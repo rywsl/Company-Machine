@@ -29,10 +29,13 @@ def test_constitution_change_rejected(tmp_path: Path) -> None:
 
 
 def test_risk_ignores_proposer(tmp_path: Path) -> None:
-    _ctx, _snapshot, pipe, _epochs = _open(tmp_path)
+    ctx, _snapshot, pipe, _epochs = _open(tmp_path)
+    assert not (ctx.root / "factory.json").exists()
     document = {"changes": [{"op": "upsert", "path": "stations/upper.yaml"}]}
     claimed_low = pipe.submit({**document, "risk": "low"}, by="acceptance")
     claimed_high = pipe.submit({**document, "risk": "high"}, by="acceptance")
+    assert claimed_low.id
+    assert claimed_high.id
     assert claimed_low.risk == claimed_high.risk
     assert claimed_low.risk in {"low", "medium", "high"}
 
