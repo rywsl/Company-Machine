@@ -190,21 +190,24 @@ def test_unrestorable_wakes(tmp_path: Path) -> None:
 
 
 def test_hold_blocks_submit(tmp_path: Path) -> None:
-    from mao.runs import LineRunner, RunState
+    from mao.runs import LineRunner, NodeState, RunState
 
-    ctx, snapshot, reconciler = _audit(tmp_path)
+    ctx, snapshot, runner, _clock = open_factory(tmp_path, FIXTURE)
+    reconciler = Reconciler(ctx, EpochStore(ctx))
     station = snapshot.key("Station", "upper@1")
+    note = seal_input(ctx, snapshot, "note.text@1")
     ctx.db.query(
         "INSERT INTO station_holds (station, finding_id, at) VALUES (?, ?, ?)",
         (station, "au-0001", "2026-01-01T00:00:00.000Z"),
     )
-    from tests.acceptance.m2.world import start_line
-
-    _ctx, _snapshot, runner, _clock, lines, inputs = start_line(tmp_path / "line", "note-trigger@1")
     lines = LineRunner(ctx, snapshot, runner)
-    run = lines.start_run("note-trigger@1", inputs)
+    run = lines.start_run("note-trigger@1", {"note": note})
     submitted = lines.tick(run.id)
+    nodes = lines.nodes(run.id)
+    assert nodes
     assert submitted == []
+    assert all(node.state == NodeState.WAITING for node in nodes)
+    assert station in reconciler.holds()
     assert lines.get(run.id).state != RunState.FAILED
 
 
