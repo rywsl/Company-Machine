@@ -1,7 +1,7 @@
 {
   "gates": {
     "M0": {
-      "commit": "664c722",
+      "commit": "282049a",
       "dirty": true,
       "evidence": [
         {
@@ -81,13 +81,13 @@
           "id": "pytest",
           "ok": true,
           "run": "uv run python tools/harness.py pytest tests",
-          "seconds": 56.0,
-          "stdout_sha256": "9a99f28d6f45b341981b4a987216eb4bcf9a7cd1f005c7885e014f8934eb5206",
-          "tail": "SKIPPED [1] tests\\system\\test_db.py:7: could not import 'mao.db': No module named 'mao.db'\nSKIPPED [1] tests\\system\\test_gate.py:7: could not import 'mao.gate': No module named 'mao.gate'\nSKIPPED [1] tests\\system\\test_jobs.py:7: could not import 'mao.jobs': No module named 'mao.jobs'\nSKIPPED [1] tests\\system\\test_operator.py:10: could not import 'mao.operator': No module named 'mao.operator'\nSKIPPED [1] tests\\system\\test_runner.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\system\\test_sandbox.py:7: could not import 'mao.sandbox': No module named 'mao.sandbox'\nSKIPPED [1] tests\\system\\test_snapshot.py:10: could not import 'mao.snapshot': No module named 'mao.snapshot'\nSKIPPED [1] tests\\system\\test_values.py:9: could not import 'mao.values': No module named 'mao.values'\nSKIPPED [1] tests\\system\\test_warehouse.py:7: could not import 'mao.warehouse': No module named 'mao.warehouse'\nSKIPPED [1] tests\\test_codebase_policy.py:146: factoryctl 尚未实现（M1-05）\nSKIPPED [1] tests\\test_codebase_policy.py:157: 还没有迁移文件（M1-01）\n742 passed, 44 skipped in 55.52s"
+          "seconds": 56.1,
+          "stdout_sha256": "cd94123894bf97b6e29095fde45d6f90bb3b00a346aad56c81f5156e199a77dc",
+          "tail": "SKIPPED [1] tests\\system\\test_db.py:7: could not import 'mao.db': No module named 'mao.db'\nSKIPPED [1] tests\\system\\test_gate.py:7: could not import 'mao.gate': No module named 'mao.gate'\nSKIPPED [1] tests\\system\\test_jobs.py:7: could not import 'mao.jobs': No module named 'mao.jobs'\nSKIPPED [1] tests\\system\\test_operator.py:10: could not import 'mao.operator': No module named 'mao.operator'\nSKIPPED [1] tests\\system\\test_runner.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\system\\test_sandbox.py:7: could not import 'mao.sandbox': No module named 'mao.sandbox'\nSKIPPED [1] tests\\system\\test_snapshot.py:10: could not import 'mao.snapshot': No module named 'mao.snapshot'\nSKIPPED [1] tests\\system\\test_values.py:9: could not import 'mao.values': No module named 'mao.values'\nSKIPPED [1] tests\\system\\test_warehouse.py:7: could not import 'mao.warehouse': No module named 'mao.warehouse'\nSKIPPED [1] tests\\test_codebase_policy.py:146: factoryctl 尚未实现（M1-05）\nSKIPPED [1] tests\\test_codebase_policy.py:157: 还没有迁移文件（M1-01）\n742 passed, 44 skipped in 55.66s"
         }
       ],
       "status": "passed",
-      "updated_at": "2026-11-09T22:31:13Z"
+      "updated_at": "2026-11-09T22:38:19Z"
     }
   },
   "tasks": {
