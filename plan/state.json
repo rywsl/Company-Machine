@@ -1,7 +1,7 @@
 {
   "gates": {
     "M0": {
-      "commit": "15b98aa",
+      "commit": "db699b4",
       "dirty": true,
       "evidence": [
         {
@@ -45,7 +45,7 @@
           "id": "conformance",
           "ok": true,
           "run": "uv run mrl conformance --json",
-          "seconds": 24.6,
+          "seconds": 26.2,
           "stdout_sha256": "68402dc6b324afb0877cc43cef261778c491f455cfebca5c7693157bf51dca64",
           "tail": "{\n  \"total\": 702,\n  \"passed\": 702,\n  \"failures\": []\n}"
         },
@@ -54,7 +54,7 @@
           "id": "coverage",
           "ok": true,
           "run": "uv run mrl coverage --json",
-          "seconds": 25.8,
+          "seconds": 26.7,
           "stdout_sha256": "3f9f21e0ca759038116e535a952d2f50e90dfd0a78e0770be17887dce881481d",
           "tail": "    \"W-NO-BUDGET\": [\n      \"factory.lines/line-without-budget-warns\",\n      \"factory.stations/agent-without-budget-warns\"\n    ],\n    \"W-PROPERTY-META\": [\n      \"factory.host/expr-property-on-meta-warns\"\n    ]\n  },\n  \"unexercised_codes\": [],\n  \"kernel_diag_rules\": 79,\n  \"unfired_rules\": []\n}"
         },
@@ -81,13 +81,13 @@
           "id": "pytest",
           "ok": true,
           "run": "uv run python tools/harness.py pytest tests",
-          "seconds": 53.7,
-          "stdout_sha256": "5a5f3292e175a82dd7688a781046b96a18c9beea189b2bf7f52d4eef05967002",
-          "tail": "SKIPPED [1] tests\\acceptance\\m1\\test_m1_02_snapshot.py:14: could not import 'mao.snapshot': No module named 'mao.snapshot'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_03_warehouse.py:13: could not import 'mao.warehouse': No module named 'mao.warehouse'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_04_sandbox.py:7: could not import 'mao.sandbox': No module named 'mao.sandbox'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_05_factoryctl.py:10: could not import 'mao.ctl': No module named 'mao.ctl'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_06_gate.py:18: could not import 'mao.gate': No module named 'mao.gate'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_07_operator.py:10: could not import 'mao.operator': No module named 'mao.operator'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_08_runner.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_09_cli.py:7: could not import 'mao.cli': No module named 'mao.cli'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_10_e2e.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\test_codebase_policy.py:146: factoryctl 尚未实现（M1-05）\nSKIPPED [1] tests\\test_codebase_policy.py:157: 还没有迁移文件（M1-01）\n742 passed, 12 skipped in 53.20s"
+          "seconds": 55.9,
+          "stdout_sha256": "925e00435f5c761152ed5733dd2fb2c6e922e07af0cc4707e842904c55431d47",
+          "tail": "SKIPPED [1] tests\\acceptance\\m1\\test_m1_02_snapshot.py:14: could not import 'mao.snapshot': No module named 'mao.snapshot'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_03_warehouse.py:13: could not import 'mao.warehouse': No module named 'mao.warehouse'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_04_sandbox.py:7: could not import 'mao.sandbox': No module named 'mao.sandbox'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_05_factoryctl.py:10: could not import 'mao.ctl': No module named 'mao.ctl'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_06_gate.py:18: could not import 'mao.gate': No module named 'mao.gate'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_07_operator.py:10: could not import 'mao.operator': No module named 'mao.operator'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_08_runner.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_09_cli.py:7: could not import 'mao.cli': No module named 'mao.cli'\nSKIPPED [1] tests\\acceptance\\m1\\test_m1_10_e2e.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\test_codebase_policy.py:146: factoryctl 尚未实现（M1-05）\nSKIPPED [1] tests\\test_codebase_policy.py:157: 还没有迁移文件（M1-01）\n742 passed, 12 skipped in 55.41s"
         }
       ],
       "status": "passed",
-      "updated_at": "2026-11-09T17:28:25Z"
+      "updated_at": "2026-11-09T17:47:23Z"
     }
   },
   "tasks": {

@@ -621,11 +621,18 @@ class Program:
                     tup = tuple(normalize(from_py(v), t) for v, (_, t) in zip(row, info.columns, strict=True))
                 except EvalError as e:
                     raise EvalError("MRL-FACT", f"关系 {name} 的事实 {row!r} 不符合声明：{e.message}") from e
-                rels[name].add(tup)
+                if rels[name].add(tup):
+                    _check_tuple_budget(sum(len(r) for r in rels.values()))
         ev = _RuleEvaluator(self, rels, budget)
         for stratum in self.strata:
             ev.run_stratum(set(stratum))
         return Model(self, rels, ev.fired)
+
+
+def _check_tuple_budget(total: int) -> None:
+    """每插入一个新元组就检查总数，宿主事实与派生元组同一上限（规范 8.6、10.1）。"""
+    if total > MAX_TUPLES:
+        raise EvalError("MRL-COST", f"元组总数超过上限 {MAX_TUPLES}（含宿主事实）")
 
 
 def _walk(n: A.Node) -> Iterator[A.Node]:

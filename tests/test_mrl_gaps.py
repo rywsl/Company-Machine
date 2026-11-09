@@ -178,18 +178,26 @@ def test_step_budget_limits_steps_not_value_size() -> None:
 
 def test_tuple_budget_includes_host_facts(monkeypatch: pytest.MonkeyPatch) -> None:
     assert MAX_TUPLES == 5_000_000
-    src = """
-module t.
-@input rel e(v: int).
-rel o(v: int).
-o(V) :- e(V).
-"""
-    program = Program.from_sources([("t.mrl", src)])
     monkeypatch.setattr("mrl.rules.MAX_TUPLES", 2)
+
+    host_only = Program.from_sources([("t.mrl", "module t.\n@input rel e(v: int).\n")])
     with pytest.raises(EvalError) as ei:
-        program.evaluate({"e": [[1], [2], [3]]})
+        host_only.evaluate({"e": [[1], [2], [3]]})
     assert ei.value.code == "MRL-COST"
     assert "宿主事实" in ei.value.message
+
+    # 派生元组本身不超过上限，加上已计入的宿主事实才超过。
+    mixed = Program.from_sources(
+        [("t.mrl", "module t.\n@input rel e(v: int).\nrel o(v: int).\no(V) :- e(V).\n")]
+    )
+    with pytest.raises(EvalError) as ei:
+        mixed.evaluate({"e": [[1], [2]]})
+    assert ei.value.code == "MRL-COST"
+    assert "宿主事实" in ei.value.message
+    within = Program.from_sources(
+        [("t.mrl", "module t.\n@input rel e(v: int).\nrel o(v: int).\no(V) :- e(V).\n")]
+    )
+    assert within.evaluate({"e": [[1]]}).rows("o") == [(1,)]
 
 
 def test_static_typing_of_dyn_follows_spec() -> None:
