@@ -11,7 +11,7 @@ pytest.importorskip("mao.errors")
 
 from mao.connectors import ReceiptStatus, ReceiptStore, idempotency_key  # noqa: E402
 from mao.errors import FactoryError  # noqa: E402
-from tests.acceptance.m2.world import FIXTURE, open_factory, start_line  # noqa: E402
+from tests.acceptance.m2.world import FIXTURE, open_factory  # noqa: E402
 
 
 def _store(tmp_path: Path):
@@ -130,11 +130,15 @@ def test_void_allows_republish(tmp_path: Path) -> None:
 
 
 def test_outcome_unknown_no_retry(tmp_path: Path) -> None:
-    _ctx, _snapshot, runner, _clock, lines, inputs = start_line(tmp_path, "note-pipeline@1")
-    from mao.runs import InlineExecutor
+    from tests.acceptance.m2.world import seal_input
 
-    done = lines.run_to_completion(lines.start_run("note-pipeline@1", inputs).id, InlineExecutor(runner))
-    assert done.id.startswith("r-")
+    ctx, snapshot, runner, _clock = open_factory(tmp_path, FIXTURE)
+    note = seal_input(ctx, snapshot, "note.text@1")
+    job = runner.submit(snapshot.key("Station", "publish-flaky@1"), {"note": note}, {})
+    done = runner.run(job.id)
+    assert done.state.value == "DEAD"
+    assert done.error["code"] == "SINK_OUTCOME_UNKNOWN"
+    assert done.attempt == 1
 
 
 def test_conflict_on_claimed(tmp_path: Path) -> None:
@@ -221,5 +225,6 @@ def test_lineage_down_shows_receipt(tmp_path: Path) -> None:
         verify_method="local-file-check",
     )
     found = store.for_bean("sha256:" + "a" * 64)
-    assert any(item.id == claimed.receipt.id for item in found)
-    assert ctx.warehouse is not None
+    assert [item.id for item in found] == [claimed.receipt.id]
+    down = ctx.warehouse.lineage("sha256:" + "a" * 64, "down")
+    assert claimed.receipt.id in str(down)

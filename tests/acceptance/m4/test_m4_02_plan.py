@@ -81,10 +81,12 @@ def test_sealed_plan_same_epoch(tmp_path: Path) -> None:
         planner_key=snapshot.key("Station", "explainer@3"),
         run=run,
     )
-    assert check.ok is False or (check.plan is not None and check.plan.epoch == snapshot.epoch)
+    assert check.ok is True
+    assert check.plan is not None
+    assert check.plan.epoch == snapshot.epoch
 
 
 def test_runtime_resolution_append_only(tmp_path: Path) -> None:
     with pytest.raises(FactoryError) as ei:
         _plan(tmp_path, {"spec": {"steps": {"a": {"station": "explainer@3"}}}})
-    assert ei.value.code in {"RUN_PLAN_INVALID", "PLAN_INVALID"} or ei.value.code == "RUN_PLAN_INVALID"
+    assert ei.value.code == "RUN_PLAN_INVALID"

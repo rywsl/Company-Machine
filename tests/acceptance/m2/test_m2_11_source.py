@@ -11,7 +11,6 @@ pytest.importorskip("mao.runner")
 pytest.importorskip("mao.errors")
 
 from mao.errors import FactoryError  # noqa: E402
-from mao.runner import Runner  # noqa: E402
 from tests.acceptance.m2.world import FIXTURE, open_factory  # noqa: E402
 
 
@@ -45,7 +44,8 @@ def test_untrusted_input_gated(tmp_path: Path) -> None:
     job = runner.submit(snapshot.key("Station", "pull-notes@1"), {}, {"from_dir": str(empty)})
     done = runner.run(job.id)
     assert done.state.value in {"REJECTED", "DEAD"}
-    assert ctx.warehouse.list(sealed_only=True) == [] or done.outputs == {}
+    assert done.outputs == {}
+    assert ctx.warehouse.list(sealed_only=True) == []
 
 
 def test_same_content_same_bean(tmp_path: Path) -> None:
@@ -71,7 +71,6 @@ def test_service_form_unsupported(tmp_path: Path) -> None:
 
 def test_policy_violation_defense(tmp_path: Path) -> None:
     _ctx, snapshot, runner = _runner(tmp_path)
-    assert isinstance(runner, Runner)
     with pytest.raises(FactoryError) as ei:
         runner.submit(
             snapshot.key("Station", "pull-notes@1"), {}, {"from_dir": str(tmp_path)}, run={"id": "x"}

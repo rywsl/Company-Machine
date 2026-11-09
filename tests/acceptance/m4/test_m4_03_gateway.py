@@ -18,6 +18,9 @@ DOC = {
     "paths": {
         "/videos": {"post": {"operationId": "submitVideo", "responses": {"200": {"description": "ok"}}}},
         "/tasks/{id}": {"get": {"operationId": "pollVideo", "responses": {"200": {"description": "ok"}}}},
+        "/videos/{id}": {
+            "delete": {"operationId": "deleteVideo", "responses": {"204": {"description": "ok"}}}
+        },
     },
 }
 
@@ -41,12 +44,7 @@ def test_incomplete_long_task() -> None:
     assert ei.value.code == "LONG_TASK_INVALID"
 
 
-def test_submit_poll_fetch_order(tmp_path: Path) -> None:
-    from tests.acceptance.m2.world import EXAMPLE, open_factory
-
-    ctx, snapshot, _runner, _clock = open_factory(tmp_path, EXAMPLE)
-    gateway = ServiceGateway(ctx, snapshot)
-    assert gateway is not None
+def test_submit_poll_fetch_order() -> None:
     task = parse_long_task(
         {
             "submit": "POST /videos",
@@ -57,7 +55,9 @@ def test_submit_poll_fetch_order(tmp_path: Path) -> None:
             "poll_every": "1s",
         }
     )
-    assert task.submit.startswith("POST")
+    assert task.submit == "POST /videos"
+    assert task.poll == "GET /tasks/{id}"
+    assert task.fetch == "response.files"
 
 
 def test_done_expression() -> None:
@@ -110,8 +110,9 @@ def test_fetch_rejects_public_host() -> None:
 def test_openapi_allowlist() -> None:
     tools = openapi_to_tools(DOC, allow=[])
     names = {tool.name for tool in tools}
-    assert "submitVideo" not in names or names <= {"submitVideo", "pollVideo"}
-    assert isinstance(tools, tuple)
+    assert names
+    assert "deleteVideo" not in names
+    assert names <= {"submitVideo", "pollVideo"}
 
 
 def test_named_tool_missing() -> None:
@@ -147,4 +148,14 @@ def test_pooled_reset_between_jobs(tmp_path: Path) -> None:
 
     ctx, snapshot, _runner, _clock = open_factory(tmp_path, EXAMPLE)
     gateway = ServiceGateway(ctx, snapshot)
-    assert callable(gateway.run_recipe)
+    with pytest.raises(FactoryError) as ei:
+        gateway.run_recipe(
+            station_key=snapshot.key("Station", "explainer@3"),
+            job_id="j-0001",
+            attempt=1,
+            sandbox=None,
+            inputs={},
+            params={},
+            timeout_s=1,
+        )
+    assert ei.value.code in {"LONG_TASK_INVALID", "SERVICE_FAILED", "FORM_UNSUPPORTED"}

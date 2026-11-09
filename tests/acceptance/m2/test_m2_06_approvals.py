@@ -47,7 +47,8 @@ def test_auto_if_approves_without_parking(tmp_path: Path) -> None:
     assert opened.decided_by == "auto"
     assert opened.status.value == "approved"
     job = ctx.db.query("SELECT state FROM jobs WHERE id = ?", ("j-0001",))
-    assert not job or job[0]["state"] != "AWAITING_APPROVAL"
+    assert job
+    assert job[0]["state"] != "AWAITING_APPROVAL"
 
 
 def test_auto_if_false_parks_for_foreman(tmp_path: Path) -> None:
@@ -153,7 +154,7 @@ def test_review_quorum_unset(tmp_path: Path) -> None:
             inputs={},
             params={},
         )
-    assert ei.value.code in {"REVIEW_QUORUM_UNSET", "APPROVAL_RULE_MISSING"}
+    assert ei.value.code == "REVIEW_QUORUM_UNSET"
 
 
 def test_review_counts_distinct_runtimes(tmp_path: Path) -> None:
@@ -167,9 +168,13 @@ def test_review_counts_distinct_runtimes(tmp_path: Path) -> None:
         params={},
     )
     first = approvals.apply_decision(opened.id, "approve", by="runtime-a")
-    assert first.status.value in {"pending", "approved"}
-    votes = approvals.votes(opened.id)
-    assert isinstance(votes, list)
+    assert first.status.value == "pending"
+    with pytest.raises(FactoryError) as ei:
+        approvals.apply_decision(opened.id, "approve", by="runtime-a")
+    assert ei.value.code == "APPROVAL_STATE_INVALID"
+    second = approvals.apply_decision(opened.id, "approve", by="runtime-b")
+    assert second.status.value == "approved"
+    assert {vote.runtime for vote in approvals.votes(opened.id)} == {"runtime-a", "runtime-b"}
 
 
 def test_eval_error_is_not_true(tmp_path: Path) -> None:

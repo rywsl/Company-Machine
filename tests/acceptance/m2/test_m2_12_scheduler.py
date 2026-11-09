@@ -28,15 +28,16 @@ def test_executor_methods_match_lines(tmp_path: Path) -> None:
     ctx, _snapshot, runner, _clock, sched = _sched(tmp_path, {"pools": {}})
     sched.load_config()
     executor = ScheduledExecutor(ctx, runner, sched)
-    assert callable(executor.dispatch)
-    assert callable(executor.wait)
     from mao.runs import LineRunner
 
-    LineRunner(ctx, _snapshot, runner)
-    import inspect
-
-    assert "dispatch" in inspect.signature(executor.dispatch).parameters
-    assert "timeout_s" in inspect.signature(executor.wait).parameters
+    lines = LineRunner(ctx, _snapshot, runner)
+    note = __import__("tests.acceptance.m2.world", fromlist=["seal_input"]).seal_input(
+        ctx, _snapshot, "note.text@1"
+    )
+    run = lines.start_run("note-trigger@1", {"note": note})
+    finished = lines.run_to_completion(run.id, executor)
+    assert finished.id == run.id
+    assert finished.state.value in {"SUCCEEDED", "FAILED", "CANCELLED"}
 
 
 def test_dispatch_does_not_run_inline(tmp_path: Path) -> None:
@@ -78,8 +79,11 @@ def test_compartment_does_not_borrow(tmp_path: Path) -> None:
         tmp_path, {"pools": {"cpu": 1}, "compartments": {"a": {"cpu": 1}, "b": {"cpu": 1}}}
     )
     sched.load_config()
-    demand = sched.demand(snapshot.key("Station", "upper@1"))
-    assert demand.cpu >= 0
+    upper = sched.demand(snapshot.key("Station", "upper@1"))
+    idle = sched.demand(snapshot.key("Station", "idle@1"))
+    assert upper.cpu == 1
+    assert idle.cpu == 0
+    assert upper.pool != idle.pool
 
 
 def test_wip_backpressure(tmp_path: Path) -> None:

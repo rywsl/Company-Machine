@@ -152,11 +152,19 @@ def test_no_cache_still_binds(tmp_path: Path) -> None:
     assert explained["material"]["v"] == 1
 
 
-def test_factory_run_cache_flag(tmp_path: Path) -> None:
+def test_factory_run_cache_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
     from mao.cli import main
 
     ctx, snapshot, _runner, _clock = open_factory(tmp_path, EXAMPLE)
     cache = JobCache(ctx)
     station = snapshot.key("Station", "subs-convert@1")
-    assert cache.key(snapshot, station, {"in": "sha256:" + "5" * 64}, {}).startswith("jk:")
-    assert callable(main)
+    bound = cache.key(snapshot, station, {"in": "sha256:" + "5" * 64}, {})
+    assert bound.startswith("jk:")
+    monkeypatch.setenv("FACTORY_ROOT", str(ctx.root))
+    buf = io.StringIO()
+    monkeypatch.setattr("sys.stdout", buf)
+    code = main(["run", "--help"])
+    assert isinstance(code, int)
+    assert "--cache" in buf.getvalue()

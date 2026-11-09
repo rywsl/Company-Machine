@@ -25,9 +25,16 @@ def test_context_open_ignores_cloud_env(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("MAO_S3_ACCESS_KEY", "local-test-key")
     root = tmp_path / "factory"
     ctx = Context.open(root, provider=LocalProvider(root))
-    assert ctx.root == root.resolve() or ctx.root == root
-    again = open_context(root, provider=LocalProvider(root))
-    assert again.db is not None
+    assert ctx.root == root.resolve()
+    state = _S3State()
+    server, _endpoint = _s3_server(state)
+    try:
+        again = open_context(root, provider=LocalProvider(root))
+        assert again.db.path == ctx.db.path
+        assert state.puts == 0
+        assert state.objects == {}
+    finally:
+        server.shutdown()
 
 
 class _S3State:
@@ -225,7 +232,7 @@ def test_migrate_verify_and_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     pointer = root / "backend-active.json"
     assert pointer.is_file()
     stored = json.loads(pointer.read_text(encoding="utf-8"))
-    assert "digest" in stored or "switched_at" in stored
+    assert stored["switched_at"]
     assert any(digest.split(":", 1)[-1] in key for key in state.objects)
 
 

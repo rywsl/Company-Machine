@@ -76,9 +76,11 @@ def test_dynamic_overflow_reject(tmp_path: Path) -> None:
     lines = LineRunner(ctx, snapshot, runner)
     DynamicRunner(ctx, snapshot, runner, lines)
     run = lines.start_run(LINE, {})
-    assert run.error is None or run.state.value in {"PENDING", "RUNNING", "FAILED"}
-    nodes = lines.nodes(run.id)
-    assert nodes == [] or any(node.state == NodeState.FAILED for node in nodes) or run.id.startswith("r-")
+    DynamicRunner(ctx, snapshot, runner, lines).expand(run.id)
+    lines.tick(run.id)
+    failed = [node for node in lines.nodes(run.id) if node.state == NodeState.FAILED]
+    assert failed
+    assert failed[0].error["code"] == "DYNAMIC_OVERFLOW"
 
 
 def test_truncate_keeps_prefix(tmp_path: Path) -> None:
@@ -102,7 +104,7 @@ def test_switch_first_match(tmp_path: Path) -> None:
         keep=True,
     )
     plan = compile_dynamic(Snapshot.load(registry), LINE)
-    assert any(node.kind == "switch" or node.id == "choose" for node in plan.nodes)
+    assert any(node.kind == "switch" for node in plan.nodes)
 
 
 def test_switch_default(tmp_path: Path) -> None:
@@ -114,7 +116,7 @@ def test_switch_default(tmp_path: Path) -> None:
     )
     plan = compile_dynamic(Snapshot.load(registry), LINE)
     assert plan.line.endswith("explainer-multilang@5")
-    assert any(node.id == "choose" or node.kind == "switch" for node in plan.nodes)
+    assert any(node.kind == "switch" for node in plan.nodes)
 
 
 def test_switch_eval_error(tmp_path: Path) -> None:
@@ -142,7 +144,7 @@ def test_until_stops(tmp_path: Path) -> None:
         keep=True,
     )
     plan = compile_dynamic(Snapshot.load(registry), LINE)
-    assert any(node.kind == "until" or "@" in node.id for node in plan.nodes)
+    assert any(node.kind == "until" for node in plan.nodes)
 
 
 def test_until_exhausted(tmp_path: Path) -> None:
@@ -165,5 +167,5 @@ def test_subline_same_epoch(tmp_path: Path) -> None:
         keep=False,
     )
     plan = compile_dynamic(Snapshot.load(registry), LINE)
-    assert any(node.kind == "subline" or node.id == "child" for node in plan.nodes)
+    assert any(node.kind == "subline" for node in plan.nodes)
     assert plan.epoch

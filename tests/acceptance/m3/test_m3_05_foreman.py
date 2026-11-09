@@ -38,14 +38,18 @@ def test_readonly_roundtrip(tmp_path: Path) -> None:
     ctx, snapshot = _open(tmp_path)
     query = ForemanQuery(ctx, EpochStore(ctx))
     shown = query.epoch_show(snapshot.epoch)
-    assert shown["epoch"] == snapshot.epoch or shown.get("commit") == snapshot.epoch
+    assert shown["epoch"] == snapshot.epoch
 
 
 def test_secret_redacted(tmp_path: Path) -> None:
     ctx, _snapshot = _open(tmp_path)
-    text = ForemanQuery(ctx, EpochStore(ctx)).job_transcript("j-missing")
+    transcript = ctx.root / "jobs" / "j-0001" / "transcript.txt"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("API_KEY=secret\n", encoding="utf-8")
+    text = ForemanQuery(ctx, EpochStore(ctx)).job_transcript("j-0001")
+    assert text != ""
     assert "API_KEY=secret" not in text
-    assert "[REDACTED]" in text or text == ""
+    assert "[REDACTED]" in text
 
 
 def test_propose_does_not_merge(tmp_path: Path) -> None:
@@ -74,7 +78,7 @@ def test_constitution_write_forbidden(tmp_path: Path) -> None:
             by="foreman",
             timeout_s=5,
         )
-    assert ei.value.code in {"CONSTITUTION_FORBIDDEN", "FOREMAN_FORBIDDEN", "CONSTITUTION_LOCKED"}
+    assert ei.value.code in {"CONSTITUTION_FORBIDDEN", "FOREMAN_FORBIDDEN"}
 
 
 def test_review_other_runtime(tmp_path: Path) -> None:

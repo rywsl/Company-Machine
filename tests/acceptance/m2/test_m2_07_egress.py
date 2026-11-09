@@ -57,7 +57,8 @@ def test_no_suffix_match(tmp_path: Path) -> None:
     snapshot = Snapshot.load(EXAMPLE)
     plan = build_egress(snapshot, snapshot.key("Station", "explainer@3"), _store(tmp_path))
     hosts = {rule.host for rule in plan.allow}
-    assert "api.fal.run" not in hosts or "fal.run" in hosts
+    assert "fal.run" in hosts
+    assert "api.fal.run" not in hosts
     assert not any(host.endswith(".fal.run") and host != "fal.run" for host in hosts)
 
 
@@ -77,7 +78,9 @@ def test_connect_without_ca_rejected_when_methods_limited(tmp_path: Path) -> Non
     )
     assert proxy.start() > 0
     proxy.close()
-    assert plan.network in {"none", "egress"}
+    assert plan.network == "egress"
+    limited = [rule for rule in plan.allow if "*" not in rule.methods]
+    assert limited
 
 
 def test_argv_has_no_host_network() -> None:
@@ -115,7 +118,8 @@ def test_model_secret_not_in_sandbox_env(tmp_path: Path) -> None:
     snapshot = Snapshot.load(EXAMPLE)
     plan = build_egress(snapshot, snapshot.key("Station", "explainer@3"), store)
     assert "MODEL_TOKEN" not in plan.env
-    assert "MODEL_TOKEN" in plan.withheld or store.secret_class("MODEL_TOKEN") == "model"
+    assert store.secret_class("MODEL_TOKEN") == "model"
+    assert "MODEL_TOKEN" in plan.withheld
 
 
 def test_model_proxy_meters(tmp_path: Path) -> None:
