@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-09T21:01:05Z",
+  "updated_at": "2026-11-09T21:08:01Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -170,7 +170,7 @@
     "tests/acceptance/m4/test_m4_01_dynamic.py": "29d848439cb852417954dc58dd34ee040bff6b54f53bb9783993d3fcceb33fa6",
     "tests/acceptance/m4/test_m4_02_plan.py": "52dda293b1996ec621820da3572c85276f3acd6094a0b36596b21b91a86fddfd",
     "tests/acceptance/m4/test_m4_03_gateway.py": "f93958515aaefb62078d6f0e08d4fa8a03f63ec0094549b249512cc5eee24ac7",
-    "tests/acceptance/m4/test_m4_04_backends.py": "ac10b06a430ab2c49e228e734e8423c355aa261e994bf3659f87675993266f5a",
+    "tests/acceptance/m4/test_m4_04_backends.py": "74e547f26aa8aeb3e61a84bb1c3b983a5fc5e520fbd5188dad253e316552dbd4",
     "tests/conftest.py": "985ae01c181878b34edfd5d8a6a71c0d608b608d1345bf3472d40cd470b9e240",
     "tests/fakes/fake_agent.py": "684f81785e0719447f320ce2ebff4cb82e25b95725921a926eb91d71a2ca5840",
     "tests/fakes/fakelib.py": "0764230c6d697b01f72ebe02b962a82a41c6a0a058177d8dbc406d030f83619c",

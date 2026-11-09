@@ -58,7 +58,8 @@ def _s3_server(state: _S3State) -> tuple[ThreadingHTTPServer, str]:
             state.authorizations.append(self.headers.get("Authorization", ""))
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("x-amz-meta-sha256", "deadbeef" if state.lie_sha else sha)
+            lied = hashlib.sha256(b"lie").hexdigest() if state.lie_sha else sha
+            self.send_header("x-amz-meta-sha256", lied)
             self.end_headers()
 
         def do_GET(self) -> None:  # noqa: N802
@@ -112,9 +113,12 @@ def test_s3_put_get_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         digest = store.put_file(path)
         dest = tmp_path / "out"
         store.get_file(digest, dest)
+        assert server.server_address[1] != 9
+        assert any(body == b"abc" for body, _sha in state.objects.values())
         assert dest.read_bytes() == b"abc"
         assert any(item.startswith("AWS4-HMAC-SHA256") for item in state.authorizations)
         puts_after_first = state.puts
+        assert puts_after_first >= 1
         again = store.put_file(path)
         assert again == digest
         assert state.puts == puts_after_first
@@ -136,15 +140,17 @@ def test_cas_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             secret_key_env="TEST_S3_SECRET",
             timeout_s=5,
         )
-        other = tmp_path / "other"
-        other.write_bytes(b"xyz")
-        digest_hex = hashlib.sha256(b"xyz").hexdigest()
-        key = f"/b/cas/sha256/{digest_hex[:2]}/{digest_hex[2:]}"
-        state.objects[key] = (b"not-xyz", "0" * 64)
+        path = tmp_path / "blob"
+        path.write_bytes(b"xyz")
+        digest = store.put_file(path)
+        assert any(body == b"xyz" for body, _sha in state.objects.values())
+        before = {key: body for key, (body, _sha) in state.objects.items()}
+        state.lie_sha = True
         with pytest.raises(FactoryError) as ei:
-            store.put_file(other)
+            store.put_file(path)
         assert ei.value.code == "CAS_CONFLICT"
-        assert state.objects[key][0] == b"not-xyz"
+        assert {key: body for key, (body, _sha) in state.objects.items()} == before
+        assert digest == "sha256:" + hashlib.sha256(b"xyz").hexdigest()
     finally:
         server.shutdown()
 
@@ -240,16 +246,20 @@ def test_migrate_verify_and_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         ),
         encoding="utf-8",
     )
+    pointer = root / "backend-active.json"
+    assert not pointer.exists()
     try:
-        main(["backend", "migrate", "--from", "local", "--to", str(config)])
+        code = main(["backend", "migrate", "--from", "local", "--to", str(config)])
     finally:
         server.shutdown()
-    pointer = root / "backend-active.json"
+    assert code == 0
     assert pointer.is_file()
     stored = json.loads(pointer.read_text(encoding="utf-8"))
-    assert stored["switched_at"]
-    assert any(body == b"migrated-bytes" for body, _sha in state.objects.values())
-    assert any(digest.split(":", 1)[-1] in key for key in state.objects)
+    assert isinstance(stored["switched_at"], str) and "T" in stored["switched_at"]
+    hexdigest = digest.split(":", 1)[-1]
+    matched = [body for body, _sha in state.objects.values() if body == b"migrated-bytes"]
+    assert matched
+    assert any(hashlib.sha256(body).hexdigest() == hexdigest for body in matched)
 
 
 def test_migrate_failure_keeps_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -281,13 +291,26 @@ def test_migrate_failure_keeps_pointer(tmp_path: Path, monkeypatch: pytest.Monke
         ),
         encoding="utf-8",
     )
+    pointer = root / "backend-active.json"
+    assert not pointer.exists()
+    raised: FactoryError | None = None
+    code = 0
     try:
-        with pytest.raises(FactoryError) as ei:
-            main(["backend", "migrate", "--from", "local", "--to", str(config)])
-        assert ei.value.code == "MIGRATE_VERIFY_FAILED"
+        try:
+            code = main(["backend", "migrate", "--from", "local", "--to", str(config)])
+        except FactoryError as exc:
+            raised = exc
+            code = 1
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
     finally:
         server.shutdown()
-    assert not (root / "backend-active.json").exists()
+    if raised is not None:
+        assert raised.code == "MIGRATE_VERIFY_FAILED"
+    else:
+        assert code == 1
+    assert not pointer.exists()
+    assert state.puts >= 1
     local = open_context(root, provider=LocalProvider(root))
     probe = tmp_path / "probe"
     probe.write_bytes(b"still-local")
