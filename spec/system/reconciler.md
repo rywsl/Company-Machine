@@ -165,9 +165,9 @@ CREATE UNIQUE INDEX audit_open ON audit_findings(invariant, subject) WHERE state
 | I11 | `refs/heads/main` 上每个控制面创建的提交（提交说明含 `changeset:`）都能在 `changesets` 里找到，且 T2/T3 的复核条数不少于该行的 `reviews_required` | 记录并唤醒。不合入、也不回滚指针（回滚是治理命令） |
 | I12 | `retain` 为真的 commit 缺失检出目录，或某 run 的 epoch 在 `epochs` 表中不存在 | 记录。禁止为了“清磁盘”删除 |
 | I13 | `git log` 中修改了 `constitution/` 的提交，`git verify-commit` 必须成功 | 失败 → 唤醒，并把该 commit 记入发现。不把 `active` 指过去 |
-| I14 | 对 `active` 的解析表再跑一次 `check_registry`，比较 `resolutions` 的 `(line, step, port, status, chain)`。只比较，不写回 | 不一致 → 唤醒。禁止用新结果覆盖旧表 |
+| I14 | 读 `$FACTORY_ROOT/epochs/<commit>/resolutions.json`（active epoch 冻结的解析表，规范 JSON 数组，项与 `check_registry` 的 `resolutions` 相同，`origin` 为 `precomputed`）。对 active Registry 再跑一次 `check_registry`，比较 `(line, step, port, status, chain)`。不读、不写 `resolution-runtime.json` | 不一致 → 唤醒。禁止用新结果覆盖 `resolutions.json` |
 
-I14 的“再跑一次”必须用同一个 `check_registry`。禁止在调和器里重写解析算法。
+I14 的“再跑一次”必须用同一个 `check_registry`。禁止在调和器里重写解析算法。存储侧是 epoch 构建时写入的 `epochs/<commit>/resolutions.json`。`dynamic.md` 的 `epochs/<commit>/resolution-runtime.json` 只追加运行期新键，不得改写 `origin: precomputed` 的键，也不是这次比较的存储表。
 
 ### 5.2 声明态与实际态（I9）
 
@@ -236,7 +236,7 @@ I14 的“再跑一次”必须用同一个 `check_registry`。禁止在调和�
 | | `test_no_psi_without_limit` | 宪法没有 `drift_psi_max` 时，审计结果里没有 PSI 比较，也不出现 0.2 |
 | | `test_unrestorable_wakes` | I1 产生唤醒票，载荷只有 finding id |
 | | `test_hold_blocks_submit` | hold 期间 `tick` 不提交该工位的节点，run 不因此 `FAILED` |
-| | `test_i14_compares_tables` | 篡改存储的解析表链之后，I14 发现出现，存储的链不被覆盖 |
+| | `test_i14_compares_tables` | 篡改 `epochs/<commit>/resolutions.json` 里某一行的 `chain` 之后，I14 发现出现，该文件不被覆盖 |
 
 ```
 uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_04_reconciler.py

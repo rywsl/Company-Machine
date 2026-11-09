@@ -241,21 +241,16 @@ def test_hold_blocks_submit(tmp_path: Path) -> None:
 def test_i14_compares_tables(tmp_path: Path) -> None:
     ctx, snapshot, reconciler = _audit(tmp_path)
     epoch = EpochStore(ctx).current()
-    stored = list(snapshot.result.resolutions)
+    stored = [dict(item) for item in snapshot.result.resolutions]
     assert stored
-    original = dict(stored[0])
-    tampered = {
-        **original,
-        "status": "convert",
-        "chain": ["tampered-converter@1"],
-        "origin": "runtime",
-    }
-    sidecar = ctx.root / "epochs" / epoch / "resolution-runtime.json"
-    sidecar.parent.mkdir(parents=True, exist_ok=True)
-    sidecar.write_text(json.dumps([tampered]), encoding="utf-8")
-    before = sidecar.read_text(encoding="utf-8")
+    stored[0] = {**stored[0], "chain": ["tampered-converter@1"], "origin": "precomputed"}
+    frozen = ctx.root / "epochs" / epoch / "resolutions.json"
+    frozen.parent.mkdir(parents=True, exist_ok=True)
+    frozen.write_text(json.dumps(stored), encoding="utf-8")
+    before = frozen.read_text(encoding="utf-8")
     findings = reconciler.audit_once(timeout_s=5)
     assert findings
     assert any(item.invariant == "I14" for item in findings)
-    assert sidecar.read_text(encoding="utf-8") == before
-    assert "tampered-converter@1" in sidecar.read_text(encoding="utf-8")
+    assert frozen.read_text(encoding="utf-8") == before
+    assert "tampered-converter@1" in frozen.read_text(encoding="utf-8")
+    assert not (ctx.root / "epochs" / epoch / "resolution-runtime.json").exists()

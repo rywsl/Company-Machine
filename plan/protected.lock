@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-09T22:27:19Z",
+  "updated_at": "2026-11-09T22:45:20Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -133,7 +133,7 @@
     "spec/system/governance.md": "46e8c41151d3c394c8233c744248dcf37623bc577ff903d16a836496dff02af8",
     "spec/system/lines.md": "efc5a37f892de5e4e883d426d32dd2f3e712d059ae17d5d664dd064c8e34d3f9",
     "spec/system/operator.md": "ab477b0b8f9018f0216f511cc2dc9fed9fadaa461f873c07a6c4b58af35b7fcb",
-    "spec/system/reconciler.md": "666610aef91d9f1a9b7346ec33adead2555784f9de315ed52df7684e6a3b0a0b",
+    "spec/system/reconciler.md": "6ef67d5150324368b88f50b19387de24d187ad931ffdbe2afa93549c90c6a666",
     "spec/system/runner.md": "c40c6b8aca806efc90f938059bf771853f5480001d6f469b6f293f0a79e06f0a",
     "spec/system/sandbox.md": "a26e8be67999a78a961c6a870812178e17e5f48a03fe34e001ad6e0d73933239",
     "spec/system/scheduler.md": "eef9dcf096bad3654746d3bd0d22ed4581353938fe7b20e469a21f0d39c5093b",
@@ -165,7 +165,7 @@
     "tests/acceptance/m2/test_m2_12_scheduler.py": "83775d8e7fa3b4de710d9f64b6b385963f23a461a6b5888e041bc71d4dd7ee07",
     "tests/acceptance/m2/world.py": "7228861077aff0c3c4decc466e70461984246a9ead626357bac25716502478cf",
     "tests/acceptance/m3/test_m3_01_governance.py": "8f301be8abfc238b20dd18db349c8970f7124eb403ca40df6b21fa6881634c4e",
-    "tests/acceptance/m3/test_m3_04_reconciler.py": "101843210e42c8847240a3deed65548c5964aad9a8d3764956531c6b06ae182f",
+    "tests/acceptance/m3/test_m3_04_reconciler.py": "f73f1b9bec20cecdcfb562dae967bd07e50e04b861c924afeba83074fa49ca9f",
     "tests/acceptance/m3/test_m3_05_foreman.py": "1c5dd0404c69de83159e4355527f3c401725ec301da35e88a534378dc7fac377",
     "tests/acceptance/m4/test_m4_01_dynamic.py": "29d848439cb852417954dc58dd34ee040bff6b54f53bb9783993d3fcceb33fa6",
     "tests/acceptance/m4/test_m4_02_plan.py": "52dda293b1996ec621820da3572c85276f3acd6094a0b36596b21b91a86fddfd",
