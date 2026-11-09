@@ -1,0 +1,27 @@
+# 任务说明（brief）。对应架构文档 13.1。
+apiVersion: mao/v1
+kind: Type
+metadata: {name: brief, version: "1.0", description: 所有任务说明的公共父类型}
+spec:
+  kind: atomic
+---
+apiVersion: mao/v1
+kind: Type
+metadata: {name: brief.video, version: "1.2", description: 视频制作任务说明}
+spec:
+  extends: brief@1
+  payload:
+    - {path: brief.json, media_type: application/json, required: true}
+    - {path: "refs/*", media_type: "video/*", required: false}       # 可选的参考视频
+  meta_schema:
+    type: object
+    required: [topic, duration_s, aspect, language]
+    properties:
+      topic:      {type: string, maxLength: 500}
+      audience:   {type: string}
+      duration_s: {type: number, minimum: 5, maximum: 600}
+      aspect:     {enum: ["16:9", "9:16", "1:1"]}
+      language:   {type: string}
+      style:      {type: string}
+  properties:
+    has_reference: "bean.payload.exists(f, f.path.startsWith('refs/'))"

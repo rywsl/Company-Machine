@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/station.schema.json",
+  "title": "Station（工位 = Recipe × Operator × Policy + 带类型的端口）",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "$defs": {
+    "approver": {"enum": ["auto", "foreman", "review"]},
+    "approvalRule": {
+      "oneOf": [
+        {"$ref": "#/$defs/approver"},
+        {
+          "type": "object",
+          "required": ["auto_if", "else"],
+          "additionalProperties": false,
+          "properties": {
+            "auto_if": {"$ref": "common.schema.json#/$defs/expr"},
+            "else": {"$ref": "#/$defs/approver"}
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "apiVersion": {"const": "mao/v1"},
+    "kind": {"const": "Station"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["role", "machine", "recipe", "operator", "policy"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {"enum": ["source", "transform", "converter", "judge", "planner", "sink"]},
+        "machine": {"$ref": "common.schema.json#/$defs/ref"},
+        "recipe": {"$ref": "common.schema.json#/$defs/name"},
+        "operator": {
+          "type": "object",
+          "required": ["runtime"],
+          "additionalProperties": false,
+          "properties": {
+            "runtime": {"$ref": "common.schema.json#/$defs/ref"},
+            "model": {"type": "string"},
+            "max_turns": {"type": "integer", "minimum": 1},
+            "tools": {"$ref": "common.schema.json#/$defs/stringList"}
+          }
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {"$ref": "common.schema.json#/$defs/paramDecl"}
+        },
+        "inputs": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["type"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {"$ref": "common.schema.json#/$defs/typeExpr"},
+              "requires": {"$ref": "common.schema.json#/$defs/propList"},
+              "optional": {"type": "boolean"}
+            }
+          }
+        },
+        "outputs": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["type"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {"$ref": "common.schema.json#/$defs/typeExpr"},
+              "guarantees": {"$ref": "common.schema.json#/$defs/propList"},
+              "accept": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/expr"}},
+              "optional": {"type": "boolean"}
+            }
+          }
+        },
+        "phases": {
+          "oneOf": [
+            {"const": ["execute"]},
+            {"const": ["propose", "execute"]}
+          ]
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "propose": {"$ref": "#/$defs/approvalRule"},
+            "in_run": {"$ref": "#/$defs/approvalRule"},
+            "timeout": {"$ref": "common.schema.json#/$defs/duration"}
+          }
+        },
+        "gate": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "judge": {
+              "type": "object",
+              "required": ["runtime", "rubric", "sample_rate", "threshold"],
+              "additionalProperties": false,
+              "properties": {
+                "runtime": {"$ref": "common.schema.json#/$defs/ref"},
+                "model": {"type": "string"},
+                "rubric": {"type": "string"},
+                "sample_rate": {"type": "number", "minimum": 0, "maximum": 1},
+                "threshold": {"type": "number", "minimum": 0, "maximum": 1}
+              }
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timeout": {"$ref": "common.schema.json#/$defs/duration"},
+            "budget_usd": {"$ref": "common.schema.json#/$defs/usd"},
+            "retries": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "rejected": {"type": "integer", "minimum": 0},
+                "failed": {"type": "integer", "minimum": 0},
+                "mode": {"enum": ["fresh", "resume"]}
+              }
+            }
+          }
+        },
+        "converts": {
+          "type": "object",
+          "required": ["from", "to", "lossless"],
+          "additionalProperties": false,
+          "properties": {
+            "from": {"$ref": "common.schema.json#/$defs/typeExpr"},
+            "to": {"$ref": "common.schema.json#/$defs/typeExpr"},
+            "lossless": {"type": "boolean"},
+            "preserves": {"$ref": "common.schema.json#/$defs/propList"}
+          }
+        },
+        "equivalence": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/expr"}},
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "usd_est": {"$ref": "common.schema.json#/$defs/usd"},
+            "p50_s": {"type": "number", "minimum": 0}
+          }
+        },
+        "fixtures": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accept": {"$ref": "common.schema.json#/$defs/stringList"},
+            "reject": {"$ref": "common.schema.json#/$defs/stringList"}
+          }
+        },
+        "plan_bounds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowed_stations": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ref"}},
+            "allowed_sinks": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ref"}},
+            "max_steps": {"type": "integer", "minimum": 1},
+            "max_fanout": {"type": "integer", "minimum": 1},
+            "max_depth": {"type": "integer", "minimum": 1},
+            "budget_usd": {"$ref": "common.schema.json#/$defs/usd"}
+          }
+        },
+        "idempotency_key": {"$ref": "common.schema.json#/$defs/template"},
+        "verify_receipt": {"$ref": "common.schema.json#/$defs/name"},
+        "policy": {"$ref": "common.schema.json#/$defs/ref"}
+      }
+    }
+  }
+}

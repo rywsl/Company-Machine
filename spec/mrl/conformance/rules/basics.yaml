@@ -1,0 +1,151 @@
+suite: rules.basics
+kind: rules
+description: 声明、事实、连接、常量、赋值、守卫与多模块（规范 8.1–8.4）
+cases:
+  - id: inline-facts
+    program: |
+      module t.
+      rel color(name: string, hex: string).
+      color("red", "#f00").
+      color("green", "#0f0").
+    expect:
+      relations:
+        color: [[red, "#f00"], [green, "#0f0"]]
+
+  - id: join
+    program: |
+      module t.
+      @input rel parent(p: string, c: string).
+      rel grandparent(g: string, c: string).
+      grandparent(G, C) :- parent(G, P), parent(P, C).
+    facts: {parent: [[a, b], [b, c], [b, d], [x, y]]}
+    expect:
+      relations: {grandparent: [[a, c], [a, d]]}
+
+  - id: constant-in-atom
+    program: |
+      module t.
+      @input rel role(s: string, r: string).
+      rel sink(s: string).
+      sink(S) :- role(S, "sink").
+    facts: {role: [[publish-s3@2, sink], [explainer@3, transform]]}
+    expect: {relations: {sink: [[publish-s3@2]]}}
+
+  - id: repeated-variable
+    program: |
+      module t.
+      @input rel e(a: string, b: string).
+      rel self_loop(a: string).
+      self_loop(X) :- e(X, X).
+    facts: {e: [[a, a], [a, b]]}
+    expect: {relations: {self_loop: [[a]]}}
+
+  - id: assignment-and-guard
+    program: |
+      module t.
+      @input rel budget(s: string, usd: float).
+      rel doubled(s: string, usd: float).
+      doubled(S, D) :- budget(S, B), D = B * 2, D > 5.
+    facts: {budget: [[a, 2], [b, 3.5]]}
+    expect: {relations: {doubled: [[b, 7.0]]}}
+
+  - id: expression-in-head
+    program: |
+      module t.
+      @input rel step(line: string, id: string).
+      rel key(k: string).
+      key(L + "/" + S) :- step(L, S).
+    facts: {step: [[l1, s1]]}
+    expect: {relations: {key: [[l1/s1]]}}
+
+  - id: expression-in-body-atom
+    program: |
+      module t.
+      @input rel n(x: int).
+      rel succ(x: int, y: int).
+      succ(X, X + 1) :- n(X), n(X + 1).
+    facts: {n: [[1], [2], [4]]}
+    expect: {relations: {succ: [[1, 2]]}}
+
+  - id: assignment-as-equality
+    program: |
+      module t.
+      @input rel p(a: int, b: int).
+      rel same(a: int).
+      same(A) :- p(A, B), A = B.
+    facts: {p: [[1, 1], [1, 2]]}
+    expect: {relations: {same: [[1]]}}
+
+  - id: macro-in-guard
+    program: |
+      module t.
+      @input rel tags(s: string, ts: list<string>).
+      rel tagged_video(s: string).
+      tagged_video(S) :- tags(S, Ts), Ts.exists(t, t == "video").
+    facts: {tags: [[a, [video, hd]], [b, [doc]]]}
+    expect: {relations: {tagged_video: [[a]]}}
+
+  - id: map-column
+    program: |
+      module t.
+      @input rel bean(id: string, facts: map<any>).
+      rel vertical(id: string).
+      vertical(I) :- bean(I, F), F.height > F.width.
+    facts: {bean: [[b1, {width: 1080, height: 1920}], [b2, {width: 1920, height: 1080}]]}
+    expect: {relations: {vertical: [[b1]]}}
+
+  - id: multiple-modules-read
+    modules:
+      - name: base.mrl
+        text: |
+          module base.
+          @input rel e(a: string).
+          rel p(a: string).
+          p(X) :- e(X).
+      - name: ext.mrl
+        text: |
+          module ext.
+          rel q(a: string).
+          q(X) :- p(X), X != "b".
+    facts: {e: [[a], [b]]}
+    expect: {relations: {p: [[a], [b]], q: [[a]]}}
+
+  - id: unused-warnings
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel orphan(a: string).
+      rel never_defined(a: string).
+      rel p(a: string).
+      p(X) :- e(X), !never_defined(X).
+    facts: {e: [[a]]}
+    expect: {warnings: [MRL-UNUSED, MRL-UNUSED], relations: {p: [[a]]}}
+
+  - id: contains-and-excludes
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel big(a: int).
+      big(X) :- e(X), X > 10.
+    facts: {e: [[5], [50], [500]]}
+    expect: {contains: {big: [[50]]}, excludes: {big: [[5]]}}
+
+  - id: zero-arity
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel nonempty().
+      nonempty() :- e(_).
+    facts: {e: [[1], [2]]}
+    expect: {relations: {nonempty: [[]]}}
+
+  - id: duplicate-derivations-collapse
+    program: |
+      module t.
+      @input rel a(x: string).
+      @input rel b(x: string).
+      rel either(x: string).
+      either(X) :- a(X).
+      either(X) :- b(X).
+    facts: {a: [[p], [q]], b: [[q], [r]]}
+    expect: {relations: {either: [[p], [q], [r]]}}

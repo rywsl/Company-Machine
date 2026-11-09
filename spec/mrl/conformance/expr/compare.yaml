@@ -1,0 +1,40 @@
+suite: expr.compare
+kind: expr
+description: 相等、有序比较与成员判断（规范 6.3）
+cases:
+  - {id: eq-int-float, expr: '1 == 1.0', expect: {value: true, type: bool}}
+  - {id: eq-exact-big, expr: '9007199254740993 == 9007199254740992.0', expect: {value: false}}
+  - {id: gt-exact-big, expr: '9007199254740993 > 9007199254740992.0', expect: {value: true}}
+  - {id: neq, expr: '1 != 2', expect: {value: true}}
+  - {id: eq-string, expr: '"a" == "a"', expect: {value: true}}
+  - {id: eq-string-int-static, expr: '"1" == 1', expect: {static_error: MRL-TYPE}}
+  - {id: eq-dyn-cross-kind, expr: 'x == 1', env: {x: "1"}, expect: {value: false}}
+  - {id: eq-bool-vs-int, expr: 'x == 1', env: {x: true}, expect: {value: false}}
+  - {id: eq-null, expr: 'x == null', env: {x: null}, expect: {value: true}}
+  - {id: eq-null-vs-string, expr: 'x == null', types: {x: string}, env: {x: "a"}, expect: {value: false}}
+  - {id: eq-list-numeric, expr: '[1, 2.0] == [1.0, 2]', expect: {value: true}}
+  - {id: eq-list-length, expr: '[1] == [1, 1]', expect: {value: false}}
+  - {id: eq-map, expr: '{"a": 1, "b": [2]} == {"b": [2.0], "a": 1}', expect: {value: true}}
+  - {id: eq-map-keys, expr: '{"a": 1} == {"b": 1}', expect: {value: false}}
+  - {id: lt-string-codepoint, expr: '"B" < "a"', expect: {value: true}}
+  - {id: lt-string-unicode, expr: '"z" < "中"', expect: {value: true}}
+  - {id: lt-string-prefix, expr: '"ab" < "abc"', expect: {value: true}}
+  - {id: le-mixed, expr: '2 <= 2.0', expect: {value: true}}
+  - {id: ge, expr: '3 >= 4', expect: {value: false}}
+  - {id: gt-negative, expr: '-50.0 < -18.2', expect: {value: true}}
+  - {id: lt-mixed-static, expr: '"a" < 1', expect: {static_error: MRL-TYPE}}
+  - {id: lt-bool-static, expr: 'true < false', expect: {static_error: MRL-TYPE}}
+  - {id: lt-dyn-runtime, expr: 'x < 1', env: {x: "a"}, expect: {error: MRL-TYPE}}
+  - {id: lt-list-runtime, expr: 'x < y', env: {x: [1], y: [2]}, expect: {error: MRL-TYPE}}
+  - {id: non-assoc, expr: '1 < 2 < 3', expect: {static_error: MRL-SYNTAX}}
+  - {id: non-assoc-eq, expr: '1 == 1 == true', expect: {static_error: MRL-SYNTAX}}
+  - {id: parenthesized-chain, expr: '(1 == 1) == true', expect: {value: true}}
+  - {id: in-list, expr: '2 in [1, 2, 3]', expect: {value: true}}
+  - {id: in-list-numeric, expr: '2.0 in [1, 2]', expect: {value: true}}
+  - {id: in-list-absent, expr: '"x" in ["a", "b"]', expect: {value: false}}
+  - {id: in-map-key, expr: '"a" in {"a": 1}', expect: {value: true}}
+  - {id: in-map-not-value, expr: '"x" in m', env: {m: {a: x}}, expect: {value: false}}
+  - {id: in-map-int-key-static, expr: '1 in {"a": 1}', expect: {static_error: MRL-TYPE}}
+  - {id: in-string-static, expr: '"a" in "abc"', expect: {static_error: MRL-TYPE}}
+  - {id: in-dyn-runtime, expr: '"a" in x', env: {x: "abc"}, expect: {error: MRL-TYPE}}
+  - {id: eq-records-numeric, expr: '{"a": 1} == {"a": 1.0}', expect: {value: true}}

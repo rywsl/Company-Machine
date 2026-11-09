@@ -1,0 +1,32 @@
+suite: expr.static
+kind: expr
+description: 静态类型推导与类型错误（规范第 5 章）。只编译不求值的用例省略 value。
+cases:
+  - {id: t-int, expr: '1 + 2', expect: {type: int}}
+  - {id: t-float, expr: '1 + 2.0', expect: {type: float}}
+  - {id: t-num, expr: 'x + 1', types: {x: num}, expect: {type: num}}
+  - {id: t-dyn-plus-int, expr: 'x + 1', types: {x: dyn}, expect: {type: num}}
+  - {id: t-dyn-plus-string, expr: 'x + "a"', types: {x: dyn}, expect: {type: string}}
+  - {id: t-div, expr: 'x / y', types: {x: int, y: int}, expect: {type: float}}
+  - {id: t-mod, expr: 'x % 2', types: {x: int}, expect: {type: int}}
+  - {id: t-neg-dyn, expr: '-x', types: {x: dyn}, expect: {type: num}}
+  - {id: t-list-int, expr: '[1, 2]', expect: {type: 'list<int>'}}
+  - {id: t-list-num, expr: '[1, 2.0]', expect: {type: 'list<num>'}}
+  - {id: t-list-dyn, expr: '[1, "a"]', expect: {type: 'list<dyn>'}}
+  - {id: t-record-literal, expr: '{"a": 1, "b": [true]}', expect: {type: '{a: int, b: list<bool>}'}}
+  - {id: t-map-dynamic-key, expr: '{k: 1.5}', types: {k: string}, expect: {type: 'map<float>'}}
+  - {id: t-select-dyn, expr: 'x.y.z', types: {x: dyn}, expect: {type: dyn}}
+  - {id: t-select-map, expr: 'm.a', types: {m: 'map<int>'}, expect: {type: int}}
+  - {id: t-index-list, expr: 'l[0]', types: {l: 'list<string>'}, expect: {type: string}}
+  - {id: t-compare, expr: 'x < 1', types: {x: float}, expect: {type: bool}}
+  - {id: t-in, expr: 'x in l', types: {x: string, l: 'list<string>'}, expect: {type: bool}}
+  - {id: t-macro-map, expr: 'l.map(x, x > 1)', types: {l: 'list<int>'}, expect: {type: 'list<bool>'}}
+  - {id: t-cond-lub, expr: 'b ? [1] : [2.0]', types: {b: bool}, expect: {type: 'list<num>'}}
+  - {id: e-select-int, expr: 'x.y', types: {x: int}, expect: {static_error: MRL-TYPE}}
+  - {id: e-undefined, expr: 'undefined_name', expect: {static_error: MRL-UNDEFINED}}
+  - {id: e-not-int, expr: '!1', expect: {static_error: MRL-TYPE}}
+  - {id: e-in-elem-type, expr: 'x in l', types: {x: int, l: 'list<string>'}, expect: {static_error: MRL-TYPE}}
+  - {id: e-compare-list, expr: 'l < l', types: {l: 'list<int>'}, expect: {static_error: MRL-TYPE}}
+  - {id: e-plus-list-int, expr: '[1] + 1', expect: {static_error: MRL-TYPE}}
+  - {id: e-index-map-int, expr: 'm[1]', types: {m: 'map<int>'}, expect: {static_error: MRL-TYPE}}
+  - {id: e-multiple-errors, expr: 'a + b', expect: {static_error: MRL-UNDEFINED}}

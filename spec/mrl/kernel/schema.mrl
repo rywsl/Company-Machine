@@ -1,0 +1,111 @@
+// MRL 工厂 profile：事实模式（规范性）。
+//
+// 这里声明宿主从 Registry 抽取的全部 @input 关系，以及唯一的输出关系 diag。
+// 抽取映射见 spec/mrl/factory-profile.md 第 3 章；任何实现都必须产出完全相同的事实。
+//
+// 约定：
+// - Spec 键（key）形如 "Station:explainer@3"、"Type:video.mp4@1.3"；
+// - 类型 id 形如 "video.mp4@1"（name@major），所有语义关系都用类型 id；
+// - 类型表达式统一为规范串：any、video.mp4@1、list<video@1>、ref<doc.pdf@1>；
+// - 诊断主体（subject）= Spec 键，或 Spec 键 + "/" + 子路径，例如
+//   "Line:explainer-multilang@5/steps.dub_en.in.subtitle"。
+
+module kernel.schema.
+
+// ---------- 通用 ----------
+@input rel spec(key: string, kind: string, name: string, version: string, lifecycle: string).
+@input rel spec_doc(key: string, file: string, doc: int).
+@input rel loc(subject: string, file: string, doc: int, path: string).
+@doc("每一处引用：subject 中引用了 kind 类的 target（按书写原样，可能缺版本）")
+@input rel ref(subject: string, kind: string, target: string).
+@doc("宿主阶段产生的诊断：E-YAML、E-SCHEMA、E-LAYOUT、E-EXPR、W-EXPR 等")
+@input rel host_diag(code: string, subject: string, message: string).
+
+// ---------- Type ----------
+@input rel type_version(key: string, id: string, minor: int, lifecycle: string).
+@input rel type_extends_decl(key: string, parent: string).
+@input rel type_kind(key: string, kind: string).
+@input rel type_field(key: string, field: string, texpr: string).
+@input rel type_item(key: string, texpr: string).
+@input rel type_target(key: string, texpr: string).
+@input rel type_fact_decl(key: string, fact: string, ftype: string).
+@input rel type_validator(key: string, validator: string, image: string).
+@input rel validator_emits(key: string, validator: string, fact: string).
+@input rel validator_fixture(key: string, validator: string, polarity: string, path: string).
+@input rel type_property(key: string, prop: string).
+@input rel type_always(key: string, prop: string).
+@doc("Registry 中出现过的全部类型表达式（含子表达式）：form 为 named/list/ref/any，arg 为类型 id 或子表达式")
+@input rel texpr(e: string, form: string, arg: string).
+
+// ---------- Machine ----------
+@input rel machine(key: string, form: string).
+@input rel machine_image(key: string, image: string).
+@input rel machine_source(key: string, repo: string, commit: string).
+@input rel recipe(machine: string, recipe: string).
+@input rel recipe_in(machine: string, recipe: string, port: string, texpr: string, optional: bool).
+@input rel recipe_out(machine: string, recipe: string, port: string, texpr: string, optional: bool).
+@input rel recipe_param(machine: string, recipe: string, param: string, ptype: string).
+
+// ---------- OperatorRuntime ----------
+@input rel runtime(key: string, kind: string).
+@input rel runtime_model(key: string, model: string).
+@input rel runtime_volume(key: string, image: string).
+
+// ---------- Station ----------
+@input rel station(key: string, role: string).
+@input rel station_machine(key: string, machine: string, recipe: string).
+@input rel station_operator(key: string, runtime: string, model: string).
+@input rel station_policy(key: string, policy: string).
+@input rel station_param(key: string, param: string, ptype: string, has_default: bool).
+@input rel in_port(key: string, port: string, texpr: string, optional: bool, requires: list<string>).
+@input rel in_require(key: string, port: string, prop: string).
+@input rel out_port(key: string, port: string, texpr: string, optional: bool, guarantees: list<string>).
+@input rel out_guarantee(key: string, port: string, prop: string).
+@input rel station_budget(key: string, usd: float).
+@input rel station_phases(key: string, phases: list<string>).
+@input rel converts(key: string, from: string, to: string, lossless: bool, preserves: list<string>).
+@input rel conv_preserve(key: string, prop: string).
+@input rel conv_cost(key: string, usd: float, p50: float).
+@input rel equivalence_count(key: string, n: int).
+@input rel station_fixture(key: string, polarity: string, path: string).
+@input rel sink_idempotency(key: string, template: string).
+@input rel sink_verify(key: string, method: string).
+@doc("审批规则：phase 为 propose/in_run；mode 为 auto/foreman/review/conditional")
+@input rel approval(key: string, phase: string, mode: string).
+
+// ---------- Line ----------
+@input rel line(key: string).
+@doc("产线接口输入：requires 是调用方必须满足的属性（在产线内部，它们就是这个输入的保证）")
+@input rel line_input(line: string, port: string, texpr: string, requires: list<string>).
+@input rel line_input_require(line: string, port: string, prop: string).
+@input rel line_output(line: string, port: string, step: string, src_port: string).
+@input rel line_output_type(line: string, port: string, texpr: string).
+@input rel line_budget(line: string, usd: float).
+@doc("产线步骤：kind 为 station/subline/switch；target 为书写原样的引用（switch 为空串）")
+@input rel step(line: string, step: string, kind: string, target: string).
+@doc("输入绑定：src_kind 为 input/step/item；input 时 src_step 为空串、src_port 为接口输入名")
+@input rel bind(line: string, step: string, port: string, src_kind: string, src_step: string, src_port: string).
+@doc("每条绑定的转换模式：auto（默认）/none/explicit，explicit 时 chain 为转换链")
+@input rel bind_via(line: string, step: string, port: string, mode: string, chain: list<string>).
+@doc("步骤参数：vtype 为字面值的类型 string/int/float/bool，或 template（含 {{ }} 的字符串）")
+@input rel step_param(line: string, step: string, param: string, vtype: string).
+@doc("map 展开：items 为字面列表长度，或动态列表的 max_items；动态且无上限时为 -1")
+@input rel step_map(line: string, step: string, items: int, max_parallel: int).
+@doc("map 对 list<T> 物料展开时被展开的来源：src_kind 为 input/step/item，写法同 bind")
+@input rel map_over(line: string, step: string, src_kind: string, src_step: string, src_port: string).
+@input rel step_until(line: string, step: string, max_iter: int).
+@doc("switch 观察的来源：src_kind 为 input/step/item，写法同 bind")
+@input rel switch_on(line: string, step: string, src_kind: string, src_step: string, src_port: string).
+@input rel switch_target(line: string, step: string, target: string).
+@input rel keep(line: string, step: string, port: string).
+
+// ---------- Policy ----------
+@input rel policy(key: string).
+@input rel policy_applies(key: string, role: string).
+@doc("出网档案：none/providers/web_read/publish/ingress")
+@input rel policy_egress(key: string, tier: string).
+@input rel policy_secret(key: string, name: string).
+
+// ---------- 输出 ----------
+@doc("唯一的输出关系。任何模块都可以追加诊断，但没有模块能读取它，所以追加模块只会增加诊断")
+@open rel diag(code: string, subject: string, message: string).

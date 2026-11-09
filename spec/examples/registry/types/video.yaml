@@ -1,0 +1,39 @@
+# 视频。video@1 是抽象父类型，只声明所有视频共有的实测 facts；video.mp4@1 是具体类型。
+apiVersion: mao/v1
+kind: Type
+metadata: {name: video, version: "1.0", description: 视频的抽象父类型}
+spec:
+  facts:
+    duration_s: float
+    width: int
+    height: int
+    fps: num
+    vcodec: string
+    audio_streams: int
+    mean_volume_db: float
+---
+apiVersion: mao/v1
+kind: Type
+metadata: {name: video.mp4, version: "1.3"}
+spec:
+  extends: video@1
+  payload:
+    - {path: video.mp4, media_type: video/mp4, required: true}
+  meta_schema:
+    type: object
+    properties: {title: {type: string}, language: {type: string}}
+  validators:
+    - name: ffprobe-facts
+      image: registry.local/validators/ffprobe@sha256:d1c72f226cafdcc440dfc48812fb4ac24dd5bf9e6f8e83b5f416531be91fc1e5
+      run: [probe-video, /bean/payload/video.mp4]
+      emits: [duration_s, width, height, fps, vcodec, audio_streams, mean_volume_db]
+      fixtures:
+        accept: [fixtures/video/ok-1920x1080.mp4, fixtures/video/ok-1080x1920.mp4]
+        reject: [fixtures/video/truncated.mp4, fixtures/video/zero-length.mp4, fixtures/video/png-renamed.mp4]
+  properties:
+    has_audio:  "bean.facts.audio_streams > 0"
+    not_silent: "bean.facts.mean_volume_db > -50.0"
+    vertical:   "bean.facts.height > bean.facts.width"
+    landscape:  "bean.facts.width > bean.facts.height"
+    hd:         "(bean.facts.width < bean.facts.height ? bean.facts.width : bean.facts.height) >= 1080"
+    h264:       "bean.facts.vcodec == 'h264'"

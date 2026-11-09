@@ -1,0 +1,47 @@
+// 参考宪法（L0）。每个 Registry 在自己的 constitution/ 目录里保存一份副本，只有人能修改。
+//
+// 宪法模块只能做一件事：向 diag 追加诊断。它可以读取内核的任何关系，
+// 但不能为内核的关系写规则（归属规则），也不能读取 diag，
+// 所以宪法只会让边界更严，永远不会放松内核的检查。
+
+module constitution.invariants.
+
+// 宪法设定的数值边界（人可以修改；厂长不能）
+rel limit(name: string, value: float).
+limit("station_budget_usd", 20.0).
+limit("line_budget_usd", 100.0).
+
+rel station_egress(s: string, tier: string).
+station_egress(S, T) :- station_policy(S, P), resolved("Policy", P, PK), policy_egress(PK, T).
+
+// I6：只有 Sink 能绑定 publish 出网；只有 Source 能绑定 ingress
+diag("E-PERMISSION", S + "/policy", "I6：只有 sink 工位能使用 publish 出网，" + R + " 工位不能") :-
+    station_egress(S, "publish"), station(S, R), R != "sink".
+diag("E-PERMISSION", S + "/policy", "I6：只有 source 工位能使用 ingress，" + R + " 工位不能") :-
+    station_egress(S, "ingress"), station(S, R), R != "source".
+diag("E-PERMISSION", PK, "I6：带 publish 出网的策略只能适用于 sink，不能适用于 " + R) :-
+    policy_egress(PK, "publish"), policy_applies(PK, R), R != "sink".
+diag("E-PERMISSION", PK, "I6：带 ingress 的策略只能适用于 source，不能适用于 " + R) :-
+    policy_egress(PK, "ingress"), policy_applies(PK, R), R != "source".
+
+// 转换的边界（架构 9.2、9.7）：converter 的出网只能是 none 或 providers
+diag("E-PERMISSION", S + "/policy", "converter 的出网只能是 none 或 providers，不能是 " + T) :-
+    station(S, "converter"), station_egress(S, T), T != "none", T != "providers".
+
+// I7：每个 Sink 都定义了幂等键和回执核验
+diag("E-INVARIANT", S, "I7：sink 工位必须定义 idempotency_key") :- station(S, "sink"), !sink_idempotency(S, _).
+diag("E-INVARIANT", S, "I7：sink 工位必须定义 verify_receipt") :- station(S, "sink"), !sink_verify(S, _).
+
+// I8（静态部分）：每个 validator 都有正样例和反样例
+rel validator_has(key: string, validator: string, polarity: string).
+validator_has(K, V, P) :- validator_fixture(K, V, P, _).
+diag("E-INVARIANT", K + "/validators." + V, "I8：validator 必须至少有一个正样例") :-
+    type_validator(K, V, _), !validator_has(K, V, "accept").
+diag("E-INVARIANT", K + "/validators." + V, "I8：validator 必须至少有一个反样例") :-
+    type_validator(K, V, _), !validator_has(K, V, "reject").
+
+// 预算的宪法上限
+diag("E-INVARIANT", S + "/limits", "单个工位的预算上限 " + string(B) + " USD 超过宪法上限 " + string(M) + " USD") :-
+    station_budget(S, B), limit("station_budget_usd", M), B > M.
+diag("E-INVARIANT", L + "/budget", "产线预算 " + string(B) + " USD 超过宪法上限 " + string(M) + " USD") :-
+    line_budget(L, B), limit("line_budget_usd", M), B > M.

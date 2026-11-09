@@ -1,0 +1,76 @@
+suite: rules.negation
+kind: rules
+description: 分层否定、匿名变量的否定、不可分层的程序（规范 8.5、8.7）
+cases:
+  - id: stratified-negation
+    program: |
+      module t.
+      @input rel node(a: string).
+      @input rel edge(a: string, b: string).
+      rel reach(a: string).
+      rel unreachable(a: string).
+      reach("root") :- node("root").
+      reach(B) :- reach(A), edge(A, B).
+      unreachable(N) :- node(N), !reach(N).
+    facts: {node: [[root], [a], [b], [c]], edge: [[root, a], [a, b]]}
+    expect: {relations: {unreachable: [[c]]}}
+
+  - id: negation-anonymous
+    program: |
+      module t.
+      @input rel step(l: string, s: string).
+      @input rel bind(l: string, s: string, port: string).
+      rel unbound(l: string, s: string).
+      unbound(L, S) :- step(L, S), !bind(L, S, _).
+    facts: {step: [[l, s1], [l, s2]], bind: [[l, s1, video]]}
+    expect: {relations: {unbound: [[l, s2]]}}
+
+  - id: negation-of-input
+    program: |
+      module t.
+      @input rel declared(a: string).
+      @input rel used(a: string).
+      rel undeclared(a: string).
+      undeclared(X) :- used(X), !declared(X).
+    facts: {declared: [[a]], used: [[a], [b]]}
+    expect: {relations: {undeclared: [[b]]}}
+
+  - id: two-strata
+    program: |
+      module t.
+      @input rel e(a: string).
+      @input rel f(a: string).
+      rel p(a: string).
+      rel q(a: string).
+      p(X) :- e(X), !f(X).
+      q(X) :- e(X), !p(X).
+    facts: {e: [[a], [b]], f: [[a]]}
+    expect: {relations: {p: [[b]], q: [[a]]}}
+
+  - id: unstratifiable-self
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel p(a: string).
+      p(X) :- e(X), !p(X).
+    expect: {static_error: MRL-STRATIFY}
+
+  - id: unstratifiable-mutual
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel p(a: string).
+      rel q(a: string).
+      p(X) :- e(X), !q(X).
+      q(X) :- e(X), !p(X).
+    expect: {static_error: MRL-STRATIFY}
+
+  - id: negation-kind-mismatch-means-absent
+    program: |
+      module t.
+      @input rel e(a: any).
+      @input rel ints(a: int).
+      rel not_int(a: any).
+      not_int(X) :- e(X), !ints(X).
+    facts: {e: [[1], [a]], ints: [[1]]}
+    expect: {relations: {not_int: [[a]]}}

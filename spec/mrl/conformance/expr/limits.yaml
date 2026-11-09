@@ -1,0 +1,20 @@
+suite: expr.limits
+kind: expr
+description: 求值预算与实现限制，保证任何表达式的求值都有界（规范 6.8）
+cases:
+  - {id: within-budget, expr: '[1, 2, 3].map(x, x)', budget: 100, expect: {value: [1, 2, 3]}}
+  - {id: over-budget, expr: '[1, 2, 3].map(x, x)', budget: 3, expect: {error: MRL-COST}}
+  - id: cubic-over-budget
+    expr: 'l.all(a, l.all(b, l.all(c, true)))'
+    env: {l: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}
+    budget: 1000
+    expect: {error: MRL-COST}
+  - id: nesting-too-deep
+    expr: '((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))'
+    expect: {static_error: MRL-LIMIT}
+  - id: unary-too-deep
+    expr: '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true'
+    expect: {static_error: MRL-LIMIT}
+  - id: nesting-ok
+    expr: '((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))'
+    expect: {value: 1}

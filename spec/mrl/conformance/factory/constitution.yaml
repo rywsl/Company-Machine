@@ -1,0 +1,102 @@
+suite: factory.constitution
+kind: factory
+base: example
+description: >-
+  参考宪法（spec/mrl/constitution/invariants.mrl，Registry 中的副本在 constitution/ 下）。
+  宪法只能追加诊断：I6 出网与角色、I7 Sink 的幂等与回执、I8 validator 的正反样例、预算上限。
+cases:
+  - id: station-budget-over-constitution-limit
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.limits.budget_usd: 25.0}}
+      - {file: lines/explainer-multilang.yaml, set: {spec.budget.cap_usd: 30.0}}
+    expect:
+      codes: [E-INVARIANT]
+      diags: [{code: E-INVARIANT, subject: "Station:explainer@3/limits", message: "25.0 USD 超过宪法上限 20.0 USD"}]
+  - id: line-budget-over-constitution-limit
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.budget.cap_usd: 150.0}}
+    expect:
+      codes: [E-INVARIANT]
+      diags: [{code: E-INVARIANT, subject: "Line:explainer-multilang@5/budget"}]
+  - id: publish-only-for-sinks
+    description: I6：transform 工位绑定了带 publish 出网的策略
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.policy: sink-s3@1}}
+    expect:
+      codes: [E-PERMISSION, E-PERMISSION]
+      diags:
+        - {code: E-PERMISSION, subject: "Station:vertical@1/policy", message: "策略 sink-s3@1 不适用于 transform 工位"}
+        - {code: E-PERMISSION, subject: "Station:vertical@1/policy", message: "I6：只有 sink 工位能使用 publish 出网"}
+  - id: publish-policy-applies-to-sinks-only
+    patch:
+      - {file: policies/sinks.yaml, doc: 0, set: {spec.applies_to: [sink, transform]}}
+    expect:
+      codes: [E-PERMISSION]
+      diags: [{code: E-PERMISSION, subject: "Policy:sink-s3@1", message: "I6：带 publish 出网的策略只能适用于 sink"}]
+  - id: ingress-only-for-sources
+    patch:
+      - {file: policies/video-default.yaml, set: {spec.egress.ingress: [webhook]}}
+    expect:
+      codes: [E-PERMISSION, E-PERMISSION, E-PERMISSION, E-PERMISSION]
+      diags:
+        - {code: E-PERMISSION, subject: "Policy:video-default@2", message: "I6：带 ingress 的策略只能适用于 source"}
+        - {code: E-PERMISSION, subject: "Station:explainer@3/policy", message: "I6：只有 source 工位能使用 ingress"}
+  - id: converter-egress-bounded
+    patch:
+      - file: policies/web.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Policy
+          metadata: {name: web, version: 1}
+          spec: {applies_to: [converter], egress: {web_read: true}}
+      - {file: converters/subs-convert/station.yaml, set: {spec.policy: web@1}}
+    expect:
+      codes: [E-PERMISSION]
+      diags: [{code: E-PERMISSION, subject: "Station:subs-convert@1/policy", message: "converter 的出网只能是 none 或 providers"}]
+  - id: converter-providers-allowed
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.policy: video-default@2}}
+    expect: {clean: true}
+  - id: sink-needs-idempotency-key
+    patch:
+      - {file: stations/sinks.yaml, doc: 1, unset: [spec.idempotency_key]}
+    expect:
+      codes: [E-INVARIANT]
+      diags: [{code: E-INVARIANT, subject: "Station:publish-github@1", message: "I7：sink 工位必须定义 idempotency_key"}]
+  - id: sink-needs-verify-receipt
+    patch:
+      - {file: stations/sinks.yaml, doc: 2, unset: [spec.verify_receipt]}
+    expect:
+      codes: [E-INVARIANT]
+      diags: [{code: E-INVARIANT, subject: "Station:publish-shorts@1", message: "verify_receipt"}]
+  - id: validator-needs-reject-fixture
+    patch:
+      - {file: types/doc.yaml, set: {"spec.validators[0].fixtures": {accept: [fixtures/doc/script-ok.json]}}}
+    expect:
+      codes: [E-INVARIANT]
+      diags: [{code: E-INVARIANT, subject: "Type:doc.script@1.0/validators.script-lint", message: "I8：validator 必须至少有一个反样例"}]
+  - id: validator-needs-accept-fixture
+    patch:
+      - {file: types/doc.yaml, unset: ["spec.validators[0].fixtures"]}
+    expect:
+      codes: [E-INVARIANT, E-INVARIANT]
+  - id: stricter-constitution
+    description: 人可以收紧宪法（例如降低预算上限）；同一个 Registry 随之不再通过
+    patch:
+      - file: constitution/invariants.mrl
+        content: |
+          module constitution.invariants.
+          rel limit(name: string, value: float).
+          limit("station_budget_usd", 4.0).
+          diag("E-INVARIANT", S + "/limits", "单个工位的预算上限 " + string(B) + " USD 超过宪法上限 " + string(M) + " USD") :-
+              station_budget(S, B), limit("station_budget_usd", M), B > M.
+    expect:
+      codes: [E-INVARIANT]
+      diags: [{code: E-INVARIANT, subject: "Station:explainer@3/limits"}]
+  - id: constitution-cannot-suppress-kernel
+    description: 宪法里写一个“永远为空”的模块，也不能让内核的错误消失
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.outputs.video.guarantees: [vertical, hd, h264]}}
+      - {file: constitution/invariants.mrl, content: "module constitution.invariants.\n"}
+    expect:
+      codes: [E-CONTRACT]

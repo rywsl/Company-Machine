@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/policy.schema.json",
+  "title": "Policy（厂规细则：出网、凭据、资源、预算、保留期）",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "mao/v1"},
+    "kind": {"const": "Policy"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["applies_to", "egress"],
+      "additionalProperties": false,
+      "properties": {
+        "applies_to": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["source", "transform", "converter", "judge", "planner", "sink"]}
+        },
+        "egress": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "none": {"const": true},
+            "providers": {},
+            "web_read": {},
+            "publish": {},
+            "ingress": {}
+          }
+        },
+        "secrets": {
+          "oneOf": [
+            {"const": "from-machine"},
+            {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}, "uniqueItems": true}
+          ]
+        },
+        "resources": {"type": "object"},
+        "budget": {"type": "object"},
+        "retention": {"type": "object", "additionalProperties": {"$ref": "common.schema.json#/$defs/duration"}}
+      }
+    }
+  }
+}

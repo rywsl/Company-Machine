@@ -1,0 +1,17 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: dub, version: 2}
+spec:
+  role: transform
+  machine: openmontage@7
+  recipe: localization-dub
+  operator: {runtime: claude-code@4, model: claude-sonnet-5-5, max_turns: 120}
+  params: {target_language: {type: string}}
+  inputs:
+    video:    {type: video.mp4@1, requires: [has_audio]}
+    subtitle: {type: subtitle.srt@1}
+  outputs:
+    video:    {type: video.mp4@1, guarantees: [has_audio, not_silent, hd]}
+    subtitle: {type: subtitle.srt@1}
+  limits: {timeout: 60m, budget_usd: 3.0, retries: {rejected: 2, failed: 1, mode: resume}}
+  policy: video-default@2

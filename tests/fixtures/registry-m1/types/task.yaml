@@ -1,0 +1,19 @@
+# fake agent 的行为脚本（JSON）。把脚本作为输入 Bean 传给 agent 工位，Local 与 Docker 下行为一致。
+apiVersion: mao/v1
+kind: Type
+metadata: {name: agent.task, version: "1.0"}
+spec:
+  payload:
+    - {path: task.json, media_type: application/json, required: true}
+  facts:
+    steps: int
+  validators:
+    - name: check-task
+      image: mao-test/tool@sha256:09b42648636a8405354592f2ae8985670dfda5b61377ac6c75e3cebbd22e0500
+      run: [check-task, /bean/payload/task.json]
+      emits: [steps]
+      fixtures:
+        accept: [fixtures/task/ok.json]
+        reject: [fixtures/task/broken.json]
+  properties:
+    has_steps: "bean.facts.steps > 0"

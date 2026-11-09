@@ -1,0 +1,24 @@
+# 只有 Sink 能绑定 publish 出网和发布凭据（不变量 I6，由宪法强制）。
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: sink-s3, version: 1}
+spec:
+  applies_to: [sink]
+  egress: {publish: [s3.amazonaws.com]}
+  secrets: [S3_WRITE_KEY]
+---
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: sink-github, version: 1}
+spec:
+  applies_to: [sink]
+  egress: {publish: [github.com]}
+  secrets: [GITHUB_PUSH_TOKEN]
+---
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: sink-shorts, version: 1}
+spec:
+  applies_to: [sink]
+  egress: {publish: [www.googleapis.com]}
+  secrets: [YOUTUBE_UPLOAD_TOKEN]

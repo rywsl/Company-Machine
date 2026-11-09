@@ -1,0 +1,8 @@
+# 工具与转换的默认策略：不出网。transform 覆盖 converter（converter 是 transform 的特化）。
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: tool-default, version: 1}
+spec:
+  applies_to: [transform]
+  egress: {none: true}
+  secrets: []

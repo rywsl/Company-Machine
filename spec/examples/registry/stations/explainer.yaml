@@ -1,0 +1,28 @@
+# 架构文档 13.1。两阶段工位：先 propose（报方案与成本），审批后再 execute。
+apiVersion: mao/v1
+kind: Station
+metadata: {name: explainer, version: 3}
+spec:
+  role: transform
+  machine: openmontage@7
+  recipe: animated-explainer
+  operator: {runtime: claude-code@4, model: claude-opus-5-5, max_turns: 200}
+  inputs:
+    brief: {type: brief.video@1}
+  outputs:
+    video:
+      type: video.mp4@1
+      guarantees: [has_audio, not_silent, hd]
+      accept:
+        - "out.facts.duration_s >= inputs.brief.meta.duration_s * 0.9"
+        - "out.facts.duration_s <= inputs.brief.meta.duration_s * 1.1"
+    subtitle: {type: subtitle.srt@1, optional: false}    # 比 Recipe 更严格：本工位要求必须有字幕
+    script:   {type: doc.script@1,   optional: false}
+  phases: [propose, execute]
+  approval:
+    propose: {auto_if: "proposal.cost_estimate_usd <= 3.0", else: foreman}
+    in_run:  {auto_if: "request.cost_usd <= 0.5", else: foreman}
+  gate:
+    judge: {runtime: claude-code@4, model: claude-sonnet-5-5, rubric: rubric.md, sample_rate: 0.2, threshold: 0.7}
+  limits: {timeout: 90m, budget_usd: 5.0, retries: {rejected: 2, failed: 1, mode: resume}}
+  policy: video-default@2

@@ -1,0 +1,49 @@
+# 示例 A：智能体原生工作区（架构文档 5.1）。具体命令与路径以产品文档为准。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: openmontage, version: 7}
+spec:
+  form: workspace
+  source:
+    repo: https://github.com/calesthio/OpenMontage
+    commit: 3f2a9c1
+  runtime:
+    image: registry.local/machines/openmontage@sha256:456fe6590eaa87f90dd88080220d13512a406032930d40ef96000e55a4c3aac7
+    workdir: /workspace
+    instance: per_job
+    resources: {cpus: 4, memory: 8Gi, gpu: none}
+  operate:
+    guide: [CLAUDE.md, AGENT_GUIDE.md]
+    factory_notes: FACTORY_NOTES.md
+  needs:
+    secrets: [FAL_KEY, PEXELS_API_KEY, ELEVENLABS_API_KEY]
+    egress:
+      providers: [fal.run, api.pexels.com, api.elevenlabs.io]
+  recipes:
+    animated-explainer:
+      inputs:
+        brief: {type: brief.video@1, place: /factory/in/brief}
+      outputs:
+        video:    {type: video.mp4@1,    harvest: "projects/*/renders/final.mp4"}
+        subtitle: {type: subtitle.srt@1, harvest: "projects/*/renders/*.srt", optional: true}
+        script:   {type: doc.script@1,   harvest: "projects/*/script*.json",  optional: true}
+      task_template: |
+        使用 animated-explainer 流水线制作视频。
+        主题：{{ inputs.brief.meta.topic }}；受众：{{ has(inputs.brief.meta.audience) ? inputs.brief.meta.audience : "大众" }}。
+        时长约 {{ inputs.brief.meta.duration_s }} 秒，画幅 {{ inputs.brief.meta.aspect }}，语言 {{ inputs.brief.meta.language }}。
+        风格：{{ has(inputs.brief.meta.style) ? inputs.brief.meta.style : "clean professional" }}。
+    localization-dub:
+      inputs:
+        video:    {type: video.mp4@1}
+        subtitle: {type: subtitle.srt@1}
+      params:
+        target_language: {type: string}
+      outputs:
+        video:    {type: video.mp4@1,    harvest: "projects/*/renders/*{{ params.target_language }}*.mp4"}
+        subtitle: {type: subtitle.srt@1, harvest: "projects/*/renders/*{{ params.target_language }}*.srt"}
+      task_template: |
+        使用 localization-dub 流水线，把 /factory/in/video 中的视频翻译并配音为 {{ params.target_language }}，
+        字幕参考 /factory/in/subtitle。
+  conformance:
+    - {name: zero-key-demo, run: ["make", "demo"], expect: {harvest: {video: video.mp4@1}}}
+    - {name: contracts,     run: ["make", "test-contracts"]}

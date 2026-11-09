@@ -1,0 +1,8 @@
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: agent-default, version: 1}
+spec:
+  applies_to: [transform]
+  egress: {none: true}
+  secrets: []
+  resources: {cpus: 1, memory: 256Mi}

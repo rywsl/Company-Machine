@@ -1,0 +1,32 @@
+# 架构文档 13.1：科普短视频的多语言发布。
+apiVersion: mao/v1
+kind: Line
+metadata: {name: explainer-multilang, version: 5}
+spec:
+  interface:
+    inputs: {brief: {type: brief.video@1}}
+  trigger:
+    - {on: bean, type: brief.video@1, label: "line=explainer-multilang"}   # 物料到达即触发
+  budget: {cap_usd: 12.0}
+  steps:
+    explainer:
+      station: explainer@3
+      in: {brief: $inputs.brief}
+    dub_en:
+      station: dub@2
+      params: {target_language: en}
+      in: {video: explainer.video, subtitle: explainer.subtitle}
+    vertical:
+      station: vertical@1
+      in: {video: dub_en.video}
+    to_s3:
+      station: publish-s3@2
+      params: {bucket: media-archive, prefix: "explainers/{{ run.id }}/"}
+      in: {artifact: vertical.video}
+    to_github:
+      station: publish-github@1
+      params: {repo: org/explainer-scripts, branch: main}
+      in: {script: explainer.script, subtitle: dub_en.subtitle}
+    to_shorts:
+      station: publish-shorts@1
+      in: {video: vertical.video, meta: explainer.script}

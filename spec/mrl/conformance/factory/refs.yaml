@@ -1,0 +1,162 @@
+suite: factory.refs
+kind: factory
+base: example
+description: 引用解析、生命周期、版本与 digest 固定、重复定义（kernel/refs.mrl）。
+cases:
+  - id: ref-missing-station
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.station: vertical@9}}
+    expect:
+      codes: [E-REF]
+      diags: [{code: E-REF, subject: "Line:explainer-multilang@5/steps.vertical", message: "Station vertical@9 不存在"}]
+      absent: [{code: E-ORPHAN}]
+  - id: ref-missing-type
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.inputs.video.type: video.mov@1}}
+    expect:
+      codes: [E-REF]
+      diags: [{code: E-REF, subject: "Station:vertical@1/inputs.video", message: "Type video.mov@1 不存在"}]
+  - id: ref-type-major-missing
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.inputs.video.type: video.mp4@2}}
+    expect:
+      codes: [E-REF]
+      diags: [{code: E-REF, subject: "Station:vertical@1/inputs.video", message: "video.mp4@2 不存在"}]
+  - id: ref-type-pinned-minor
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.inputs.video.type: video.mp4@1.3}}
+    expect: {clean: true}
+  - id: ref-type-pinned-minor-missing
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.inputs.video.type: video.mp4@1.9}}
+    expect:
+      codes: [E-REF]
+      diags: [{code: E-REF, message: "video.mp4@1.9 不存在"}]
+  - id: ref-type-resolves-to-latest-minor
+    description: name@major 解析到该 major 下最新的非 retired minor；旧 minor 仍可被钉住引用
+    patch:
+      - file: types/video.yaml
+        append:
+          apiVersion: mao/v1
+          kind: Type
+          metadata: {name: video.mp4, version: "1.2", lifecycle: deprecated}
+          spec:
+            extends: video@1
+            validators:
+              - name: ffprobe-facts
+                image: registry.local/validators/ffprobe@sha256:d1c72f226cafdcc440dfc48812fb4ac24dd5bf9e6f8e83b5f416531be91fc1e5
+                run: [probe-video]
+                emits: [duration_s, width, height, fps, vcodec, audio_streams, mean_volume_db]
+                fixtures: {accept: [a.mp4], reject: [b.mp4]}
+            properties: {has_audio: "bean.facts.audio_streams > 0"}
+    expect: {clean: true}
+  - id: ref-pinned-deprecated-minor-warns
+    patch:
+      - file: types/video.yaml
+        append:
+          apiVersion: mao/v1
+          kind: Type
+          metadata: {name: video.mp4, version: "1.2", lifecycle: deprecated}
+          spec: {extends: video@1}
+      - {file: stations/quick-short.yaml, set: {spec.outputs.video.type: video.mp4@1.2, spec.outputs.video.guarantees: []}}
+    expect:
+      codes: [W-DEPRECATED]
+      diags: [{code: W-DEPRECATED, subject: "Station:quick-short@1/outputs.video"}]
+  - id: ref-retired-station
+    patch:
+      - {file: stations/vertical.yaml, set: {metadata.lifecycle: retired}}
+    expect:
+      codes: [E-REF]
+      diags: [{code: E-REF, subject: "Line:explainer-multilang@5/steps.vertical", message: "已退役"}]
+  - id: ref-retired-type-major
+    description: 某个 major 的所有 minor 都退役后，name@major 的引用报“已退役”
+    patch:
+      - {file: types/doc.yaml, set: {metadata.lifecycle: retired}}
+    expect:
+      codes: [E-REF, E-REF, E-REF, E-REF, E-REF, E-REF]
+      diags:
+        - {code: E-REF, subject: "Station:explainer@3/outputs.script", message: "doc.script@1 已退役"}
+        - {code: E-REF, subject: "Station:publish-github@1/inputs.script", message: "已退役"}
+  - id: ref-deprecated-warns
+    patch:
+      - {file: stations/dub.yaml, set: {metadata.lifecycle: deprecated}}
+    expect:
+      codes: [W-DEPRECATED]
+      diags: [{code: W-DEPRECATED, subject: "Line:explainer-multilang@5/steps.dub_en", severity: warning}]
+  - id: unpinned-station-ref
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.station: vertical}}
+    expect:
+      codes: [E-UNPINNED]
+      diags: [{code: E-UNPINNED, subject: "Line:explainer-multilang@5/steps.vertical"}]
+  - id: unpinned-type-ref
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.inputs.video.type: video.mp4}}
+    expect:
+      codes: [E-UNPINNED]
+      diags: [{code: E-UNPINNED, subject: "Station:vertical@1/inputs.video"}]
+  - id: unpinned-image-tag
+    patch:
+      - {file: machines/ffmpeg/machine.yaml, set: {spec.runtime.image: "registry.local/machines/ffmpeg:7.1"}}
+    expect:
+      codes: [E-UNPINNED]
+      diags: [{code: E-UNPINNED, subject: "Machine:ffmpeg@3", message: "没有用 sha256 digest 固定"}]
+  - id: unpinned-image-short-digest
+    patch:
+      - {file: machines/ffmpeg/machine.yaml, set: {spec.runtime.image: "registry.local/machines/ffmpeg@sha256:6862fa01d6f0bc4c9601c1a0a9d170cb49cf255b25bfc66a02f958fa47be43a"}}
+    expect:
+      codes: [E-UNPINNED]
+  - id: unpinned-image-uppercase-digest
+    patch:
+      - {file: machines/ffmpeg/machine.yaml, set: {spec.runtime.image: "registry.local/machines/ffmpeg@sha256:6862FA01D6F0BC4C9601C1A0A9D170CB49CF255B25BFC66A02F958FA47BE43A2"}}
+    expect:
+      codes: [E-UNPINNED]
+  - id: unpinned-validator-image
+    patch:
+      - {file: types/doc.yaml, set: {"spec.validators[0].image": "registry.local/validators/script-lint:latest"}}
+    expect:
+      codes: [E-UNPINNED]
+      diags: [{code: E-UNPINNED, subject: "Type:doc.script@1.0/validators.script-lint"}]
+  - id: unpinned-operator-volume
+    patch:
+      - {file: runtimes/claude-code.yaml, set: {spec.inject.volume: "operator-claude-code:latest"}}
+    expect:
+      codes: [E-UNPINNED]
+      diags: [{code: E-UNPINNED, subject: "OperatorRuntime:claude-code@4"}]
+  - id: unpinned-source-branch
+    patch:
+      - {file: machines/openmontage/machine.yaml, set: {spec.source.commit: main}}
+    expect:
+      codes: [E-UNPINNED]
+      diags: [{code: E-UNPINNED, subject: "Machine:openmontage@7/source", message: "没有用 commit 固定"}]
+  - id: duplicate-spec
+    patch:
+      - file: stations/dub.yaml
+        append:
+          apiVersion: mao/v1
+          kind: Station
+          metadata: {name: dub, version: 2}
+          spec:
+            role: transform
+            machine: openmontage@7
+            recipe: localization-dub
+            operator: {runtime: claude-code@4, model: claude-sonnet-5-5}
+            params: {target_language: {type: string}}
+            inputs: {video: {type: video.mp4@1, requires: [has_audio]}, subtitle: {type: subtitle.srt@1}}
+            outputs: {video: {type: video.mp4@1, guarantees: [has_audio, not_silent, hd]}, subtitle: {type: subtitle.srt@1}}
+            limits: {budget_usd: 3.0}
+            policy: video-default@2
+    expect:
+      codes: [E-DUPLICATE]
+      diags: [{code: E-DUPLICATE, subject: "Station:dub@2", message: "定义了 2 次"}]
+  - id: duplicate-across-files
+    patch:
+      - {file: stations/dub-copy.yaml, content: "apiVersion: mao/v1\nkind: Policy\nmetadata: {name: tool-default, version: 1}\nspec: {applies_to: [transform], egress: {none: true}}\n"}
+    expect:
+      codes: [E-LAYOUT]
+      diags: [{code: E-LAYOUT}]
+  - id: duplicate-policy
+    patch:
+      - {file: policies/copy.yaml, content: "apiVersion: mao/v1\nkind: Policy\nmetadata: {name: tool-default, version: 1}\nspec: {applies_to: [transform], egress: {none: true}}\n"}
+    expect:
+      codes: [E-DUPLICATE]

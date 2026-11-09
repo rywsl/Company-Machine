@@ -1,0 +1,92 @@
+suite: rules.syntax
+kind: rules
+description: 规则文件的语法：模块头、语句结束符、':-'、注解、注释（规范第 8 章文法）
+cases:
+  - id: missing-module-header
+    program: |
+      rel p(a: string).
+    expect: {static_error: MRL-SYNTAX}
+
+  - id: missing-end
+    program: |
+      module t.
+      rel p(a: string)
+    expect: {static_error: MRL-SYNTAX}
+
+  - id: end-requires-whitespace
+    program: "module t.\nrel p(a: string).rel q(a: string).\n"
+    expect: {static_error: MRL-SYNTAX}
+
+  - id: arrow-must-be-adjacent
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel p(a: string).
+      p(X) : - e(X).
+    expect: {static_error: MRL-SYNTAX}
+
+  - id: member-access-before-end
+    program: |
+      module t.
+      @input rel b(id: string, m: map<any>).
+      rel lang(id: string, l: string).
+      lang(I, L) :- b(I, M), has(M.language), L = M.language.
+    facts: {b: [[x, {language: zh-CN}], [y, {}]]}
+    expect: {relations: {lang: [[x, zh-CN]]}}
+
+  - id: float-before-end
+    program: |
+      module t.
+      rel limit(name: string, v: float).
+      limit("cap", 12.0).
+    expect: {relations: {limit: [[cap, 12.0]]}}
+
+  - id: comment-after-end
+    program: |
+      module t. // 模块
+      rel p(a: int). // 声明
+      p(1).// 事实
+    expect: {relations: {p: [[1]]}}
+
+  - id: doc-annotation
+    program: |
+      module t.
+      @doc("工位角色") @input rel role(s: string, r: string).
+      rel sinks(s: string).
+      sinks(S) :- role(S, "sink").
+    facts: {role: [[a, sink]]}
+    expect: {relations: {sinks: [[a]]}}
+
+  - id: annotation-on-rule
+    program: |
+      module t.
+      rel p(a: int).
+      @input p(1).
+    expect: {static_error: MRL-DECL}
+
+  - id: qualified-module-name
+    program: |
+      module kernel.types.
+      rel p(a: int).
+      p(1).
+    expect: {relations: {p: [[1]]}}
+
+  - id: reserved-relation-name-in-head
+    program: |
+      module t.
+      rel p(a: int).
+      if(1).
+    expect: {static_error: MRL-SYNTAX}
+
+  - id: reserved-relation-name-in-decl
+    program: |
+      module t.
+      rel while(a: int).
+    expect: {static_error: MRL-SYNTAX}
+
+  - id: map-literal-with-negative-value
+    program: |
+      module t.
+      rel cfg(m: map<int>).
+      cfg({"a":-1}).
+    expect: {relations: {cfg: [[{a: -1}]]}}

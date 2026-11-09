@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/common.schema.json",
+  "title": "mao/v1 公共定义",
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$",
+      "maxLength": 64,
+      "description": "Spec 名字：小写字母开头，段之间用 . 或 - 连接"
+    },
+    "ident": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "maxLength": 64,
+      "description": "端口名、参数名、属性名、fact 名、步骤 id"
+    },
+    "intVersion": {"type": "integer", "minimum": 1},
+    "typeVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "lifecycle": {"enum": ["active", "deprecated", "retired"]},
+    "labels": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
+    "ref": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*(?:@[0-9]+)?$",
+      "description": "引用其他 Spec：name@version。不写版本会被内核规则判为 E-UNPINNED"
+    },
+    "typeRef": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*(?:@[0-9]+(?:\\.[0-9]+)?)?$",
+      "description": "引用 Type：name@major（常用）或 name@major.minor（钉住 minor）"
+    },
+    "typeExpr": {
+      "type": "string",
+      "pattern": "^[a-z0-9.@<>_-]+$",
+      "maxLength": 200,
+      "description": "类型表达式：any | name@M[.m] | list<类型表达式> | ref<类型表达式>（由抽取器进一步解析）"
+    },
+    "expr": {"type": "string", "minLength": 1, "maxLength": 4096, "description": "MRL 表达式"},
+    "template": {"type": "string", "maxLength": 4096, "description": "MRL 模板：文本 + {{ 表达式 }}"},
+    "propList": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/ident"},
+      "uniqueItems": true
+    },
+    "factType": {
+      "type": "string",
+      "pattern": "^(?:bool|int|float|num|string|list<[a-z<>]+>|map<[a-z<>]+>)$",
+      "description": "fact 的 MRL 类型"
+    },
+    "paramDecl": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["string", "int", "float", "num", "bool"]},
+        "default": {},
+        "description": {"type": "string"}
+      }
+    },
+    "duration": {"type": "string", "pattern": "^[0-9]+(?:ms|s|m|h|d)$"},
+    "usd": {"type": "number", "minimum": 0},
+    "stringList": {"type": "array", "items": {"type": "string"}},
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "version": {"$ref": "#/$defs/intVersion"},
+        "lifecycle": {"$ref": "#/$defs/lifecycle"},
+        "labels": {"$ref": "#/$defs/labels"},
+        "description": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "recordMetadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$", "maxLength": 64},
+        "labels": {"$ref": "#/$defs/labels"},
+        "proposer": {"type": "string"},
+        "trigger": {"type": "string"},
+        "generated_by": {"type": "string"},
+        "run": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

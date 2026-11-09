@@ -1,0 +1,51 @@
+scenario: foreman-mistakes-13-4
+milestone: M0
+kind: registry
+base: example
+description: 架构文档 13.4：厂长犯错时，确定性的检查把错误拦下（每一步都从示例 Registry 重新开始）
+steps:
+  - name: 删掉 vertical 的 has_audio、not_silent 两个保证 → E-CONTRACT（publish-shorts 依赖它们）
+    reset: true
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.outputs.video.guarantees: [vertical, hd, h264]}}
+    expect:
+      codes: [E-CONTRACT]
+      diags: [{code: E-CONTRACT, subject: "Line:explainer-multilang@5/steps.to_shorts.in.video", message: "缺失 {has_audio, not_silent}"}]
+  - name: 让 explainer 直接上传成品（绑定带 publish 出网的策略）→ I6 拒绝
+    reset: true
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.policy: sink-s3@1}}
+    expect:
+      codes: [E-PERMISSION, E-PERMISSION]
+      diags:
+        - {code: E-PERMISSION, subject: "Station:explainer@3/policy", message: "I6：只有 sink 工位能使用 publish 出网"}
+  - name: 删掉 validator 的反样例来“放水” → I8 拒绝（删除反样例属于宪法级操作）
+    reset: true
+    patch:
+      - {file: types/video.yaml, doc: 1, set: {"spec.validators[0].fixtures": {accept: [fixtures/video/ok-1920x1080.mp4]}}}
+    expect:
+      codes: [E-INVARIANT]
+      diags: [{code: E-INVARIANT, subject: "Type:video.mp4@1.3/validators.ffprobe-facts", message: "反样例"}]
+  - name: 把单个工位的预算提到宪法上限之上 → E-INVARIANT
+    reset: true
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.limits.budget_usd: 50.0}}
+      - {file: lines/explainer-multilang.yaml, set: {spec.budget.cap_usd: 60.0}}
+    expect:
+      codes: [E-INVARIANT]
+  - name: 试图在宪法目录里写一个放松检查的模块 → 归属规则拒绝（E-CONSTITUTION），内核的错误照样报告
+    reset: true
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.outputs.video.guarantees: [vertical, hd, h264]}}
+      - file: constitution/loosen.mrl
+        content: |
+          module constitution.loosen.
+          resolved("Station", "publish-shorts@1", "Station:vertical@1").
+    expect:
+      codes: [E-CONSTITUTION, E-CONTRACT]
+  - name: 删除宪法本身 → E-CONSTITUTION（删掉宪法不是绕过检查的办法）
+    reset: true
+    patch:
+      - {file: constitution/invariants.mrl, delete: true}
+    expect:
+      codes: [E-CONSTITUTION]

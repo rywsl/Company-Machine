@@ -1,0 +1,113 @@
+suite: rules.safety
+kind: rules
+description: 安全性（变量先绑定后使用，从左到右）与终止性（递归中不构造新值）（规范 8.5、8.7）
+cases:
+  - id: head-var-unbound
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel p(a: string, b: string).
+      p(X, Y) :- e(X).
+    expect: {static_error: MRL-UNSAFE}
+
+  - id: negated-var-unbound
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel p(a: string).
+      p(X) :- !e(X).
+    expect: {static_error: MRL-UNSAFE}
+
+  - id: guard-before-binding
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel p(a: int).
+      p(X) :- X > 1, e(X).
+    expect: {static_error: MRL-UNSAFE}
+
+  - id: assignment-unbound-rhs
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel p(a: int).
+      p(X) :- X = Y + 1, e(Y).
+    expect: {static_error: MRL-UNSAFE}
+
+  - id: anon-in-head
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel p(a: int).
+      p(_) :- e(_).
+    expect: {static_error: MRL-UNSAFE}
+
+  - id: anon-in-expression
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel p(a: int).
+      p(X) :- e(X), X > _.
+    expect: {static_error: MRL-UNSAFE}
+
+  - id: same-atom-expression-uses-new-var
+    program: |
+      module t.
+      @input rel e(a: int, b: int).
+      rel p(a: int).
+      p(X) :- e(X, X + 1).
+    expect: {static_error: MRL-UNSAFE}
+
+  - id: fact-with-variable
+    program: |
+      module t.
+      rel p(a: int).
+      p(X).
+    expect: {static_error: MRL-UNSAFE}
+
+  - id: lowercase-is-not-a-variable
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel p(a: int).
+      p(x) :- e(x).
+    expect: {static_error: MRL-UNDEFINED}
+
+  - id: invention-in-recursion
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel n(a: int).
+      n(X) :- e(X).
+      n(Y) :- n(X), Y = X + 1.
+    expect: {static_error: MRL-INVENTION}
+
+  - id: invention-in-recursive-head
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel s(a: string).
+      s(X) :- e(X).
+      s(X + "!") :- s(X).
+    expect: {static_error: MRL-INVENTION}
+
+  - id: copy-in-recursion-is-fine
+    program: |
+      module t.
+      @input rel e(a: string, b: string).
+      rel r(a: string, b: string).
+      r(A, B) :- e(A, B).
+      r(A, C) :- r(A, B), e(B, X), C = X.
+    facts: {e: [[a, b], [b, c]]}
+    expect: {relations: {r: [[a, b], [a, c], [b, c]]}}
+
+  - id: invention-outside-recursion-is-fine
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel n(a: int).
+      rel m(a: int).
+      n(X) :- e(X).
+      m(Y) :- n(X), Y = X * 10.
+    facts: {e: [[1], [2]]}
+    expect: {relations: {m: [[10], [20]]}}

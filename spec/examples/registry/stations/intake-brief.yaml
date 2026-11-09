@@ -1,0 +1,11 @@
+# Source：没有输入端口，从外部摄入物料（架构文档 5.4）。它产出的 brief.video@1 到达后触发 explainer-multilang。
+apiVersion: mao/v1
+kind: Station
+metadata: {name: intake-brief, version: 1}
+spec:
+  role: source
+  machine: webhook-intake@1
+  recipe: receive
+  operator: {runtime: script@1}
+  outputs: {brief: {type: brief.video@1}}
+  policy: source-webhook@1

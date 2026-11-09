@@ -1,0 +1,13 @@
+# 旁路：服务型产品 + 脚本操作工（架构文档 13.1）。参数都能从 brief 中结构化地取得，不需要 agent。
+apiVersion: mao/v1
+kind: Station
+metadata: {name: quick-short, version: 1}
+spec:
+  role: transform
+  machine: moneyprinter@2
+  recipe: quick-short
+  operator: {runtime: script@1}
+  inputs:  {brief: {type: brief.video@1}}
+  outputs: {video: {type: video.mp4@1, guarantees: [has_audio]}}
+  limits:  {timeout: 30m, budget_usd: 0.5}
+  policy: video-default@2

@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/records.schema.json",
+  "title": "记录类 kind：Plan / ChangeSet / ConversionRequest / GoldenSet / Baseline",
+  "$defs": {
+    "plan": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {"const": "mao/v1"},
+        "kind": {"const": "Plan"},
+        "metadata": {"$ref": "common.schema.json#/$defs/recordMetadata"},
+        "spec": {
+          "type": "object",
+          "required": ["steps"],
+          "additionalProperties": false,
+          "properties": {
+            "steps": {"type": "object", "minProperties": 1},
+            "keep": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "changeset": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {"const": "mao/v1"},
+        "kind": {"const": "ChangeSet"},
+        "metadata": {"$ref": "common.schema.json#/$defs/recordMetadata"},
+        "spec": {
+          "type": "object",
+          "required": ["base_epoch", "intent", "changes"],
+          "additionalProperties": false,
+          "properties": {
+            "base_epoch": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+            "intent": {"type": "string", "minLength": 1},
+            "changes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["op", "kind", "name"],
+                "additionalProperties": false,
+                "properties": {
+                  "op": {"enum": ["upsert", "deprecate", "retire"]},
+                  "kind": {"enum": ["Type", "Machine", "OperatorRuntime", "Station", "Line", "Policy", "GoldenSet", "Baseline"]},
+                  "name": {"$ref": "common.schema.json#/$defs/name"},
+                  "from": {"type": ["string", "integer", "null"]},
+                  "to": {"type": ["string", "integer", "null"]},
+                  "diff": {}
+                }
+              }
+            },
+            "rollout": {"type": "object"},
+            "risk_tier": {"enum": ["T0", "T1", "T2", "T3", "T4"]},
+            "status": {"enum": ["draft", "verifying", "verified", "shadow", "canary", "active", "rejected", "rolled-back"]}
+          }
+        }
+      }
+    },
+    "conversionRequest": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {"const": "mao/v1"},
+        "kind": {"const": "ConversionRequest"},
+        "metadata": {"$ref": "common.schema.json#/$defs/recordMetadata"},
+        "spec": {
+          "type": "object",
+          "required": ["from", "to", "status"],
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "object",
+              "required": ["type"],
+              "additionalProperties": false,
+              "properties": {
+                "type": {"$ref": "common.schema.json#/$defs/typeExpr"},
+                "guarantees": {"$ref": "common.schema.json#/$defs/propList"}
+              }
+            },
+            "to": {
+              "type": "object",
+              "required": ["type"],
+              "additionalProperties": false,
+              "properties": {
+                "type": {"$ref": "common.schema.json#/$defs/typeExpr"},
+                "requires": {"$ref": "common.schema.json#/$defs/propList"}
+              }
+            },
+            "found_at": {"type": "array"},
+            "samples": {"type": "array", "items": {"type": "string"}},
+            "blocked_runs": {"type": "array", "items": {"type": "string"}},
+            "status": {"enum": ["open", "in_progress", "resolved"]}
+          }
+        }
+      }
+    },
+    "goldenSet": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {"const": "mao/v1"},
+        "kind": {"const": "GoldenSet"},
+        "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+        "spec": {
+          "type": "object",
+          "required": ["station", "cases"],
+          "additionalProperties": false,
+          "properties": {
+            "station": {"$ref": "common.schema.json#/$defs/ref"},
+            "cases": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["name", "inputs"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {"type": "string"},
+                  "inputs": {"type": "object", "additionalProperties": {"type": "string"}},
+                  "params": {"type": "object"}
+                }
+              }
+            },
+            "budget_usd": {"$ref": "common.schema.json#/$defs/usd"}
+          }
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {"const": "mao/v1"},
+        "kind": {"const": "Baseline"},
+        "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+        "spec": {
+          "type": "object",
+          "required": ["station", "window", "metrics"],
+          "additionalProperties": false,
+          "properties": {
+            "station": {"$ref": "common.schema.json#/$defs/ref"},
+            "window": {"$ref": "common.schema.json#/$defs/duration"},
+            "metrics": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": "number"}}}
+          }
+        }
+      }
+    }
+  }
+}

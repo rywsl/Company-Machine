@@ -1,0 +1,21 @@
+# 操作工运行时：如何以无头方式启动 Claude Code（架构文档 5.2；参数仅作示例，以 CLI 当前文档为准）。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: claude-code, version: 4}
+spec:
+  kind: agent-cli
+  inject:
+    volume: registry.local/operators/claude-code@sha256:28952501290a718c501109c2f219f787b9ac7d40e5802a726f38ef2acf61f3c3
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/claude, -p, "{{ brief.task }}",
+           --append-system-prompt, "{{ brief.factory_contract }}",
+           --output-format, stream-json, --verbose,
+           --max-turns, "{{ limits.max_turns }}",
+           --model, "{{ operator.model }}",
+           --permission-mode, bypassPermissions]
+    mcp: {format: claude-json, flag: --mcp-config}
+  env:
+    ANTHROPIC_BASE_URL: http://model-proxy:8080
+  transcript: {format: stream-json, from: stdout}
+  models_allowed: [claude-opus-5-5, claude-sonnet-5-5]

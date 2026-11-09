@@ -1,0 +1,16 @@
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: rclone, version: 1}
+spec:
+  form: tool
+  runtime:
+    image: registry.local/machines/rclone@sha256:d20d4b5e7f2ab15d675ecaa9df391bc6d8a43d352ffb9fd0916c1a3e5fce8361
+    instance: per_job
+  needs: {secrets: [S3_WRITE_KEY]}
+  recipes:
+    copy:
+      inputs: {artifact: {type: any}}
+      params:
+        bucket: {type: string}
+        prefix: {type: string}
+      run: ["rclone", "copy", "/factory/in/artifact", "s3:{{ params.bucket }}/{{ params.prefix }}"]

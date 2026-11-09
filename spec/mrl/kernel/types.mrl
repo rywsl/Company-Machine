@@ -1,0 +1,96 @@
+// 内核：类型系统——名义子类型、属性继承、facts、类型表达式的子类型与属性。
+//
+// 子类型是名义的：只有声明了 extends 才有 A <: B（可传递）；T <: any；
+// list 与 ref 协变。extends 的兼容性由下面的规则验证（种类、字段、facts、属性）。
+
+module kernel.types.
+
+rel tid(t: string).
+tid(T) :- type_key(T, _).
+
+rel extends(t: string, parent: string).
+extends(T, P) :- type_key(T, K), type_extends_decl(K, P).
+
+@doc("命名类型 id 之间的子类型关系（自反、传递）")
+rel subtype(t: string, s: string).
+subtype(T, T) :- tid(T).
+subtype(T, S) :- extends(T, P), subtype(P, S).
+
+rel ext_reach(a: string, b: string).
+ext_reach(A, B) :- extends(A, B).
+ext_reach(A, C) :- extends(A, B), ext_reach(B, C).
+@doc("处在继承环上的类型：只报 E-CYCLE，不再报由环连带产生的继承问题")
+rel in_cycle(t: string).
+in_cycle(T) :- ext_reach(T, T).
+diag("E-CYCLE", K, "类型继承成环：" + T) :- in_cycle(T), type_key(T, K).
+
+// extends 的兼容性
+diag("E-EXTENDS", K, T + " 的种类 " + A + " 与父类型 " + P + " 的种类 " + B + " 不同") :-
+    extends(T, P), !in_cycle(T), type_key(T, K), type_key(P, PK), type_kind(K, A), type_kind(PK, B), A != B.
+rel field_compatible(key: string, field: string, parent_texpr: string).
+field_compatible(K, F, PT) :- type_field(K, F, CT), type_field(_, F, PT), tsub(CT, PT).
+rel field_unresolved(key: string, field: string).
+field_unresolved(K, F) :- type_field(K, F, CT), !texpr_ok(CT).
+diag("E-EXTENDS", K + "/fields." + F, T + " 缺少父类型 " + P + " 的字段 " + F + "，或字段类型不是父类型字段的子类型") :-
+    extends(T, P), !in_cycle(T), type_key(T, K), type_key(P, PK), type_field(PK, F, PT), texpr_ok(PT),
+    !field_unresolved(K, F), !field_compatible(K, F, PT).
+
+@doc("类型 T 上可见的命名属性，以及定义它的类型")
+rel type_prop(t: string, p: string, owner: string).
+type_prop(T, P, T) :- type_key(T, K), type_property(K, P).
+type_prop(T, P, O) :- extends(T, Par), type_prop(Par, P, O).
+diag("E-EXTENDS", K + "/properties." + P, "属性 " + P + " 已由 " + O + " 定义，子类型不能重新定义（要改语义请换一个属性名）") :-
+    type_key(T, K), !in_cycle(T), type_property(K, P), extends(T, Par), type_prop(Par, P, O).
+
+@doc("类型恒真属性：每个该类型的 Bean 都必然满足（由出厂检验对所有 Bean 强制）")
+rel type_always_p(t: string, p: string).
+type_always_p(T, P) :- type_key(T, K), type_always(K, P).
+type_always_p(T, P) :- extends(T, Par), type_always_p(Par, P).
+diag("E-PROPERTY", K + "/always", "always 中的 " + P + " 不是 " + T + " 的命名属性") :-
+    type_key(T, K), type_always(K, P), !type_prop(T, P, _).
+
+@doc("类型 T 的 facts（含继承）")
+rel type_fact(t: string, f: string, ftype: string).
+type_fact(T, F, Ty) :- type_key(T, K), type_fact_decl(K, F, Ty).
+type_fact(T, F, Ty) :- extends(T, Par), type_fact(Par, F, Ty).
+diag("E-EXTENDS", K + "/facts." + F, "fact " + F + " 的类型冲突：" + A + " 与 " + B) :-
+    type_key(T, K), !in_cycle(T), type_fact(T, F, A), type_fact(T, F, B), A < B.
+
+rel emitted(t: string, f: string).
+emitted(T, F) :- type_key(T, K), validator_emits(K, _, F).
+rel concrete(t: string).
+concrete(T) :- type_key(T, K), type_validator(K, _, _).
+diag("E-FACT", K + "/validators." + V, "validator " + V + " 产出的 " + F + " 没有在 facts 中声明（含继承）") :-
+    type_key(T, K), !in_cycle(T), validator_emits(K, V, F), !type_fact(T, F, _).
+diag("E-FACT", K + "/facts." + F, "fact " + F + " 没有任何 validator 产出") :-
+    concrete(T), !in_cycle(T), type_key(T, K), type_fact(T, F, _), !emitted(T, F).
+
+// ---------- 类型表达式 ----------
+
+@doc("类型表达式中的命名类型都能解析。引用无法解析时只报 E-REF，依赖类型的检查不再连带报错")
+rel texpr_ok(e: string).
+texpr_ok(E) :- texpr(E, "named", A), tid(A).
+texpr_ok(E) :- texpr(E, "any", _).
+texpr_ok(E) :- texpr(E, "list", A), texpr_ok(A).
+texpr_ok(E) :- texpr(E, "ref", A), texpr_ok(A).
+
+@doc("类型表达式之间的子类型关系：e <: f")
+rel tsub(e: string, f: string).
+tsub(E, F) :- texpr(E, "named", A), texpr(F, "named", B), subtype(A, B).
+tsub(E, F) :- texpr(E, _, _), texpr(F, "any", _).
+tsub(E, F) :- texpr(E, "list", A), texpr(F, "list", B), tsub(A, B).
+tsub(E, F) :- texpr(E, "ref", A), texpr(F, "ref", B), tsub(A, B).
+
+rel same_type(a: string, b: string).
+same_type(A, B) :- tsub(A, B), tsub(B, A).
+
+@doc("类型表达式上定义的命名属性；list 与 ref 取元素类型的属性（对每个元素成立）")
+rel texpr_prop(e: string, p: string).
+texpr_prop(E, P) :- texpr(E, "named", A), type_prop(A, P, _).
+texpr_prop(E, P) :- texpr(E, "list", A), texpr_prop(A, P).
+texpr_prop(E, P) :- texpr(E, "ref", A), texpr_prop(A, P).
+
+rel texpr_always(e: string, p: string).
+texpr_always(E, P) :- texpr(E, "named", A), type_always_p(A, P).
+texpr_always(E, P) :- texpr(E, "list", A), texpr_always(A, P).
+texpr_always(E, P) :- texpr(E, "ref", A), texpr_always(A, P).

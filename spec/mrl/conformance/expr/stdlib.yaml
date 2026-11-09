@@ -1,0 +1,129 @@
+suite: expr.stdlib
+kind: expr
+description: 标准库函数的结果与边界（规范 6.7）
+cases:
+  # size
+  - {id: size-string-codepoints, expr: 'size("中文")', expect: {value: 2, type: int}}
+  - {id: size-list, expr: 'size([1, 2])', expect: {value: 2}}
+  - {id: size-map, expr: 'size({"a": 1})', expect: {value: 1}}
+  - {id: size-receiver, expr: '"abc".size()', expect: {value: 3}}
+  - {id: size-int-static, expr: 'size(1)', expect: {static_error: MRL-TYPE}}
+  - {id: size-arity, expr: 'size()', expect: {static_error: MRL-ARITY}}
+  - {id: size-arity-2, expr: 'size(1, 2)', expect: {static_error: MRL-ARITY}}
+  - {id: unknown-function, expr: 'foo(1)', expect: {static_error: MRL-UNDEFINED}}
+  # int
+  - {id: int-trunc-pos, expr: 'int(3.9)', expect: {value: 3, type: int}}
+  - {id: int-trunc-neg, expr: 'int(-3.9)', expect: {value: -3}}
+  - {id: int-parse, expr: 'int("42")', expect: {value: 42}}
+  - {id: int-parse-sign, expr: 'int("-7") + int("+7")', expect: {value: 0}}
+  - {id: int-parse-space, expr: 'int(" 7")', expect: {error: MRL-CONVERT}}
+  - {id: int-parse-decimal, expr: 'int("7.0")', expect: {error: MRL-CONVERT}}
+  - {id: int-parse-non-ascii-digit, expr: 'int("٣")', expect: {error: MRL-CONVERT}}
+  - {id: int-parse-overflow, expr: 'int("99999999999999999999")', expect: {error: MRL-OVERFLOW}}
+  - {id: int-float-overflow, expr: 'int(1e19)', expect: {error: MRL-OVERFLOW}}
+  - {id: int-bool-static, expr: 'int(true)', expect: {static_error: MRL-TYPE}}
+  # float
+  - {id: float-from-int, expr: 'float(2)', expect: {value: 2.0, type: float}}
+  - {id: float-parse, expr: 'float("1.5")', expect: {value: 1.5}}
+  - {id: float-parse-exp, expr: 'float("1e3")', expect: {value: 1000.0}}
+  - {id: float-parse-int-text, expr: 'float("-12")', expect: {value: -12.0}}
+  - {id: float-parse-leading-dot, expr: 'float(".5")', expect: {error: MRL-CONVERT}}
+  - {id: float-parse-inf-text, expr: 'float("inf")', expect: {error: MRL-CONVERT}}
+  - {id: float-parse-nan-text, expr: 'float("nan")', expect: {error: MRL-CONVERT}}
+  - {id: float-parse-overflow, expr: 'float("1e400")', expect: {error: MRL-DOMAIN}}
+  # string
+  - {id: string-int, expr: 'string(1)', expect: {value: "1", type: string}}
+  - {id: string-float-integral, expr: 'string(1.0)', expect: {value: "1.0"}}
+  - {id: string-float-short, expr: 'string(0.1)', expect: {value: "0.1"}}
+  - {id: string-float-sci-large, expr: 'string(1e16)', expect: {value: "1e+16"}}
+  - {id: string-float-fixed-large, expr: 'string(1e15)', expect: {value: "1000000000000000.0"}}
+  - {id: string-float-small, expr: 'string(0.0001)', expect: {value: "0.0001"}}
+  - {id: string-float-sci-small, expr: 'string(0.00001)', expect: {value: "1e-05"}}
+  - {id: string-float-negative, expr: 'string(-2.5)', expect: {value: "-2.5"}}
+  - {id: string-bool, expr: 'string(true) + string(false)', expect: {value: "truefalse"}}
+  - {id: string-big-int, expr: 'string(123456789012345678)', expect: {value: "123456789012345678"}}
+  - {id: string-null-static, expr: 'string(null)', expect: {static_error: MRL-TYPE}}
+  - {id: string-list-static, expr: 'string([1])', expect: {static_error: MRL-TYPE}}
+  - {id: string-null-dyn, expr: 'string(x)', env: {x: null}, expect: {error: MRL-TYPE}}
+  # type
+  - {id: type-names, expr: '[type(1), type(1.0), type("a"), type(true), type(null), type([]), type({})]', expect: {value: [int, float, string, bool, "null", list, map]}}
+  # abs floor ceil round
+  - {id: abs-int, expr: 'abs(-3)', expect: {value: 3, type: int}}
+  - {id: abs-float, expr: 'abs(-2.5)', expect: {value: 2.5, type: float}}
+  - {id: abs-int-min, expr: 'abs(-9223372036854775808)', expect: {error: MRL-OVERFLOW}}
+  - {id: floor-neg, expr: 'floor(-1.5)', expect: {value: -2, type: int}}
+  - {id: ceil-neg, expr: 'ceil(-1.5)', expect: {value: -1, type: int}}
+  - {id: round-half-up, expr: 'round(1.5)', expect: {value: 2, type: int}}
+  - {id: round-half-away-pos, expr: 'round(2.5)', expect: {value: 3}}
+  - {id: round-half-away-neg, expr: 'round(-0.5)', expect: {value: -1}}
+  - {id: round-below-half, expr: 'round(0.49999999999999994)', expect: {value: 0}}
+  - {id: round-int, expr: 'round(7)', expect: {value: 7}}
+  - {id: floor-overflow, expr: 'floor(1e19)', expect: {error: MRL-OVERFLOW}}
+  # min max sum
+  - {id: min-variadic, expr: 'min(3, 1, 2)', expect: {value: 1, type: int}}
+  - {id: max-list, expr: 'max([1, 2.5])', expect: {value: 2.5, type: num}}
+  - {id: min-empty, expr: 'min([])', expect: {error: MRL-DOMAIN}}
+  - {id: min-tie-first-int, expr: 'min(1, 1.0)', expect: {value: 1}}
+  - {id: min-tie-first-float, expr: 'min(1.0, 1)', expect: {value: 1.0}}
+  - {id: max-strings, expr: 'max("a", "b")', expect: {value: b, type: string}}
+  - {id: min-mixed-static, expr: 'min(1, "a")', expect: {static_error: MRL-TYPE}}
+  - {id: min-mixed-dyn, expr: 'min([1, "a"])', expect: {error: MRL-TYPE}}
+  - {id: sum-int, expr: 'sum([1, 2, 3])', expect: {value: 6, type: int}}
+  - {id: sum-mixed, expr: 'sum([1, 2.5])', expect: {value: 3.5, type: num}}
+  - {id: sum-empty, expr: 'sum([])', expect: {value: 0}}
+  - {id: sum-order, expr: 'sum([0.1, 0.2, 0.3])', expect: {value: 0.6000000000000001}}
+  - {id: sum-overflow, expr: 'sum([9223372036854775807, 1])', expect: {error: MRL-OVERFLOW}}
+  - {id: sum-strings-static, expr: 'sum(["a"])', expect: {static_error: MRL-TYPE}}
+  # 字符串
+  - {id: starts-with, expr: '"abc".startsWith("ab")', expect: {value: true, type: bool}}
+  - {id: ends-with, expr: '"abc".endsWith("bc")', expect: {value: true}}
+  - {id: contains, expr: '"abc".contains("d")', expect: {value: false}}
+  - {id: starts-with-empty, expr: '"".startsWith("")', expect: {value: true}}
+  - {id: starts-with-int-static, expr: 'startsWith("a", 1)', expect: {static_error: MRL-TYPE}}
+  - {id: lower-ascii, expr: 'lower("AbC")', expect: {value: abc}}
+  - {id: upper-ascii-only, expr: 'upper("straße")', expect: {value: "STRAßE"}}
+  - {id: lower-non-ascii-unchanged, expr: 'lower("İ")', expect: {value: "İ"}}
+  - {id: trim, expr: 'trim("  a b \n")', expect: {value: "a b"}}
+  - {id: trim-ascii-only, expr: 'trim("　a")', expect: {value: "　a"}}
+  - {id: split, expr: 'split("a,b,,c", ",")', expect: {value: [a, b, "", c], type: 'list<string>'}}
+  - {id: split-empty-sep, expr: 'split("abc", "")', expect: {error: MRL-DOMAIN}}
+  - {id: join, expr: 'join(["a", "b"], "-")', expect: {value: a-b}}
+  - {id: join-empty, expr: 'join([], ",")', expect: {value: ""}}
+  - {id: join-int-static, expr: 'join([1], ",")', expect: {static_error: MRL-TYPE}}
+  - {id: replace, expr: 'replace("aaa", "a", "b")', expect: {value: bbb}}
+  - {id: replace-empty, expr: 'replace("abc", "", "x")', expect: {error: MRL-DOMAIN}}
+  # glob
+  - {id: glob-star, expr: 'glob("refs/a.mp4", "refs/*")', expect: {value: true}}
+  - {id: glob-star-no-slash, expr: 'glob("refs/a/b.mp4", "refs/*")', expect: {value: false}}
+  - {id: glob-double-star, expr: 'glob("refs/a/b.mp4", "refs/**")', expect: {value: true}}
+  - {id: glob-double-star-empty, expr: 'glob("refs/", "refs/**")', expect: {value: true}}
+  - {id: glob-ext, expr: 'glob("a.mp4", "*.mp4")', expect: {value: true}}
+  - {id: glob-ext-dir, expr: 'glob("dir/a.mp4", "*.mp4")', expect: {value: false}}
+  - {id: glob-deep-ext, expr: 'glob("dir/a.mp4", "**/*.mp4")', expect: {value: true}}
+  - {id: glob-deep-ext-needs-slash, expr: 'glob("a.mp4", "**/*.mp4")', expect: {value: false}}
+  - {id: glob-question, expr: 'glob("ab", "a?")', expect: {value: true}}
+  - {id: glob-question-no-slash, expr: 'glob("a/", "a?")', expect: {value: false}}
+  - {id: glob-escape, expr: 'glob("a?c", "a\\?c")', expect: {value: true}}
+  - {id: glob-escape-literal, expr: 'glob("abc", "a\\?c")', expect: {value: false}}
+  - {id: glob-empty, expr: '[glob("", ""), glob("", "*"), glob("x", "")]', expect: {value: [true, true, false]}}
+  # map
+  - {id: keys, expr: 'keys({"b": 1, "a": 2})', expect: {value: [a, b], type: 'list<string>'}}
+  - {id: values, expr: 'values({"b": 1, "a": 2})', expect: {value: [2, 1], type: 'list<int>'}}
+  - {id: get-present, expr: 'get({"a": 1}, "a", 0)', expect: {value: 1, type: int}}
+  - {id: get-default, expr: 'get({"a": 1}, "b", 0)', expect: {value: 0}}
+  - {id: get-dyn, expr: 'get(m, "x", "d")', env: {m: {}}, expect: {value: d}}
+  - {id: get-non-map-static, expr: 'get(1, "a", 0)', expect: {static_error: MRL-TYPE}}
+  # 列表与集合
+  - {id: sort-numbers, expr: 'sort([3, 1.5, 2])', expect: {value: [1.5, 2, 3]}}
+  - {id: sort-strings, expr: 'sort(["b", "A", "a"])', expect: {value: [A, a, b]}}
+  - {id: sort-stable, expr: 'sort([2.0, 2, 1])', expect: {value: [1, 2.0, 2]}}
+  - {id: sort-mixed, expr: 'sort([1, "a"])', expect: {error: MRL-TYPE}}
+  - {id: unique, expr: 'unique([1, 2, 1, 1.0, "a", "a"])', expect: {value: [1, 2, a]}}
+  - {id: union, expr: 'union(["b", "a"], ["c", "a"])', expect: {value: [a, b, c], type: 'list<string>'}}
+  - {id: union-numeric-first, expr: 'union([2.0], [2])', expect: {value: [2.0]}}
+  - {id: intersect, expr: 'intersect([3, 1, 2], [2, 3, 4])', expect: {value: [2, 3]}}
+  - {id: difference, expr: 'difference(["a", "b", "c"], ["b"])', expect: {value: [a, c]}}
+  - {id: is-subset, expr: 'isSubset(["a"], ["a", "b"])', expect: {value: true, type: bool}}
+  - {id: is-subset-false, expr: 'isSubset(["a", "c"], ["a", "b"])', expect: {value: false}}
+  - {id: is-subset-empty, expr: 'isSubset([], [])', expect: {value: true}}
+  - {id: is-subset-numeric, expr: 'isSubset([1], [1.0])', expect: {value: true}}

@@ -1,0 +1,48 @@
+scenario: evolution-13-2
+milestone: M0
+kind: registry
+base: example
+description: 架构文档 13.2：上游升级后字幕改为 VTT → 缺少转换 → 厂长编写转换 → 编译器自动衔接
+steps:
+  - name: 起点：示例 Registry 完全通过
+    expect: {clean: true}
+  - name: 升级草稿：explainer 的字幕改为 VTT，转换库里还没有 VTT → SRT
+    patch:
+      - {file: converters/subs-convert/station.yaml, delete: true}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+    expect:
+      codes: [E-NO-CONVERTER]
+      diags: [{code: E-NO-CONVERTER, subject: "Line:explainer-multilang@5/steps.dub_en.in.subtitle", message: "subtitle.vtt@1 → subtitle.srt@1"}]
+  - name: 厂长编写 subs-convert@1（新增转换，不改变现有边的解析 → T1）
+    patch:
+      - file: converters/subs-convert/station.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Station
+          metadata: {name: subs-convert, version: 1}
+          spec:
+            role: converter
+            converts: {from: subtitle.vtt@1, to: subtitle.srt@1, lossless: true, preserves: []}
+            machine: ffmpeg@3
+            recipe: subs-convert
+            operator: {runtime: script@1}
+            inputs:  {in:  {type: subtitle.vtt@1}}
+            outputs: {out: {type: subtitle.srt@1}}
+            equivalence:
+              - "dst.facts.cue_count == src.facts.cue_count"
+              - "dst.facts.last_cue_end_s == src.facts.last_cue_end_s"
+            cost: {usd_est: 0, p50_s: 2}
+            fixtures:
+              accept: [fixtures/basic.vtt, fixtures/multiline.vtt, fixtures/styled.vtt]
+              reject: [fixtures/broken-timestamps.vtt]
+            policy: tool-default@1
+    expect:
+      clean: true
+      diags: [{code: I-CONVERT, message: "插入 [subs-convert@1]（无损）"}]
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [subs-convert@1]}]
+  - name: 产线源文件不需要任何修改；其余的边仍然直接连接
+    expect:
+      resolutions:
+        - {step: to_github, port: subtitle, status: direct}
+        - {step: vertical, port: video, status: direct}

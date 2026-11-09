@@ -1,0 +1,89 @@
+# 提交前检查（harness check）与阶段门（harness gate <M>）。
+# 检查项的字段同 tasks.yaml 的验收项（plan/README.md 第 7.1 节）；指标含义见 plan/acceptance.md。
+# 规则：阶段门的门槛只升不降；后一个阶段门重复列出前一个的全部检查项。
+
+check:
+  - &lint {id: lint, run: uv run ruff check src tests tools}
+  - &format {id: format, run: uv run ruff format --check src tests tools}
+  - &lock {id: lock, run: uv run python tools/harness.py lock --verify}
+  - &doccheck {id: doccheck, run: uv run python tools/harness.py doccheck}
+  - &conformance
+    id: conformance
+    run: uv run mrl conformance --json
+    assert: size(out.failures) == 0 && out.total >= 702
+  - &coverage
+    id: coverage
+    run: uv run mrl coverage --json
+    assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 79
+  - &example
+    id: example
+    run: uv run mrl registry check spec/examples/registry --strict --json
+    assert: out.ok && out.counts.error == 0 && out.counts.warning == 0
+  - &scenarios {id: scenarios, run: uv run python tools/harness.py scenario run --all}
+  - &pytest
+    id: pytest
+    run: uv run python tools/harness.py pytest tests
+    assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+    slow: true
+
+gates:
+  M0:
+    title: 结构编译（MRL 1.0 与工厂 profile）
+    checks: [*lint, *format, *lock, *doccheck, *conformance, *coverage, *example, *scenarios, *pytest]
+
+  M1:
+    title: 单工位跑通
+    requires_gates: [M0]
+    checks:
+      - *lint
+      - *format
+      - *lock
+      - *doccheck
+      - *conformance
+      - *coverage
+      - *example
+      - *scenarios
+      - *pytest
+      - id: acceptance-m1
+        run: uv run python tools/harness.py pytest tests/acceptance/m1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 2400
+      - id: unit-m1
+        run: uv run python tools/harness.py pytest tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
+      - id: policy
+        run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 12
+
+  # M2–M4 的检查项在对应里程碑开始前补全（门槛只升不降）。在此之前，
+  # “本里程碑的验收测试存在并全部通过”这一项会失败，阶段门不可能被空跑通过。
+  M2:
+    title: 产线与外部世界
+    requires_gates: [M1]
+    checks:
+      - id: acceptance-m2
+        run: uv run python tools/harness.py pytest tests/acceptance/m2
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+
+  M3:
+    title: 治理与厂长
+    requires_gates: [M2]
+    checks:
+      - id: acceptance-m3
+        run: uv run python tools/harness.py pytest tests/acceptance/m3
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+
+  M4:
+    title: 动态结构与生产化
+    requires_gates: [M3]
+    checks:
+      - id: acceptance-m4
+        run: uv run python tools/harness.py pytest tests/acceptance/m4
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600

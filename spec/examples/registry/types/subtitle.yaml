@@ -1,0 +1,42 @@
+# 字幕。subtitle@1 声明共有的 facts 与属性；srt 与 vtt 各有自己的 validator。
+apiVersion: mao/v1
+kind: Type
+metadata: {name: subtitle, version: "1.0", description: 字幕的抽象父类型}
+spec:
+  facts:
+    cue_count: int
+    last_cue_end_s: float
+  properties:
+    non_empty: "bean.facts.cue_count > 0"
+---
+apiVersion: mao/v1
+kind: Type
+metadata: {name: subtitle.srt, version: "1.0"}
+spec:
+  extends: subtitle@1
+  payload:
+    - {path: subtitle.srt, media_type: application/x-subrip, required: true}
+  validators:
+    - name: srt-lint
+      image: registry.local/validators/srt-lint@sha256:3bef9563687cb6ae8b6cbd63c5e956887a6757bdbce10c233d4a3058e9697bf6
+      run: [lint-srt, /bean/payload/subtitle.srt]
+      emits: [cue_count, last_cue_end_s]
+      fixtures:
+        accept: [fixtures/subtitle/basic.srt, fixtures/subtitle/multiline.srt]
+        reject: [fixtures/subtitle/overlapping.srt, fixtures/subtitle/bad-timestamp.srt]
+---
+apiVersion: mao/v1
+kind: Type
+metadata: {name: subtitle.vtt, version: "1.0"}
+spec:
+  extends: subtitle@1
+  payload:
+    - {path: subtitle.vtt, media_type: text/vtt, required: true}
+  validators:
+    - name: vtt-lint
+      image: registry.local/validators/vtt-lint@sha256:b19bb1191427d6732831c87402bbdcc1a4c9fa99ae05860175458baae1ac6349
+      run: [lint-vtt, /bean/payload/subtitle.vtt]
+      emits: [cue_count, last_cue_end_s]
+      fixtures:
+        accept: [fixtures/subtitle/basic.vtt, fixtures/subtitle/styled.vtt]
+        reject: [fixtures/subtitle/broken-timestamps.vtt]

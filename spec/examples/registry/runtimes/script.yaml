@@ -1,0 +1,5 @@
+# 脚本操作工：控制面直接执行 Recipe 的 run / call，不需要 agent。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: script, version: 1}
+spec: {kind: script}

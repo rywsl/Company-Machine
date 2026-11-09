@@ -1,0 +1,10 @@
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: video-default, version: 2}
+spec:
+  applies_to: [transform]
+  egress:
+    providers: [fal.run, api.pexels.com, api.elevenlabs.io]
+  secrets: from-machine
+  resources: {cpus: 4, memory: 8Gi}
+  retention: {workspace: 7d}

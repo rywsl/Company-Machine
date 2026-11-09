@@ -1,0 +1,33 @@
+suite: expr.macros
+kind: expr
+description: all / exists / exists_one / map / filter 宏（规范 6.6）
+cases:
+  - {id: all-true, expr: '[1, 2, 3].all(x, x > 0)', expect: {value: true, type: bool}}
+  - {id: all-false, expr: '[1, -2, 3].all(x, x > 0)', expect: {value: false}}
+  - {id: all-empty, expr: '[].all(x, x > 0)', expect: {value: true}}
+  - {id: all-short-circuit, expr: '[1, 0].all(x, 1 / x > 2)', expect: {value: false}}
+  - {id: all-error-first, expr: '[0, 1].all(x, 1 / x > 2)', expect: {error: MRL-DIV-ZERO}}
+  - {id: exists, expr: '[1, 2].exists(x, x == 2)', expect: {value: true}}
+  - {id: exists-empty, expr: '[].exists(x, true)', expect: {value: false}}
+  - {id: exists-short-circuit, expr: '[2, 0].exists(x, 1 / x > 0.1)', expect: {value: true}}
+  - {id: exists-one, expr: '[1, 2, 2].exists_one(x, x == 1)', expect: {value: true}}
+  - {id: exists-one-two, expr: '[1, 2, 2].exists_one(x, x == 2)', expect: {value: false}}
+  - {id: exists-one-evaluates-all, expr: '[1, 0].exists_one(x, 1 / x > 0)', expect: {error: MRL-DIV-ZERO}}
+  - {id: map, expr: '[1, 2].map(x, x * 10)', expect: {value: [10, 20], type: 'list<int>'}}
+  - {id: map-filter, expr: '[1, 2, 3, 4].map(x, x % 2 == 0, x * x)', expect: {value: [4, 16]}}
+  - {id: filter, expr: '[3, 1, 2].filter(x, x >= 2)', expect: {value: [3, 2], type: 'list<int>'}}
+  - {id: macro-on-map-keys, expr: '{"b": 1, "a": 2}.map(k, k)', expect: {value: [a, b], type: 'list<string>'}}
+  - {id: macro-on-map-filter, expr: 'm.filter(k, m[k] > 1)', env: {m: {x: 1, y: 2, z: 3}}, expect: {value: [y, z]}}
+  - {id: nested, expr: '[[1, 2], [3]].all(l, l.all(x, x > 0))', expect: {value: true}}
+  - {id: payload-exists, expr: 'p.exists(f, f.path.startsWith("refs/"))', env: {p: [{path: brief.json}, {path: refs/a.mp4}]}, expect: {value: true}}
+  - {id: shadow-root, expr: 'x.all(x, x > 0)', env: {x: [1]}, expect: {static_error: MRL-SHADOW}}
+  - {id: shadow-nested, expr: '[[1]].all(a, a.all(a, a > 0))', expect: {static_error: MRL-SHADOW}}
+  - {id: macro-var-not-ident, expr: '[1].all(1, true)', expect: {static_error: MRL-MACRO}}
+  - {id: macro-arity, expr: '[1].all(x)', expect: {static_error: MRL-MACRO}}
+  - {id: map-macro-arity, expr: '[1].map(x)', expect: {static_error: MRL-MACRO}}
+  - {id: macro-pred-non-bool, expr: '[1].all(x, x)', expect: {static_error: MRL-TYPE}}
+  - {id: macro-pred-non-bool-dyn, expr: 'l.all(x, x)', env: {l: [1]}, expect: {error: MRL-TYPE}}
+  - {id: macro-on-int, expr: 'x.all(y, true)', env: {x: 1}, expect: {error: MRL-TYPE}}
+  - {id: macro-on-int-static, expr: '1.all(y, true)', expect: {static_error: MRL-TYPE}}
+  - {id: macro-var-scope, expr: '[1].map(x, x) + [y]', env: {y: 2}, expect: {value: [1, 2]}}
+  - {id: macro-var-out-of-scope, expr: '[1].all(x, true) && x > 0', expect: {static_error: MRL-UNDEFINED}}

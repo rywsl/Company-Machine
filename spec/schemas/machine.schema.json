@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/machine.schema.json",
+  "title": "Machine（智能机器 / Machine Package 主描述）",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "mao/v1"},
+    "kind": {"const": "Machine"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["form", "runtime", "recipes"],
+      "additionalProperties": false,
+      "properties": {
+        "form": {"enum": ["workspace", "service", "tool"]},
+        "source": {
+          "type": "object",
+          "required": ["repo", "commit"],
+          "additionalProperties": false,
+          "properties": {
+            "repo": {"type": "string"},
+            "commit": {"type": "string"}
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "image": {"type": "string"},
+            "compose": {"type": "string"},
+            "workdir": {"type": "string"},
+            "service": {"type": "object"},
+            "instance": {"enum": ["per_job", "pooled"]},
+            "reset": {"oneOf": [{"type": "string"}, {"$ref": "common.schema.json#/$defs/stringList"}]},
+            "resources": {"type": "object"},
+            "caches": {"type": "array"}
+          },
+          "oneOf": [{"required": ["image"]}, {"required": ["compose"]}]
+        },
+        "operate": {"type": "object"},
+        "needs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secrets": {"$ref": "common.schema.json#/$defs/stringList"},
+            "egress": {},
+            "budget_knobs": {"type": "array"},
+            "config_render": {},
+            "rate_limits": {}
+          }
+        },
+        "recipes": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"$ref": "common.schema.json#/$defs/name"},
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "description": {"type": "string"},
+              "inputs": {
+                "type": "object",
+                "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+                "additionalProperties": {
+                  "type": "object",
+                  "required": ["type"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {"$ref": "common.schema.json#/$defs/typeExpr"},
+                    "place": {"type": "string"},
+                    "optional": {"type": "boolean"}
+                  }
+                }
+              },
+              "params": {
+                "type": "object",
+                "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+                "additionalProperties": {"$ref": "common.schema.json#/$defs/paramDecl"}
+              },
+              "outputs": {
+                "type": "object",
+                "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+                "additionalProperties": {
+                  "type": "object",
+                  "required": ["type"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {"$ref": "common.schema.json#/$defs/typeExpr"},
+                    "harvest": {},
+                    "optional": {"type": "boolean"}
+                  }
+                }
+              },
+              "task_template": {"type": "string"},
+              "call": {"type": "object"},
+              "run": {"$ref": "common.schema.json#/$defs/stringList"}
+            }
+          }
+        },
+        "probe": {"type": "object"},
+        "conformance": {"type": "array"}
+      }
+    }
+  }
+}

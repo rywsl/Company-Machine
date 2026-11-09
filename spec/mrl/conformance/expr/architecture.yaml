@@ -1,0 +1,107 @@
+suite: expr.architecture
+kind: expr
+description: >-
+  架构文档（docs/architecture.md）中出现的全部表达式，在其真实的类型环境下编译并求值。
+  文档里的示例必须是可运行的，而不只是描述。
+cases:
+  # 8.2 / 13.1：video.mp4@1 的命名属性
+  - id: prop-has-audio
+    expr: 'bean.facts.audio_streams > 0'
+    types: &video_bean {bean: '{id: string, type: string, facts: {duration_s: float, width: int, height: int, fps: num, vcodec: string, audio_streams: int, mean_volume_db: float}, meta: {title?: string, language?: string}, payload: list<{path: string, digest: string, size: int, media_type: string}>}'}
+    env: &landscape_video
+      bean:
+        id: "sha256:77e0"
+        type: video.mp4@1.3
+        facts: {duration_s: 61.4, width: 1920, height: 1080, fps: 30, vcodec: h264, audio_streams: 1, mean_volume_db: -18.2}
+        meta: {title: 为什么天空是蓝色的, language: zh-CN}
+        payload: [{path: video.mp4, digest: "sha256:b3a9", size: 48211934, media_type: video/mp4}]
+    expect: {value: true, type: bool, warnings: []}
+  - {id: prop-not-silent, expr: 'bean.facts.mean_volume_db > -50.0', types: *video_bean, env: *landscape_video, expect: {value: true}}
+  - {id: prop-vertical, expr: 'bean.facts.height > bean.facts.width', types: *video_bean, env: *landscape_video, expect: {value: false}}
+  - {id: prop-landscape, expr: 'bean.facts.width > bean.facts.height', types: *video_bean, env: *landscape_video, expect: {value: true}}
+  - id: prop-hd
+    expr: '(bean.facts.width < bean.facts.height ? bean.facts.width : bean.facts.height) >= 1080'
+    types: *video_bean
+    env: *landscape_video
+    expect: {value: true, type: bool}
+  - {id: prop-h264, expr: 'bean.facts.vcodec == "h264"', types: *video_bean, env: *landscape_video, expect: {value: true}}
+  - id: prop-uses-meta-warns-optional
+    expr: 'bean.meta.language == "zh-CN"'
+    types: *video_bean
+    env: *landscape_video
+    expect: {value: true, warnings: [MRL-MAYBE-ABSENT]}
+  - id: prop-typo-is-static-error
+    expr: 'bean.facts.audio_stream > 0'
+    types: *video_bean
+    expect: {static_error: MRL-NO-FIELD}
+  - id: prop-type-error-is-static
+    expr: 'bean.facts.vcodec > 3'
+    types: *video_bean
+    expect: {static_error: MRL-TYPE}
+  # 13.1：brief.video@1 的命名属性
+  - id: prop-has-reference
+    expr: 'bean.payload.exists(f, f.path.startsWith("refs/"))'
+    types: {bean: '{payload: list<{path: string, digest: string, size: int, media_type: string}>, ...}'}
+    env:
+      bean:
+        payload:
+          - {path: brief.json, digest: "sha256:01", size: 120, media_type: application/json}
+          - {path: refs/sky.mp4, digest: "sha256:02", size: 9000, media_type: video/mp4}
+    expect: {value: true}
+  # 13.1：explainer@3 的验收表达式；brief 的 duration_s 是 JSON 整数 60
+  - id: accept-lower-bound-pass
+    expr: 'out.facts.duration_s >= inputs.brief.meta.duration_s * 0.9'
+    types: &accept_env
+      out: '{facts: {duration_s: float, ...}, ...}'
+      inputs: '{brief: {meta: {topic: string, duration_s: num, aspect: string, language: string, audience?: string, style?: string}, ...}}'
+    env: &attempt2
+      out: {facts: {duration_s: 61.4}}
+      inputs: {brief: {meta: {topic: 天空为什么是蓝色的, duration_s: 60, aspect: "16:9", language: zh-CN}}}
+    expect: {value: true, warnings: []}
+  - {id: accept-upper-bound-pass, expr: 'out.facts.duration_s <= inputs.brief.meta.duration_s * 1.1', types: *accept_env, env: *attempt2, expect: {value: true}}
+  - id: accept-upper-bound-reject
+    expr: 'out.facts.duration_s <= inputs.brief.meta.duration_s * 1.1'
+    types: *accept_env
+    env:
+      out: {facts: {duration_s: 71.2}}
+      inputs: {brief: {meta: {topic: 天空为什么是蓝色的, duration_s: 60, aspect: "16:9", language: zh-CN}}}
+    expect: {value: false}
+  # 9.2：subs-convert@1 的 equivalence
+  - id: equivalence-cue-count
+    expr: 'dst.facts.cue_count == src.facts.cue_count'
+    types: {src: '{facts: {cue_count: int, last_cue_end_s: float}, ...}', dst: '{facts: {cue_count: int, last_cue_end_s: float}, ...}'}
+    env: {src: {facts: {cue_count: 42, last_cue_end_s: 59.8}}, dst: {facts: {cue_count: 42, last_cue_end_s: 59.8}}}
+    expect: {value: true}
+  - id: equivalence-last-cue
+    expr: 'dst.facts.last_cue_end_s == src.facts.last_cue_end_s'
+    types: {src: '{facts: {cue_count: int, last_cue_end_s: float}, ...}', dst: '{facts: {cue_count: int, last_cue_end_s: float}, ...}'}
+    env: {src: {facts: {cue_count: 42, last_cue_end_s: 59.8}}, dst: {facts: {cue_count: 41, last_cue_end_s: 57.1}}}
+    expect: {value: false}
+  # 13.5：script-to-md 的 equivalence
+  - id: equivalence-sections
+    expr: 'dst.facts.section_count == src.facts.scene_count'
+    types: {src: '{facts: {scene_count: int}, ...}', dst: '{facts: {section_count: int}, ...}'}
+    env: {src: {facts: {scene_count: 7}}, dst: {facts: {section_count: 7}}}
+    expect: {value: true}
+  # 10.2：switch 与 until
+  - id: switch-shorts
+    expr: 'bean.facts.duration_s <= 60.0'
+    types: *video_bean
+    env: *landscape_video
+    expect: {value: false}
+  - id: until-judge
+    expr: 'gate.judge_score >= 0.85'
+    types: {gate: '{judge_score: float, attempt: int, ...}'}
+    env: {gate: {judge_score: 0.82, attempt: 2}}
+    expect: {value: false}
+  # 13.1：审批条件
+  - id: approval-propose-auto
+    expr: 'proposal.cost_estimate_usd <= 3.0'
+    types: {proposal: '{cost_estimate_usd: num, summary: string, ...}'}
+    env: {proposal: {cost_estimate_usd: 3.2, summary: 两段动画 + 旁白}}
+    expect: {value: false}
+  - id: approval-in-run-auto
+    expr: 'request.cost_usd <= 0.5'
+    types: {request: '{cost_usd: num, kind: string, ...}'}
+    env: {request: {cost_usd: 0.3, kind: creative-choice}}
+    expect: {value: true}

@@ -1,0 +1,41 @@
+suite: expr.access
+kind: expr
+description: 字段选择、下标、has()、map 字面量、记录类型与定义性分析（规范 5.4、6.5）
+cases:
+  - {id: select, expr: 'm.a.b', env: {m: {a: {b: 3}}}, expect: {value: 3}}
+  - {id: select-missing, expr: 'm.x', env: {m: {a: 1}}, expect: {error: MRL-NO-FIELD}}
+  - {id: select-on-null, expr: 'm.a.b', env: {m: {a: null}}, expect: {error: MRL-TYPE}}
+  - {id: select-on-int, expr: 'm.a.b', env: {m: {a: 1}}, expect: {error: MRL-TYPE}}
+  - {id: select-on-list-static, expr: '[1].a', expect: {static_error: MRL-TYPE}}
+  - {id: index-list, expr: 'l[1]', env: {l: [10, 20]}, expect: {value: 20}}
+  - {id: index-out-of-range, expr: 'l[2]', env: {l: [10, 20]}, expect: {error: MRL-INDEX}}
+  - {id: index-negative, expr: 'l[-1]', env: {l: [10, 20]}, expect: {error: MRL-INDEX}}
+  - {id: index-float-dyn, expr: 'l[x]', env: {l: [10], x: 0.0}, expect: {error: MRL-TYPE}}
+  - {id: index-float-static, expr: '[1, 2][0.5]', expect: {static_error: MRL-TYPE}}
+  - {id: index-map, expr: 'm["a-b"]', env: {m: {a-b: 5}}, expect: {value: 5}}
+  - {id: index-map-missing, expr: 'm["z"]', env: {m: {}}, expect: {error: MRL-NO-FIELD}}
+  - {id: index-record-literal-key, expr: '{"a": 1}["b"]', expect: {static_error: MRL-NO-FIELD}}
+  - {id: has-present, expr: 'has(m.a)', env: {m: {a: null}}, expect: {value: true, type: bool}}
+  - {id: has-absent, expr: 'has(m.b)', env: {m: {a: 1}}, expect: {value: false}}
+  - {id: has-on-null, expr: 'has(m.a.b)', env: {m: {a: null}}, expect: {value: false}}
+  - {id: has-on-int, expr: 'has(m.a.b)', env: {m: {a: 1}}, expect: {error: MRL-TYPE}}
+  - {id: has-not-select, expr: 'has(m)', env: {m: {}}, expect: {static_error: MRL-MACRO}}
+  - {id: has-guard, expr: 'has(m.b) && m.b > 0', env: {m: {a: 1}}, expect: {value: false}}
+  - {id: has-closed-record-unknown, expr: 'has(r.z)', types: {r: '{x: int}'}, env: {r: {x: 1}}, expect: {static_error: MRL-NO-FIELD}}
+  - {id: record-field, expr: 'r.x + 1', types: {r: '{x: int}'}, env: {r: {x: 1}}, expect: {value: 2, type: int}}
+  - {id: record-unknown-field, expr: 'r.y', types: {r: '{x: int}'}, env: {r: {x: 1}}, expect: {static_error: MRL-NO-FIELD}}
+  - {id: record-open-field, expr: 'r.y', types: {r: '{x: int, ...}'}, env: {r: {x: 1, y: 2}}, expect: {value: 2, type: dyn}}
+  - {id: record-type-mismatch, expr: 'r.x == "a"', types: {r: '{x: int}'}, env: {r: {x: 1}}, expect: {static_error: MRL-TYPE}}
+  - {id: record-optional-unguarded, expr: 'r.y == 1', types: {r: '{y?: int}'}, env: {r: {y: 1}}, expect: {value: true, warnings: [MRL-MAYBE-ABSENT]}}
+  - {id: record-optional-guarded, expr: 'has(r.y) && r.y == 1', types: {r: '{y?: int}'}, env: {r: {}}, expect: {value: false, warnings: []}}
+  - {id: record-optional-guarded-or, expr: '!has(r.y) || r.y == 1', types: {r: '{y?: int}'}, env: {r: {}}, expect: {value: true, warnings: []}}
+  - {id: record-optional-guarded-ternary, expr: 'has(r.y) ? r.y : 0', types: {r: '{y?: int}'}, env: {r: {y: 4}}, expect: {value: 4, type: int, warnings: []}}
+  - {id: record-optional-guard-wrong-path, expr: 'has(r.x) && r.y == 1', types: {r: '{x?: int, y?: int}'}, env: {r: {x: 1, y: 1}}, expect: {value: true, warnings: [MRL-MAYBE-ABSENT]}}
+  - {id: record-optional-runtime-missing, expr: 'r.y == 1', types: {r: '{y?: int}'}, env: {r: {}}, expect: {error: MRL-NO-FIELD}}
+  - {id: nested-record, expr: 'b.facts.width', types: {b: '{facts: {width: int, height: int}}'}, env: {b: {facts: {width: 1, height: 2}}}, expect: {value: 1, type: int}}
+  - {id: map-literal-record-type, expr: '{"a": 1, "b": "x"}.b', expect: {value: x, type: string}}
+  - {id: map-literal-dup-key, expr: '{"a": 1, "a": 2}', expect: {static_error: MRL-DUP-KEY}}
+  - {id: map-literal-dup-key-dyn, expr: '{k: 1, "a": 2}', env: {k: a}, expect: {error: MRL-DUP-KEY}}
+  - {id: map-literal-non-string-key, expr: '{1: 2}', expect: {static_error: MRL-TYPE}}
+  - {id: map-literal-dyn-key-type, expr: '{k: 1}', env: {k: a}, types: {k: string}, expect: {value: {a: 1}, type: 'map<int>'}}
+  - {id: map-iteration-sorted, expr: 'keys({"b": 1, "a": 2, "C": 3})', expect: {value: [C, a, b]}}

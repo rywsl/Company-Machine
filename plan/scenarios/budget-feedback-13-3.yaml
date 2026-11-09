@@ -1,0 +1,29 @@
+scenario: budget-feedback-13-3
+milestone: M0
+kind: registry
+base: example
+description: >-
+  架构文档 13.3 的反馈回路（静态部分）：配 3 种语言超出预算 → 编译错误作为反馈 → 改为 2 种语言后通过。
+  运行期由 planner 产出 plan 的部分属于 M4；这里用等价的 Line 验证同一套编译规则。
+steps:
+  - name: 3 种语言：5.0 + 3 × 3.0 = 14.0 USD，超过 12.0 USD
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.dub_en.map: {over: [en, ja, es], as: lang, max_parallel: 2}
+          spec.steps.dub_en.params.target_language: "{{ lang }}"
+          spec.steps.vertical.map: {over: dub_en.video, max_items: 3}
+          spec.steps.vertical.in.video: $item
+          spec.steps.to_shorts.map: {over: vertical.video, max_items: 3}
+          spec.steps.to_shorts.in.video: $item
+          spec.steps.to_github.map: {over: dub_en.subtitle, max_items: 3}
+          spec.steps.to_github.in.subtitle: $item
+    expect:
+      codes: [E-BUDGET]
+      diags: [{code: E-BUDGET, subject: "Line:explainer-multilang@5/budget", message: "14.0 USD 超过产线预算 12.0 USD"}]
+  - name: 根据反馈改为 2 种语言：5.0 + 2 × 3.0 = 11.0 USD → 通过
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.map: {over: [en, ja], as: lang, max_parallel: 2}}}
+    expect:
+      clean: true
+      resolutions: [{step: to_s3, port: artifact, status: direct, type: list<video.mp4@1>}]

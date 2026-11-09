@@ -1,0 +1,53 @@
+// 内核：引用解析、版本固定、重复定义（V1 规格校验的关系部分）。
+
+module kernel.refs.
+
+@doc("引用 ref（kind 类）解析到的 Spec 键；不含 retired")
+rel resolved(kind: string, ref: string, key: string).
+@doc("引用目标的生命周期；含 retired，用于区分“不存在”与“已退役”")
+rel ref_lifecycle(kind: string, ref: string, lifecycle: string).
+@doc("类型 id（name@major）解析到的最新非 retired minor")
+rel type_latest(id: string, minor: int).
+rel type_key(id: string, key: string).
+
+// 非 Type：按 name@version 精确匹配
+ref_lifecycle(K, R, L) :- spec(_, K, N, V, L), K != "Type", R = N + "@" + V.
+resolved(K, R, Key) :- spec(Key, K, N, V, L), K != "Type", L != "retired", R = N + "@" + V.
+
+// Type：name@major 解析到该 major 下最新的非 retired minor
+type_latest(Id, max(Mi)) :- type_version(_, Id, Mi, L), L != "retired".
+type_key(Id, Key) :- type_latest(Id, Mi), type_version(Key, Id, Mi, L), L != "retired".
+resolved("Type", Id, Key) :- type_key(Id, Key).
+ref_lifecycle("Type", Id, L) :- type_key(Id, Key), spec(Key, _, _, _, L).
+ref_lifecycle("Type", Id, "retired") :- type_version(_, Id, _, _), !type_key(Id, _).
+// Type：name@major.minor 钉住某个 minor
+ref_lifecycle("Type", R, L) :- spec(_, "Type", N, V, L), R = N + "@" + V.
+resolved("Type", R, Key) :- spec(Key, "Type", N, V, L), L != "retired", R = N + "@" + V.
+
+diag("E-UNPINNED", S, K + " 引用 " + R + " 没有固定版本") :-
+    ref(S, K, R), !R.contains("@").
+diag("E-REF", S, K + " " + R + " 不存在") :-
+    ref(S, K, R), R.contains("@"), !ref_lifecycle(K, R, _).
+diag("E-REF", S, K + " " + R + " 已退役，不能再被引用") :-
+    ref(S, K, R), ref_lifecycle(K, R, "retired"), !resolved(K, R, _).
+diag("W-DEPRECATED", S, K + " " + R + " 已弃用") :-
+    ref(S, K, R), resolved(K, R, Key), spec(Key, _, _, _, "deprecated").
+
+// 重复定义
+rel doc_count(key: string, n: int).
+doc_count(K, count()) :- spec_doc(K, _, _).
+diag("E-DUPLICATE", K, K + " 定义了 " + string(N) + " 次") :- doc_count(K, N), N > 1.
+
+// 镜像与上游源码必须固定
+rel image_ref(subject: string, image: string).
+image_ref(K, I) :- machine_image(K, I).
+image_ref(S, I) :- type_validator(K, V, I), S = K + "/validators." + V.
+image_ref(K, I) :- runtime_volume(K, I).
+rel image_pinned(image: string).
+image_pinned(I) :-
+    image_ref(_, I), I.contains("@sha256:"),
+    D = split(I, "@sha256:")[1], size(D) == 64, charsIn(D, "0123456789abcdef").
+diag("E-UNPINNED", S, "镜像 " + I + " 没有用 sha256 digest 固定") :-
+    image_ref(S, I), !image_pinned(I).
+diag("E-UNPINNED", K + "/source", "上游源码 " + R + " 没有用 commit 固定：" + C) :-
+    machine_source(K, R, C), !(size(C) >= 7 && size(C) <= 40 && charsIn(C, "0123456789abcdef")).

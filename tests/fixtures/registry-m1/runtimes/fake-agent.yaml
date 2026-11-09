@@ -1,0 +1,20 @@
+# 测试用 agent CLI（tests/fakes/fake_agent.py）。命令行形状模仿 Claude Code 无头模式。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: fake-agent, version: 1}
+spec:
+  kind: agent-cli
+  inject:
+    volume: mao-test/operator@sha256:cef52db3ca9921be9f4a7c0c1e2c5eab79aa09b827c55fcf60c8a353247d7433
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/fake-agent, -p, "{{ brief.task }}",
+           --append-system-prompt, "{{ brief.factory_contract }}",
+           --output-format, stream-json,
+           --max-turns, "{{ limits.max_turns }}",
+           --model, "{{ operator.model }}"]
+  env:
+    FAKE_AGENT_RUNTIME: "{{ operator.runtime }}"
+    FAKE_AGENT_BUDGET: "{{ limits.budget_usd }}"
+  transcript: {format: stream-json, from: stdout}
+  models_allowed: [fake-model-1]

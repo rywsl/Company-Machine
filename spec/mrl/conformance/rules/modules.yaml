@@ -1,0 +1,144 @@
+suite: rules.modules
+kind: rules
+description: >-
+  模块与归属：规则只能定义本模块的关系；@open 关系可被任何模块追加但不可读取；
+  @input 关系只由宿主提供。这保证“追加模块只会增加诊断，不会放松已有约束”（规范 8.3）
+cases:
+  - id: ownership-foreign-rule
+    modules:
+      - {name: a.mrl, text: "module a.\nrel p(x: string).\np(\"a\").\n"}
+      - {name: b.mrl, text: "module b.\np(\"b\").\n"}
+    expect: {static_error: MRL-OWNERSHIP}
+
+  - id: open-relation-extended
+    modules:
+      - name: kernel.mrl
+        text: |
+          module kernel.
+          @input rel station(s: string, role: string).
+          @open rel diag(code: string, subject: string).
+          diag("E-A", S) :- station(S, "bad").
+      - name: constitution.mrl
+        text: |
+          module constitution.
+          diag("E-B", S) :- station(S, "sink").
+    facts: {station: [[x, bad], [y, sink], [z, transform]]}
+    expect: {relations: {diag: [[E-A, x], [E-B, y]]}}
+
+  - id: open-relation-not-readable
+    program: |
+      module t.
+      @open rel diag(code: string).
+      rel count_diag(n: int).
+      diag("E-A").
+      count_diag(count()) :- diag(_).
+    expect: {static_error: MRL-OWNERSHIP}
+
+  - id: input-no-rules
+    program: |
+      module t.
+      @input rel e(a: string).
+      e("x").
+    expect: {static_error: MRL-OWNERSHIP}
+
+  - id: duplicate-relation
+    modules:
+      - {name: a.mrl, text: "module a.\nrel p(x: string).\n"}
+      - {name: b.mrl, text: "module b.\nrel p(x: string).\n"}
+    expect: {static_error: MRL-DUP}
+
+  - id: duplicate-module
+    modules:
+      - {name: a.mrl, text: "module a.\nrel p(x: string).\n"}
+      - {name: a2.mrl, text: "module a.\nrel q(x: string).\n"}
+    expect: {static_error: MRL-DUP}
+
+  - id: relation-named-like-function
+    program: |
+      module t.
+      rel size(x: int).
+    expect: {static_error: MRL-DUP}
+
+  - id: undeclared-relation-in-body
+    program: |
+      module t.
+      @input rel edge(a: string, b: string).
+      rel p(a: string).
+      p(X) :- egde(X, _).
+    expect: {static_error: MRL-UNDEFINED}
+
+  - id: undeclared-head
+    program: |
+      module t.
+      @input rel e(a: string).
+      q(X) :- e(X).
+    expect: {static_error: MRL-UNDEFINED}
+
+  - id: input-and-open
+    program: |
+      module t.
+      @input @open rel e(a: string).
+    expect: {static_error: MRL-DECL}
+
+  - id: num-column-type
+    program: |
+      module t.
+      rel p(a: num).
+    expect: {static_error: MRL-DECL}
+
+  - id: duplicate-column
+    program: |
+      module t.
+      rel p(a: string, a: int).
+    expect: {static_error: MRL-DECL}
+
+  - id: unknown-annotation
+    program: |
+      module t.
+      @output rel p(a: string).
+    expect: {static_error: MRL-DECL}
+
+  - id: arity-mismatch-body
+    program: |
+      module t.
+      @input rel e(a: string, b: string).
+      rel p(a: string).
+      p(X) :- e(X).
+    expect: {static_error: MRL-ARITY}
+
+  - id: arity-mismatch-head
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel p(a: string).
+      p(X, X) :- e(X).
+    expect: {static_error: MRL-ARITY}
+
+  - id: facts-for-non-input
+    program: |
+      module t.
+      rel p(a: string).
+      p("x").
+    facts: {p: [[y]]}
+    expect: {error: MRL-FACT}
+
+  - id: facts-wrong-type
+    program: |
+      module t.
+      @input rel e(a: int).
+    facts: {e: [[x]]}
+    expect: {error: MRL-FACT}
+
+  - id: facts-wrong-arity
+    program: |
+      module t.
+      @input rel e(a: int, b: int).
+    facts: {e: [[1]]}
+    expect: {error: MRL-FACT}
+
+  - id: facts-for-undeclared
+    program: |
+      module t.
+      @input rel e(a: int).
+    facts: {nope: [[1]]}
+    expect: {error: MRL-FACT}

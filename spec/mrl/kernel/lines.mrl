@@ -1,0 +1,218 @@
+// 内核：产线——步骤端口、绑定、无环、去处完整、类型与契约（含转换解析）、预算。
+
+module kernel.lines.
+
+@doc("步骤的目标能被解析（引用有效）")
+rel step_target_ok(line: string, step: string).
+step_target_ok(L, St) :- step(L, St, "station", R), resolved("Station", R, _).
+step_target_ok(L, St) :- step(L, St, "subline", R), resolved("Line", R, _).
+step_target_ok(L, St) :- step(L, St, "switch", _).
+
+rel has_step(line: string, step: string).
+has_step(L, St) :- step(L, St, _, _).
+rel has_map(line: string, step: string).
+has_map(L, St) :- step_map(L, St, _, _).
+rel has_map_over(line: string, step: string).
+has_map_over(L, St) :- map_over(L, St, _, _, _).
+rel has_until(line: string, step: string).
+has_until(L, St) :- step_until(L, St, _).
+rel has_output_type(line: string, port: string).
+has_output_type(L, P) :- line_output_type(L, P, _).
+
+@doc("步骤的输入端口：类型 d 与要求的属性 r")
+rel step_in_port(line: string, step: string, port: string, d: string, r: list<string>).
+step_in_port(L, St, P, D, R) :- step(L, St, "station", Ref), resolved("Station", Ref, K), in_port(K, P, D, _, R).
+step_in_port(L, St, P, D, R) :- step(L, St, "subline", Ref), resolved("Line", Ref, LK), line_input(LK, P, D, R).
+
+@doc("步骤的输出端口：类型 u 与保证的属性 g。带 map 的工位步骤把各次输出聚合为 list<u>（保证对每个元素成立）；子产线的输出见 line_out")
+rel step_out_port(line: string, step: string, port: string, u: string, g: list<string>).
+step_out_port(L, St, P, U, G) :-
+    step(L, St, "station", Ref), !has_map(L, St), resolved("Station", Ref, K), out_port(K, P, U, _, G).
+step_out_port(L, St, P, LU, G) :-
+    step(L, St, "station", Ref), has_map(L, St), resolved("Station", Ref, K), out_port(K, P, U, _, G),
+    LU = "list<" + U + ">".
+step_out_port(L, St, P, U, G) :- step(L, St, "subline", Ref), resolved("Line", Ref, LK), line_out(LK, P, U, G).
+
+@doc("产线接口输出对外呈现的类型与保证：声明了 type 时用声明的类型，否则用内部来源端口的类型；保证沿用内部来源端口")
+rel line_out(line: string, port: string, u: string, g: list<string>).
+line_out(L, P, T, G) :- line_output(L, P, SS, SP), line_output_type(L, P, T), step_out_port(L, SS, SP, _, G).
+line_out(L, P, U, G) :- line_output(L, P, SS, SP), !has_output_type(L, P), step_out_port(L, SS, SP, U, G).
+
+@doc("绑定、map、switch 可引用的来源端口：src_kind 为 step（步骤输出）或 input（产线接口输入，它的 requires 就是保证）")
+rel source_port(line: string, src_kind: string, src_step: string, src_port: string, u: string, g: list<string>).
+source_port(L, "step", S, P, U, G) :- step_out_port(L, S, P, U, G).
+source_port(L, "input", "", P, U, G) :- line_input(L, P, U, G).
+
+@doc("$item 的类型：map 展开的 list<t> 的元素类型 t；来源的保证对每个元素成立")
+rel item_port(line: string, step: string, u: string, g: list<string>).
+item_port(L, St, E, G) :- map_over(L, St, K, S, P), source_port(L, K, S, P, U, G), texpr(U, "list", E).
+
+@doc("来源在诊断消息中的写法")
+rel source_name(line: string, src_kind: string, src_step: string, src_port: string, name: string).
+source_name(L, K, S, P, N) :- bind(L, _, _, K, S, P), N = K == "input" ? "$inputs." + P : (K == "item" ? "$item" : S + "." + P).
+source_name(L, K, S, P, N) :- map_over(L, _, K, S, P), N = K == "input" ? "$inputs." + P : (K == "item" ? "$item" : S + "." + P).
+source_name(L, K, S, P, N) :- switch_on(L, _, K, S, P), N = K == "input" ? "$inputs." + P : (K == "item" ? "$item" : S + "." + P).
+
+rel step_required_in(line: string, step: string, port: string).
+step_required_in(L, St, P) :- step(L, St, "station", Ref), resolved("Station", Ref, K), in_port(K, P, _, false, _).
+step_required_in(L, St, P) :- step(L, St, "subline", Ref), resolved("Line", Ref, LK), line_input(LK, P, _, _).
+
+rel bound(line: string, step: string, port: string).
+bound(L, St, P) :- bind(L, St, P, _, _, _).
+
+// ---------- 绑定 ----------
+diag("E-UNBOUND", L + "/steps." + St + ".in", "必填输入 " + P + " 没有连接") :-
+    step_required_in(L, St, P), !bound(L, St, P).
+diag("E-PORT", L + "/steps." + St + ".in." + P, "步骤 " + St + " 的目标没有输入端口 " + P) :-
+    bind(L, St, P, _, _, _), step_target_ok(L, St), !step_in_port(L, St, P, _, _).
+diag("E-PORT", L + "/steps." + St + ".in." + P, "来源步骤 " + Src + " 不存在") :-
+    bind(L, St, P, "step", Src, _), !has_step(L, Src).
+diag("E-PORT", L + "/steps." + St + ".in." + P, "来源步骤 " + Src + " 没有输出端口 " + SP) :-
+    bind(L, St, P, "step", Src, SP), step_target_ok(L, Src), !step_out_port(L, Src, SP, _, _).
+diag("E-PORT", L + "/steps." + St + ".in." + P, "产线接口没有输入 " + In) :-
+    bind(L, St, P, "input", _, In), !line_input(L, In, _, _).
+diag("E-PORT", L + "/steps." + St + ".in." + P, "$item 只能用在带 map 的步骤中") :-
+    bind(L, St, P, "item", _, _), !has_map(L, St).
+diag("E-PORT", L + "/steps." + St + ".in." + P, "对字面列表展开的 map 只能在 params 中用 {{ 名字 }} 引用元素，不能用 $item 绑定端口") :-
+    bind(L, St, P, "item", _, _), has_map(L, St), !has_map_over(L, St).
+diag("E-PORT", L + "/interface.outputs." + P, "接口输出引用的来源 " + SS + "." + SP + " 不存在") :-
+    line_output(L, P, SS, SP), !step_out_port(L, SS, SP, _, _).
+diag("E-PORT", L + "/interface.outputs." + P, "接口输出声明的类型 " + T + " 不是来源类型 " + U + " 的超类型") :-
+    line_output_type(L, P, T), line_output(L, P, SS, SP), step_out_port(L, SS, SP, U, _), texpr_ok(T), texpr_ok(U),
+    !tsub(U, T).
+
+diag("E-PROPERTY", L + "/interface.inputs." + P, "requires 中的 " + X + " 不是 " + E + " 的命名属性") :-
+    line_input_require(L, P, X), line_input(L, P, E, _), texpr_ok(E), !texpr_prop(E, X).
+
+// ---------- 参数 ----------
+@doc("参数类型 ptype 能接受的值类型 vtype；模板的渲染结果是 string")
+rel param_accepts(ptype: string, vtype: string).
+param_accepts("string", "string").
+param_accepts("string", "template").
+param_accepts("int", "int").
+param_accepts("float", "float").
+param_accepts("float", "int").
+param_accepts("num", "int").
+param_accepts("num", "float").
+param_accepts("bool", "bool").
+
+diag("E-PARAM", L + "/steps." + St + ".params." + X, "工位没有声明参数 " + X) :-
+    step_param(L, St, X, _), step(L, St, "station", Ref), resolved("Station", Ref, K), !station_param(K, X, _, _).
+diag("E-PARAM", L + "/steps." + St + ".params", "必填参数 " + X + " 没有提供") :-
+    step(L, St, "station", Ref), resolved("Station", Ref, K), station_param(K, X, _, false), !step_param(L, St, X, _).
+diag("E-PARAM", L + "/steps." + St + ".params." + X, "参数 " + X + " 的类型是 " + PT + "，不能接受 " + VT + " 值") :-
+    step_param(L, St, X, VT), step(L, St, "station", Ref), resolved("Station", Ref, K), station_param(K, X, PT, _),
+    !param_accepts(PT, VT).
+diag("E-PARAM", L + "/steps." + St + ".params." + X, "子产线步骤不接受参数（子产线没有参数声明）") :-
+    step_param(L, St, X, _), step(L, St, "subline", _).
+
+// ---------- switch 与 map ----------
+diag("E-PORT", L + "/steps." + St + ".switch", "switch 的目标步骤 " + T + " 不存在") :-
+    switch_target(L, St, T), !has_step(L, T).
+diag("E-PORT", L + "/steps." + St + ".switch", "switch 观察的来源 " + N + " 不存在") :-
+    switch_on(L, St, K, Src, SP), K != "item", !source_port(L, K, Src, SP, _, _), source_name(L, K, Src, SP, N).
+diag("E-PORT", L + "/steps." + St + ".switch", "switch 不能观察 $item") :- switch_on(L, St, "item", _, _).
+
+diag("E-PORT", L + "/steps." + St + ".map", "map 展开的来源 " + N + " 不存在") :-
+    map_over(L, St, K, Src, SP), K != "item", !source_port(L, K, Src, SP, _, _), source_name(L, K, Src, SP, N).
+diag("E-PORT", L + "/steps." + St + ".map", "map 展开的来源 " + N + " 的类型 " + U + " 不是 list") :-
+    map_over(L, St, K, Src, SP), source_port(L, K, Src, SP, U, _), !texpr(U, "list", _), source_name(L, K, Src, SP, N).
+diag("E-PORT", L + "/steps." + St + ".map", "map 不能对 $item 展开") :- map_over(L, St, "item", _, _).
+
+// ---------- 无环 ----------
+rel dep(line: string, a: string, b: string).
+dep(L, A, B) :- bind(L, A, _, "step", B, _).
+dep(L, A, B) :- switch_on(L, A, "step", B, _).
+dep(L, A, B) :- map_over(L, A, "step", B, _).
+dep(L, T, Sw) :- switch_target(L, Sw, T).
+rel reach(line: string, a: string, b: string).
+reach(L, A, B) :- dep(L, A, B).
+reach(L, A, C) :- dep(L, A, B), reach(L, B, C).
+diag("E-CYCLE", L + "/steps." + A, "步骤 " + A + " 处在依赖环上") :- reach(L, A, A).
+
+// ---------- 去处完整 ----------
+rel consumed(line: string, step: string, port: string).
+consumed(L, St, P) :- bind(L, _, _, "step", St, P).
+consumed(L, St, P) :- keep(L, St, P).
+consumed(L, St, P) :- line_output(L, _, St, P).
+consumed(L, St, P) :- map_over(L, _, "step", St, P).
+diag("E-ORPHAN", L + "/steps." + St, "输出 " + St + "." + P + " 没有去处：既不被消费，也没有标记 keep") :-
+    step_out_port(L, St, P, _, _), !consumed(L, St, P).
+diag("E-PORT", L + "/keep", "keep 引用的 " + St + "." + P + " 不存在") :-
+    keep(L, St, P), !step_out_port(L, St, P, _, _).
+
+// ---------- 类型与契约：转换解析 ----------
+@doc("一条边：上游类型 u 与保证 g，下游类型 d 与要求 r")
+rel edge(line: string, step: string, port: string, u: string, g: list<string>, d: string, r: list<string>).
+edge(L, St, P, U, G, D, R) :-
+    bind(L, St, P, K, S, SP), K != "item", source_port(L, K, S, SP, U, G), step_in_port(L, St, P, D, R).
+edge(L, St, P, U, G, D, R) :-
+    bind(L, St, P, "item", _, _), item_port(L, St, U, G), step_in_port(L, St, P, D, R).
+
+@doc("转换库中的一个转换（非 retired）；active 为 false 表示已弃用，只能显式使用")
+rel conv_record(c: map<any>, active: bool).
+conv_record(C, A) :-
+    station(K, "converter"), spec(K, _, N, V, Lc), Lc != "retired",
+    converts(K, F, T, Lossless, Ps), in_port(K, "in", _, _, Rs), out_port(K, "out", _, _, Gs),
+    conv_cost(K, Usd, P50), A = Lc == "active",
+    C = {"id": N + "@" + V, "from": F, "to": T, "lossless": Lossless, "requires": Rs,
+         "guarantees": Gs, "preserves": Ps, "cost": Usd, "p50": P50}.
+rel conv_lib(lib: list<map<any>>).
+conv_lib(set(C)) :- conv_record(C, true).
+rel conv_lib_all(lib: list<map<any>>).
+conv_lib_all(set(C)) :- conv_record(C, _).
+rel sub_pairs(ps: list<list<string>>).
+sub_pairs(set([A, B])) :- tsub(A, B).
+rel always_pairs(ps: list<list<string>>).
+always_pairs(set([E, P])) :- texpr_always(E, P).
+
+@doc("每条边的解析结果（即本 epoch 的转换解析表）；result 字段见 factory-profile.md 第 5 章")
+rel resolution(line: string, step: string, port: string, result: map<any>).
+resolution(L, St, P, Res) :-
+    edge(L, St, P, U, G, D, R), texpr_ok(U), texpr_ok(D), bind_via(L, St, P, "auto", _),
+    conv_lib(Lib), sub_pairs(S), always_pairs(A), Res = resolve(Lib, S, A, U, G, D, R).
+resolution(L, St, P, Res) :-
+    edge(L, St, P, U, G, D, R), texpr_ok(U), texpr_ok(D), bind_via(L, St, P, "none", _),
+    sub_pairs(S), always_pairs(A), Res = resolve([], S, A, U, G, D, R).
+resolution(L, St, P, Res) :-
+    edge(L, St, P, U, G, D, R), texpr_ok(U), texpr_ok(D), bind_via(L, St, P, "explicit", Chain),
+    conv_lib_all(Lib), sub_pairs(S), always_pairs(A), Res = resolveVia(Lib, S, A, U, G, D, R, Chain).
+
+diag("E-NO-CONVERTER", L + "/steps." + St + ".in." + P, U + " → " + D + "：转换库中没有满足条件的路径（将生成转换需求）") :-
+    resolution(L, St, P, Res), Res.status == "no-converter", bind_via(L, St, P, "auto", _),
+    edge(L, St, P, U, _, D, _).
+diag("E-TYPE-MISMATCH", L + "/steps." + St + ".in." + P, U + " 不是 " + D + " 的子类型，且这条边禁止自动转换") :-
+    resolution(L, St, P, Res), Res.status == "no-converter", bind_via(L, St, P, "none", _),
+    edge(L, St, P, U, _, D, _).
+diag("E-CONTRACT", L + "/steps." + St + ".in." + P, "要求 {" + join(R, ", ") + "}，可提供 {" + join(Res.props, ", ") + "}，缺失 {" + join(Res.missing, ", ") + "}") :-
+    resolution(L, St, P, Res), Res.status == "contract", edge(L, St, P, _, _, _, R).
+diag("E-VIA", L + "/steps." + St + ".in." + P, Res.detail) :-
+    resolution(L, St, P, Res), Res.status == "via-invalid".
+diag("I-CONVERT", L + "/steps." + St + ".in." + P, U + " → " + D + "：插入 [" + join(Res.chain, ", ") + "]" + (Res.lossless ? "（无损）" : "（有损）")) :-
+    resolution(L, St, P, Res), Res.status == "convert", edge(L, St, P, U, _, D, _).
+
+// ---------- 预算 ----------
+rel step_cost(line: string, step: string, usd: float).
+step_cost(L, St, B) :- step(L, St, "station", Ref), resolved("Station", Ref, K), station_budget(K, B).
+step_cost(L, St, B) :- step(L, St, "subline", Ref), resolved("Line", Ref, LK), line_budget(LK, B).
+rel multiplicity(line: string, step: string, n: int).
+multiplicity(L, St, N) :- step(L, St, _, _), !has_map(L, St), !has_until(L, St), N = 1.
+multiplicity(L, St, N) :- step_map(L, St, I, _), I >= 0, !has_until(L, St), N = I.
+multiplicity(L, St, N) :- step_until(L, St, M), !has_map(L, St), N = M.
+multiplicity(L, St, N) :- step_map(L, St, I, _), I >= 0, step_until(L, St, M), N = I * M.
+diag("E-BUDGET", L + "/steps." + St + ".map", "map 的输入长度在运行期才知道，必须设置 max_items 才能计算预算") :-
+    step_map(L, St, -1, _), step_cost(L, St, B), B > 0.0.
+
+@doc("产线预算的组成：每个步骤的预算上限 × 次数；以及边上插入的每个转换的预算上限 × 下游步骤的次数")
+rel cost_item(line: string, item: string, usd: float).
+cost_item(L, St, X) :- step_cost(L, St, B), multiplicity(L, St, N), X = B * N.
+cost_item(L, I, X) :-
+    resolution(L, St, P, Res), Res.status == "convert", station(K, "converter"), spec(K, _, Nm, V, _),
+    Nm + "@" + V in Res.chain, station_budget(K, B), multiplicity(L, St, N),
+    I = St + ".in." + P + "~" + Nm + "@" + V, X = B * N.
+
+rel spend(line: string, usd: float).
+spend(L, sum(X)) :- cost_item(L, _, X).
+diag("E-BUDGET", L + "/budget", "各步骤（含插入的转换）预算上限之和 " + string(X) + " USD 超过产线预算 " + string(C) + " USD") :-
+    spend(L, X), line_budget(L, C), X > C.
+diag("W-NO-BUDGET", L, "产线没有设置 budget.cap_usd") :- line(L), !line_budget(L, _).

@@ -1,0 +1,13 @@
+# 脚本工位：把短文转成大写。产物保证 shouting（全部大写）。
+apiVersion: mao/v1
+kind: Station
+metadata: {name: upper, version: 1}
+spec:
+  role: transform
+  machine: toolbox@1
+  recipe: upper
+  operator: {runtime: script@1}
+  inputs:  {note: {type: note.text@1, requires: [non_empty]}}
+  outputs: {note: {type: note.text@1, guarantees: [non_empty, shouting]}}
+  limits:  {timeout: 60s, budget_usd: 0, retries: {rejected: 0, failed: 1, mode: fresh}}
+  policy: tool-default@1

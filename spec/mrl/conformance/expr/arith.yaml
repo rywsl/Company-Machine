@@ -1,0 +1,46 @@
+suite: expr.arith
+kind: expr
+description: 数值语义——int 与 float 混合、溢出、除法、取模、零的规范化（规范 6.2）
+cases:
+  - {id: add-int, expr: '1 + 2', expect: {value: 3, type: int}}
+  - {id: sub-int, expr: '1 - 5', expect: {value: -4}}
+  - {id: mul-int, expr: '6 * 7', expect: {value: 42}}
+  - {id: precedence, expr: '1 + 2 * 3', expect: {value: 7}}
+  - {id: parens, expr: '(1 + 2) * 3', expect: {value: 9}}
+  - {id: left-assoc-sub, expr: '10 - 3 - 2', expect: {value: 5}}
+  - {id: left-assoc-div, expr: '8 / 4 / 2', expect: {value: 1.0}}
+  - {id: div-int-gives-float, expr: '7 / 2', expect: {value: 3.5, type: float}}
+  - {id: div-exact-still-float, expr: '6 / 3', expect: {value: 2.0, type: float}}
+  - {id: mixed-mul, expr: 'x * 0.9', env: {x: 60}, types: {x: int}, expect: {value: 54.0, type: float}}
+  - {id: mixed-add, expr: '1 + 0.5', expect: {value: 1.5, type: float}}
+  - {id: mixed-num-type, expr: 'x + 1', env: {x: 2}, types: {x: num}, expect: {value: 3, type: num}}
+  - {id: num-keeps-float, expr: 'x + 1', env: {x: 2.5}, types: {x: num}, expect: {value: 3.5}}
+  - {id: json-int-times-float, expr: 'm.duration_s * 0.9', env: {m: {duration_s: 60}}, expect: {value: 54.0}}
+  - {id: float-add, expr: '0.1 + 0.2', expect: {value: 0.30000000000000004}}
+  - {id: big-int-to-float, expr: '9007199254740993 * 1.0', expect: {value: 9007199254740992.0}}
+  - {id: int-overflow-add, expr: '9223372036854775807 + 1', expect: {error: MRL-OVERFLOW}}
+  - {id: int-overflow-mul, expr: '4611686018427387904 * 2', expect: {error: MRL-OVERFLOW}}
+  - {id: int-overflow-negate, expr: '-(-9223372036854775808)', expect: {error: MRL-OVERFLOW}}
+  - {id: int-min-minus-one, expr: '-9223372036854775808 - 1', expect: {error: MRL-OVERFLOW}}
+  - {id: div-zero-int, expr: '1 / 0', expect: {error: MRL-DIV-ZERO}}
+  - {id: div-zero-float, expr: '1.0 / 0.0', expect: {error: MRL-DIV-ZERO}}
+  - {id: mod-floor, expr: '-7 % 3', expect: {value: 2, type: int}}
+  - {id: mod-floor-neg-divisor, expr: '7 % -3', expect: {value: -2}}
+  - {id: mod-zero, expr: '5 % 0', expect: {error: MRL-DIV-ZERO}}
+  - {id: mod-float-static, expr: '5.0 % 2', expect: {static_error: MRL-TYPE}}
+  - {id: mod-float-dyn, expr: 'x % 2', env: {x: 5.0}, expect: {error: MRL-TYPE}}
+  - {id: float-overflow, expr: '1e308 * 10.0', expect: {error: MRL-DOMAIN}}
+  - {id: float-overflow-div, expr: '1e308 / 1e-308', expect: {error: MRL-DOMAIN}}
+  - {id: neg-zero-normalized, expr: 'string(-0.0)', expect: {value: "0.0"}}
+  - {id: neg-zero-product, expr: 'string(-1.0 * 0.0)', expect: {value: "0.0"}}
+  - {id: unary-minus-float, expr: '-2.5', expect: {value: -2.5, type: float}}
+  - {id: double-negation, expr: '- -3', expect: {value: 3}}
+  - {id: unary-minus-dyn, expr: '-x', env: {x: 4}, expect: {value: -4, type: num}}
+  - {id: unary-minus-string, expr: '-"a"', expect: {static_error: MRL-TYPE}}
+  - {id: string-concat, expr: '"a" + "b"', expect: {value: ab, type: string}}
+  - {id: list-concat, expr: '[1] + [2.5]', expect: {value: [1, 2.5], type: 'list<num>'}}
+  - {id: add-string-int-static, expr: '"a" + 1', expect: {static_error: MRL-TYPE}}
+  - {id: mul-string-static, expr: '"a" * 2', expect: {static_error: MRL-TYPE}}
+  - {id: add-dyn-mismatch, expr: 'x + 1', env: {x: "a"}, expect: {error: MRL-TYPE}}
+  - {id: bool-is-not-number, expr: 'x + 1', env: {x: true}, expect: {error: MRL-TYPE}}
+  - {id: null-is-not-number, expr: 'x * 2', env: {x: null}, expect: {error: MRL-TYPE}}

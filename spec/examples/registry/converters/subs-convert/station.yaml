@@ -1,0 +1,25 @@
+# 转换（架构文档 9.2）：converter 是只有一个输入 in、一个输出 out、没有对外副作用的工位。
+# 收录在转换库中：任何产线遇到 subtitle.vtt@1 → subtitle.srt@1 的不兼容，编译器都会自动插入它。
+apiVersion: mao/v1
+kind: Station
+metadata: {name: subs-convert, version: 1}
+spec:
+  role: converter
+  converts:
+    from: subtitle.vtt@1
+    to: subtitle.srt@1
+    lossless: true
+    preserves: []                     # 输入满足、输出也一定满足的属性
+  machine: ffmpeg@3
+  recipe: subs-convert
+  operator: {runtime: script@1}
+  inputs:  {in:  {type: subtitle.vtt@1}}
+  outputs: {out: {type: subtitle.srt@1}}
+  equivalence:                        # 转换前后必须成立的关系，由出厂检验强制执行
+    - "dst.facts.cue_count == src.facts.cue_count"
+    - "dst.facts.last_cue_end_s == src.facts.last_cue_end_s"
+  cost: {usd_est: 0, p50_s: 2}        # 用于路径排序
+  fixtures:
+    accept: [fixtures/basic.vtt, fixtures/multiline.vtt, fixtures/styled.vtt]
+    reject: [fixtures/broken-timestamps.vtt]
+  policy: tool-default@1

@@ -1,0 +1,102 @@
+// 内核：工位——与配方一致、角色要求的端口、属性引用、converter 结构、策略与模型。
+
+module kernel.stations.
+
+rel role_name(r: string).
+role_name("source").
+role_name("transform").
+role_name("converter").
+role_name("judge").
+role_name("planner").
+role_name("sink").
+
+@doc("converter、judge、planner 是 transform 的特化")
+rel specialized(r: string).
+specialized("converter").
+specialized("judge").
+specialized("planner").
+
+@doc("策略的 applies_to 中写的角色 PR 覆盖工位角色 R")
+rel role_covers(pr: string, r: string).
+role_covers(R, R) :- role_name(R).
+role_covers("transform", R) :- specialized(R).
+
+rel has_in(s: string).
+has_in(S) :- in_port(S, _, _, _, _).
+rel has_out(s: string).
+has_out(S) :- out_port(S, _, _, _, _).
+
+// ---------- 角色要求的端口 ----------
+diag("E-PORT", S + "/inputs", "source 工位不能有输入端口") :- station(S, "source"), has_in(S).
+diag("E-PORT", S + "/outputs", "source 工位至少要有一个输出端口") :- station(S, "source"), !has_out(S).
+diag("E-PORT", S + "/inputs", "sink 工位至少要有一个输入端口") :- station(S, "sink"), !has_in(S).
+diag("E-PORT", S + "/inputs", R + " 工位至少要有一个输入端口") :-
+    station(S, R), R != "source", R != "sink", !has_in(S).
+diag("E-PORT", S + "/outputs", R + " 工位至少要有一个输出端口") :-
+    station(S, R), R != "source", R != "sink", !has_out(S).
+
+// ---------- 与配方一致 ----------
+rel st_recipe(s: string, machine: string, recipe: string).
+st_recipe(S, MK, R) :- station_machine(S, M, R), resolved("Machine", M, MK), recipe(MK, R).
+
+diag("E-REF", S + "/recipe", "机器 " + M + " 没有配方 " + R) :-
+    station_machine(S, M, R), resolved("Machine", M, MK), !recipe(MK, R).
+diag("E-PORT", S + "/inputs." + P, "配方 " + R + " 没有输入端口 " + P) :-
+    in_port(S, P, _, _, _), st_recipe(S, MK, R), !recipe_in(MK, R, P, _, _).
+diag("E-PORT", S + "/inputs." + P, "工位输入类型 " + E + " 不是配方输入类型 " + RE + " 的子类型") :-
+    in_port(S, P, E, _, _), st_recipe(S, MK, R), recipe_in(MK, R, P, RE, _), texpr_ok(E), texpr_ok(RE), !tsub(E, RE).
+diag("E-PORT", S + "/inputs", "配方 " + R + " 的必填输入 " + P + " 没有在工位中声明") :-
+    st_recipe(S, MK, R), recipe_in(MK, R, P, _, false), !in_port(S, P, _, _, _).
+diag("E-PORT", S + "/outputs." + P, "配方 " + R + " 没有输出端口 " + P) :-
+    out_port(S, P, _, _, _), st_recipe(S, MK, R), !recipe_out(MK, R, P, _, _).
+diag("E-PORT", S + "/outputs." + P, "配方输出类型 " + RE + " 不是工位输出类型 " + E + " 的子类型") :-
+    out_port(S, P, E, _, _), st_recipe(S, MK, R), recipe_out(MK, R, P, RE, _), texpr_ok(E), texpr_ok(RE), !tsub(RE, E).
+diag("E-PARAM", S + "/params." + X, "配方 " + R + " 没有参数 " + X) :-
+    station_param(S, X, _, _), st_recipe(S, MK, R), !recipe_param(MK, R, X, _).
+diag("E-PARAM", S + "/params." + X, "参数 " + X + " 的类型 " + A + " 与配方声明的 " + B + " 不同") :-
+    station_param(S, X, A, _), st_recipe(S, MK, R), recipe_param(MK, R, X, B), A != B.
+
+// ---------- 属性引用 ----------
+diag("E-PROPERTY", S + "/outputs." + P, "guarantees 中的 " + X + " 不是 " + E + " 的命名属性") :-
+    out_guarantee(S, P, X), out_port(S, P, E, _, _), texpr_ok(E), !texpr_prop(E, X).
+diag("E-PROPERTY", S + "/inputs." + P, "requires 中的 " + X + " 不是 " + E + " 的命名属性") :-
+    in_require(S, P, X), in_port(S, P, E, _, _), texpr_ok(E), !texpr_prop(E, X).
+diag("E-PROPERTY", S + "/converts", "preserves 中的 " + X + " 必须同时是 " + F + " 与 " + T + " 的命名属性") :-
+    conv_preserve(S, X), converts(S, F, T, _, _), texpr_ok(F), texpr_ok(T), !texpr_prop(F, X).
+diag("E-PROPERTY", S + "/converts", "preserves 中的 " + X + " 必须同时是 " + F + " 与 " + T + " 的命名属性") :-
+    conv_preserve(S, X), converts(S, F, T, _, _), texpr_ok(T), texpr_prop(F, X), !texpr_prop(T, X).
+
+// ---------- converter 结构 ----------
+diag("E-CONVERTER", S, "converter 必须声明 converts") :- station(S, "converter"), !converts(S, _, _, _, _).
+diag("E-CONVERTER", S + "/converts", "只有 converter 工位可以声明 converts") :-
+    converts(S, _, _, _, _), station(S, R), R != "converter".
+diag("E-CONVERTER", S + "/inputs", "converter 只能有一个名为 in 的输入端口，发现 " + P) :-
+    station(S, "converter"), in_port(S, P, _, _, _), P != "in".
+diag("E-CONVERTER", S + "/outputs", "converter 只能有一个名为 out 的输出端口，发现 " + P) :-
+    station(S, "converter"), out_port(S, P, _, _, _), P != "out".
+diag("E-CONVERTER", S + "/inputs", "converter 必须有输入端口 in") :- station(S, "converter"), !in_port(S, "in", _, _, _).
+diag("E-CONVERTER", S + "/outputs", "converter 必须有输出端口 out") :- station(S, "converter"), !out_port(S, "out", _, _, _).
+diag("E-CONVERTER", S + "/converts", "converts.from（" + F + "）与输入端口 in 的类型（" + E + "）不一致") :-
+    converts(S, F, _, _, _), in_port(S, "in", E, _, _), texpr_ok(F), texpr_ok(E), !same_type(F, E).
+diag("E-CONVERTER", S + "/converts", "converts.to（" + T + "）与输出端口 out 的类型（" + E + "）不一致") :-
+    converts(S, _, T, _, _), out_port(S, "out", E, _, _), texpr_ok(T), texpr_ok(E), !same_type(T, E).
+rel has_equivalence(s: string).
+has_equivalence(S) :- equivalence_count(S, N), N > 0.
+diag("E-CONVERTER", S + "/equivalence", "converter 至少要有一条 equivalence") :-
+    station(S, "converter"), !has_equivalence(S).
+diag("E-CONVERTER", S + "/fixtures", "converter 至少要有一个正样例") :-
+    station(S, "converter"), !station_fixture(S, "accept", _).
+diag("E-CONVERTER", S + "/outputs.out", "converter 的输出端口不能是可选的") :-
+    station(S, "converter"), out_port(S, "out", _, true, _).
+
+// ---------- 策略与模型 ----------
+rel policy_covers(p: string, role: string).
+policy_covers(PK, R) :- policy_applies(PK, PR), role_covers(PR, R).
+diag("E-PERMISSION", S + "/policy", "策略 " + P + " 不适用于 " + R + " 工位") :-
+    station(S, R), station_policy(S, P), resolved("Policy", P, PK), !policy_covers(PK, R).
+diag("E-PERMISSION", S + "/operator", "模型 " + M + " 不在运行时 " + RT + " 的 models_allowed 中") :-
+    station_operator(S, RT, M), M != "", resolved("OperatorRuntime", RT, RK), runtime(RK, "agent-cli"), !runtime_model(RK, M).
+diag("E-PERMISSION", S + "/operator", "agent-cli 运行时 " + RT + " 必须指定 model") :-
+    station_operator(S, RT, ""), resolved("OperatorRuntime", RT, RK), runtime(RK, "agent-cli").
+diag("W-NO-BUDGET", S + "/limits", "由 agent 驱动的工位没有设置 budget_usd") :-
+    station_operator(S, RT, _), resolved("OperatorRuntime", RT, RK), runtime(RK, "agent-cli"), !station_budget(S, _).

@@ -1,0 +1,8 @@
+# 只有 Source 能绑定 ingress（不变量 I6，由宪法强制）。
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: source-webhook, version: 1}
+spec:
+  applies_to: [source]
+  egress: {ingress: [webhook]}
+  secrets: [WEBHOOK_SIGNING_SECRET]

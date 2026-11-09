@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/operator-runtime.schema.json",
+  "title": "OperatorRuntime（操作工运行时：如何以无头方式启动一个已有的 agent CLI 或执行脚本）",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "mao/v1"},
+    "kind": {"const": "OperatorRuntime"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["agent-cli", "script"]},
+        "inject": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "volume": {"type": "string"},
+            "mount": {"type": "string"},
+            "derive_image": {"type": "boolean"}
+          }
+        },
+        "invoke": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "argv": {"$ref": "common.schema.json#/$defs/stringList"},
+            "mcp": {"type": "object"}
+          }
+        },
+        "env": {"type": "object", "additionalProperties": {"type": "string"}},
+        "transcript": {"type": "object"},
+        "models_allowed": {"$ref": "common.schema.json#/$defs/stringList"}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "agent-cli"}}}, "then": {"required": ["invoke", "models_allowed"]}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,239 @@
+suite: factory.stations
+kind: factory
+base: example
+description: 工位：角色要求的端口、与配方一致、属性引用、converter 结构、策略与模型（kernel/stations.mrl）。
+cases:
+  # ---------- 角色要求的端口 ----------
+  - id: source-cannot-have-inputs
+    patch:
+      - {file: stations/quick-short.yaml, set: {spec.role: source}}
+    expect:
+      codes: [E-PERMISSION, E-PORT]
+      diags:
+        - {code: E-PORT, subject: "Station:quick-short@1/inputs", message: "source 工位不能有输入端口"}
+        - {code: E-PERMISSION, subject: "Station:quick-short@1/policy", message: "不适用于 source"}
+  - id: sink-needs-inputs
+    patch:
+      - {file: stations/sinks.yaml, doc: 0, set: {spec.inputs: {}}}
+    expect:
+      codes: [E-EXPR, E-PORT, E-PORT, E-PORT]
+      diags: [{code: E-PORT, subject: "Station:publish-s3@2/inputs", message: "sink 工位至少要有一个输入端口"}]
+  - id: transform-needs-outputs
+    patch:
+      - {file: stations/quick-short.yaml, set: {spec.outputs: {}}}
+      - {file: machines/moneyprinter/machine.yaml, unset: [spec.recipes.quick-short.outputs]}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Station:quick-short@1/outputs", message: "transform 工位至少要有一个输出端口"}]
+
+  # ---------- 与配方一致 ----------
+  - id: recipe-missing
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.recipe: reframe-square}}
+    expect:
+      codes: [E-REF]
+      diags: [{code: E-REF, subject: "Station:vertical@1/recipe", message: "机器 ffmpeg@3 没有配方 reframe-square"}]
+  - id: recipe-input-port-missing
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.inputs.audio: {type: any, optional: true}}}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Station:vertical@1/inputs.audio"}]
+  - id: recipe-input-type-incompatible
+    patch:
+      - {file: stations/quick-short.yaml, set: {spec.inputs.brief.type: brief@1}}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Station:quick-short@1/inputs.brief", message: "不是配方输入类型 brief.video@1 的子类型"}]
+  - id: station-input-may-narrow
+    description: 工位输入可以比配方更窄（工位类型是配方类型的子类型）
+    patch:
+      - {file: machines/rclone/machine.yaml, set: {spec.recipes.copy.inputs.artifact.type: any}}
+      - {file: stations/sinks.yaml, doc: 0, set: {spec.inputs.artifact.type: video@1}}
+    expect: {clean: true}
+  - id: recipe-required-input-undeclared
+    patch:
+      - {file: stations/dub.yaml, unset: [spec.inputs.subtitle]}
+    expect:
+      codes: [E-PORT, E-PORT]
+      diags: [{code: E-PORT, subject: "Station:dub@2/inputs", message: "必填输入 subtitle 没有在工位中声明"}]
+  - id: recipe-output-port-missing
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.outputs.thumbnail: {type: any}}}
+    expect:
+      codes: [E-ORPHAN, E-PORT]
+      diags: [{code: E-PORT, subject: "Station:vertical@1/outputs.thumbnail"}]
+  - id: recipe-output-type-incompatible
+    description: 配方输出类型必须是工位输出类型的子类型（工位只能放宽，不能收窄）
+    patch:
+      - {file: machines/moneyprinter/machine.yaml, set: {spec.recipes.quick-short.outputs.video.type: video@1}}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Station:quick-short@1/outputs.video", message: "配方输出类型 video@1 不是工位输出类型 video.mp4@1 的子类型"}]
+  - id: station-param-not-in-recipe
+    patch:
+      - {file: stations/dub.yaml, set: {spec.params.voice: {type: string, default: alloy}}}
+    expect:
+      codes: [E-PARAM]
+      diags: [{code: E-PARAM, subject: "Station:dub@2/params.voice"}]
+  - id: station-param-type-mismatch
+    patch:
+      - {file: stations/dub.yaml, set: {spec.params.target_language: {type: int}}}
+    expect:
+      codes: [E-PARAM, E-PARAM]
+      diags: [{code: E-PARAM, subject: "Station:dub@2/params.target_language", message: "int 与配方声明的 string 不同"}]
+
+  # ---------- 属性引用 ----------
+  - id: guarantee-unknown-property
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.video.guarantees: [has_audio, not_silent, hd, uhd]}}
+    expect:
+      codes: [E-PROPERTY]
+      diags: [{code: E-PROPERTY, subject: "Station:explainer@3/outputs.video", message: "uhd"}]
+  - id: requires-unknown-property
+    patch:
+      - {file: stations/dub.yaml, set: {spec.inputs.subtitle.requires: [synced]}}
+    expect:
+      codes: [E-CONTRACT, E-PROPERTY]
+      diags: [{code: E-PROPERTY, subject: "Station:dub@2/inputs.subtitle", message: "synced"}]
+  - id: guarantee-on-any-is-unknown
+    patch:
+      - {file: stations/sinks.yaml, doc: 0, set: {spec.inputs.artifact.requires: [has_audio]}}
+    expect:
+      codes: [E-PROPERTY]
+      diags: [{code: E-PROPERTY, subject: "Station:publish-s3@2/inputs.artifact"}]
+  - id: preserves-must-exist-on-both-types
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.converts.preserves: [has_audio]}}
+    expect:
+      codes: [E-PROPERTY]
+      diags: [{code: E-PROPERTY, subject: "Station:subs-convert@1/converts"}]
+  - id: preserves-inherited-property
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.converts.preserves: [non_empty]}}
+    expect: {clean: true}
+
+  # ---------- converter 结构 ----------
+  - id: converter-without-converts
+    patch:
+      - {file: converters/subs-convert/station.yaml, unset: [spec.converts, spec.equivalence]}
+    expect:
+      codes: [E-CONVERTER, E-CONVERTER]
+      diags:
+        - {code: E-CONVERTER, subject: "Station:subs-convert@1", message: "必须声明 converts"}
+        - {code: E-CONVERTER, subject: "Station:subs-convert@1/equivalence"}
+  - id: converts-only-on-converter
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.converts: {from: video.mp4@1, to: video.mp4@1, lossless: false}}}
+    expect:
+      codes: [E-CONVERTER]
+      diags: [{code: E-CONVERTER, subject: "Station:vertical@1/converts"}]
+  - id: converter-port-names
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.inputs: {src: {type: subtitle.vtt@1}}}}
+      - {file: machines/ffmpeg/machine.yaml, set: {spec.recipes.subs-convert.inputs: {src: {type: subtitle.vtt@1}}}}
+    expect:
+      codes: [E-CONVERTER, E-CONVERTER]
+      diags:
+        - {code: E-CONVERTER, subject: "Station:subs-convert@1/inputs", message: "只能有一个名为 in 的输入端口"}
+        - {code: E-CONVERTER, subject: "Station:subs-convert@1/inputs", message: "必须有输入端口 in"}
+  - id: converter-converts-matches-ports
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.converts.from: subtitle.srt@1}}
+    expect:
+      codes: [E-CONVERTER]
+      diags: [{code: E-CONVERTER, subject: "Station:subs-convert@1/converts", message: "converts.from（subtitle.srt@1）与输入端口 in 的类型（subtitle.vtt@1）不一致"}]
+  - id: converter-needs-equivalence
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.equivalence: []}}
+    expect:
+      codes: [E-CONVERTER]
+      diags: [{code: E-CONVERTER, subject: "Station:subs-convert@1/equivalence"}]
+  - id: converter-needs-accept-fixture
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.fixtures: {reject: [x.vtt]}}}
+    expect:
+      codes: [E-CONVERTER]
+      diags: [{code: E-CONVERTER, subject: "Station:subs-convert@1/fixtures"}]
+  - id: converter-output-not-optional
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.outputs.out.optional: true}}
+    expect:
+      codes: [E-CONVERTER]
+      diags: [{code: E-CONVERTER, subject: "Station:subs-convert@1/outputs.out"}]
+
+  # ---------- 策略与模型 ----------
+  - id: policy-not-applicable-to-role
+    patch:
+      - {file: stations/sinks.yaml, doc: 0, set: {spec.policy: tool-default@1}}
+    expect:
+      codes: [E-PERMISSION]
+      diags: [{code: E-PERMISSION, subject: "Station:publish-s3@2/policy", message: "策略 tool-default@1 不适用于 sink 工位"}]
+  - id: transform-policy-covers-converter
+    description: converter、judge、planner 是 transform 的特化，适用于 transform 的策略也适用于它们
+    expect: {clean: true}
+  - id: model-not-allowed
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.operator.model: gpt-5}}
+    expect:
+      codes: [E-PERMISSION]
+      diags: [{code: E-PERMISSION, subject: "Station:explainer@3/operator", message: "模型 gpt-5 不在运行时 claude-code@4 的 models_allowed 中"}]
+  - id: agent-needs-model
+    patch:
+      - {file: stations/dub.yaml, unset: [spec.operator.model]}
+    expect:
+      codes: [E-PERMISSION]
+      diags: [{code: E-PERMISSION, subject: "Station:dub@2/operator", message: "必须指定 model"}]
+  - id: script-runtime-needs-no-model
+    expect:
+      clean: true
+      absent: [{subject: "Station:vertical@1/operator"}]
+  - id: agent-without-budget-warns
+    patch:
+      - {file: stations/dub.yaml, unset: [spec.limits.budget_usd]}
+    expect:
+      codes: [W-NO-BUDGET]
+      diags: [{code: W-NO-BUDGET, subject: "Station:dub@2/limits", severity: warning}]
+
+  # ---------- 规则覆盖补充 ----------
+  - id: source-station-is-clean
+    description: 示例中的 intake-brief@1（架构文档 5.4）
+    expect:
+      clean: true
+      absent: [{subject: "Station:intake-brief@1/inputs"}, {subject: "Station:intake-brief@1/policy"}]
+  - id: source-needs-outputs
+    patch:
+      - {file: stations/intake-brief.yaml, set: {spec.outputs: {}}}
+      - {file: machines/webhook-intake/machine.yaml, unset: [spec.recipes.receive.outputs]}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Station:intake-brief@1/outputs", message: "source 工位至少要有一个输出端口"}]
+  - id: transform-needs-inputs
+    patch:
+      - {file: stations/quick-short.yaml, set: {spec.inputs: {}}}
+      - {file: machines/moneyprinter/machine.yaml, unset: [spec.recipes.quick-short.inputs, spec.recipes.quick-short.call]}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Station:quick-short@1/inputs", message: "transform 工位至少要有一个输入端口"}]
+  - id: preserves-missing-on-target-type
+    patch:
+      - {file: types/subtitle.yaml, doc: 2, set: {spec.properties.styled: "bean.facts.cue_count > 0"}}
+      - {file: converters/subs-convert/station.yaml, set: {spec.converts.preserves: [styled]}}
+    expect:
+      codes: [E-PROPERTY]
+      diags: [{code: E-PROPERTY, subject: "Station:subs-convert@1/converts", message: "preserves 中的 styled 必须同时是 subtitle.vtt@1 与 subtitle.srt@1 的命名属性"}]
+  - id: converter-output-port-name
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.outputs: {result: {type: subtitle.srt@1}}}}
+      - {file: machines/ffmpeg/machine.yaml, set: {spec.recipes.subs-convert.outputs: {result: {type: subtitle.srt@1}}}}
+    expect:
+      codes: [E-CONVERTER, E-CONVERTER]
+      diags:
+        - {code: E-CONVERTER, subject: "Station:subs-convert@1/outputs", message: "只能有一个名为 out 的输出端口，发现 result"}
+        - {code: E-CONVERTER, subject: "Station:subs-convert@1/outputs", message: "必须有输出端口 out"}
+  - id: converter-converts-to-matches-port
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {spec.converts.to: subtitle.vtt@1}}
+    expect:
+      codes: [E-CONVERTER]
+      diags: [{code: E-CONVERTER, subject: "Station:subs-convert@1/converts", message: "converts.to（subtitle.vtt@1）与输出端口 out 的类型（subtitle.srt@1）不一致"}]

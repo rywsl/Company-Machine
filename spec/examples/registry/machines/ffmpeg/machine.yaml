@@ -1,0 +1,25 @@
+# 示例 C：工具型（架构文档 5.1）。subs-convert 是厂长为转换编写的配方（架构文档 9.5）。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: ffmpeg, version: 3}
+spec:
+  form: tool
+  runtime:
+    image: registry.local/machines/ffmpeg@sha256:6862fa01d6f0bc4c9601c1a0a9d170cb49cf255b25bfc66a02f958fa47be43a2
+    instance: per_job
+    resources: {cpus: 2, memory: 2Gi}
+  needs: {egress: none}
+  recipes:
+    reframe-vertical:
+      inputs:  {video: {type: video.mp4@1}}
+      outputs: {video: {type: video.mp4@1, harvest: "/factory/out/video/video.mp4"}}
+      run: ["ffmpeg", "-i", "/factory/in/video/video.mp4",
+            "-vf", "crop=ih*9/16:ih,scale=1080:1920", "-c:v", "libx264", "-c:a", "copy",
+            "/factory/out/video/video.mp4"]
+    subs-convert:
+      inputs:  {in:  {type: subtitle.vtt@1}}
+      outputs: {out: {type: subtitle.srt@1, harvest: "/factory/out/out/subtitle.srt"}}
+      run: ["ffmpeg", "-i", "/factory/in/in/subtitle.vtt", "/factory/out/out/subtitle.srt"]
+  conformance:
+    - {name: reframe, recipe: reframe-vertical, inputs: {video: fixtures/1920x1080.mp4}, expect: {props: [vertical]}}
+    - {name: subs,    recipe: subs-convert,     inputs: {in: fixtures/sample.vtt}}

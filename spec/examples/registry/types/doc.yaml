@@ -1,0 +1,20 @@
+# 文稿。
+apiVersion: mao/v1
+kind: Type
+metadata: {name: doc.script, version: "1.0", description: 视频脚本（分镜与旁白）}
+spec:
+  payload:
+    - {path: script.json, media_type: application/json, required: true}
+  facts:
+    scene_count: int
+    word_count: int
+  validators:
+    - name: script-lint
+      image: registry.local/validators/script-lint@sha256:e86d8b338a4f6098af820732e33db2c637c5d1cbc33d1e50aaca1e0d2861789a
+      run: [lint-script, /bean/payload/script.json]
+      emits: [scene_count, word_count]
+      fixtures:
+        accept: [fixtures/doc/script-ok.json]
+        reject: [fixtures/doc/script-no-scenes.json]
+  properties:
+    has_scenes: "bean.facts.scene_count > 0"

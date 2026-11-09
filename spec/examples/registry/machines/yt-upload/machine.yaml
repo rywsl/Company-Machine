@@ -1,0 +1,15 @@
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: yt-upload, version: 1}
+spec:
+  form: tool
+  runtime:
+    image: registry.local/machines/yt-upload@sha256:38a29dd3b711ce770be4152701f6fc7b93f6086265653f199ecf03f072e73bd9
+    instance: per_job
+  needs: {secrets: [YOUTUBE_UPLOAD_TOKEN]}
+  recipes:
+    upload-short:
+      inputs:
+        video: {type: video.mp4@1}
+        meta:  {type: doc.script@1}
+      run: ["upload-short", "--video", "/factory/in/video/video.mp4", "--meta", "/factory/in/meta/script.json"]

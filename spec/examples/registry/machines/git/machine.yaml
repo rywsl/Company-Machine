@@ -1,0 +1,18 @@
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: git, version: 1}
+spec:
+  form: tool
+  runtime:
+    image: registry.local/machines/git@sha256:9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a
+    instance: per_job
+  needs: {secrets: [GITHUB_PUSH_TOKEN]}
+  recipes:
+    commit-push:
+      inputs:
+        script:   {type: doc.script@1}
+        subtitle: {type: subtitle.srt@1}
+      params:
+        repo:   {type: string}
+        branch: {type: string}
+      run: ["publish-git", "--repo", "{{ params.repo }}", "--branch", "{{ params.branch }}", "/factory/in"]

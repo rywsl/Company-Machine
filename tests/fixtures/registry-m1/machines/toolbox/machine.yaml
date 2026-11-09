@@ -1,0 +1,16 @@
+# 工具型机器（C 形态）：脚本操作工直接执行配方的 run。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: toolbox, version: 1}
+spec:
+  form: tool
+  runtime:
+    image: mao-test/tool@sha256:09b42648636a8405354592f2ae8985670dfda5b61377ac6c75e3cebbd22e0500
+    instance: per_job
+    resources: {cpus: 1, memory: 256Mi}
+  needs: {egress: none}
+  recipes:
+    upper:
+      inputs:  {note: {type: note.text@1}}
+      outputs: {note: {type: note.text@1}}
+      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]

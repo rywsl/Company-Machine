@@ -1,0 +1,20 @@
+suite: factory.example
+kind: factory
+base: example
+description: >-
+  基准：spec/examples/registry（架构文档 13.1 的 Registry）必须完全通过检查，
+  并且每条边都直接连接。其余 factory 套件都以它为起点打补丁。
+cases:
+  - id: example-is-clean
+    expect:
+      clean: true
+      absent: [{severity: info}]
+  - id: example-resolution-table
+    expect:
+      clean: true
+      resolutions:
+        - {step: explainer, port: brief, status: direct, chain: [], type: brief.video@1}
+        - {step: dub_en, port: video, status: direct, props: [has_audio, hd, not_silent]}
+        - {step: vertical, port: video, status: direct, props: [has_audio, hd, not_silent]}
+        - {step: to_shorts, port: video, status: direct, props: [h264, has_audio, hd, not_silent, vertical]}
+        - {step: to_s3, port: artifact, status: direct, type: video.mp4@1}

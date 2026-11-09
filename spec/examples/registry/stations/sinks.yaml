@@ -1,0 +1,50 @@
+# 消费终端（Sink）：没有产物，每次执行只留下一条回执记录。
+apiVersion: mao/v1
+kind: Station
+metadata: {name: publish-s3, version: 2}
+spec:
+  role: sink
+  machine: rclone@1
+  recipe: copy
+  operator: {runtime: script@1}
+  params: {bucket: {type: string}, prefix: {type: string}}
+  inputs:  {artifact: {type: any}}
+  outputs: {}
+  idempotency_key: "{{ inputs.artifact.id }}:s3://{{ params.bucket }}/{{ params.prefix }}"
+  verify_receipt: s3-head-and-hash          # 核验对象存在，且 hash 与 Bean 一致
+  policy: sink-s3@1
+---
+apiVersion: mao/v1
+kind: Station
+metadata: {name: publish-github, version: 1}
+spec:
+  role: sink
+  machine: git@1
+  recipe: commit-push
+  operator: {runtime: script@1}
+  params: {repo: {type: string}, branch: {type: string}}
+  inputs:
+    script:   {type: doc.script@1}
+    subtitle: {type: subtitle.srt@1}
+  outputs: {}
+  idempotency_key: "{{ inputs.script.id }}:{{ inputs.subtitle.id }}:{{ params.repo }}"
+  verify_receipt: git-commit-visible
+  policy: sink-github@1
+---
+apiVersion: mao/v1
+kind: Station
+metadata: {name: publish-shorts, version: 1}
+spec:
+  role: sink
+  machine: yt-upload@1
+  recipe: upload-short
+  operator: {runtime: script@1}
+  inputs:
+    video: {type: video.mp4@1, requires: [vertical, hd, has_audio, not_silent]}
+    meta:  {type: doc.script@1}
+  outputs: {}
+  phases: [propose, execute]                # 先 dry-run，厂长审批后再发布
+  approval: {propose: foreman}
+  idempotency_key: "{{ inputs.video.id }}:shorts"
+  verify_receipt: url-reachable
+  policy: sink-shorts@1

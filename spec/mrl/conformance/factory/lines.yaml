@@ -1,0 +1,439 @@
+suite: factory.lines
+kind: factory
+base: example
+description: 产线：绑定、参数、无环、去处完整、类型与契约（含转换解析）、预算（kernel/lines.mrl）。
+cases:
+  # ---------- 绑定 ----------
+  - id: unbound-required-input
+    patch:
+      - {file: lines/explainer-multilang.yaml, unset: [spec.steps.dub_en.in.subtitle]}
+    expect:
+      codes: [E-ORPHAN, E-UNBOUND]
+      diags:
+        - {code: E-UNBOUND, subject: "Line:explainer-multilang@5/steps.dub_en.in", message: "必填输入 subtitle 没有连接"}
+        - {code: E-ORPHAN, subject: "Line:explainer-multilang@5/steps.explainer", message: "explainer.subtitle"}
+  - id: optional-input-may-be-unbound
+    patch:
+      - {file: stations/dub.yaml, set: {spec.inputs.subtitle.optional: true}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.localization-dub.inputs.subtitle.optional: true}}
+      - {file: lines/explainer-multilang.yaml, unset: [spec.steps.dub_en.in.subtitle], set: {spec.keep: [explainer.subtitle]}}
+    expect: {clean: true}
+  - id: bind-unknown-target-port
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.in.audio: explainer.video}}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.dub_en.in.audio", message: "目标没有输入端口 audio"}]
+  - id: bind-unknown-source-step
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.in.video: dubb.video}}
+    expect:
+      codes: [E-ORPHAN, E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.vertical.in.video", message: "来源步骤 dubb 不存在"}]
+  - id: bind-unknown-source-port
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.in.video: explainer.thumbnail}}
+    expect:
+      codes: [E-ORPHAN, E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.vertical.in.video", message: "来源步骤 explainer 没有输出端口 thumbnail"}]
+  - id: bind-unknown-line-input
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.explainer.in.brief: $inputs.request}}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.explainer.in.brief", message: "产线接口没有输入 request"}]
+  - id: item-without-map
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.in.video: $item}}
+    expect:
+      codes: [E-ORPHAN, E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.vertical.in.video", message: "$item 只能用在带 map 的步骤中"}]
+
+  # ---------- 参数 ----------
+  - id: step-param-undeclared
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.params.voice: alloy}}
+    expect:
+      codes: [E-PARAM]
+      diags: [{code: E-PARAM, subject: "Line:explainer-multilang@5/steps.dub_en.params.voice"}]
+  - id: step-param-missing
+    patch:
+      - {file: lines/explainer-multilang.yaml, unset: [spec.steps.dub_en.params]}
+    expect:
+      codes: [E-PARAM]
+      diags: [{code: E-PARAM, subject: "Line:explainer-multilang@5/steps.dub_en.params", message: "必填参数 target_language 没有提供"}]
+  - id: step-param-default-makes-optional
+    patch:
+      - {file: stations/dub.yaml, set: {spec.params.target_language: {type: string, default: en}}}
+      - {file: lines/explainer-multilang.yaml, unset: [spec.steps.dub_en.params]}
+    expect: {clean: true}
+  - id: step-param-wrong-type
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.params.target_language: 3}}
+    expect:
+      codes: [E-PARAM]
+      diags: [{code: E-PARAM, message: "参数 target_language 的类型是 string，不能接受 int 值"}]
+  - id: step-param-template-needs-string
+    patch:
+      - {file: stations/dub.yaml, set: {spec.params.target_language: {type: int}}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.localization-dub.params.target_language: {type: int}}}
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.params.target_language: "{{ run.id }}"}}
+    expect:
+      codes: [E-PARAM]
+      diags: [{code: E-PARAM, message: "不能接受 template 值"}]
+  - id: step-param-int-to-float
+    patch:
+      - {file: stations/dub.yaml, set: {spec.params.target_language: {type: float}}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.localization-dub.params.target_language: {type: float}}}
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.params.target_language: 3}}
+    expect:
+      clean: true
+
+  # ---------- 无环与去处 ----------
+  - id: cycle
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.in.video: vertical.video}}
+    expect:
+      codes: [E-CYCLE, E-CYCLE, E-ORPHAN]
+      diags:
+        - {code: E-CYCLE, subject: "Line:explainer-multilang@5/steps.dub_en"}
+        - {code: E-CYCLE, subject: "Line:explainer-multilang@5/steps.vertical"}
+        - {code: E-ORPHAN, message: "explainer.video"}
+  - id: orphan-output
+    patch:
+      - {file: lines/explainer-multilang.yaml, unset: [spec.steps.to_github]}
+    expect:
+      codes: [E-ORPHAN]
+      diags: [{code: E-ORPHAN, subject: "Line:explainer-multilang@5/steps.dub_en", message: "dub_en.subtitle"}]
+  - id: keep-resolves-orphan
+    patch:
+      - {file: lines/explainer-multilang.yaml, unset: [spec.steps.to_github], set: {spec.keep: [dub_en.subtitle]}}
+    expect: {clean: true}
+  - id: interface-output-resolves-orphan
+    patch:
+      - {file: lines/explainer-multilang.yaml, unset: [spec.steps.to_github], set: {spec.interface.outputs: {subtitle: {from: dub_en.subtitle}}}}
+    expect: {clean: true}
+  - id: keep-unknown
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.keep: [dub_en.audio]}}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/keep"}]
+  - id: sink-has-no-outputs-to-orphan
+    description: 消费终端没有产物，也就没有去处问题
+    expect:
+      clean: true
+      absent: [{code: E-ORPHAN}]
+
+  # ---------- 预算 ----------
+  - id: budget-exceeded
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.budget.cap_usd: 7.5}}
+    expect:
+      codes: [E-BUDGET]
+      diags: [{code: E-BUDGET, subject: "Line:explainer-multilang@5/budget", message: "预算上限之和 8.0 USD 超过产线预算 7.5 USD"}]
+  - id: line-without-budget-warns
+    patch:
+      - {file: lines/explainer-multilang.yaml, unset: [spec.budget]}
+    expect:
+      codes: [W-NO-BUDGET]
+
+  # ---------- 类型与契约：转换解析（架构文档 7.3、9.3、13.2） ----------
+  - id: contract-violation
+    description: 架构文档 7.3：vertical 删掉了 has_audio、not_silent 两个保证
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.outputs.video.guarantees: [vertical, hd, h264]}}
+    expect:
+      codes: [E-CONTRACT]
+      diags:
+        - code: E-CONTRACT
+          subject: "Line:explainer-multilang@5/steps.to_shorts.in.video"
+          message: "要求 {vertical, hd, has_audio, not_silent}，可提供 {h264, hd, vertical}，缺失 {has_audio, not_silent}"
+      resolutions: [{step: to_shorts, port: video, status: contract, missing: [has_audio, not_silent]}]
+  - id: auto-convert
+    description: 架构文档 13.2：explainer 的字幕改为 VTT，转换库自动插入 subs-convert@1
+    patch: &vtt
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+    expect:
+      clean: true
+      diags:
+        - {code: I-CONVERT, severity: info, subject: "Line:explainer-multilang@5/steps.dub_en.in.subtitle", message: "subtitle.vtt@1 → subtitle.srt@1：插入 [subs-convert@1]（无损）"}
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [subs-convert@1], type: subtitle.srt@1}]
+  - id: no-converter
+    description: 架构文档 13.2 第 3 步：转换库里还没有 VTT → SRT 的转换
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: converters/subs-convert/station.yaml, delete: true}
+    expect:
+      codes: [E-NO-CONVERTER]
+      diags: [{code: E-NO-CONVERTER, subject: "Line:explainer-multilang@5/steps.dub_en.in.subtitle", message: "subtitle.vtt@1 → subtitle.srt@1"}]
+      resolutions: [{step: dub_en, port: subtitle, status: no-converter}]
+  - id: via-none-forbids-conversion
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.in.subtitle: {from: explainer.subtitle, via: none}}}
+    expect:
+      codes: [E-TYPE-MISMATCH]
+      diags: [{code: E-TYPE-MISMATCH, subject: "Line:explainer-multilang@5/steps.dub_en.in.subtitle"}]
+  - id: via-none-allows-subtype
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.in.subtitle: {from: explainer.subtitle, via: none}}}
+    expect: {clean: true}
+  - id: via-explicit
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.in.subtitle: {from: explainer.subtitle, via: [subs-convert@1]}}}
+    expect:
+      clean: true
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [subs-convert@1]}]
+  - id: via-unknown-converter
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.in.subtitle: {from: explainer.subtitle, via: [vtt2srt@1]}}}
+    expect:
+      codes: [E-REF, E-VIA]
+      diags:
+        - {code: E-REF, subject: "Line:explainer-multilang@5/steps.dub_en.in.subtitle.via[0]"}
+        - {code: E-VIA, subject: "Line:explainer-multilang@5/steps.dub_en.in.subtitle", message: "via[0]：vtt2srt@1 不在转换库中"}
+  - id: via-wrong-input-type
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.in.subtitle: {from: explainer.subtitle, via: [subs-convert@1]}}}
+    expect:
+      codes: [E-VIA]
+      diags: [{code: E-VIA, message: "subs-convert@1 接受 subtitle.vtt@1，但此处的类型是 subtitle.srt@1"}]
+  - id: via-non-converter
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.in.video: {from: dub_en.video, via: [vertical@1]}}}
+    expect:
+      codes: [E-VIA]
+  - id: deprecated-converter-only-explicit
+    description: 已弃用的转换不再参与自动解析，但仍可显式指定（同时提示弃用）
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: converters/subs-convert/station.yaml, set: {metadata.lifecycle: deprecated}}
+    expect:
+      codes: [E-NO-CONVERTER]
+  - id: deprecated-converter-explicit
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: converters/subs-convert/station.yaml, set: {metadata.lifecycle: deprecated}}
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.in.subtitle: {from: explainer.subtitle, via: [subs-convert@1]}}}
+    expect:
+      codes: [W-DEPRECATED]
+      resolutions: [{step: dub_en, port: subtitle, status: convert}]
+  - id: retired-converter-unusable
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: converters/subs-convert/station.yaml, set: {metadata.lifecycle: retired}}
+    expect:
+      codes: [E-NO-CONVERTER]
+
+  # ---------- 属性沿转换链传播 ----------
+  - id: requires-through-conversion-lost
+    description: 下游要求 non_empty；转换没有声明 preserves，属性在转换后丢失，所以没有满足条件的路径
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle: {type: subtitle.vtt@1, guarantees: [non_empty]}}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: stations/dub.yaml, set: {spec.inputs.subtitle.requires: [non_empty]}}
+    expect:
+      codes: [E-NO-CONVERTER]
+  - id: requires-through-conversion-preserved
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle: {type: subtitle.vtt@1, guarantees: [non_empty]}}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: stations/dub.yaml, set: {spec.inputs.subtitle.requires: [non_empty]}}
+      - {file: converters/subs-convert/station.yaml, set: {spec.converts.preserves: [non_empty]}}
+    expect:
+      clean: true
+      resolutions: [{step: dub_en, port: subtitle, status: convert, props: [non_empty]}]
+  - id: requires-through-conversion-guaranteed
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: stations/dub.yaml, set: {spec.inputs.subtitle.requires: [non_empty]}}
+      - {file: converters/subs-convert/station.yaml, set: {spec.outputs.out.guarantees: [non_empty]}}
+    expect:
+      clean: true
+      resolutions: [{step: dub_en, port: subtitle, status: convert, props: [non_empty]}]
+  - id: converter-requires-must-hold
+    description: 转换自己的 requires 必须被当前属性覆盖，否则这一步不可用
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: converters/subs-convert/station.yaml, set: {spec.inputs.in.requires: [non_empty]}}
+    expect:
+      codes: [E-NO-CONVERTER]
+
+  # ---------- 路径选择：无损优先 → 步数最少 → 成本最低 → 耗时最短 → 字典序 ----------
+  - id: prefer-lossless
+    patch:
+      - *vtt
+      - &lossy_direct
+        file: converters/vtt-quick/station.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Station
+          metadata: {name: vtt-quick, version: 1}
+          spec:
+            role: converter
+            converts: {from: subtitle.vtt@1, to: subtitle.srt@1, lossless: false}
+            machine: ffmpeg@3
+            recipe: subs-convert
+            operator: {runtime: script@1}
+            inputs:  {in:  {type: subtitle.vtt@1}}
+            outputs: {out: {type: subtitle.srt@1}}
+            equivalence: ["dst.facts.cue_count <= src.facts.cue_count"]
+            cost: {usd_est: 0, p50_s: 1}
+            fixtures: {accept: [a.vtt]}
+            policy: tool-default@1
+    expect:
+      ok: true
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [subs-convert@1], lossless: true}]
+  - id: prefer-fewer-steps
+    description: 有一步直达与两步两条无损路径时，选步数少的
+    patch:
+      - *vtt
+      - &ass_setup
+        - file: types/ass.yaml
+          content: |
+            apiVersion: mao/v1
+            kind: Type
+            metadata: {name: subtitle.ass, version: "1.0"}
+            spec:
+              extends: subtitle@1
+              validators:
+                - {name: ass-lint, image: "registry.local/validators/ass@sha256:3bef9563687cb6ae8b6cbd63c5e956887a6757bdbce10c233d4a3058e9697bf6", run: [lint], emits: [cue_count, last_cue_end_s], fixtures: {accept: [a.ass], reject: [b.ass]}}
+        - file: machines/ffmpeg/machine.yaml
+          set:
+            spec.recipes.vtt-to-ass: {inputs: {in: {type: subtitle.vtt@1}}, outputs: {out: {type: subtitle.ass@1}}, run: [ffmpeg]}
+            spec.recipes.ass-to-srt: {inputs: {in: {type: subtitle.ass@1}}, outputs: {out: {type: subtitle.srt@1}}, run: [ffmpeg]}
+        - file: converters/two-step/station.yaml
+          content: |
+            apiVersion: mao/v1
+            kind: Station
+            metadata: {name: vtt-to-ass, version: 1}
+            spec:
+              role: converter
+              converts: {from: subtitle.vtt@1, to: subtitle.ass@1, lossless: true}
+              machine: ffmpeg@3
+              recipe: vtt-to-ass
+              operator: {runtime: script@1}
+              inputs:  {in:  {type: subtitle.vtt@1}}
+              outputs: {out: {type: subtitle.ass@1}}
+              equivalence: ["dst.facts.cue_count == src.facts.cue_count"]
+              fixtures: {accept: [a.vtt]}
+              policy: tool-default@1
+            ---
+            apiVersion: mao/v1
+            kind: Station
+            metadata: {name: ass-to-srt, version: 1}
+            spec:
+              role: converter
+              converts: {from: subtitle.ass@1, to: subtitle.srt@1, lossless: true}
+              machine: ffmpeg@3
+              recipe: ass-to-srt
+              operator: {runtime: script@1}
+              inputs:  {in:  {type: subtitle.ass@1}}
+              outputs: {out: {type: subtitle.srt@1}}
+              equivalence: ["dst.facts.cue_count == src.facts.cue_count"]
+              fixtures: {accept: [a.ass]}
+              policy: tool-default@1
+    expect:
+      clean: true
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [subs-convert@1]}]
+  - id: two-step-chain-when-needed
+    patch:
+      - *vtt
+      - {file: converters/subs-convert/station.yaml, delete: true}
+      - *ass_setup
+    expect:
+      clean: true
+      diags: [{code: I-CONVERT, message: "插入 [vtt-to-ass@1, ass-to-srt@1]（无损）"}]
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [vtt-to-ass@1, ass-to-srt@1]}]
+  - id: lossless-two-steps-beat-lossy-one-step
+    patch:
+      - *vtt
+      - {file: converters/subs-convert/station.yaml, delete: true}
+      - *ass_setup
+      - *lossy_direct
+    expect:
+      clean: true
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [vtt-to-ass@1, ass-to-srt@1], lossless: true}]
+  - id: prefer-cheaper
+    patch:
+      - *vtt
+      - {file: converters/subs-convert/station.yaml, set: {spec.cost: {usd_est: 0.02, p50_s: 2}}}
+      - file: converters/vtt-cheap/station.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Station
+          metadata: {name: vtt-cheap, version: 1}
+          spec:
+            role: converter
+            converts: {from: subtitle.vtt@1, to: subtitle.srt@1, lossless: true}
+            machine: ffmpeg@3
+            recipe: subs-convert
+            operator: {runtime: script@1}
+            inputs:  {in:  {type: subtitle.vtt@1}}
+            outputs: {out: {type: subtitle.srt@1}}
+            equivalence: ["dst.facts.cue_count == src.facts.cue_count"]
+            cost: {usd_est: 0.01, p50_s: 30}
+            fixtures: {accept: [a.vtt]}
+            policy: tool-default@1
+    expect:
+      clean: true
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [vtt-cheap@1]}]
+  - id: tie-broken-by-name
+    patch:
+      - *vtt
+      - file: converters/aaa/station.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Station
+          metadata: {name: aaa-subs, version: 1}
+          spec:
+            role: converter
+            converts: {from: subtitle.vtt@1, to: subtitle.srt@1, lossless: true}
+            machine: ffmpeg@3
+            recipe: subs-convert
+            operator: {runtime: script@1}
+            inputs:  {in:  {type: subtitle.vtt@1}}
+            outputs: {out: {type: subtitle.srt@1}}
+            equivalence: ["dst.facts.cue_count == src.facts.cue_count"]
+            cost: {usd_est: 0, p50_s: 2}
+            fixtures: {accept: [a.vtt]}
+            policy: tool-default@1
+    expect:
+      clean: true
+      resolutions: [{step: dub_en, port: subtitle, status: convert, chain: [aaa-subs@1]}]
+  - id: lossy-only-path-is-used
+    patch:
+      - *vtt
+      - {file: converters/subs-convert/station.yaml, delete: true}
+      - *lossy_direct
+    expect:
+      ok: true
+      diags: [{code: I-CONVERT, message: "（有损）"}]
+  - id: interface-output-unknown-source
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.interface.outputs: {audio: {from: dub_en.audio}}}}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/interface.outputs.audio", message: "dub_en.audio 不存在"}]
+  - id: conversion-budget-counts
+    description: 自动插入的转换也计入产线预算（按下游步骤的次数）
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.outputs.subtitle.type: subtitle.vtt@1}}
+      - {file: converters/subs-convert/station.yaml, set: {spec.limits: {budget_usd: 5.0}}}
+    expect:
+      codes: [E-BUDGET]
+      diags: [{code: E-BUDGET, subject: "Line:explainer-multilang@5/budget", message: "13.0 USD 超过产线预算 12.0 USD"}]

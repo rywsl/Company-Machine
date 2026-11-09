@@ -1,0 +1,21 @@
+# agent 工位：fake agent 按输入的脚本写短文。验收标准要求至少两行；运行中花钱要审批。
+apiVersion: mao/v1
+kind: Station
+metadata: {name: writer, version: 1}
+spec:
+  role: transform
+  machine: studio@1
+  recipe: write-note
+  operator: {runtime: fake-agent@1, model: fake-model-1, max_turns: 5}
+  params: {topic: {type: string, default: 工厂}}
+  inputs:  {task: {type: agent.task@1, requires: [has_steps]}}
+  outputs:
+    note:
+      type: note.text@1
+      guarantees: [non_empty]
+      accept: ["out.facts.lines >= 2"]
+  approval:
+    in_run: {auto_if: "request.cost_usd <= 0.5", else: foreman}
+    timeout: 10m
+  limits: {timeout: 120s, budget_usd: 1.0, retries: {rejected: 1, failed: 1, mode: fresh}}
+  policy: agent-default@1

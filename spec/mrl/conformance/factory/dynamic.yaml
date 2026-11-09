@@ -1,0 +1,330 @@
+suite: factory.dynamic
+kind: factory
+base: example
+description: >-
+  受限的动态构造（架构文档 10.2、13.3）：map 的输出聚合为 list、$item 的元素类型、
+  switch 与 until 的条件、子产线的接口、动态构造对预算的影响。
+cases:
+  # ---------- map ----------
+  - id: map-literal-list
+    description: 对字面列表展开；as 名字在 params 模板中可用；输出聚合为 list<T>，下游逐个展开
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.dub_en.map: {over: [en, ja], as: lang, max_parallel: 2}
+          spec.steps.dub_en.params.target_language: "{{ lang }}"
+          spec.steps.vertical.map: {over: dub_en.video, max_items: 2}
+          spec.steps.vertical.in.video: $item
+          spec.steps.to_shorts.map: {over: vertical.video, max_items: 2}
+          spec.steps.to_shorts.in.video: $item
+          spec.steps.to_github.map: {over: dub_en.subtitle, max_items: 2}
+          spec.steps.to_github.in.subtitle: $item
+    expect:
+      clean: true
+      resolutions:
+        - {step: vertical, port: video, status: direct, type: video.mp4@1}
+        - {step: to_s3, port: artifact, status: direct, type: list<video.mp4@1>}
+        - {step: to_shorts, port: video, status: direct, props: [h264, has_audio, hd, not_silent, vertical]}
+  - id: map-output-is-list
+    description: 带 map 的步骤输出 list<T>；不展开就直接连到需要 T 的端口是类型错误
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.dub_en.map: {over: [en, ja], as: lang}
+          spec.steps.dub_en.params.target_language: "{{ lang }}"
+    expect:
+      codes: [E-NO-CONVERTER, E-NO-CONVERTER]
+      diags:
+        - {code: E-NO-CONVERTER, subject: "Line:explainer-multilang@5/steps.vertical.in.video", message: "list<video.mp4@1> → video.mp4@1"}
+        - {code: E-NO-CONVERTER, subject: "Line:explainer-multilang@5/steps.to_github.in.subtitle"}
+  - id: map-budget-multiplies
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.dub_en.map: {over: [en, ja, es], as: lang}
+          spec.steps.dub_en.params.target_language: "{{ lang }}"
+          spec.steps.vertical.map: {over: dub_en.video, max_items: 3}
+          spec.steps.vertical.in.video: $item
+          spec.steps.to_shorts.map: {over: vertical.video, max_items: 3}
+          spec.steps.to_shorts.in.video: $item
+          spec.steps.to_github.map: {over: dub_en.subtitle, max_items: 3}
+          spec.steps.to_github.in.subtitle: $item
+    expect:
+      codes: [E-BUDGET]
+      diags: [{code: E-BUDGET, message: "预算上限之和 14.0 USD 超过产线预算 12.0 USD"}]
+  - id: map-unbounded-needs-max-items
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.interface.inputs.briefs: {type: list<brief.video@1>}
+          spec.steps.explainer.map: {over: $inputs.briefs}
+          spec.steps.explainer.in.brief: $item
+          spec.steps.dub_en.map: {over: explainer.video, max_items: 1}
+          spec.steps.dub_en.in: {video: $item, subtitle: explainer.subtitle}
+    expect:
+      codes: [E-BUDGET, E-NO-CONVERTER, E-NO-CONVERTER, E-NO-CONVERTER, E-NO-CONVERTER, E-NO-CONVERTER]
+      diags: [{code: E-BUDGET, subject: "Line:explainer-multilang@5/steps.explainer.map", message: "必须设置 max_items"}]
+  - id: map-over-line-input
+    patch:
+      - file: lines/batch.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Line
+          metadata: {name: batch, version: 1}
+          spec:
+            interface: {inputs: {videos: {type: list<video.mp4@1>}}}
+            budget: {cap_usd: 1.0}
+            steps:
+              each:
+                map: {over: $inputs.videos, as: clip, max_items: 20}
+                station: publish-s3@2
+                params: {bucket: clips, prefix: "{{ run.id }}/{{ clip.id }}"}
+                in: {artifact: $item}
+    expect:
+      clean: true
+      resolutions: [{line: batch@1, step: each, port: artifact, status: direct, type: video.mp4@1}]
+  - id: map-as-is-typed
+    description: 动态 map 的 as 名字是元素 Bean，字段写错是静态错误
+    patch:
+      - file: lines/batch.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Line
+          metadata: {name: batch, version: 1}
+          spec:
+            interface: {inputs: {videos: {type: list<video.mp4@1>}}}
+            budget: {cap_usd: 1.0}
+            steps:
+              each:
+                map: {over: $inputs.videos, as: clip, max_items: 20}
+                station: publish-s3@2
+                params: {bucket: clips, prefix: "{{ clip.facts.duration }}"}
+                in: {artifact: $item}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Line:batch@1/steps.each.params.prefix", message: MRL-NO-FIELD}]
+  - id: map-source-must-be-list
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.vertical.map: {over: dub_en.video, max_items: 2}
+          spec.steps.vertical.in.video: $item
+    expect:
+      codes: [E-NO-CONVERTER, E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.vertical.map", message: "的类型 video.mp4@1 不是 list"}]
+  - id: map-literal-cannot-bind-item
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.vertical.map: {over: [a, b], as: x}
+          spec.steps.vertical.in.video: $item
+    expect:
+      codes: [E-NO-CONVERTER, E-ORPHAN, E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.vertical.in.video", message: "不能用 $item 绑定端口"}]
+  - id: map-literal-needs-as
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.map: {over: [a, b]}}}
+    expect:
+      codes: [E-SCHEMA]
+      diags: [{code: E-SCHEMA, subject: "Line:explainer-multilang@5"}]
+  - id: map-as-shadows-env
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.dub_en.map: {over: [en, ja], as: run}
+          spec.steps.dub_en.params.target_language: "{{ run }}"
+    expect:
+      codes: [E-EXPR, E-NO-CONVERTER, E-NO-CONVERTER]
+      diags: [{code: E-EXPR, message: "与模板环境中的名字冲突"}]
+
+  # ---------- switch ----------
+  - id: switch-routes
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.route:
+            switch:
+              on: vertical.video
+              cases: [{when: "bean.facts.duration_s <= 60.0", goto: to_shorts}]
+              default: to_s3
+    expect:
+      clean: true
+  - id: switch-on-line-input
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.route:
+            switch:
+              on: $inputs.brief
+              cases: [{when: "bean.meta.duration_s <= 60", goto: to_shorts}]
+              default: to_s3
+    expect:
+      clean: true
+  - id: switch-condition-typo
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.route:
+            switch:
+              on: vertical.video
+              cases: [{when: "bean.facts.duraton_s <= 60.0", goto: to_shorts}]
+              default: to_s3
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Line:explainer-multilang@5/steps.route.switch.cases[0]"}]
+  - id: switch-unknown-target
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.route:
+            switch:
+              on: vertical.video
+              cases: [{when: "bean.facts.duration_s <= 60.0", goto: to_tiktok}]
+              default: to_s3
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.route.switch", message: "to_tiktok 不存在"}]
+  - id: switch-unknown-source
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.route:
+            switch: {on: vertical.thumb, cases: [{when: "true", goto: to_shorts}], default: to_s3}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, message: "switch 观察的来源 vertical.thumb 不存在"}]
+  - id: switch-target-cycle
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.route:
+            switch: {on: vertical.video, cases: [{when: "true", goto: vertical}], default: to_s3}
+    expect:
+      codes: [E-CYCLE, E-CYCLE]
+      diags: [{code: E-CYCLE, subject: "Line:explainer-multilang@5/steps.route"}]
+
+  # ---------- until ----------
+  - id: until-with-judge
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.explainer.until: {cond: "gate.judge_score >= 0.85", max_iter: 2}, spec.budget.cap_usd: 15.0}}
+    expect: {clean: true}
+  - id: until-multiplies-budget
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.explainer.until: {cond: "gate.judge_score >= 0.85", max_iter: 3}}}
+    expect:
+      codes: [E-BUDGET]
+      diags: [{code: E-BUDGET, message: "18.0 USD 超过产线预算 12.0 USD"}]
+  - id: until-without-judge-warns
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.until: {cond: "gate.judge_score >= 0.85", max_iter: 2}}}
+    expect:
+      codes: [W-EXPR]
+      diags: [{code: W-EXPR, subject: "Line:explainer-multilang@5/steps.vertical.until", message: MRL-MAYBE-ABSENT}]
+  - id: until-on-outputs
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.until: {cond: "out.video.facts.height == 1920 || gate.attempt >= 2", max_iter: 2}}}
+    expect: {clean: true}
+  - id: until-max-iter-bounded
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.vertical.until: {cond: "true", max_iter: 50}}}
+    expect:
+      codes: [E-SCHEMA]
+
+  # ---------- subline ----------
+  - id: subline
+    description: 声明了 interface 的产线可以作为步骤嵌套（分形组合）；子产线的输出沿用内部的类型与保证
+    patch: &subline
+      - file: lines/localize.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Line
+          metadata: {name: localize, version: 1}
+          spec:
+            interface:
+              inputs: {video: {type: video.mp4@1, requires: [has_audio]}, subtitle: {type: subtitle.srt@1}}
+              outputs:
+                video: {from: dub.video}
+                subtitle: {from: dub.subtitle}
+            budget: {cap_usd: 3.0}
+            steps:
+              dub:
+                station: dub@2
+                params: {target_language: en}
+                in: {video: $inputs.video, subtitle: $inputs.subtitle}
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.dub_en: {subline: localize@1, in: {video: explainer.video, subtitle: explainer.subtitle}}
+    expect:
+      clean: true
+      resolutions:
+        - {line: localize@1, step: dub, port: video, status: direct, props: [has_audio]}
+        - {step: dub_en, port: video, status: direct}
+        - {step: vertical, port: video, status: direct, props: [has_audio, hd, not_silent]}
+  - id: subline-interface-requires-checked-at-call-site
+    patch:
+      - *subline
+      - {file: stations/explainer.yaml, set: {spec.outputs.video.guarantees: [hd]}}
+    expect:
+      codes: [E-CONTRACT]
+      diags: [{code: E-CONTRACT, subject: "Line:explainer-multilang@5/steps.dub_en.in.video", message: "缺失 {has_audio}"}]
+  - id: interface-requires-unknown-property
+    patch:
+      - *subline
+      - {file: lines/localize.yaml, set: {spec.interface.inputs.video.requires: [has_audio, loud]}}
+    expect:
+      codes: [E-CONTRACT, E-PROPERTY]
+      diags: [{code: E-PROPERTY, subject: "Line:localize@1/interface.inputs.video", message: "loud"}]
+  - id: subline-output-type-declared
+    patch:
+      - *subline
+      - {file: lines/localize.yaml, set: {spec.interface.outputs.video.type: video@1}}
+    expect:
+      codes: [E-NO-CONVERTER]
+      diags: [{code: E-NO-CONVERTER, subject: "Line:explainer-multilang@5/steps.vertical.in.video", message: "video@1 → video.mp4@1"}]
+  - id: subline-output-type-must-be-supertype
+    patch:
+      - *subline
+      - {file: lines/localize.yaml, set: {spec.interface.outputs.video.type: subtitle.srt@1}}
+    expect:
+      codes: [E-NO-CONVERTER, E-PORT]
+      diags: [{code: E-PORT, subject: "Line:localize@1/interface.outputs.video"}]
+  - id: subline-takes-no-params
+    patch:
+      - *subline
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.dub_en.params: {target_language: en}}}
+    expect:
+      codes: [E-PARAM]
+  - id: subline-budget-counts
+    patch:
+      - *subline
+      - {file: lines/localize.yaml, set: {spec.budget.cap_usd: 8.0}}
+    expect:
+      codes: [E-BUDGET]
+      diags: [{code: E-BUDGET, subject: "Line:explainer-multilang@5/budget", message: "13.0 USD"}]
+  - id: switch-cannot-observe-item
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.route:
+            switch: {on: $item, cases: [{when: "true", goto: to_shorts}], default: to_s3}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.route.switch", message: "switch 不能观察 $item"}]
+  - id: map-over-unknown-source
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.vertical.map: {over: dubb.video, max_items: 2}
+          spec.steps.vertical.in.video: $item
+    expect:
+      codes: [E-NO-CONVERTER, E-ORPHAN, E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.vertical.map", message: "map 展开的来源 dubb.video 不存在"}]
+  - id: map-over-item
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set:
+          spec.steps.vertical.map: {over: $item, max_items: 2}
+          spec.steps.vertical.in.video: $item
+    expect:
+      codes: [E-NO-CONVERTER, E-ORPHAN, E-PORT]
+      diags: [{code: E-PORT, subject: "Line:explainer-multilang@5/steps.vertical.map", message: "map 不能对 $item 展开"}]

@@ -1,0 +1,13 @@
+# Source 用的机器：接收外部推送（架构文档 5.4）。外部输入一律视为不可信，产出的 Bean 同样要经过出厂检验。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: webhook-intake, version: 1}
+spec:
+  form: service
+  runtime:
+    image: registry.local/machines/webhook-intake@sha256:a8effeffd8dacf82073fe9b606922ac61ee2ba52bd1840c67e7883f4ba334086
+    service: {name: intake, port: 8081}
+    instance: pooled
+  recipes:
+    receive:
+      outputs: {brief: {type: brief.video@1, harvest: "/factory/out/brief"}}

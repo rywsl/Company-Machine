@@ -1,0 +1,48 @@
+suite: expr.lexical
+kind: expr
+description: 字面量、转义、注释、保留字与数字格式（规范第 3 章）
+cases:
+  - {id: int-literal, expr: '42', expect: {value: 42, type: int}}
+  - {id: float-literal, expr: '4.25', expect: {value: 4.25, type: float}}
+  - {id: float-exp, expr: '1e3', expect: {value: 1000.0, type: float}}
+  - {id: float-exp-neg, expr: '2.5E-2', expect: {value: 0.025}}
+  - {id: int-max, expr: '9223372036854775807', expect: {value: 9223372036854775807}}
+  - {id: int-min-literal, expr: '-9223372036854775808', expect: {value: -9223372036854775808}}
+  - {id: int-literal-overflow, expr: '9223372036854775808', expect: {static_error: MRL-OVERFLOW}}
+  - {id: int-literal-too-large, expr: '99999999999999999999', expect: {static_error: MRL-OVERFLOW}}
+  - {id: leading-zero, expr: '007', expect: {static_error: MRL-SYNTAX}}
+  - {id: zero, expr: '0', expect: {value: 0}}
+  - {id: zero-point, expr: '0.5', expect: {value: 0.5}}
+  - {id: trailing-dot, expr: '1.', expect: {static_error: MRL-SYNTAX}}
+  - {id: leading-dot, expr: '.5', expect: {static_error: MRL-SYNTAX}}
+  - {id: exponent-incomplete, expr: '1e', expect: {static_error: MRL-SYNTAX}}
+  - {id: number-then-ident, expr: '12abc', expect: {static_error: MRL-SYNTAX}}
+  - {id: float-literal-overflow, expr: '1e400', expect: {static_error: MRL-SYNTAX}}
+  - {id: float-literal-underflow, expr: '1e-400', expect: {value: 0.0}}
+  - {id: string-double, expr: '"abc"', expect: {value: abc, type: string}}
+  - {id: string-single, expr: "'abc'", expect: {value: abc}}
+  - {id: escapes, expr: '"a\"b\\c\n\t"', expect: {value: "a\"b\\c\n\t"}}
+  - {id: escape-quote-single, expr: "'it\\'s'", expect: {value: "it's"}}
+  - {id: escape-unicode, expr: '"中\U0001F600"', expect: {value: "中😀"}}
+  - {id: escape-surrogate, expr: '"\ud800"', expect: {static_error: MRL-SYNTAX}}
+  - {id: escape-short-hex, expr: '"\u12"', expect: {static_error: MRL-SYNTAX}}
+  - {id: escape-unknown, expr: '"\q"', expect: {static_error: MRL-SYNTAX}}
+  - {id: unterminated, expr: '"abc', expect: {static_error: MRL-SYNTAX}}
+  - {id: newline-in-string, expr: "\"a\nb\"", expect: {static_error: MRL-SYNTAX}}
+  - {id: comment, expr: "1 + // 注释\n 2", expect: {value: 3}}
+  - {id: true-literal, expr: 'true', expect: {value: true, type: bool}}
+  - {id: false-literal, expr: 'false', expect: {value: false, type: bool}}
+  - {id: null-literal, expr: 'null', expect: {value: null, type: "null"}}
+  - {id: reserved-word, expr: 'if', expect: {static_error: MRL-SYNTAX}}
+  - {id: keyword-as-ident, expr: 'in', expect: {static_error: MRL-SYNTAX}}
+  - {id: keyword-as-field, expr: 'm.in', env: {m: {in: 1}}, expect: {value: 1}}
+  - {id: reserved-as-field, expr: 'm.for', env: {m: {for: 2}}, expect: {value: 2}}
+  - {id: dot-then-space, expr: 'm. a', env: {m: {a: 1}}, expect: {static_error: MRL-SYNTAX}}
+  - {id: illegal-char, expr: '1 # 2', expect: {static_error: MRL-SYNTAX}}
+  - {id: non-ascii-ident, expr: '名字', expect: {static_error: MRL-SYNTAX}}
+  - {id: trailing-comma-list, expr: '[1, 2,]', expect: {value: [1, 2]}}
+  - {id: trailing-comma-map, expr: '{"a": 1,}', expect: {value: {a: 1}}}
+  - {id: empty-list, expr: '[]', expect: {value: [], type: 'list<dyn>'}}
+  - {id: empty-map, expr: '{}', expect: {value: {}, type: 'map<dyn>'}}
+  - {id: trailing-garbage, expr: '1 2', expect: {static_error: MRL-SYNTAX}}
+  - {id: empty-source, expr: '', expect: {static_error: MRL-SYNTAX}}

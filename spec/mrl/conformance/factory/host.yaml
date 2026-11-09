@@ -1,0 +1,243 @@
+suite: factory.host
+kind: factory
+base: example
+description: >-
+  宿主阶段的诊断：YAML、JSON Schema、目录布局、嵌入表达式的静态检查、宪法本身的问题。
+cases:
+  # ---------- E-YAML ----------
+  - id: yaml-duplicate-key
+    patch:
+      - file: types/extra.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Type
+          kind: Type
+    expect:
+      codes: [E-YAML]
+      diags: [{code: E-YAML, subject: "File:types/extra.yaml", message: "重复的键 'kind'"}]
+  - id: yaml-syntax-error
+    patch:
+      - file: types/extra.yaml
+        content: "apiVersion: mao/v1\nkind: [Type\n"
+    expect:
+      codes: [E-YAML]
+  - id: yaml-1-1-booleans-are-strings
+    description: "YAML 1.2 core：on/yes 不是布尔值，trigger 的 {on: bean} 必须原样保留为字符串"
+    patch:
+      - file: lines/explainer-multilang.yaml
+        set: {spec.trigger: [{on: manual}]}
+    expect: {clean: true}
+
+  # ---------- E-SCHEMA ----------
+  - id: schema-missing-required-field
+    patch:
+      - {file: stations/vertical.yaml, unset: [spec.role]}
+    expect:
+      codes: [E-REF, E-SCHEMA]
+      diags: [{code: E-SCHEMA, subject: "Station:vertical@1", message: "'role' is a required property"}]
+  - id: schema-unknown-field
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.colour: blue}}
+    expect:
+      codes: [E-REF, E-SCHEMA]
+      diags: [{code: E-SCHEMA, subject: "Station:vertical@1"}]
+  - id: schema-type-version-must-be-string
+    patch:
+      - {file: types/doc.yaml, set: {metadata.version: 1}}
+    expect:
+      codes: [E-REF, E-REF, E-REF, E-REF, E-REF, E-REF, E-SCHEMA]
+      diags: [{code: E-SCHEMA, subject: "Type:doc.script@1"}]
+  - id: schema-invalid-doc-is-excluded
+    description: 未通过 schema 的文档不参与后续检查，所以引用它的地方会报 E-REF
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.role: painter}}
+    expect:
+      codes: [E-REF, E-SCHEMA]
+      diags:
+        - {code: E-SCHEMA, subject: "Station:vertical@1"}
+        - {code: E-REF, subject: "Line:explainer-multilang@5/steps.vertical"}
+  - id: schema-unparsable-type-expression
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.inputs.video.type: "list<video.mp4@1"}}
+    expect:
+      codes: [E-REF, E-SCHEMA]
+      diags: [{code: E-SCHEMA, subject: "Station:vertical@1/inputs.video", message: "缺少结尾的 '>'"}]
+  - id: schema-reserved-type-name
+    patch:
+      - {file: stations/vertical.yaml, set: {spec.inputs.video.type: "list@1"}}
+    expect:
+      codes: [E-REF, E-SCHEMA]
+      diags: [{code: E-SCHEMA, subject: "Station:vertical@1/inputs.video", message: "保留的类型名"}]
+  - id: schema-not-a-mapping
+    patch:
+      - {file: policies/extra.yaml, content: "- just\n- a list\n"}
+    expect:
+      codes: [E-SCHEMA]
+
+  # ---------- E-LAYOUT ----------
+  - id: layout-kind-in-wrong-directory
+    patch:
+      - file: types/misplaced.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Policy
+          metadata: {name: misplaced, version: 1}
+          spec: {applies_to: [transform], egress: {none: true}}
+    expect:
+      codes: [E-LAYOUT]
+      diags: [{code: E-LAYOUT, subject: "Policy:misplaced@1", message: "该位置只能放 Type"}]
+  - id: layout-record-kind-in-registry
+    patch:
+      - file: stations/cs.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: ChangeSet
+          metadata: {name: cs-0001}
+          spec: {base_epoch: d3a0f55, intent: test, changes: [{op: upsert, kind: Station, name: x}]}
+    expect:
+      codes: [E-LAYOUT]
+  - id: layout-files-outside-layout-are-ignored
+    patch:
+      - {file: notes/readme.yaml, content: "this: [is not, a spec]\n"}
+      - {file: stations/explainer/fixtures/case.yaml, content: "kind: Station\n"}
+    expect: {clean: true}
+
+  # ---------- E-EXPR / W-EXPR / W-PROPERTY-META ----------
+  - id: expr-property-field-typo
+    patch:
+      - {file: types/video.yaml, doc: 1, set: {spec.properties.has_audio: "bean.facts.audio_stream > 0"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Type:video.mp4@1.3/properties.has_audio", message: MRL-NO-FIELD}]
+  - id: expr-property-type-error
+    patch:
+      - {file: types/video.yaml, doc: 1, set: {spec.properties.h264: "bean.facts.vcodec > 3"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, message: MRL-TYPE}]
+  - id: expr-property-must-be-bool
+    patch:
+      - {file: types/video.yaml, doc: 1, set: {spec.properties.hd: "bean.facts.width"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Type:video.mp4@1.3/properties.hd", message: "这里需要 bool"}]
+  - id: expr-property-inherited-facts
+    description: 子类型的属性可以使用父类型声明的 facts
+    patch:
+      - {file: types/subtitle.yaml, doc: 1, set: {spec.properties.long: "bean.facts.last_cue_end_s > 600.0"}}
+    expect: {clean: true}
+  - id: expr-in-is-a-keyword
+    description: in 是关键字；验收标准用 inputs 引用输入
+    patch:
+      - {file: stations/explainer.yaml, set: {"spec.outputs.video.accept[0]": "out.facts.duration_s >= in.brief.meta.duration_s * 0.9"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Station:explainer@3/outputs.video.accept[0]", message: MRL-SYNTAX}]
+  - id: expr-accept-int-times-float
+    description: brief 的 duration_s 是 num；int 与 float 混合运算会提升，不是类型错误
+    patch:
+      - {file: stations/explainer.yaml, set: {"spec.outputs.video.accept[1]": "out.facts.duration_s <= inputs.brief.meta.duration_s * 1.1 + 1"}}
+    expect: {clean: true}
+  - id: expr-accept-maybe-absent
+    patch:
+      - {file: stations/explainer.yaml, set: {"spec.outputs.video.accept[1]": "inputs.brief.meta.audience != 'kids'"}}
+    expect:
+      codes: [W-EXPR]
+      diags: [{code: W-EXPR, severity: warning, message: MRL-MAYBE-ABSENT}]
+  - id: expr-accept-guarded-with-has
+    patch:
+      - {file: stations/explainer.yaml, set: {"spec.outputs.video.accept[1]": "!has(inputs.brief.meta.audience) || inputs.brief.meta.audience != 'kids'"}}
+    expect: {clean: true}
+  - id: expr-property-on-meta-warns
+    patch:
+      - {file: types/video.yaml, doc: 1, set: {spec.properties.chinese: "has(bean.meta.language) && bean.meta.language == 'zh-CN'"}}
+    expect:
+      codes: [W-PROPERTY-META]
+      diags: [{code: W-PROPERTY-META, subject: "Type:video.mp4@1.3/properties.chinese"}]
+  - id: expr-equivalence-typo
+    patch:
+      - {file: converters/subs-convert/station.yaml, set: {"spec.equivalence[0]": "dst.facts.cue_count == src.facts.cues"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Station:subs-convert@1/equivalence[0]"}]
+  - id: expr-approval-typo
+    patch:
+      - {file: stations/explainer.yaml, set: {spec.approval.propose.auto_if: "proposal.cost_usd <= 3.0"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Station:explainer@3/approval.propose"}]
+  - id: expr-idempotency-template-typo
+    patch:
+      - {file: stations/sinks.yaml, doc: 0, set: {spec.idempotency_key: "{{ inputs.artifact.idd }}:{{ params.bucket }}"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Station:publish-s3@2/idempotency_key"}]
+  - id: expr-step-param-template-typo
+    patch:
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.to_s3.params.prefix: "explainers/{{ run.idd }}/"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Line:explainer-multilang@5/steps.to_s3.params.prefix"}]
+  - id: expr-recipe-template-typo
+    patch:
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.task_template: "主题：{{ inputs.brif.meta.topic }}"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Machine:openmontage@7/recipes.animated-explainer.task_template"}]
+  - id: expr-recipe-template-maybe-absent
+    patch:
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.animated-explainer.task_template: "受众：{{ inputs.brief.meta.audience }}"}}
+    expect:
+      codes: [W-EXPR]
+  - id: expr-runtime-template-typo
+    patch:
+      - {file: runtimes/claude-code.yaml, set: {"spec.invoke.argv[2]": "{{ brief.tsk }}"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "OperatorRuntime:claude-code@4/invoke.argv[2]"}]
+
+  # ---------- E-CONSTITUTION ----------
+  - id: constitution-missing
+    patch:
+      - {file: constitution/invariants.mrl, delete: true}
+    expect:
+      codes: [E-CONSTITUTION]
+  - id: constitution-cannot-write-kernel-relations
+    description: 归属规则：宪法不能为内核的关系写规则，所以无法放松内核的检查
+    patch:
+      - file: constitution/loosen.mrl
+        content: |
+          module constitution.loosen.
+          resolved("Station", "ghost@1", "Station:ghost@1").
+    expect:
+      codes: [E-CONSTITUTION]
+      diags: [{code: E-CONSTITUTION, message: MRL-OWNERSHIP}]
+  - id: constitution-cannot-read-diag
+    patch:
+      - file: constitution/peek.mrl
+        content: |
+          module constitution.peek.
+          rel seen(c: string).
+          seen(C) :- diag(C, _, _).
+    expect:
+      codes: [E-CONSTITUTION]
+      diags: [{code: E-CONSTITUTION, message: MRL-OWNERSHIP}]
+  - id: constitution-unregistered-code
+    patch:
+      - file: constitution/extra.mrl
+        content: |
+          module constitution.extra.
+          diag("E-MY-OWN-CODE", K, "自造的诊断码") :- line(K).
+    expect:
+      codes: [E-CONSTITUTION]
+      diags: [{code: E-CONSTITUTION, subject: "Line:explainer-multilang@5", message: "E-MY-OWN-CODE"}]
+  - id: constitution-sees-host-warnings
+    description: 第二遍求值时宿主诊断已经进入 host_diag，宪法可以把警告升级为错误
+    patch:
+      - file: constitution/strict.mrl
+        content: |
+          module constitution.strict.
+          diag("E-INVARIANT", S, "本工厂把表达式警告视为错误：" + M) :- host_diag("W-EXPR", S, M).
+      - {file: stations/explainer.yaml, set: {"spec.outputs.video.accept[1]": "inputs.brief.meta.audience != 'kids'"}}
+    expect:
+      codes: [E-INVARIANT, W-EXPR]

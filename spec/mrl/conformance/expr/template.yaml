@@ -1,0 +1,28 @@
+suite: template.basic
+kind: template
+description: 模板 MRL-T：文本 + {{ 表达式 }}（规范第 7 章）
+cases:
+  - {id: plain, template: 'plain text', expect: {value: plain text}}
+  - {id: arith, template: '{{ 1 + 1 }}', expect: {value: "2"}}
+  - {id: around, template: 'a{{ x }}b', env: {x: "-"}, expect: {value: a-b}}
+  - {id: float, template: 'v={{ x }}', env: {x: 1.5}, expect: {value: v=1.5}}
+  - {id: bool, template: '{{ x }}', env: {x: true}, expect: {value: "true"}}
+  - {id: int, template: '{{ x }}', env: {x: 3}, expect: {value: "3"}}
+  - {id: list-dyn, template: '{{ x }}', env: {x: [1]}, expect: {error: MRL-TYPE}}
+  - {id: list-static, template: '{{ x }}', env: {x: [1]}, types: {x: 'list<int>'}, expect: {static_error: MRL-TYPE}}
+  - {id: null-dyn, template: '{{ x }}', env: {x: null}, expect: {error: MRL-TYPE}}
+  - {id: braces-inside, template: '{{ {"a": 1}.a }}', expect: {value: "1"}}
+  - {id: closer-in-string, template: '{{ "}}" }}', expect: {value: "}}"}}
+  - {id: two-interpolations, template: '{{ a }}/{{ b }}', env: {a: x, b: y}, expect: {value: x/y}}
+  - {id: unclosed, template: 'a {{ x', env: {x: 1}, expect: {static_error: MRL-SYNTAX}}
+  - {id: empty-interpolation, template: '{{ }}', expect: {static_error: MRL-SYNTAX}}
+  - {id: lone-closer-is-text, template: 'a }} b', expect: {value: 'a }} b'}}
+  - {id: undefined, template: '{{ nope }}', expect: {static_error: MRL-UNDEFINED}}
+  - id: idempotency-key
+    template: '{{ inputs.artifact.id }}:s3://{{ params.bucket }}/{{ params.prefix }}'
+    env:
+      inputs: {artifact: {id: "sha256:ab12"}}
+      params: {bucket: media-archive, prefix: explainers/r-0042/}
+    expect: {value: "sha256:ab12:s3://media-archive/explainers/r-0042/"}
+  - {id: run-prefix, template: 'explainers/{{ run.id }}/', env: {run: {id: r-0042}}, expect: {value: explainers/r-0042/}}
+  - {id: map-var, template: '{{ lang }}', env: {lang: en}, expect: {value: en}}

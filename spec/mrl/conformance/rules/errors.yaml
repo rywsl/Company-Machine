@@ -1,0 +1,61 @@
+suite: rules.errors
+kind: rules
+description: >-
+  运行时错误终止整个求值（失败即关闭）；规则体严格从左到右求值，
+  所以守卫的位置决定它会在哪些绑定上被求值（规范 8.9）
+cases:
+  - id: error-aborts
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel p(a: float).
+      p(Y) :- e(X), Y = 1 / X.
+    facts: {e: [[1], [0]]}
+    expect: {error: MRL-DIV-ZERO}
+
+  - id: filter-before-compute
+    program: |
+      module t.
+      @input rel e(a: int).
+      @input rel nonzero(a: int).
+      rel p(a: float).
+      p(Y) :- e(X), nonzero(X), Y = 1 / X.
+    facts: {e: [[1], [0]], nonzero: [[1]]}
+    expect: {relations: {p: [[1.0]]}}
+
+  - id: guard-position-matters
+    program: |
+      module t.
+      @input rel e(a: int).
+      @input rel nonzero(a: int).
+      rel p(a: int).
+      p(X) :- e(X), 1 / X > 0, nonzero(X).
+    facts: {e: [[1], [0]], nonzero: [[1]]}
+    expect: {error: MRL-DIV-ZERO}
+
+  - id: missing-field-aborts
+    program: |
+      module t.
+      @input rel bean(id: string, facts: map<any>).
+      rel loud(id: string).
+      loud(I) :- bean(I, F), F.mean_volume_db > -50.0.
+    facts: {bean: [[a, {mean_volume_db: -18.2}], [b, {}]]}
+    expect: {error: MRL-NO-FIELD}
+
+  - id: has-guard-avoids-missing-field
+    program: |
+      module t.
+      @input rel bean(id: string, facts: map<any>).
+      rel loud(id: string).
+      loud(I) :- bean(I, F), has(F.mean_volume_db), F.mean_volume_db > -50.0.
+    facts: {bean: [[a, {mean_volume_db: -18.2}], [b, {}]]}
+    expect: {relations: {loud: [[a]]}}
+
+  - id: error-in-head-expression
+    program: |
+      module t.
+      @input rel e(a: string).
+      rel p(a: int).
+      p(int(X)) :- e(X).
+    facts: {e: [["12"], ["x"]]}
+    expect: {error: MRL-CONVERT}

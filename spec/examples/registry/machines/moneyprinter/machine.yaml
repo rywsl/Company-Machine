@@ -1,0 +1,28 @@
+# 示例 B：服务型（架构文档 5.1，节选）。接口路径与字段以产品实际为准。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: moneyprinter, version: 2}
+spec:
+  form: service
+  source: {repo: https://github.com/harry0703/MoneyPrinterTurbo, commit: b81c0d2}
+  runtime:
+    image: registry.local/machines/moneyprinter@sha256:2177c7d47dc7e9a3a474bb4fceb2d1d567dd87f0bf5e7d20608d893e6aa92ab4
+    service: {name: api, port: 8080}
+    instance: pooled
+    reset: "rm -rf /app/storage/tasks/*"
+  operate:
+    openapi: http://api:8080/openapi.json
+    long_task:
+      submit: "POST /api/v1/videos"
+      poll:   "GET /api/v1/tasks/{task_id}"
+  needs:
+    secrets: [LLM_API_KEY, PEXELS_API_KEY]
+    egress: {providers: [api.pexels.com, api.deepseek.com]}
+  recipes:
+    quick-short:
+      inputs:  {brief: {type: brief.video@1}}
+      outputs: {video: {type: video.mp4@1}}
+      call:
+        video_subject:  "{{ inputs.brief.meta.topic }}"
+        video_aspect:   "{{ inputs.brief.meta.aspect }}"
+        video_language: "{{ inputs.brief.meta.language }}"

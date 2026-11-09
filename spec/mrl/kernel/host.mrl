@@ -1,0 +1,5 @@
+// 内核：宿主阶段的诊断（YAML、schema、目录布局、表达式静态检查）统一经由 diag 输出。
+
+module kernel.host.
+
+diag(C, S, M) :- host_diag(C, S, M).

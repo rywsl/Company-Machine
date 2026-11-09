@@ -1,0 +1,47 @@
+// 诊断码表（规范性）。宿主在求值后检查：每条 diag 的 code 都必须在这里登记。
+// severity 为 error / warning / info；只要出现 error，检查就不通过。
+
+module kernel.codes.
+
+rel code(code: string, severity: string, title: string).
+
+// 宿主阶段
+code("E-YAML", "error", "YAML 无法解析，或有重复的键、非字符串的键").
+code("E-SCHEMA", "error", "Spec 不符合其 kind 的 JSON Schema，或类型表达式无法解析").
+code("E-LAYOUT", "error", "Spec 文件所在目录与其 kind 不符").
+code("E-EXPR", "error", "MRL 表达式或模板有静态错误").
+code("E-CONSTITUTION", "error", "宪法缺失，或宪法模块无法通过 MRL 静态检查").
+code("W-EXPR", "warning", "MRL 表达式的警告，例如可选字段没有用 has() 保护").
+code("W-PROPERTY-META", "warning", "命名属性引用了自报的 meta，而不是实测的 facts").
+
+// 引用与版本
+code("E-DUPLICATE", "error", "同一个 Spec（kind + 名字 + 版本）定义了多次").
+code("E-REF", "error", "引用的 Spec 不存在或已退役").
+code("E-UNPINNED", "error", "版本、镜像 digest 或上游 commit 没有固定").
+code("W-DEPRECATED", "warning", "引用了已弃用的 Spec").
+
+// 类型
+code("E-CYCLE", "error", "存在环：类型继承成环，或产线步骤依赖成环").
+code("E-EXTENDS", "error", "子类型与父类型不兼容：种类不同、字段不兼容、fact 类型冲突、重新定义属性").
+code("E-FACT", "error", "facts 声明与 validator 产出不一致").
+code("E-PROPERTY", "error", "引用了端口类型上没有定义的命名属性").
+
+// 工位
+code("E-PORT", "error", "端口不存在、与配方不符，或角色要求的端口缺失").
+code("E-PARAM", "error", "参数没有声明，或必填参数没有提供").
+code("E-CONVERTER", "error", "converter 工位的结构不符合要求").
+code("E-PERMISSION", "error", "权限越界：策略不适用于该角色、模型不在允许范围、出网或凭据越级").
+code("W-NO-BUDGET", "warning", "没有设置预算上限").
+
+// 产线
+code("E-UNBOUND", "error", "必填输入没有连接").
+code("E-TYPE-MISMATCH", "error", "边两端类型不兼容，且这条边禁止自动转换（via: none）").
+code("E-NO-CONVERTER", "error", "边两端类型不兼容，转换库中也没有满足条件的路径").
+code("E-CONTRACT", "error", "下游的 requires 没有被覆盖").
+code("E-VIA", "error", "显式指定的转换链不可用").
+code("E-ORPHAN", "error", "终端物料没有去处：既不被消费，也没有标记 keep").
+code("E-BUDGET", "error", "各步骤预算之和超过产线预算").
+code("I-CONVERT", "info", "边上插入了转换（自动解析或显式指定）").
+
+// 宪法
+code("E-INVARIANT", "error", "违反宪法不变量").

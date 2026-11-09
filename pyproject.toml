@@ -1,0 +1,43 @@
+[project]
+name = "machine-agent-org"
+version = "0.1.0"
+description = "智能机器工厂：关系语言 MRL 的参考实现，以及构建在其上的工厂系统"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pyyaml>=6.0.1",
+  "jsonschema>=4.23",
+]
+
+[project.scripts]
+mrl = "mrl.cli:main"
+factory = "mao.cli:main"   # 由 M1-09 实现（spec/system/cli.md）
+
+[dependency-groups]
+dev = [
+  "pytest>=9.2.0",
+  "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mrl", "src/mao"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"spec" = "mrl/_spec"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]

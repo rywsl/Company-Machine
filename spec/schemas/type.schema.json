@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/type.schema.json",
+  "title": "Type（物料规格）",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "mao/v1"},
+    "kind": {"const": "Type"},
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "common.schema.json#/$defs/name"},
+        "version": {"$ref": "common.schema.json#/$defs/typeVersion"},
+        "lifecycle": {"$ref": "common.schema.json#/$defs/lifecycle"},
+        "labels": {"$ref": "common.schema.json#/$defs/labels"},
+        "description": {"type": "string"}
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "extends": {"$ref": "common.schema.json#/$defs/typeRef"},
+        "kind": {"enum": ["atomic", "bundle", "list", "ref"]},
+        "fields": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {"$ref": "common.schema.json#/$defs/typeExpr"}
+        },
+        "item": {"$ref": "common.schema.json#/$defs/typeExpr"},
+        "target": {"$ref": "common.schema.json#/$defs/typeExpr"},
+        "payload": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "media_type": {"type": "string"},
+              "required": {"type": "boolean"}
+            }
+          }
+        },
+        "meta_schema": {"type": "object"},
+        "facts": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {"$ref": "common.schema.json#/$defs/factType"},
+          "description": "实测 facts 的类型声明；子类型继承父类型的 facts"
+        },
+        "validators": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "image", "run", "emits"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"$ref": "common.schema.json#/$defs/name"},
+              "image": {"type": "string"},
+              "run": {"$ref": "common.schema.json#/$defs/stringList"},
+              "emits": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ident"}, "uniqueItems": true},
+              "fixtures": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "accept": {"$ref": "common.schema.json#/$defs/stringList"},
+                  "reject": {"$ref": "common.schema.json#/$defs/stringList"}
+                }
+              }
+            }
+          }
+        },
+        "properties": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {"$ref": "common.schema.json#/$defs/expr"}
+        },
+        "always": {"$ref": "common.schema.json#/$defs/propList"},
+        "compat": {"const": "full-within-major"},
+        "retention": {"$ref": "common.schema.json#/$defs/duration"}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "bundle"}}, "required": ["kind"]}, "then": {"required": ["fields"]}},
+        {"if": {"properties": {"kind": {"const": "list"}}, "required": ["kind"]}, "then": {"required": ["item"]}},
+        {"if": {"properties": {"kind": {"const": "ref"}}, "required": ["kind"]}, "then": {"required": ["target"]}}
+      ]
+    }
+  }
+}

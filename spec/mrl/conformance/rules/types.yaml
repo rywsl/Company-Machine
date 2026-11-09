@@ -1,0 +1,98 @@
+suite: rules.types
+kind: rules
+description: 列类型、值的规范化（int 进入 float 列）、静态与运行期类型错误（规范 8.2、8.4）
+cases:
+  - id: int-into-float-column
+    program: |
+      module t.
+      @input rel x(v: int).
+      rel f(v: float).
+      f(V) :- x(V).
+    facts: {x: [[1], [2]]}
+    expect: {relations: {f: [[1.0], [2.0]]}}
+
+  - id: float-into-int-column-static
+    program: |
+      module t.
+      @input rel x(v: float).
+      rel i(v: int).
+      i(V) :- x(V).
+    expect: {static_error: MRL-TYPE}
+
+  - id: string-into-int-static
+    program: |
+      module t.
+      rel i(v: int).
+      i("a").
+    expect: {static_error: MRL-TYPE}
+
+  - id: dyn-into-int-runtime
+    program: |
+      module t.
+      @input rel x(v: any).
+      rel i(v: int).
+      i(V) :- x(V).
+    facts: {x: [[1], [1.5]]}
+    expect: {error: MRL-TYPE}
+
+  - id: int-float-join
+    program: |
+      module t.
+      @input rel a(v: int).
+      @input rel b(v: float).
+      rel both(v: int).
+      both(V) :- a(V), b(V).
+    facts: {a: [[1], [2]], b: [[1.0], [3.0]]}
+    expect: {relations: {both: [[1]]}}
+
+  - id: any-column-distinguishes-int-float
+    program: |
+      module t.
+      @input rel x(v: any).
+      rel n(c: int).
+      n(count()) :- x(_).
+    facts: {x: [[1], [1.0], ["1"]]}
+    expect: {relations: {n: [[3]]}}
+
+  - id: list-column-normalized
+    program: |
+      module t.
+      @input rel x(v: list<float>).
+      rel y(v: list<float>).
+      y(V) :- x(V).
+    facts: {x: [[[1, 2.5]]]}
+    expect: {relations: {y: [[[1.0, 2.5]]]}}
+
+  - id: guard-must-be-bool
+    program: |
+      module t.
+      @input rel x(v: int).
+      rel y(v: int).
+      y(V) :- x(V), V + 1.
+    expect: {static_error: MRL-TYPE}
+
+  - id: guard-bool-dyn-runtime
+    program: |
+      module t.
+      @input rel x(v: any).
+      rel y(v: any).
+      y(V) :- x(V), V.
+    facts: {x: [[true], [1]]}
+    expect: {error: MRL-TYPE}
+
+  - id: var-type-conflict
+    program: |
+      module t.
+      @input rel a(v: string).
+      @input rel b(v: int).
+      rel c(v: string).
+      c(V) :- a(V), b(V).
+    expect: {static_error: MRL-TYPE}
+
+  - id: head-expression-type
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel p(a: int).
+      p(X / 2) :- e(X).
+    expect: {static_error: MRL-TYPE}

@@ -1,0 +1,97 @@
+scenario: conversion-13-5
+milestone: M0
+kind: registry
+base: example
+description: 架构文档 13.5：先用 agent 驱动的转换应急，再固化为脚本；解析结果随之切换到更便宜的版本
+steps:
+  - name: 归档产线需要 doc.markdown@1，转换库里没有 → E-NO-CONVERTER（生成转换需求 cr-0031）
+    patch: &archive
+      - file: types/markdown.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Type
+          metadata: {name: doc.markdown, version: "1.0"}
+          spec:
+            payload: [{path: doc.md, media_type: text/markdown, required: true}]
+            facts: {section_count: int}
+            validators:
+              - name: md-lint
+                image: registry.local/validators/md-lint@sha256:e86d8b338a4f6098af820732e33db2c637c5d1cbc33d1e50aaca1e0d2861789a
+                run: [lint-md, /bean/payload/doc.md]
+                emits: [section_count]
+                fixtures: {accept: [fixtures/doc/ok.md], reject: [fixtures/doc/empty.md]}
+      - {file: machines/rclone/machine.yaml, set: {spec.recipes.copy-doc: {inputs: {doc: {type: doc.markdown@1}}, params: {bucket: {type: string}}, run: [rclone, copy, /factory/in/doc, "s3:{{ params.bucket }}"]}}}
+      - file: stations/archive.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Station
+          metadata: {name: publish-archive, version: 1}
+          spec:
+            role: sink
+            machine: rclone@1
+            recipe: copy-doc
+            operator: {runtime: script@1}
+            params: {bucket: {type: string}}
+            inputs: {doc: {type: doc.markdown@1}}
+            outputs: {}
+            idempotency_key: "{{ inputs.doc.id }}:{{ params.bucket }}"
+            verify_receipt: s3-head-and-hash
+            policy: sink-s3@1
+      - {file: lines/explainer-multilang.yaml, set: {spec.steps.to_archive: {station: publish-archive@1, params: {bucket: archive}, in: {doc: explainer.script}}}}
+    expect:
+      codes: [E-NO-CONVERTER]
+      diags: [{code: E-NO-CONVERTER, subject: "Line:explainer-multilang@5/steps.to_archive.in.doc", message: "doc.script@1 → doc.markdown@1"}]
+  - name: 厂长先写 agent 驱动的 script-to-md@1（有成本、有预算）→ 自动插入
+    patch: &md1
+      - {file: machines/openmontage/machine.yaml, set: {spec.recipes.script-to-md: {inputs: {in: {type: doc.script@1}}, outputs: {out: {type: doc.markdown@1}}, task_template: "把 /factory/in/in 中的分镜脚本整理成 Markdown，每个场景一节。"}}}
+      - file: converters/script-to-md/station.yaml
+        content: |
+          apiVersion: mao/v1
+          kind: Station
+          metadata: {name: script-to-md, version: 1}
+          spec:
+            role: converter
+            converts: {from: doc.script@1, to: doc.markdown@1, lossless: true}
+            machine: openmontage@7
+            recipe: script-to-md
+            operator: {runtime: claude-code@4, model: claude-sonnet-5-5, max_turns: 20}
+            inputs:  {in:  {type: doc.script@1}}
+            outputs: {out: {type: doc.markdown@1}}
+            equivalence: ["dst.facts.section_count == src.facts.scene_count"]
+            cost: {usd_est: 0.04, p50_s: 40}
+            limits: {budget_usd: 0.2}
+            fixtures: {accept: [fixtures/script-a.json, fixtures/script-b.json], reject: [fixtures/script-broken.json]}
+            policy: video-default@2
+    expect:
+      ok: true
+      diags: [{code: I-CONVERT, subject: "Line:explainer-multilang@5/steps.to_archive.in.doc", message: "插入 [script-to-md@1]"}]
+      resolutions: [{step: to_archive, port: doc, status: convert, chain: [script-to-md@1]}]
+  - name: 固化为确定性脚本 script-to-md@2（成本接近 0、耗时 1 秒）→ 解析表切换到 @2（改变现有边的解析 → T2）
+    patch:
+      - {file: machines/ffmpeg/machine.yaml, set: {spec.recipes.script-to-md: {inputs: {in: {type: doc.script@1}}, outputs: {out: {type: doc.markdown@1}}, run: [convkit, script-to-md, /factory/in/in, /factory/out/out]}}}
+      - file: converters/script-to-md/station.yaml
+        append:
+          apiVersion: mao/v1
+          kind: Station
+          metadata: {name: script-to-md, version: 2}
+          spec:
+            role: converter
+            converts: {from: doc.script@1, to: doc.markdown@1, lossless: true}
+            machine: ffmpeg@3
+            recipe: script-to-md
+            operator: {runtime: script@1}
+            inputs:  {in:  {type: doc.script@1}}
+            outputs: {out: {type: doc.markdown@1}}
+            equivalence: ["dst.facts.section_count == src.facts.scene_count"]
+            cost: {usd_est: 0, p50_s: 1}
+            fixtures: {accept: [fixtures/script-a.json, fixtures/script-b.json], reject: [fixtures/script-broken.json]}
+            policy: tool-default@1
+    expect:
+      ok: true
+      resolutions: [{step: to_archive, port: doc, status: convert, chain: [script-to-md@2]}]
+  - name: 引用归零后 @1 先弃用、再退役；解析不受影响
+    patch:
+      - {file: converters/script-to-md/station.yaml, doc: 0, set: {metadata.lifecycle: retired}}
+    expect:
+      ok: true
+      resolutions: [{step: to_archive, port: doc, status: convert, chain: [script-to-md@2]}]

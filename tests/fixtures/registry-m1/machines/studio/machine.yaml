@@ -1,0 +1,25 @@
+# 智能体原生工作区（A 形态）：镜像的 /workspace 里有工作区，由 fake agent 操作。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: studio, version: 1}
+spec:
+  form: workspace
+  runtime:
+    image: mao-test/studio@sha256:f6bf945c5ebf73ef9407b0a47f424feeccd5a1783675d678bf1b66278c5e81f3
+    workdir: /workspace
+    instance: per_job
+    resources: {cpus: 1, memory: 256Mi}
+  operate:
+    guide: [README.factory]
+  needs: {egress: none}
+  recipes:
+    write-note:
+      inputs:
+        task: {type: agent.task@1}
+      params:
+        topic: {type: string, default: 工厂}
+      outputs:
+        note: {type: note.text@1, harvest: "drafts/*.txt"}
+      task_template: |
+        按照 /factory/in/task/task.json 中的 {{ inputs.task.facts.steps }} 个步骤，写一篇关于「{{ params.topic }}」的短文。
+        写好后放进 drafts/ 目录。

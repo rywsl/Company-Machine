@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/line.schema.json",
+  "title": "Line（产线：带类型的 DAG + 受限的动态构造）",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "$defs": {
+    "source": {
+      "type": "string",
+      "pattern": "^(?:\\$inputs\\.[a-z][a-z0-9_]*|\\$item|[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*)$",
+      "description": "$inputs.<端口> | <步骤>.<端口> | $item"
+    },
+    "binding": {
+      "oneOf": [
+        {"$ref": "#/$defs/source"},
+        {
+          "type": "object",
+          "required": ["from"],
+          "additionalProperties": false,
+          "properties": {
+            "from": {"$ref": "#/$defs/source"},
+            "via": {
+              "oneOf": [
+                {"const": "none"},
+                {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/ref"}}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "station": {"$ref": "common.schema.json#/$defs/ref"},
+        "subline": {"$ref": "common.schema.json#/$defs/ref"},
+        "in": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {"$ref": "#/$defs/binding"}
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {"type": ["string", "number", "boolean"]}
+        },
+        "map": {
+          "type": "object",
+          "required": ["over"],
+          "additionalProperties": false,
+          "if": {"properties": {"over": {"type": "array"}}},
+          "then": {"required": ["as"]},
+          "properties": {
+            "over": {
+              "oneOf": [
+                {"type": "array", "minItems": 1, "items": {"type": ["string", "number", "boolean"]}},
+                {"$ref": "#/$defs/source"}
+              ]
+            },
+            "as": {"$ref": "common.schema.json#/$defs/ident"},
+            "max_parallel": {"type": "integer", "minimum": 1},
+            "max_items": {"type": "integer", "minimum": 1},
+            "overflow": {"enum": ["reject", "truncate"]}
+          }
+        },
+        "switch": {
+          "type": "object",
+          "required": ["on", "cases", "default"],
+          "additionalProperties": false,
+          "properties": {
+            "on": {"$ref": "#/$defs/source"},
+            "cases": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["when", "goto"],
+                "additionalProperties": false,
+                "properties": {
+                  "when": {"$ref": "common.schema.json#/$defs/expr"},
+                  "goto": {"$ref": "common.schema.json#/$defs/ident"}
+                }
+              }
+            },
+            "default": {"$ref": "common.schema.json#/$defs/ident"}
+          }
+        },
+        "until": {
+          "type": "object",
+          "required": ["cond", "max_iter"],
+          "additionalProperties": false,
+          "properties": {
+            "cond": {"$ref": "common.schema.json#/$defs/expr"},
+            "max_iter": {"type": "integer", "minimum": 1, "maximum": 10}
+          }
+        }
+      },
+      "oneOf": [
+        {"required": ["station"], "not": {"anyOf": [{"required": ["subline"]}, {"required": ["switch"]}]}},
+        {"required": ["subline"], "not": {"anyOf": [{"required": ["station"]}, {"required": ["switch"]}, {"required": ["map"]}, {"required": ["until"]}]}},
+        {"required": ["switch"], "not": {"anyOf": [{"required": ["station"]}, {"required": ["subline"]}, {"required": ["in"]}, {"required": ["map"]}, {"required": ["until"]}, {"required": ["params"]}]}}
+      ]
+    }
+  },
+  "properties": {
+    "apiVersion": {"const": "mao/v1"},
+    "kind": {"const": "Line"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": false,
+      "properties": {
+        "interface": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "inputs": {
+              "type": "object",
+              "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+              "additionalProperties": {
+                "type": "object",
+                "required": ["type"],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {"$ref": "common.schema.json#/$defs/typeExpr"},
+                  "requires": {"$ref": "common.schema.json#/$defs/propList"}
+                }
+              }
+            },
+            "outputs": {
+              "type": "object",
+              "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+              "additionalProperties": {
+                "type": "object",
+                "required": ["from"],
+                "additionalProperties": false,
+                "properties": {
+                  "from": {"type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"},
+                  "type": {"$ref": "common.schema.json#/$defs/typeExpr"}
+                }
+              }
+            }
+          }
+        },
+        "trigger": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["on"],
+            "additionalProperties": false,
+            "properties": {
+              "on": {"enum": ["manual", "cron", "bean"]},
+              "schedule": {"type": "string"},
+              "type": {"$ref": "common.schema.json#/$defs/typeRef"},
+              "label": {"type": "string"}
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "required": ["cap_usd"],
+          "additionalProperties": false,
+          "properties": {"cap_usd": {"$ref": "common.schema.json#/$defs/usd"}}
+        },
+        "steps": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"$ref": "common.schema.json#/$defs/ident"},
+          "additionalProperties": {"$ref": "#/$defs/step"}
+        },
+        "keep": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"},
+          "uniqueItems": true
+        },
+        "slo": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    }
+  }
+}

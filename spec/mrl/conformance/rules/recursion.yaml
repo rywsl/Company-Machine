@@ -1,0 +1,93 @@
+suite: rules.recursion
+kind: rules
+description: 递归：传递闭包、互递归、非线性递归、带守卫的递归（规范 8.6）
+cases:
+  - id: transitive-closure
+    program: |
+      module t.
+      @input rel edge(a: string, b: string).
+      rel path(a: string, b: string).
+      path(A, B) :- edge(A, B).
+      path(A, C) :- path(A, B), edge(B, C).
+    facts: {edge: [[a, b], [b, c], [c, d]]}
+    expect: {relations: {path: [[a, b], [a, c], [a, d], [b, c], [b, d], [c, d]]}}
+
+  - id: cycle-detection
+    program: |
+      module t.
+      @input rel dep(a: string, b: string).
+      rel reach(a: string, b: string).
+      rel cyclic(a: string).
+      reach(A, B) :- dep(A, B).
+      reach(A, C) :- dep(A, B), reach(B, C).
+      cyclic(A) :- reach(A, A).
+    facts: {dep: [[x, y], [y, z], [z, x], [z, w]]}
+    expect: {relations: {cyclic: [[x], [y], [z]]}}
+
+  - id: mutual-recursion
+    program: |
+      module t.
+      @input rel next(a: int, b: int).
+      @input rel zero(a: int).
+      rel even(a: int).
+      rel odd(a: int).
+      even(X) :- zero(X).
+      odd(Y) :- even(X), next(X, Y).
+      even(Y) :- odd(X), next(X, Y).
+    facts: {zero: [[0]], next: [[0, 1], [1, 2], [2, 3], [3, 4]]}
+    expect: {relations: {even: [[0], [2], [4]], odd: [[1], [3]]}}
+
+  - id: nonlinear-recursion
+    program: |
+      module t.
+      @input rel edge(a: string, b: string).
+      rel path(a: string, b: string).
+      path(A, B) :- edge(A, B).
+      path(A, C) :- path(A, B), path(B, C).
+    facts: {edge: [[a, b], [b, c], [c, d], [d, e]]}
+    expect:
+      relations:
+        path: [[a, b], [a, c], [a, d], [a, e], [b, c], [b, d], [b, e], [c, d], [c, e], [d, e]]
+
+  - id: subtype-closure
+    program: |
+      module t.
+      @input rel extends(t: string, parent: string).
+      @input rel tnode(t: string).
+      rel sub(a: string, b: string).
+      sub(T, T) :- tnode(T).
+      sub(T, "any") :- tnode(T).
+      sub(A, C) :- extends(A, B), sub(B, C).
+    facts:
+      tnode: [[video.mp4@1], [video@1], [subtitle.srt@1]]
+      extends: [[video.mp4@1, video@1]]
+    expect:
+      relations:
+        sub:
+          - [subtitle.srt@1, any]
+          - [subtitle.srt@1, subtitle.srt@1]
+          - [video.mp4@1, any]
+          - [video.mp4@1, video.mp4@1]
+          - [video.mp4@1, video@1]
+          - [video@1, any]
+          - [video@1, video@1]
+
+  - id: recursion-with-guard
+    program: |
+      module t.
+      @input rel edge(a: string, b: string, w: int).
+      rel cheap_reach(a: string, b: string).
+      cheap_reach(A, B) :- edge(A, B, W), W < 10.
+      cheap_reach(A, C) :- cheap_reach(A, B), edge(B, C, W), W < 10.
+    facts: {edge: [[a, b, 1], [b, c, 20], [b, d, 2]]}
+    expect: {relations: {cheap_reach: [[a, b], [a, d], [b, d]]}}
+
+  - id: long-chain
+    program: |
+      module t.
+      @input rel edge(a: int, b: int).
+      rel reach(b: int).
+      reach(0).
+      reach(B) :- reach(A), edge(A, B).
+    facts: {edge: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9], [9, 10]]}
+    expect: {relations: {reach: [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]]}}

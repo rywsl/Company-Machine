@@ -1,0 +1,151 @@
+suite: rules.aggregation
+kind: rules
+description: >-
+  聚合 count/sum/min/max/set：按 body 的不同绑定（匿名变量也算）聚合；
+  无分组时的空输入语义；浮点求和按规范序（规范 8.8）
+cases:
+  - id: count-group
+    program: |
+      module t.
+      @input rel step(line: string, s: string).
+      rel steps(line: string, n: int).
+      steps(L, count()) :- step(L, _).
+    facts: {step: [[a, s1], [a, s2], [b, s1]]}
+    expect: {relations: {steps: [[a, 2], [b, 1]]}}
+
+  - id: sum-distinct-bindings
+    program: |
+      module t.
+      @input rel budget(line: string, s: string, usd: float).
+      rel spend(line: string, usd: float).
+      spend(L, sum(U)) :- budget(L, _, U).
+    facts: {budget: [[l, explainer, 5.0], [l, dub, 3.0], [l, vertical, 0], [l, extra, 3.0]]}
+    expect: {relations: {spend: [[l, 11.0]]}}
+
+  - id: sum-int
+    program: |
+      module t.
+      @input rel x(k: string, v: int).
+      rel total(v: int).
+      total(sum(V)) :- x(_, V).
+    facts: {x: [[a, 1], [b, 2], [c, 2]]}
+    expect: {relations: {total: [[5]]}}
+
+  - id: min-max
+    program: |
+      module t.
+      @input rel cost(c: string, usd: float).
+      rel cheapest(usd: float).
+      rel dearest(usd: float).
+      cheapest(min(U)) :- cost(_, U).
+      dearest(max(U)) :- cost(_, U).
+    facts: {cost: [[a, 0.5], [b, 0.04], [c, 2]]}
+    expect: {relations: {cheapest: [[0.04]], dearest: [[2.0]]}}
+
+  - id: set-aggregate
+    program: |
+      module t.
+      @input rel guarantee(s: string, port: string, p: string).
+      rel gset(s: string, port: string, ps: list<string>).
+      gset(S, P, set(G)) :- guarantee(S, P, G).
+    facts:
+      guarantee: [[vertical@1, video, vertical], [vertical@1, video, hd], [vertical@1, video, h264], [dub@2, video, has_audio]]
+    expect:
+      relations:
+        gset: [[dub@2, video, [has_audio]], [vertical@1, video, [h264, hd, vertical]]]
+
+  - id: empty-no-group-count-sum-set
+    program: |
+      module t.
+      @input rel x(v: int).
+      rel n(c: int).
+      rel s(v: int).
+      rel vals(vs: list<int>).
+      n(count()) :- x(_).
+      s(sum(V)) :- x(V).
+      vals(set(V)) :- x(V).
+    expect: {relations: {n: [[0]], s: [[0]], vals: [[[]]]}}
+
+  - id: empty-no-group-min
+    program: |
+      module t.
+      @input rel x(v: int).
+      rel lo(v: int).
+      lo(min(V)) :- x(V).
+    expect: {relations: {lo: []}}
+
+  - id: empty-with-group
+    program: |
+      module t.
+      @input rel x(k: string, v: int).
+      rel per(k: string, n: int).
+      per(K, count()) :- x(K, _).
+    expect: {relations: {per: []}}
+
+  - id: sum-float-order-is-canonical
+    program: |
+      module t.
+      @input rel x(k: string, v: float).
+      rel total(v: float).
+      total(sum(V)) :- x(_, V).
+    facts: {x: [[a, 0.3], [b, 0.1], [c, 0.2]]}
+    expect: {relations: {total: [[0.6000000000000001]]}}
+
+  - id: aggregate-in-recursion
+    program: |
+      module t.
+      @input rel e(a: string, b: string).
+      rel deg(a: string, n: int).
+      rel e2(a: string, b: string).
+      e2(A, B) :- e(A, B).
+      e2(A, B) :- deg(A, N), e(A, B), N > 1.
+      deg(A, count()) :- e2(A, _).
+    expect: {static_error: MRL-STRATIFY}
+
+  - id: aggregate-then-compare
+    program: |
+      module t.
+      @input rel step(line: string, s: string, usd: float).
+      @input rel cap(line: string, usd: float).
+      rel spend(line: string, usd: float).
+      rel over(line: string).
+      spend(L, sum(U)) :- step(L, _, U).
+      over(L) :- spend(L, X), cap(L, C), X > C.
+    facts: {step: [[a, s1, 5.0], [a, s2, 8.0], [b, s1, 1.0]], cap: [[a, 12.0], [b, 12.0]]}
+    expect: {relations: {over: [[a]]}}
+
+  - id: multiple-aggregates
+    program: |
+      module t.
+      @input rel x(k: string, v: int).
+      rel stats(k: string, n: int, total: int, hi: int).
+      stats(K, count(), sum(V), max(V)) :- x(K, V).
+    facts: {x: [[a, 1], [a, 5], [b, 2]]}
+    expect: {relations: {stats: [[a, 2, 6, 5], [b, 1, 2, 2]]}}
+
+  - id: distinct-values-via-set
+    program: |
+      module t.
+      @input rel x(k: string, v: int).
+      rel vals(vs: list<int>).
+      rel distinct_vals(n: int).
+      vals(set(V)) :- x(_, V).
+      distinct_vals(N) :- vals(Vs), N = size(Vs).
+    facts: {x: [[a, 1], [b, 1], [c, 2]]}
+    expect: {relations: {distinct_vals: [[2]]}}
+
+  - id: aggregate-arity
+    program: |
+      module t.
+      @input rel e(a: int).
+      rel n(c: int).
+      n(count(X)) :- e(X).
+    expect: {static_error: MRL-ARITY}
+
+  - id: aggregate-type
+    program: |
+      module t.
+      @input rel x(v: string).
+      rel s(v: int).
+      s(sum(V)) :- x(V).
+    expect: {static_error: MRL-TYPE}

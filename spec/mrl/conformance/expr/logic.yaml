@@ -1,0 +1,27 @@
+suite: expr.logic
+kind: expr
+description: 逻辑运算与条件表达式；严格从左到右短路（规范 6.4）
+cases:
+  - {id: and, expr: 'true && false', expect: {value: false}}
+  - {id: or, expr: 'false || true', expect: {value: true}}
+  - {id: not, expr: '!true', expect: {value: false}}
+  - {id: not-not, expr: '!!true', expect: {value: true}}
+  - {id: and-short-circuit, expr: 'false && (1 / 0 > 0)', expect: {value: false}}
+  - {id: or-short-circuit, expr: 'true || (1 / 0 > 0)', expect: {value: true}}
+  - {id: and-left-error, expr: '(1 / 0 > 0) && false', expect: {error: MRL-DIV-ZERO}}
+  - {id: or-left-error, expr: '(1 / 0 > 0) || true', expect: {error: MRL-DIV-ZERO}}
+  - {id: precedence-and-or, expr: 'true || false && false', expect: {value: true}}
+  - {id: precedence-not, expr: '!false && false', expect: {value: false}}
+  - {id: and-non-bool-static, expr: '1 && true', expect: {static_error: MRL-TYPE}}
+  - {id: and-non-bool-dyn, expr: 'x && true', env: {x: 1}, expect: {error: MRL-TYPE}}
+  - {id: and-right-non-bool-dyn, expr: 'true && x', env: {x: "yes"}, expect: {error: MRL-TYPE}}
+  - {id: not-non-bool-static, expr: '!1', expect: {static_error: MRL-TYPE}}
+  - {id: not-non-bool-dyn, expr: '!x', env: {x: "a"}, expect: {error: MRL-TYPE}}
+  - {id: ternary, expr: '1 < 2 ? "yes" : "no"', expect: {value: "yes", type: string}}
+  - {id: ternary-lazy, expr: 'true ? 1 : 1 / 0', expect: {value: 1, type: num}}
+  - {id: ternary-lub-type, expr: 'x ? 1 : 2.5', types: {x: bool}, env: {x: false}, expect: {value: 2.5, type: num}}
+  - {id: ternary-null-branch, expr: 'x ? 1 : null', types: {x: bool}, env: {x: true}, expect: {value: 1, type: dyn}}
+  - {id: ternary-right-assoc, expr: 'false ? 1 : true ? 2 : 3', expect: {value: 2}}
+  - {id: ternary-cond-static, expr: '1 ? 2 : 3', expect: {static_error: MRL-TYPE}}
+  - {id: ternary-cond-dyn, expr: 'x ? 2 : 3', env: {x: null}, expect: {error: MRL-TYPE}}
+  - {id: ternary-min-pattern, expr: '(w < h ? w : h) >= 1080', env: {w: 1080, h: 1920}, types: {w: int, h: int}, expect: {value: true}}

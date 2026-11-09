@@ -1,0 +1,12 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: vertical, version: 1}
+spec:
+  role: transform
+  machine: ffmpeg@3
+  recipe: reframe-vertical
+  operator: {runtime: script@1}
+  inputs:  {video: {type: video.mp4@1, requires: [hd, has_audio]}}
+  outputs: {video: {type: video.mp4@1, guarantees: [vertical, hd, h264, has_audio, not_silent]}}
+  limits:  {timeout: 15m, budget_usd: 0}
+  policy: tool-default@1

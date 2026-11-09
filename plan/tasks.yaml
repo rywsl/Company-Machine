@@ -1,0 +1,307 @@
+# 任务清单（格式见 plan/README.md 第 7.1 节）。
+# - deps 中的任务全部 done，才能 start / accept。
+# - paths 是允许修改的文件（glob，pathlib 语义）。越界改动会记入证据，由人在阶段门审查。
+# - accept 是验收项：全部通过，任务才算完成。门槛的含义见 plan/acceptance.md。
+#
+# M1 任务的通用验收项：
+#   acceptance  预先写好的验收测试，零失败、零跳过，且通过数不低于该文件的测试数
+#   unit        实现者自己写的单元测试（tests/system/test_<模块>.py），至少 5 个，零失败
+#   regress     全量 pytest 零失败（含静态规则 tests/test_codebase_policy.py）
+#   lint/format/doccheck
+
+tasks:
+  # ------------------------------------------------------------------ M0（已完成，记录证据）
+  - id: M0-01
+    milestone: M0
+    title: MRL-E / MRL-T：表达式与模板语言
+    card: plan/tasks/M0-01.md
+    spec: [spec/mrl/mrl-1.0.md]
+    paths: [src/mrl/**, spec/mrl/conformance/expr/**]
+    accept:
+      - id: conformance-expr
+        run: uv run mrl conformance spec/mrl/conformance/expr --json
+        assert: size(out.failures) == 0 && out.total >= 398
+
+  - id: M0-02
+    milestone: M0
+    title: MRL-R：规则语言（模块、归属、分层、聚合）
+    card: plan/tasks/M0-02.md
+    deps: [M0-01]
+    spec: [spec/mrl/mrl-1.0.md]
+    paths: [src/mrl/**, spec/mrl/conformance/rules/**]
+    accept:
+      - id: conformance-rules
+        run: uv run mrl conformance spec/mrl/conformance/rules --json
+        assert: size(out.failures) == 0 && out.total >= 106
+
+  - id: M0-03
+    milestone: M0
+    title: Spec 的 JSON Schema 与示例 Registry
+    card: plan/tasks/M0-03.md
+    deps: [M0-02]
+    spec: [spec/mrl/factory-profile.md]
+    paths: [spec/schemas/**, spec/examples/registry/**]
+    accept:
+      - id: example-strict
+        run: uv run mrl registry check spec/examples/registry --strict --json
+        assert: out.ok && out.counts.error == 0 && out.counts.warning == 0 && out.stats.edges == 9
+
+  - id: M0-04
+    milestone: M0
+    title: 工厂 profile：抽取、内核、宪法、转换解析、诊断
+    card: plan/tasks/M0-04.md
+    deps: [M0-03]
+    spec: [spec/mrl/factory-profile.md]
+    paths: [src/mrl/factory/**, spec/mrl/kernel/**, spec/mrl/constitution/**, spec/mrl/conformance/factory/**]
+    accept:
+      - id: conformance-factory
+        run: uv run mrl conformance spec/mrl/conformance/factory --json
+        assert: size(out.failures) == 0 && out.total >= 198
+      - id: coverage
+        run: uv run mrl coverage --json
+        assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 79
+      - id: factory-tests
+        run: uv run python tools/harness.py pytest tests/test_factory.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+
+  - id: M0-05
+    milestone: M0
+    title: mrl 命令行
+    card: plan/tasks/M0-05.md
+    deps: [M0-04]
+    spec: [spec/mrl/mrl-1.0.md, spec/mrl/factory-profile.md]
+    paths: [src/mrl/cli.py, tests/test_cli.py]
+    accept:
+      - id: cli-tests
+        run: uv run python tools/harness.py pytest tests/test_cli.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 14
+
+  - id: M0-06
+    milestone: M0
+    title: 语言规范与 profile 规范（文档与实现一致）
+    card: plan/tasks/M0-06.md
+    deps: [M0-05]
+    spec: [spec/mrl/mrl-1.0.md, spec/mrl/factory-profile.md]
+    paths: [spec/mrl/*.md]
+    accept:
+      - id: doccheck
+        run: uv run python tools/harness.py doccheck
+
+  - id: M0-07
+    milestone: M0
+    title: harness、计划文档与场景
+    card: plan/tasks/M0-07.md
+    deps: [M0-06]
+    spec: [plan/README.md, plan/acceptance.md]
+    paths: [tools/**, plan/**, tests/test_codebase_policy.py, tests/conftest.py]
+    accept:
+      - id: scenarios
+        run: uv run python tools/harness.py scenario run --all
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+      - id: policy
+        run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 2
+
+  # ------------------------------------------------------------------ M1 单工位跑通
+  - id: M1-01
+    milestone: M1
+    title: 基础设施：规范 JSON、时钟与 ID、错误码、SQLite、Context
+    card: plan/tasks/M1-01.md
+    spec: [spec/system/README.md, spec/system/foundation.md]
+    paths:
+      - src/mao/__init__.py
+      - src/mao/base.py
+      - src/mao/errors.py
+      - src/mao/db.py
+      - src/mao/context.py
+      - src/mao/migrations/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_01_foundation.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_base.py tests/system/test_db.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - &regress {id: regress, run: uv run python tools/harness.py pytest tests, assert: out.failed == 0 && out.errors == 0}
+      - &lint {id: lint, run: uv run ruff check src tests tools}
+      - &format {id: format, run: uv run ruff format --check src tests tools}
+      - &doccheck {id: doccheck, run: uv run python tools/harness.py doccheck}
+
+  - id: M1-02
+    milestone: M1
+    title: Registry 快照与运行期求值环境
+    card: plan/tasks/M1-02.md
+    deps: [M1-01]
+    spec: [spec/system/README.md, spec/system/snapshot.md]
+    paths: [src/mao/snapshot.py, src/mao/values.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_02_snapshot.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_snapshot.py tests/system/test_values.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+
+  - id: M1-03
+    milestone: M1
+    title: 仓库（Warehouse）：CAS、Bean、封存、血缘、完整性
+    card: plan/tasks/M1-03.md
+    deps: [M1-01]
+    spec: [spec/system/README.md, spec/system/warehouse.md]
+    paths: [src/mao/warehouse.py, src/mao/migrations/001_warehouse.sql, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_03_warehouse.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_warehouse.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+
+  - id: M1-04
+    milestone: M1
+    title: 沙箱：SandboxProvider、DockerProvider、LocalProvider
+    card: plan/tasks/M1-04.md
+    deps: [M1-01]
+    spec: [spec/system/README.md, spec/system/sandbox.md]
+    paths: [src/mao/sandbox/**, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_04_sandbox.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        env: {MAO_REQUIRE_DOCKER: "1"}
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_sandbox.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+
+  - id: M1-05
+    milestone: M1
+    title: factoryctl 与控制通道（CtlServer）
+    card: plan/tasks/M1-05.md
+    deps: [M1-04]
+    spec: [spec/system/README.md, spec/system/factoryctl.md]
+    paths: [src/mao/ctl/**, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_05_factoryctl.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        env: {MAO_REQUIRE_DOCKER: "1"}
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_ctl.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+
+  - id: M1-06
+    milestone: M1
+    title: 来料检验与出厂检验（V5）
+    card: plan/tasks/M1-06.md
+    deps: [M1-02, M1-03, M1-04]
+    spec: [spec/system/README.md, spec/system/gate.md]
+    paths: [src/mao/gate.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_06_gate.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_gate.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+
+  - id: M1-07
+    milestone: M1
+    title: OperatorRuntime 调用、transcript 解析与 Station Brief
+    card: plan/tasks/M1-07.md
+    deps: [M1-02, M1-05]
+    spec: [spec/system/README.md, spec/system/operator.md]
+    paths: [src/mao/operator.py, src/mao/brief.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_07_operator.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_operator.py tests/system/test_brief.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+
+  - id: M1-08
+    milestone: M1
+    title: Job 状态机与 Runner（收货、检验、封存、重试、审批、预算）
+    card: plan/tasks/M1-08.md
+    deps: [M1-03, M1-05, M1-06, M1-07]
+    spec: [spec/system/README.md, spec/system/runner.md]
+    paths: [src/mao/jobs.py, src/mao/runner.py, src/mao/migrations/002_jobs.sql, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_08_runner.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_jobs.py tests/system/test_runner.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+
+  - id: M1-09
+    milestone: M1
+    title: factory 命令行
+    card: plan/tasks/M1-09.md
+    deps: [M1-08]
+    spec: [spec/system/README.md, spec/system/cli.md]
+    paths: [src/mao/cli.py, src/mao/__main__.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_09_cli.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+      - id: unit
+        run: uv run python tools/harness.py pytest tests/system/test_cli.py
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+
+  - id: M1-10
+    milestone: M1
+    title: 端到端：Local 与 Docker 下的单工位运行
+    card: plan/tasks/M1-10.md
+    deps: [M1-09]
+    spec: [spec/system/README.md, spec/system/testing.md]
+    paths: [src/mao/**, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_10_e2e.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 1800
+      - id: all-m1
+        run: uv run python tools/harness.py pytest tests/acceptance/m1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 1800
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
