@@ -91,8 +91,8 @@ def test_equivalence_holds(tmp_path: Path) -> None:
 
 
 def test_converter_reject_not_sealed(tmp_path: Path) -> None:
-    result = _runner(tmp_path).run_equivalence("subs-convert@1", timeout_s=30)
-    assert result.detail.get("sealed_outputs", []) == []
+    result = _runner(tmp_path).run_equivalence("note-to-text@1", timeout_s=30)
+    assert result.detail["sealed_outputs"] == []
 
 
 def test_diff_regression(tmp_path: Path) -> None:

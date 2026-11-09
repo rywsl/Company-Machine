@@ -65,7 +65,9 @@ def test_no_suffix_match(tmp_path: Path) -> None:
 def test_machine_needs_do_not_expand_policy(tmp_path: Path) -> None:
     snapshot = Snapshot.load(EXAMPLE)
     plan = build_egress(snapshot, snapshot.key("Station", "explainer@3"), _store(tmp_path))
-    assert all(rule.host != "example.invalid" for rule in plan.allow)
+    hosts = {rule.host for rule in plan.allow}
+    assert {"fal.run", "api.pexels.com", "api.elevenlabs.io"} <= hosts
+    assert "example.invalid" not in hosts
 
 
 def test_connect_without_ca_rejected_when_methods_limited(tmp_path: Path) -> None:
@@ -122,42 +124,198 @@ def test_model_secret_not_in_sandbox_env(tmp_path: Path) -> None:
     assert "MODEL_TOKEN" in plan.withheld
 
 
+def _post_model(port: int, job_id: str, body: dict) -> tuple[int, dict]:
+    import json
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/messages",
+        data=json.dumps(body).encode(),
+        headers={"X-Factory-Job": job_id, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode())
+
+
+def _running_job(ctx, snapshot, job_id: str, state: str = "RUNNING") -> None:
+    with ctx.db.tx() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, station, epoch, state, attempt, inputs, params, outputs, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 1, '{}', '{}', '{}', ?, ?)",
+            (
+                job_id,
+                snapshot.key("Station", "explainer@3"),
+                snapshot.epoch,
+                state,
+                "2026-01-01T00:00:00.000Z",
+                "2026-01-01T00:00:00.000Z",
+            ),
+        )
+
+
 def test_model_proxy_meters(tmp_path: Path) -> None:
+    import json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
     from mao.base import FakeClock
     from mao.egress import ModelProxy
+    from tests.acceptance.m2.world import open_factory
 
-    proxy = ModelProxy(_store(tmp_path), FakeClock(), tmp_path)
-    assert proxy.spent("j-missing") == 0.0
-    proxy.close()
+    class Upstream(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            payload = json.dumps({"usage": {"input_tokens": 1000, "output_tokens": 0}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, fmt: str, *args: object) -> None:
+            del fmt, args
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    threading = __import__("threading")
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    ctx, snapshot, _runner, _clock = open_factory(tmp_path, EXAMPLE)
+    root = ctx.root
+    (root / "egress").mkdir()
+    (root / "egress" / "prices.json").write_text(
+        json.dumps({"meter-model": {"input_per_mtok": 2.0, "output_per_mtok": 4.0}}),
+        encoding="utf-8",
+    )
+    (root / "egress" / "upstreams.json").write_text(
+        json.dumps(
+            {
+                "meter-model": {
+                    "url": f"http://127.0.0.1:{upstream.server_address[1]}/v1/messages",
+                    "secret": "TOOL_TOKEN",
+                    "header": "x-api-key",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _running_job(ctx, snapshot, "j-meter")
+    proxy = ModelProxy(_store(tmp_path), FakeClock(), root)
+    port = proxy.start(port=0)
+    try:
+        status, _body = _post_model(port, "j-meter", {"model": "meter-model"})
+        assert status == 200
+        assert proxy.spent("j-meter") == 0.002
+    finally:
+        proxy.close()
+        upstream.shutdown()
 
 
 def test_missing_price_does_not_zero(tmp_path: Path) -> None:
+    import json
+
     from mao.base import FakeClock
     from mao.egress import ModelProxy
+    from tests.acceptance.m2.world import open_factory
 
-    proxy = ModelProxy(_store(tmp_path), FakeClock(), tmp_path)
-    assert proxy.spent("j-0001") == 0.0
-    proxy.close()
+    ctx, snapshot, _runner, _clock = open_factory(tmp_path, EXAMPLE)
+    (ctx.root / "egress").mkdir()
+    (ctx.root / "egress" / "upstreams.json").write_text(
+        json.dumps({"*": {"url": "http://127.0.0.1:9/v1", "secret": "TOOL_TOKEN", "header": "x-api-key"}}),
+        encoding="utf-8",
+    )
+    _running_job(ctx, snapshot, "j-noprice")
+    before = proxy_spent = 0.0
+    proxy = ModelProxy(_store(tmp_path), FakeClock(), ctx.root)
+    port = proxy.start(port=0)
+    try:
+        status, body = _post_model(port, "j-noprice", {"model": "unpriced"})
+        assert status == 402
+        assert body["code"] == "BUDGET_PRICE_MISSING"
+        assert proxy.spent("j-noprice") == before == proxy_spent
+    finally:
+        proxy.close()
 
 
 def test_budget_stop_prevents_seal(tmp_path: Path) -> None:
-    from mao.egress import ModelProxy
+    import json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    proxy = ModelProxy(_store(tmp_path), __import__("mao.base", fromlist=["FakeClock"]).FakeClock(), tmp_path)
-    assert proxy.spent("j-0001") == 0.0
-    proxy.close()
+    from mao.base import FakeClock
+    from mao.egress import ModelProxy
+    from tests.acceptance.m2.world import open_factory
+
+    class Upstream(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            payload = json.dumps({"usage": {"input_tokens": 1000, "output_tokens": 0}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, fmt: str, *args: object) -> None:
+            del fmt, args
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    threading = __import__("threading")
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    ctx, snapshot, _runner, _clock = open_factory(tmp_path, EXAMPLE)
+    root = ctx.root
+    (root / "egress").mkdir()
+    (root / "egress" / "prices.json").write_text(
+        json.dumps({"meter-model": {"input_per_mtok": 6000.0, "output_per_mtok": 0.0}}),
+        encoding="utf-8",
+    )
+    (root / "egress" / "upstreams.json").write_text(
+        json.dumps(
+            {
+                "meter-model": {
+                    "url": f"http://127.0.0.1:{upstream.server_address[1]}/v1/messages",
+                    "secret": "TOOL_TOKEN",
+                    "header": "x-api-key",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _running_job(ctx, snapshot, "j-stop")
+    proxy = ModelProxy(_store(tmp_path), FakeClock(), root)
+    port = proxy.start(port=0)
+    try:
+        first_status, _first = _post_model(port, "j-stop", {"model": "meter-model"})
+        assert first_status == 200
+        assert proxy.spent("j-stop") == 6.0
+        stops = ctx.db.query("SELECT code FROM budget_stops WHERE job_id = ?", ("j-stop",))
+        assert [row["code"] for row in stops] == ["BUDGET_EXCEEDED"]
+        status, body = _post_model(port, "j-stop", {"model": "meter-model"})
+        assert status == 402
+        assert body["code"] == "BUDGET_EXCEEDED"
+        row = ctx.db.query("SELECT state FROM jobs WHERE id = ?", ("j-stop",))
+        assert row[0]["state"] != "SEALED"
+    finally:
+        proxy.close()
+        upstream.shutdown()
 
 
 def test_sealed_job_header_rejected(tmp_path: Path) -> None:
-    from mao.egress import EgressProxy
+    from mao.base import FakeClock
+    from mao.egress import ModelProxy
+    from tests.acceptance.m2.world import open_factory
 
-    snapshot = Snapshot.load(EXAMPLE)
-    plan = build_egress(snapshot, snapshot.key("Station", "explainer@3"), _store(tmp_path))
-    proxy = EgressProxy(
-        lambda _job: plan, _store(tmp_path), __import__("mao.base", fromlist=["FakeClock"]).FakeClock()
-    )
-    assert proxy.start() > 0
-    proxy.close()
+    ctx, snapshot, _runner, _clock = open_factory(tmp_path, EXAMPLE)
+    _running_job(ctx, snapshot, "j-sealed", state="SEALED")
+    proxy = ModelProxy(_store(tmp_path), FakeClock(), ctx.root)
+    port = proxy.start(port=0)
+    try:
+        status, body = _post_model(port, "j-sealed", {"model": "meter-model"})
+        assert status == 403
+        assert body["code"] == "EGRESS_JOB_INVALID"
+    finally:
+        proxy.close()
 
 
 def test_secret_absent_from_records(tmp_path: Path) -> None:

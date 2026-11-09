@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -97,38 +98,93 @@ def test_wip_backpressure(tmp_path: Path) -> None:
 
 
 def test_breaker_unarmed(tmp_path: Path) -> None:
-    _ctx, _snapshot, _runner, _clock, sched = _sched(tmp_path, {"pools": {}, "breakers": {}})
+    ctx, snapshot, runner, _clock, sched = _sched(tmp_path, {"pools": {"cpu": 4}, "breakers": {}})
     sched.load_config()
-    assert sched.pump() == []
+    job = runner.submit(snapshot.key("Station", "upper@1"), {}, {})
+    sched.enqueue([job.id])
+    assert sched.pump() == [job.id]
+
+
+def _terminal_job(ctx, station: str, epoch: str, job_id: str, state: str, at: str) -> None:
+    with ctx.db.tx() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, station, epoch, state, attempt, inputs, params, outputs, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 1, '{}', '{}', '{}', ?, ?)",
+            (job_id, station, epoch, state, at, at),
+        )
 
 
 def test_breaker_uses_configured_rate(tmp_path: Path) -> None:
-    _ctx, _snapshot, _runner, _clock, sched = _sched(
-        tmp_path,
-        {
-            "pools": {},
-            "breakers": {
-                "upper": {"min_samples": 2, "failure_rate_gt": 0.5, "open_for": "1s", "probe_limit": 1}
-            },
-        },
+    ctx, snapshot, runner, _clock, sched = _sched(tmp_path, None)
+    station = snapshot.key("Station", "upper@1")
+    subject = "station:" + station
+    (ctx.root / "scheduler.json").write_text(
+        json.dumps(
+            {
+                "pools": {"cpu": 4},
+                "breakers": [
+                    {
+                        "subject": subject,
+                        "min_samples": 2,
+                        "failure_rate_gt": 0.5,
+                        "open_for": "1h",
+                        "probe_limit": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
     sched.load_config()
-    assert sched.tick()["pumped"] == []
+    _terminal_job(ctx, station, snapshot.epoch, "j-rate-dead", "DEAD", "2026-01-01T00:00:00.000Z")
+    _terminal_job(ctx, station, snapshot.epoch, "j-rate-sealed", "SEALED", "2026-01-01T00:00:01.000Z")
+    sched.tick()
+    held = runner.submit(station, {}, {})
+    sched.enqueue([held.id])
+    assert held.id in sched.pump()
+    _terminal_job(ctx, station, snapshot.epoch, "j-rate-dead-2", "DEAD", "2026-01-01T00:00:02.000Z")
+    _terminal_job(ctx, station, snapshot.epoch, "j-rate-dead-3", "DEAD", "2026-01-01T00:00:03.000Z")
+    sched.tick()
+    opened = ctx.db.query("SELECT state FROM breaker_state WHERE subject = ?", (subject,))
+    assert opened[0]["state"] == "open"
+    blocked = runner.submit(station, {}, {})
+    sched.enqueue([blocked.id])
+    assert blocked.id not in sched.pump()
 
 
 def test_half_open_probe_limit(tmp_path: Path) -> None:
-    _ctx, _snapshot, _runner, clock, sched = _sched(
-        tmp_path,
-        {
-            "pools": {"cpu": 2},
-            "breakers": {
-                "upper": {"min_samples": 1, "failure_rate_gt": 0.0, "open_for": "1s", "probe_limit": 1}
-            },
-        },
+    ctx, snapshot, runner, clock, sched = _sched(tmp_path, None)
+    station = snapshot.key("Station", "upper@1")
+    subject = "station:" + station
+    (ctx.root / "scheduler.json").write_text(
+        json.dumps(
+            {
+                "pools": {"cpu": 4},
+                "breakers": [
+                    {
+                        "subject": subject,
+                        "min_samples": 1,
+                        "failure_rate_gt": 0.0,
+                        "open_for": "1s",
+                        "probe_limit": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
     sched.load_config()
-    clock.advance(2)
-    assert "pumped" in sched.tick()
+    _terminal_job(ctx, station, snapshot.epoch, "j-open-sample", "DEAD", "2026-01-01T00:00:00.000Z")
+    sched.tick()
+    clock.advance(1)
+    first = runner.submit(station, {}, {})
+    second = runner.submit(station, {}, {})
+    sched.enqueue([first.id, second.id])
+    pumped = sched.tick()["pumped"]
+    assert len(pumped) == 1
+    assert set(pumped) <= {first.id, second.id}
+    state = ctx.db.query("SELECT state FROM breaker_state WHERE subject = ?", (subject,))
+    assert state[0]["state"] == "half_open"
 
 
 def test_run_cap(tmp_path: Path) -> None:
@@ -141,24 +197,45 @@ def test_run_cap(tmp_path: Path) -> None:
 def test_cron_every(tmp_path: Path) -> None:
     _ctx, _snapshot, _runner, clock, sched = _sched(tmp_path, {"pools": {}, "cron": True})
     sched.load_config()
-    sched.tick()["cron"]
+    first = sched.tick()["cron"]
+    assert first
     second = sched.tick()["cron"]
+    assert second == []
     clock.advance(60)
     third = sched.tick()["cron"]
-    assert second == []
-    assert third != second
+    assert third
+    assert set(third).isdisjoint(second)
 
 
 def test_cron_requires_empty_interface(tmp_path: Path) -> None:
-    _ctx, _snapshot, _runner, _clock, sched = _sched(tmp_path, {"pools": {}})
+    ctx, _snapshot, _runner, _clock, sched = _sched(tmp_path, {"pools": {}})
     sched.load_config()
     assert sched.tick()["cron"] == []
+    rows = ctx.db.query("SELECT kind, data FROM events")
+    blob = "\n".join(str(row["kind"]) + str(row["data"]) for row in rows)
+    assert "CRON_INPUT_REQUIRED" in blob
 
 
 def test_dlq_not_redispatched(tmp_path: Path) -> None:
-    _ctx, _snapshot, _runner, _clock, sched = _sched(tmp_path, {"pools": {}})
+    ctx, snapshot, runner, _clock, sched = _sched(tmp_path, {"pools": {"cpu": 1}})
     sched.load_config()
-    assert sched.list_dead() == []
+    with ctx.db.tx() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, station, epoch, state, attempt, inputs, params, outputs, created_at, updated_at) "
+            "VALUES ('j-dead', ?, ?, 'DEAD', 1, '{}', '{}', '{}', ?, ?)",
+            (
+                snapshot.key("Station", "upper@1"),
+                snapshot.epoch,
+                "2026-01-01T00:00:00.000Z",
+                "2026-01-01T00:00:00.000Z",
+            ),
+        )
+    dead = sched.list_dead()
+    assert [item.job_id for item in dead] == ["j-dead"]
+    before = runner.get("j-dead").attempt
+    sched.enqueue(["j-dead"])
+    assert sched.pump() == []
+    assert runner.get("j-dead").attempt == before
 
 
 def test_quarantine_visible_to_cache(tmp_path: Path) -> None:

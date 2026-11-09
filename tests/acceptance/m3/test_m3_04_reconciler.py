@@ -130,9 +130,13 @@ def test_missing_image_does_not_pull(tmp_path: Path) -> None:
 
 
 def test_secret_values_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _ctx, _snapshot, reconciler = _audit(tmp_path)
+    ctx, snapshot, reconciler = _audit(tmp_path)
     monkeypatch.setenv("ACCEPTANCE_SECRET", CANARY)
+    bean_id = seal_input(ctx, snapshot, "note.text@1")
+    blob = ctx.warehouse.blob_path(ctx.warehouse.get(bean_id).payload[0].digest)
+    blob.write_bytes(blob.read_bytes()[:-1] + b"\x01")
     findings = reconciler.audit_once(timeout_s=5)
+    assert any(item.invariant == "I1" for item in findings)
     assert CANARY not in json.dumps([item.detail for item in findings], ensure_ascii=False)
 
 
@@ -158,8 +162,12 @@ def test_baseline_breach_holds(tmp_path: Path) -> None:
 
 
 def test_no_psi_without_limit(tmp_path: Path) -> None:
-    _ctx, _snapshot, reconciler = _audit(tmp_path)
+    ctx, snapshot, reconciler = _audit(tmp_path)
+    bean_id = seal_input(ctx, snapshot, "note.text@1")
+    blob_path = ctx.warehouse.blob_path(ctx.warehouse.get(bean_id).payload[0].digest)
+    blob_path.write_bytes(blob_path.read_bytes()[:-1] + b"\x02")
     findings = reconciler.audit_once(timeout_s=5)
+    assert any(item.invariant == "I1" for item in findings)
     blob = json.dumps([item.detail for item in findings])
     assert "0.2" not in blob
     assert not any("psi" in json.dumps(item.detail).lower() for item in findings)

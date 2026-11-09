@@ -175,10 +175,20 @@ def test_psql_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_placeholder_not_concatenated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TEST_DSN", "postgres://local/factory")
-    store = PostgresStore(dsn_env="TEST_DSN", psql="psql", timeout_s=1)
-    with pytest.raises(FactoryError) as ei:
-        store.query("select $1", ["o'brien"])
-    assert ei.value.code in {"BACKEND_UNAVAILABLE", "SQL_DIALECT"}
+    script = tmp_path / "psql.py"
+    log = tmp_path / "psql-stdin.txt"
+    script.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        f"Path({str(log)!r}).write_text(sys.stdin.read(), encoding='utf-8')\n"
+        "sys.stdout.write('')\n",
+        encoding="utf-8",
+    )
+    store = PostgresStore(dsn_env="TEST_DSN", psql=f"python {script}", timeout_s=5)
+    store.query("SELECT name FROM acceptance_rows WHERE name = ?", ["o'brien"])
+    assert log.is_file()
+    sent = log.read_text(encoding="utf-8")
+    assert "SELECT" in sent.upper()
+    assert "o'brien" not in sent
 
 
 def _local_with_rows_and_blob(tmp_path: Path):

@@ -15,13 +15,17 @@ from tests.acceptance.m2.world import start_line  # noqa: E402
 
 
 def test_happy_path_inline(tmp_path: Path) -> None:
-    _ctx, _snapshot, runner, _clock, lines, inputs = start_line(tmp_path, "note-pipeline@1")
+    ctx, _snapshot, runner, _clock, lines, inputs = start_line(tmp_path, "note-pipeline@1")
     run = lines.start_run("note-pipeline@1", inputs)
     done = lines.run_to_completion(run.id, InlineExecutor(runner))
+    nodes = lines.nodes(done.id)
     assert done.state == RunState.SUCCEEDED
     assert done.outputs
-    assert done.spent_usd >= 0
-    assert [node.state for node in lines.nodes(done.id)] == [NodeState.DONE] * len(lines.nodes(done.id))
+    assert nodes
+    assert [node.state for node in nodes] == [NodeState.DONE] * len(nodes)
+    costs = ctx.db.query("SELECT cost_usd FROM jobs")
+    assert costs
+    assert done.spent_usd == sum(row["cost_usd"] for row in costs)
 
 
 def test_implicit_converter_job_runs(tmp_path: Path) -> None:

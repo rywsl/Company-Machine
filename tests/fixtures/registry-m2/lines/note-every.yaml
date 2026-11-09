@@ -1,0 +1,12 @@
+apiVersion: mao/v1
+kind: Line
+metadata: {name: note-every, version: 1}
+spec:
+  trigger:
+    - {on: cron, schedule: "every:1m"}
+  budget: {cap_usd: 1.0}
+  keep: [pull.note]
+  steps:
+    pull:
+      station: pull-notes@1
+      params: {from_dir: /tmp/notes}

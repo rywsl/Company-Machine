@@ -127,8 +127,21 @@ def test_in_run_missing_rule_rejects(tmp_path: Path) -> None:
     assert ei.value.code == "APPROVAL_RULE_MISSING"
 
 
+def _insert_job(ctx, snapshot, job_id: str) -> None:
+    station = snapshot.key("Station", "quote@1")
+    with ctx.db.tx() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, station, epoch, state, attempt, inputs, params, outputs, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'RUNNING', 1, '{}', '{}', '{}', ?, ?)",
+            (job_id, station, snapshot.epoch, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z"),
+        )
+
+
 def test_timeout_uses_spec_not_default(tmp_path: Path) -> None:
-    _ctx, snapshot, approvals, clock = _approvals(tmp_path)
+    import shutil
+
+    ctx, snapshot, approvals, clock = _approvals(tmp_path)
+    _insert_job(ctx, snapshot, "j-0007")
     opened = approvals.open_proposal(
         job_id="j-0007",
         attempt=1,
@@ -137,10 +150,35 @@ def test_timeout_uses_spec_not_default(tmp_path: Path) -> None:
         inputs={},
         params={},
     )
-    assert opened.deadline is not None
+    assert opened.deadline == "2026-01-01T00:00:01.000Z"
     clock.advance(2)
     expired = approvals.expire_due()
     assert opened.id in expired
+    job = ctx.db.query("SELECT state, error FROM jobs WHERE id = ?", ("j-0007",))
+    assert job[0]["state"] == "FAILED"
+    assert "APPROVAL_TIMEOUT" in (job[0]["error"] or "")
+
+    registry = tmp_path / "registry-no-timeout"
+    shutil.copytree(FIXTURE, registry)
+    quote = registry / "stations" / "quote.yaml"
+    quote.write_text(quote.read_text(encoding="utf-8").replace("    timeout: 1s\n", ""), encoding="utf-8")
+    ctx2, snapshot2, _runner, clock2 = open_factory(tmp_path / "no-timeout", registry)
+    approvals2 = Approvals(ctx2, snapshot2)
+    _insert_job(ctx2, snapshot2, "j-0008")
+    parked = approvals2.open_proposal(
+        job_id="j-0008",
+        attempt=1,
+        station_key=snapshot2.key("Station", "quote@1"),
+        payload={"summary": "quote", "cost_estimate_usd": 9.0, "time_estimate_s": 1},
+        inputs={},
+        params={},
+    )
+    assert parked.deadline is None
+    assert parked.status.value == "pending"
+    clock2.advance(7200)
+    assert parked.id not in approvals2.expire_due()
+    still = ctx2.db.query("SELECT state FROM jobs WHERE id = ?", ("j-0008",))
+    assert still[0]["state"] != "FAILED"
 
 
 def test_review_quorum_unset(tmp_path: Path) -> None:

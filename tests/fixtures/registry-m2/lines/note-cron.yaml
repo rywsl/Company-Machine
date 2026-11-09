@@ -1,0 +1,14 @@
+apiVersion: mao/v1
+kind: Line
+metadata: {name: note-cron, version: 1}
+spec:
+  interface:
+    inputs: {note: {type: note.text@1, requires: [non_empty]}}
+  trigger:
+    - {on: cron, schedule: "every:1m"}
+  budget: {cap_usd: 1.0}
+  steps:
+    upper:
+      station: upper@1
+      in: {note: $inputs.note}
+  keep: [upper.note]
