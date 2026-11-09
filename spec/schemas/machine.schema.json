@@ -95,7 +95,8 @@
               },
               "task_template": {"type": "string"},
               "call": {"type": "object"},
-              "run": {"$ref": "common.schema.json#/$defs/stringList"}
+              "run": {"$ref": "common.schema.json#/$defs/stringList"},
+              "propose": {"$ref": "common.schema.json#/$defs/stringList"}
             }
           }
         },

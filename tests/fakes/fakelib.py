@@ -45,6 +45,7 @@ TOOL_SCRIPTS = {
     "check-task": TOOLS / "check_task.py",
     "exit-three": TOOLS / "exit_three.py",
     "exit-one": TOOLS / "exit_one.py",
+    "write-proposal": TOOLS / "write_proposal.py",
 }
 FAKE_AGENT_COMMAND = "/opt/operator/bin/fake-agent"
 
