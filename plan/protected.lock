@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-09T21:08:01Z",
+  "updated_at": "2026-11-09T21:15:00Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
