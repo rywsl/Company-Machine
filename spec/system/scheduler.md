@@ -448,3 +448,12 @@ if failures / n > 0.5: open_breaker()
 - **令牌桶用 `monotonic`。** `FakeClock.advance` 会推进它。不要在桶的计算里调用 `time.monotonic()`。
 - **隔离与缓存的接线**要求进程里调用过 `install`。只构造了 `Scheduler` 却没 `install` 时，`cache.md` 看不到隔离。
 - **Windows**：配置路径用 `pathlib`。不启动 shell。资源单位只接受 `Mi` / `Gi`，不要接受会随区域设置变化的写法。
+---
+
+## 10. 任务拆分
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M2-12 | ScheduledExecutor、配额、熔断、死信、隔离与 cron | M2-03、M2-05 | 3–7 | `src/mao/scheduler.py`、`src/mao/migrations/016_scheduler.sql`、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_scheduler_*.py` | `test_m2_12_scheduler.py`（≥ 17 通过） | L |
+
+`Executor` 的方法集合以 `lines.md` 第 3.2 节为准，本任务不改那个 Protocol。`tests/acceptance/m2/` 属于预先写好的验收材料。任务执行者不得修改它们。

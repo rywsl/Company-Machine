@@ -511,3 +511,14 @@ def decide(self, approval_id, decision, *, by, note="", runtime): ...
 - **复核票可以永远等不齐**。M2 不代为投票。有 `timeout` 时到期失败；没有就停着。厂长唤醒是 M3 的事。
 - **自由文本会夹带秘密**。`summary`、`plan`、`note` 入库前要 `redact`，来源证明列表不收录这些字段。
 - **Windows**：`proposal.json` 用临时文件加 `os.replace`，路径用 `pathlib`。不要用 `shell=True` 跑 `propose` argv。
+---
+
+## 10. 任务拆分
+
+第 7 章的运行期测试是一个任务。第 5.7 节的静态检查仍由 `connectors.md` 的 M2-09 实现，本表不另开任务。
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M2-06 | 审批路由、超时、复核与两阶段 propose | M1 全部、M2-10 | 3–7 | `src/mao/approvals.py`、`src/mao/migrations/013_approvals.sql`、`src/mao/runner.py`（只增第 3.2 节的转交）、`src/mao/jobs.py`（只增 `phase`）、`src/mao/ctl/**`、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_approvals_*.py` | `test_m2_06_approvals.py`（≥ 13 通过） | L |
+
+`tests/acceptance/m2/` 属于预先写好的验收材料。任务执行者不得修改它们。

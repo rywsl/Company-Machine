@@ -440,3 +440,12 @@ hosts = policy_hosts | machine_hosts
 - **`host-gateway` 依赖 Docker 20.10+。** 写不进 argv 时 `EGRESS_PROXY_UNAVAILABLE`，不要退回 `--network host`。
 - **计量晚于上游扣费。** 解析失败或越限的那一次，上游可能已经收费。失败关闭优先于“把未计价的成功交给操作工”。
 - **Windows**：只绑定 `127.0.0.1`；路径用 `pathlib`；子进程参数列表，禁止 `shell=True`。
+---
+
+## 10. 任务拆分
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M2-07 | 秘密分类、出网计划、出网代理与模型计量 | M1 全部 | 3–7 | `src/mao/egress.py`、`src/mao/migrations/014_egress.sql`、`src/mao/cli.py`、`src/mao/errors.py`、`src/mao/sandbox/**`（只增第 5.6 节的 argv 替换）、`tests/system/test_egress_*.py` | `test_m2_07_egress.py`（≥ 13 通过） | L |
+
+`tests/acceptance/m2/` 属于预先写好的验收材料。任务执行者不得修改它们。

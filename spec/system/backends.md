@@ -299,3 +299,12 @@ uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_04_backends.py
 - **翻译不是第二份手写迁移**。新增 SQLite 迁移后，翻译器必须能处理它，否则 `SQL_DIALECT` 让 Postgres 路径失败，而不是悄悄跳过。已发布的 sqlite 文件仍然禁止修改（README 3.6）。
 - **锁与崩溃**。进程在复制中被杀死会留下 `backend_lock`。人删除锁之前，`MIGRATE_IN_PROGRESS` 一直拒绝新的迁移。不要在超时后自动删锁并再迁一次（可能双写）。
 - **D8 回归**。M1 验收不设置指针文件。任何在 `Warehouse.__init__` 或 `Database.__init__` 里探测云环境变量的改动都是缺陷。
+---
+
+## 10. 任务拆分
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M4-04 | 本地与 S3 对象存储、Postgres 状态存储、`open_context` | M1-03 | 3–7 | `src/mao/backends.py`、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_backends_*.py` | `test_m4_04_backends.py`（第 7 章全部测试通过） | L |
+
+`Context.open` 的签名不增加参数。`tests/acceptance/m4/` 属于预先写好的验收材料。任务执行者不得修改它们。

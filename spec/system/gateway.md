@@ -273,3 +273,12 @@ uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_03_gateway.py
 - **响应里的令牌**。事件只记 `task_id` 与次数。查询日志走 `foreman.md` 的打码。网关自己的异常 `detail` 不放响应体。
 - **compose**。机器用 `runtime.compose` 时，仍由 `DockerProvider` 启动，本文件不引入 compose 库。compose 文件里若写了端口发布，`build_run_argv` 的安全检查（既有单元测试）应拒绝；网关不放松这条。
 - **与 FORM_UNSUPPORTED 的并存**。M2 验收不构造 `ServiceGateway`。不要为了 M4 去改 `connectors.md` 的错误码语义。
+---
+
+## 10. 任务拆分
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M4-03 | 长任务网关、OpenAPI 工具与 MCP 清单 | M2-11 | 3–7 | `src/mao/gateway.py`、`src/mao/ctl/**`（只增 `factoryctl service`）、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_gateway_*.py` | `test_m4_03_gateway.py`（第 7 章全部测试通过） | L |
+
+不构造 `ServiceGateway` 时，`form: service` 仍是 `FORM_UNSUPPORTED`（`connectors.md`）。`tests/acceptance/m4/` 属于预先写好的验收材料。任务执行者不得修改它们。

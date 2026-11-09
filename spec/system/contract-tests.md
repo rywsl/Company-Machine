@@ -356,3 +356,12 @@ env = {"in": src, "out": dst}
 - **canary 不查缓存**，否则外部 provider 的漂移会被缓存盖住（`cache.md` 第 9 章）。
 - **报告不是 Bean**，也不进血缘。不要为了“可追溯”把报告封存成物料。
 - **Windows**：样例路径用 `pathlib`，相对 Registry 根解析后再检查是否仍在根下。复制用 `shutil.copyfile`，不要把大样例读进内存。
+---
+
+## 10. 任务拆分
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M2-08 | 契约运行：validator、黄金样例、等价、差分与 Sink 干跑 | M2-06、M2-10 | 3–7 | `src/mao/contract.py`、`src/mao/migrations/015_contract.sql`、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_contract_*.py` | `test_m2_08_contract.py`（≥ 16 通过） | L |
+
+`tests/acceptance/m2/` 属于预先写好的验收材料。任务执行者不得修改它们。

@@ -305,3 +305,418 @@ tasks:
       - *lint
       - *format
       - *doccheck
+
+  # ------------------------------------------------------------------ M2 产线与外部世界
+  - id: M2-01
+    milestone: M2
+    title: 运行计划编译（纯函数）
+    card: plan/tasks/M2-01.md
+    deps: [M1-01, M1-02, M1-03, M1-04, M1-05, M1-06, M1-07, M1-08, M1-09, M1-10]
+    spec: [spec/system/lines.md]
+    paths: [src/mao/runplan.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_01_runplan.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-02
+    milestone: M2
+    title: run 存储、状态机与输入检查
+    card: plan/tasks/M2-02.md
+    deps: [M2-01]
+    spec: [spec/system/lines.md]
+    paths: [src/mao/runs.py, src/mao/migrations/010_runs.sql, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_02_runs_store.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-03
+    milestone: M2
+    title: LineRunner 推进、InlineExecutor、取消、重试、重建、CLI
+    card: plan/tasks/M2-03.md
+    deps: [M2-02]
+    spec: [spec/system/lines.md]
+    paths: [src/mao/runs.py, src/mao/cli.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_03_line_runner.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-04
+    milestone: M2
+    title: Bean 标签与 bean 触发器
+    card: plan/tasks/M2-04.md
+    deps: [M2-03]
+    spec: [spec/system/lines.md]
+    paths:
+      - src/mao/runs.py
+      - src/mao/warehouse.py
+      - src/mao/ctl/**
+      - src/mao/runner.py
+      - src/mao/cli.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_04_triggers.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-05
+    milestone: M2
+    title: 缓存键、查找、失效，以及与 LineRunner、factory run 的集成
+    card: plan/tasks/M2-05.md
+    deps: [M2-03]
+    spec: [spec/system/cache.md]
+    paths:
+      - src/mao/cache.py
+      - src/mao/migrations/011_cache.sql
+      - src/mao/runs.py
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_05_cache.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 10
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-06
+    milestone: M2
+    title: 审批路由、超时、复核与两阶段 propose
+    card: plan/tasks/M2-06.md
+    deps: [M1-01, M1-02, M1-03, M1-04, M1-05, M1-06, M1-07, M1-08, M1-09, M1-10, M2-10]
+    spec: [spec/system/approvals.md]
+    paths:
+      - src/mao/approvals.py
+      - src/mao/migrations/013_approvals.sql
+      - src/mao/runner.py
+      - src/mao/jobs.py
+      - src/mao/ctl/**
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_06_approvals.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 13
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-07
+    milestone: M2
+    title: 秘密分类、出网计划、出网代理与模型计量
+    card: plan/tasks/M2-07.md
+    deps: [M1-01, M1-02, M1-03, M1-04, M1-05, M1-06, M1-07, M1-08, M1-09, M1-10]
+    spec: [spec/system/egress.md]
+    paths:
+      - src/mao/egress.py
+      - src/mao/migrations/014_egress.sql
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - src/mao/sandbox/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_07_egress.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 13
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-08
+    milestone: M2
+    title: 契约运行：validator、黄金样例、等价、差分与 Sink 干跑
+    card: plan/tasks/M2-08.md
+    deps: [M2-06, M2-10]
+    spec: [spec/system/contract-tests.md]
+    paths:
+      - src/mao/contract.py
+      - src/mao/migrations/015_contract.sql
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_08_contract.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 16
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-09
+    milestone: M2
+    title: MRL profile：核验配方与两阶段工位的静态检查
+    card: plan/tasks/M2-09.md
+    deps: [M1-01, M1-02, M1-03, M1-04, M1-05, M1-06, M1-07, M1-08, M1-09, M1-10]
+    spec: [spec/system/connectors.md, spec/system/approvals.md]
+    paths:
+      - spec/schemas/machine.schema.json
+      - spec/schemas/station.schema.json
+      - src/mrl/factory/extract.py
+      - spec/mrl/kernel/stations.mrl
+      - spec/mrl/kernel/codes.mrl
+      - spec/mrl/factory-profile.md
+      - spec/examples/registry/machines/**
+      - spec/mrl/conformance/factory/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_09_profile_receipts.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 3
+      - id: conformance
+        run: uv run mrl conformance --json
+        assert: size(out.failures) == 0 && out.total >= 702
+      - id: coverage
+        run: uv run mrl coverage --json
+        assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 79
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-10
+    milestone: M2
+    title: Sink：幂等键、占用、回执、核验、作废、CLI
+    card: plan/tasks/M2-10.md
+    deps: [M2-03, M2-09]
+    spec: [spec/system/connectors.md]
+    paths:
+      - src/mao/connectors.py
+      - src/mao/runner.py
+      - src/mao/jobs.py
+      - src/mao/ctl/**
+      - src/mao/migrations/012_receipts.sql
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_10_sink.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 10
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-11
+    milestone: M2
+    title: Source：执行流程、来源证明与凭据边界
+    card: plan/tasks/M2-11.md
+    deps: [M2-10]
+    spec: [spec/system/connectors.md]
+    paths: [src/mao/connectors.py, src/mao/runner.py, src/mao/cli.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_11_source.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M2-12
+    milestone: M2
+    title: ScheduledExecutor、配额、熔断、死信、隔离与 cron
+    card: plan/tasks/M2-12.md
+    deps: [M2-03, M2-05]
+    spec: [spec/system/scheduler.md, spec/system/lines.md]
+    paths:
+      - src/mao/scheduler.py
+      - src/mao/migrations/016_scheduler.sql
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_12_scheduler.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 17
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  # ------------------------------------------------------------------ M3 治理与厂长
+  - id: M3-01
+    milestone: M3
+    title: Epoch 指针、ChangeSet 提交与回滚
+    card: plan/tasks/M3-01.md
+    deps: [M2-08]
+    spec: [spec/system/governance.md]
+    paths: [src/mao/governance.py, src/mao/cli.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_01_governance.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M3-04
+    milestone: M3
+    title: 不变量审计、引用修复与工位暂停
+    card: plan/tasks/M3-04.md
+    deps: [M3-01]
+    spec: [spec/system/reconciler.md, spec/system/governance.md]
+    paths:
+      - src/mao/reconcile.py
+      - src/mao/migrations/022_audit.sql
+      - src/mao/runs.py
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_04_reconciler.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 11
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M3-05
+    milestone: M3
+    title: 唤醒、只读查询、提议、转换需求与自举检查
+    card: plan/tasks/M3-05.md
+    deps: [M3-01]
+    spec: [spec/system/foreman.md, spec/system/governance.md]
+    paths:
+      - src/mao/foreman.py
+      - src/mao/migrations/023_foreman.sql
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_05_foreman.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 12
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  # ------------------------------------------------------------------ M4 动态结构与生产化
+  - id: M4-01
+    milestone: M4
+    title: compile_dynamic 与动态构造展开
+    card: plan/tasks/M4-01.md
+    deps: [M2-03]
+    spec: [spec/system/dynamic.md, spec/system/lines.md]
+    paths: [src/mao/dynamic.py, src/mao/runs.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_01_dynamic.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 11
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M4-02
+    milestone: M4
+    title: Plan 编译、预算与运行期解析表追加
+    card: plan/tasks/M4-02.md
+    deps: [M4-01, M3-05]
+    spec: [spec/system/dynamic.md, spec/system/foreman.md]
+    paths: [src/mao/dynamic.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_02_plan.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M4-03
+    milestone: M4
+    title: 长任务网关、OpenAPI 工具与 MCP 清单
+    card: plan/tasks/M4-03.md
+    deps: [M2-11]
+    spec: [spec/system/gateway.md, spec/system/connectors.md]
+    paths: [src/mao/gateway.py, src/mao/ctl/**, src/mao/cli.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_03_gateway.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 11
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M4-04
+    milestone: M4
+    title: 本地与 S3 对象存储、Postgres 状态存储、open_context
+    card: plan/tasks/M4-04.md
+    deps: [M1-03]
+    spec: [spec/system/backends.md, spec/system/foundation.md]
+    paths: [src/mao/backends.py, src/mao/cli.py, src/mao/errors.py, tests/system/**]
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_04_backends.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 11
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+

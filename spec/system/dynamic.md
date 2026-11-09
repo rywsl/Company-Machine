@@ -295,3 +295,15 @@ uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_02_plan.py
 - **子 run 与父 run 的预算**。子 run 的花费已经含在父 run 的 `spent_usd` 里之后，报表不要再加一次。验收可以核对父 spent 等于各子 spent 之和加上父自身节点花费。
 - **switch 的共享下游**。一个步骤既是某个 `goto` 又被别的步骤绑定：只有当它的每一条入边都来自未选中的分支时才 `SKIPPED`。不要因为它出现在 `cases` 里就无条件跳过。
 - **Windows 路径**。侧车 JSON 用 `pathlib` 写在 epoch 目录旁，不写进 Git 工作区，避免把 Registry 弄脏。
+---
+
+## 10. 任务拆分
+
+第 7 章已经把测试分成两个文件。本表只照这个分法，不另拆。
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M4-01 | `compile_dynamic` 与动态构造展开 | M2-03 | 3、5.1–5.4、7 的 `test_m4_01_dynamic.py` | `src/mao/dynamic.py`、`src/mao/runs.py`（只增展开前的 `expand` 调用）、`src/mao/errors.py`、`tests/system/test_dynamic_*.py` | `test_m4_01_dynamic.py`（第 7 章该文件全部测试通过） | L |
+| M4-02 | Plan 编译、预算与运行期解析表追加 | M4-01、M3-05 | 3、4、5.5、7 的 `test_m4_02_plan.py` | `src/mao/dynamic.py`、`src/mao/errors.py`、`tests/system/test_plan_*.py` | `test_m4_02_plan.py`（第 7 章该文件全部测试通过） | M |
+
+`compile_run_plan` 对 map / switch / until / subline 仍抛 `LINE_UNSUPPORTED`。本任务不改那个函数的拒绝行为。`tests/acceptance/m4/` 属于预先写好的验收材料。任务执行者不得修改它们。

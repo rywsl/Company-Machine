@@ -388,3 +388,12 @@ uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_05_foreman.py
 - **唤醒风暴**。合并键已经按 signal + subject 去重。不要为同一发现的每次审计再开一张票。
 - **transcript 很大**。`job_transcript` 可以只读文件。调用方若只要尾部，仍必须先打码再截断，禁止先截断再打码（密钥可能被截成两半从而漏检）。打码在完整文本上做，然后可以按调用参数截断；本文件的 CLI 返回全文的打码结果。
 - **自举空库**。第一个 commit 必须由人签名写入宪法。`bootstrap_check` 在没有 `active` 时 `ok` 为假，`missing` 含 `active`。它不运行 `git init`。
+---
+
+## 10. 任务拆分
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M3-05 | 唤醒、只读查询、提议、转换需求与自举检查 | M3-01 | 3–7 | `src/mao/foreman.py`、`src/mao/migrations/023_foreman.sql`、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_foreman_*.py` | `test_m3_05_foreman.py`（第 7 章全部测试通过） | L |
+
+`tests/acceptance/m3/` 属于预先写好的验收材料。任务执行者不得修改它们。

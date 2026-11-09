@@ -285,3 +285,12 @@ uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_04_reconciler.
 - **hold 与 fail-fast**。hold 不是节点失败。不要让 `lines.md` 的 FAILING 逻辑把整条 run 停掉。只跳过提交。
 - **并发**。`audit_once` 与 `tick` 可能同时跑。hold 的插入与“读取 holds 再提交”必须能看到已提交的事务。提交节点前再读一次 hold。
 - **Windows**。`docker image inspect` 的输出按 UTF-8、`errors="replace"` 解码。digest 比较用小写 hex，不依赖平台路径。
+---
+
+## 10. 任务拆分
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M3-04 | 不变量审计、引用修复与工位暂停 | M3-01 | 3–7 | `src/mao/reconcile.py`、`src/mao/migrations/022_audit.sql`、`src/mao/runs.py`（只增 `holds()` 暂停提交）、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_reconcile_*.py` | `test_m3_04_reconciler.py`（第 7 章全部测试通过） | L |
+
+夹具建库方式与 `governance.md` 相同。`tests/acceptance/m3/` 属于预先写好的验收材料。任务执行者不得修改它们。

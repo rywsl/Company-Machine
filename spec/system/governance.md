@@ -87,7 +87,7 @@ ChangeSet 文档字段与架构文档 11.2 一致：`base_epoch`、`intent`、`c
 
 ## 7. 验收测试
 
-文件：`tests/acceptance/m3/test_m3_01_governance.py`。本里程碑开始前不创建该文件。
+文件：`tests/acceptance/m3/test_m3_01_governance.py`。该文件是预先写好的验收测试，实现者不得修改。
 
 | 测试 | 验证 |
 |---|---|
@@ -135,3 +135,12 @@ epoch_store.rollback(base, by=actor)
 - **R18**：禁止破坏性 git 操作。回滚只动指针。
 - **R14**：风险规则有歧义时停下来写 journal，不要猜一个等级。
 - 影子运行必须绑定新快照的 epoch，不能改当前指针。
+---
+
+## 10. 任务拆分
+
+| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
+|---|---|---|---|---|---|---|
+| M3-01 | Epoch 指针、ChangeSet 提交与回滚 | M2-08 | 3–7 | `src/mao/governance.py`、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_governance_*.py` | `test_m3_01_governance.py`（第 7 章全部测试通过） | M |
+
+`tests/acceptance/m3/` 属于预先写好的验收材料。任务执行者不得修改它们。
