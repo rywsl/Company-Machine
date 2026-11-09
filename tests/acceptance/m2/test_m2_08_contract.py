@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -26,8 +27,13 @@ def test_validator_accept_and_reject(tmp_path: Path) -> None:
 
 
 def test_reject_fixture_that_passes_fails(tmp_path: Path) -> None:
-    runner = _runner(tmp_path)
-    result = runner.run_validator("note.text@1", "count-text", timeout_s=30)
+    registry = tmp_path / "registry"
+    shutil.copytree(FIXTURE, registry)
+    accept = registry / "fixtures" / "note" / "ok.txt"
+    reject = registry / "fixtures" / "note" / "empty.txt"
+    shutil.copyfile(accept, reject)
+    ctx, snapshot, runner, _clock = open_factory(tmp_path / "run", registry)
+    result = ContractRunner(ctx, snapshot, runner).run_validator("note.text@1", "count-text", timeout_s=30)
     assert result.verdict == Verdict.FAIL
     assert result.detail["code"] == "CONTRACT_FIXTURE_ACCEPTED"
 
@@ -40,13 +46,21 @@ def test_fixture_set_removed(tmp_path: Path) -> None:
 
 
 def test_golden_within_baseline(tmp_path: Path) -> None:
-    result = _runner(tmp_path).run_golden("golden@1", "baseline@1", timeout_s=30)
+    result = _runner(tmp_path).run_golden("upper-golden@1", "upper-baseline@1", timeout_s=30)
     assert result.kind == "golden"
     assert any(gate["ok"] is True for gate in result.detail["gates"])
 
 
 def test_golden_exceeds_written_max(tmp_path: Path) -> None:
-    result = _runner(tmp_path).run_golden("golden@1", "baseline-tight@1", timeout_s=30)
+    registry = tmp_path / "registry"
+    shutil.copytree(FIXTURE, registry)
+    baseline = registry / "records" / "upper-baseline.yaml"
+    text = baseline.read_text(encoding="utf-8").replace("max: 1.0", "max: 0.0")
+    baseline.write_text(text, encoding="utf-8", newline="\n")
+    ctx, snapshot, runner, _clock = open_factory(tmp_path / "run", registry)
+    result = ContractRunner(ctx, snapshot, runner).run_golden(
+        "upper-golden@1", "upper-baseline@1", timeout_s=30
+    )
     assert result.verdict == Verdict.FAIL
     assert result.detail["code"] == "CONTRACT_BASELINE_EXCEEDED"
 

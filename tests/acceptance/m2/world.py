@@ -48,11 +48,12 @@ def open_factory(tmp: Path, registry: Path):
     from mao.runner import Runner
     from mao.sandbox import LocalProvider
     from mao.snapshot import Snapshot
+    from tests.fakes.fakelib import local_commands
 
     root = tmp / "factory"
     root.mkdir()
     clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    provider = LocalProvider(root, clock=clock)
+    provider = LocalProvider(root, commands=local_commands(), clock=clock)
     ctx = Context.open(root, provider=provider, clock=clock, ids=CounterIds())
     snapshot = Snapshot.load(registry)
     return ctx, snapshot, Runner(ctx, snapshot), clock

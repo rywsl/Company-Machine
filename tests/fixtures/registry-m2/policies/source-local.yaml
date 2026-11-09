@@ -1,0 +1,7 @@
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: source-local, version: 1}
+spec:
+  applies_to: [source]
+  egress: {none: true}
+  secrets: []

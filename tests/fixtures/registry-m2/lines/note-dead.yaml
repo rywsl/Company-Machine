@@ -1,0 +1,18 @@
+apiVersion: mao/v1
+kind: Line
+metadata: {name: note-dead, version: 1}
+spec:
+  interface:
+    inputs: {task: {type: agent.task@1, requires: [has_steps]}}
+  budget: {cap_usd: 5.0}
+  steps:
+    write:
+      station: write@1
+      in: {task: $inputs.task}
+    fail:
+      station: fail@1
+      in: {note: write.note}
+    publish:
+      station: publish-local@1
+      params: {dir: /tmp/dead}
+      in: {note: fail.note}

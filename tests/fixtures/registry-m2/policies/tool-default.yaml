@@ -1,0 +1,7 @@
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: tool-default, version: 1}
+spec:
+  applies_to: [transform]
+  egress: {none: true}
+  secrets: []

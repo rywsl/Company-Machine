@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -28,11 +30,11 @@ def test_constitution_change_rejected(tmp_path: Path) -> None:
 
 def test_risk_ignores_proposer(tmp_path: Path) -> None:
     _ctx, _snapshot, pipe, _epochs = _open(tmp_path)
-    change = pipe.submit(
-        {"risk": "low", "changes": [{"op": "upsert", "path": "stations/upper.yaml"}]}, by="acceptance"
-    )
-    assert change.risk in {"low", "medium", "high"}
-    assert change.risk != ""
+    document = {"changes": [{"op": "upsert", "path": "stations/upper.yaml"}]}
+    claimed_low = pipe.submit({**document, "risk": "low"}, by="acceptance")
+    claimed_high = pipe.submit({**document, "risk": "high"}, by="acceptance")
+    assert claimed_low.risk == claimed_high.risk
+    assert claimed_low.risk in {"low", "medium", "high"}
 
 
 def test_unscored_is_not_low(tmp_path: Path) -> None:
@@ -42,16 +44,48 @@ def test_unscored_is_not_low(tmp_path: Path) -> None:
     assert ei.value.code == "RISK_UNSCORED"
 
 
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8"
+    )
+    return proc.stdout.strip()
+
+
 def test_rollback_moves_pointer_only(tmp_path: Path) -> None:
     ctx, _snapshot, _pipe, epochs = _open(tmp_path)
-    current = epochs.current()
-    moved = epochs.rollback(current, by="acceptance")
-    assert moved == current or Path(ctx.root / "epoch").read_text(encoding="utf-8").strip() == moved
-    assert (ctx.root / "epoch").exists()
+    repo = ctx.root
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "acceptance@example.com")
+    _git(repo, "config", "user.name", "acceptance")
+    readme = repo / "README"
+    readme.write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "README")
+    _git(repo, "commit", "-m", "base")
+    first = _git(repo, "rev-parse", "HEAD")
+    readme.write_text("later\n", encoding="utf-8")
+    _git(repo, "add", "README")
+    _git(repo, "commit", "-m", "later")
+    second = _git(repo, "rev-parse", "HEAD")
+    (repo / "epoch").write_text(second + "\n", encoding="utf-8")
+    moved = epochs.rollback(first, by="acceptance")
+    pointer = (repo / "epoch").read_text(encoding="utf-8").strip()
+    assert moved == first
+    assert pointer == first
+    assert pointer != second
+    assert _git(repo, "rev-parse", second) == second
+    history = _git(repo, "log", "--format=%H")
+    assert first in history
+    assert second in history
 
 
 def test_freeze_window(tmp_path: Path) -> None:
-    _ctx, _snapshot, pipe, _epochs = _open(tmp_path)
+    ctx, _snapshot, _pipe, _epochs = _open(tmp_path)
+    (ctx.root / "factory.json").write_text(
+        json.dumps({"freeze": {"start": "2025-01-01T00:00:00Z", "until": "2027-01-01T00:00:00Z"}}),
+        encoding="utf-8",
+    )
+    pipe = ChangePipeline(ctx)
     with pytest.raises(FactoryError) as ei:
         pipe.submit({"changes": [{"op": "upsert", "path": "stations/upper.yaml"}]}, by="acceptance")
     assert ei.value.code == "FREEZE_WINDOW"
+    assert ei.value.detail.get("until")

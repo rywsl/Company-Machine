@@ -1,0 +1,18 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: quote, version: 1}
+spec:
+  role: transform
+  machine: toolbox@1
+  recipe: quote
+  operator: {runtime: script@1}
+  params: {cost_estimate_usd: {type: float, default: 0.2}}
+  inputs: {note: {type: note.text@1, requires: [non_empty]}}
+  outputs: {note: {type: note.text@1, guarantees: [non_empty]}}
+  phases: [propose, execute]
+  approval:
+    propose: {auto_if: "proposal.cost_estimate_usd <= 1.0", else: foreman}
+    in_run: {auto_if: "request.cost_usd <= 0.5", else: foreman}
+    timeout: 1s
+  limits: {timeout: 60s, budget_usd: 1.0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: tool-default@1

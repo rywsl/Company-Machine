@@ -1,0 +1,8 @@
+apiVersion: mao/v1
+kind: Baseline
+metadata: {name: upper-baseline, version: 1}
+spec:
+  station: upper@1
+  window: 7d
+  metrics:
+    cost_usd: {max: 1.0}

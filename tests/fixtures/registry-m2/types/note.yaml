@@ -1,0 +1,25 @@
+# 纯文本短文。validator count-text 实测字符数、行数、是否含小写字母。
+apiVersion: mao/v1
+kind: Type
+metadata: {name: note.text, version: "1.0"}
+spec:
+  payload:
+    - {path: note.txt, media_type: text/plain, required: true}
+  meta_schema:
+    type: object
+    properties: {title: {type: string}}
+  facts:
+    chars: int
+    lines: int
+    has_lower: bool
+  validators:
+    - name: count-text
+      image: mao-test/tool@sha256:09b42648636a8405354592f2ae8985670dfda5b61377ac6c75e3cebbd22e0500
+      run: [count-text, /bean/payload/note.txt]
+      emits: [chars, lines, has_lower]
+      fixtures:
+        accept: [fixtures/note/ok.txt]
+        reject: [fixtures/note/empty.txt]
+  properties:
+    non_empty: "bean.facts.chars > 0"
+    shouting: "!bean.facts.has_lower"

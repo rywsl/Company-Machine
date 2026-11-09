@@ -1,0 +1,21 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: note-to-text, version: 1}
+spec:
+  role: converter
+  converts:
+    from: note.raw@1
+    to: note.text@1
+    lossless: true
+    preserves: [non_empty]
+  machine: toolbox@1
+  recipe: note-to-text
+  operator: {runtime: script@1}
+  inputs:  {in: {type: note.raw@1}}
+  outputs: {out: {type: note.text@1, guarantees: [non_empty]}}
+  equivalence:
+    - "dst.facts.chars == src.facts.chars"
+  fixtures:
+    accept: [fixtures/note/ok.txt]
+    reject: [fixtures/note/empty.txt]
+  policy: converter-default@1

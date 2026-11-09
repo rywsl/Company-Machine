@@ -1,0 +1,12 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: write, version: 1}
+spec:
+  role: transform
+  machine: studio@1
+  recipe: write-raw
+  operator: {runtime: fake-agent@1, model: fake-model-1, max_turns: 5}
+  inputs:  {task: {type: agent.task@1, requires: [has_steps]}}
+  outputs: {note: {type: note.raw@1, guarantees: [non_empty]}}
+  limits:  {timeout: 120s, budget_usd: 1.0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: agent-default@1

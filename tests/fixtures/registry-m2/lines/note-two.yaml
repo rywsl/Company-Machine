@@ -1,0 +1,19 @@
+apiVersion: mao/v1
+kind: Line
+metadata: {name: note-two, version: 1}
+spec:
+  interface:
+    inputs:
+      note: {type: note.text@1, requires: [non_empty]}
+      task: {type: agent.task@1, requires: [has_steps]}
+  trigger:
+    - {on: bean, type: note.text@1, label: "line=note-two"}
+  budget: {cap_usd: 1.0}
+  steps:
+    upper:
+      station: upper@1
+      in: {note: $inputs.note}
+    write:
+      station: write@1
+      in: {task: $inputs.task}
+  keep: [upper.note, write.note]

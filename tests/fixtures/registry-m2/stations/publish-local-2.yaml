@@ -1,0 +1,15 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: publish-local, version: 2}
+spec:
+  role: sink
+  machine: toolbox@1
+  recipe: publish-local
+  operator: {runtime: script@1}
+  params: {dir: {type: string}}
+  inputs: {note: {type: note.text@1}}
+  outputs: {}
+  idempotency_key: "{{ inputs.note.id }}:{{ params.dir }}"
+  verify_receipt: local-file-check
+  limits: {timeout: 60s, budget_usd: 0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: sink-local@1

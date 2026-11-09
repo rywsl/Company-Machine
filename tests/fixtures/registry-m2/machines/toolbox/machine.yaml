@@ -1,0 +1,56 @@
+# 工具型机器（C 形态）：脚本操作工直接执行配方的 run。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: toolbox, version: 1}
+spec:
+  form: tool
+  runtime:
+    image: mao-test/tool@sha256:09b42648636a8405354592f2ae8985670dfda5b61377ac6c75e3cebbd22e0500
+    instance: per_job
+    resources: {cpus: 1, memory: 256Mi}
+  needs: {egress: none}
+  recipes:
+    upper:
+      inputs:  {note: {type: note.text@1}}
+      outputs: {note: {type: note.text@1}}
+      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]
+    note-to-text:
+      inputs:  {in: {type: note.raw@1}}
+      outputs: {out: {type: note.text@1, harvest: /factory/out/out/note.txt}}
+      run: [upper-text, /factory/in/in/raw.txt, /factory/out/out/note.txt]
+    publish-local:
+      inputs:  {note: {type: note.text@1}}
+      params:  {dir: {type: string}}
+      outputs: {}
+      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]
+    local-file-check:
+      inputs:  {note: {type: note.text@1}}
+      outputs: {}
+      run: [count-text, /factory/in/note/note.txt]
+    publish-flaky:
+      inputs:  {note: {type: note.text@1}}
+      outputs: {}
+      run: [exit-one]
+    publish-templated:
+      inputs:  {note: {type: note.text@1}}
+      params:  {dir: {type: string}}
+      outputs: {}
+      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]
+    quote:
+      inputs:  {note: {type: note.text@1}}
+      params:  {cost_estimate_usd: {type: float, default: 0.2}}
+      outputs: {note: {type: note.text@1}}
+      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]
+    fail:
+      inputs:  {note: {type: note.text@1}}
+      outputs: {note: {type: note.text@1}}
+      run: [exit-three, /factory/in/note/note.txt, /factory/out/note/note.txt]
+    pull-notes:
+      params:  {from_dir: {type: string}}
+      outputs: {note: {type: note.text@1, harvest: /factory/out/note/note.txt}}
+      run: [upper-text, /factory/in/from_dir/note.txt, /factory/out/note/note.txt]
+    idle:
+      inputs:  {note: {type: note.text@1}}
+      outputs: {note: {type: note.text@1}}
+      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]
+

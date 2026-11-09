@@ -1,0 +1,7 @@
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: converter-default, version: 1}
+spec:
+  applies_to: [converter]
+  egress: {none: true}
+  secrets: []

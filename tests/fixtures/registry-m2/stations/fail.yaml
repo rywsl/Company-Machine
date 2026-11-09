@@ -1,0 +1,12 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: fail, version: 1}
+spec:
+  role: transform
+  machine: toolbox@1
+  recipe: fail
+  operator: {runtime: script@1}
+  inputs: {note: {type: note.text@1}}
+  outputs: {note: {type: note.text@1, guarantees: [non_empty]}}
+  limits: {timeout: 60s, budget_usd: 0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: tool-default@1

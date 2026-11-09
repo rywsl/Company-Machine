@@ -1,0 +1,14 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: publish-flaky, version: 1}
+spec:
+  role: sink
+  machine: toolbox@1
+  recipe: publish-flaky
+  operator: {runtime: script@1}
+  inputs: {note: {type: note.text@1}}
+  outputs: {}
+  idempotency_key: "{{ inputs.note.id }}"
+  verify_receipt: local-file-check
+  limits: {timeout: 60s, budget_usd: 0, retries: {rejected: 0, failed: 2, mode: fresh}}
+  policy: sink-local@1

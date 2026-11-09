@@ -121,10 +121,13 @@ def test_cannot_self_resolve(tmp_path: Path) -> None:
 
 
 def test_bootstrap_reports_missing(tmp_path: Path) -> None:
-    _ctx, snapshot = _open(tmp_path)
+    ctx, snapshot = _open(tmp_path)
+    before = ctx.db.query("SELECT seq FROM events")
     report = bootstrap_check(snapshot, [])
+    after = ctx.db.query("SELECT seq FROM events")
     assert report.ok is False
-    assert "Station:registry-sink" in " ".join(report.missing) or report.missing
+    assert any("registry-sink" in item for item in report.missing)
+    assert after == before
 
 
 def test_sink_token_cannot_promote(tmp_path: Path) -> None:
@@ -134,9 +137,27 @@ def test_sink_token_cannot_promote(tmp_path: Path) -> None:
     assert report.ok is False
 
 
-def test_mcp_is_local_stdio(tmp_path: Path) -> None:
-    from mao.foreman import serve_stdio
+def test_mcp_is_local_stdio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import socket
 
-    assert callable(serve_stdio)
+    connects: list[object] = []
+
+    def record_connect(self: socket.socket, address: object) -> None:
+        connects.append(address)
+        raise OSError("acceptance blocked an outbound connect")
+
+    monkeypatch.setattr(socket.socket, "connect", record_connect)
     ctx, _snapshot = _open(tmp_path)
-    assert WakeQueue(ctx).list() == []
+    monkeypatch.setenv("FACTORY_ROOT", str(ctx.root))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO('{"jsonrpc":"2.0","id":1,"method":"foreman.list","params":{"kind":"Station"}}\n'),
+    )
+    from mao.cli import main
+
+    try:
+        main(["mcp"])
+    except SystemExit:
+        pass
+    assert connects == []

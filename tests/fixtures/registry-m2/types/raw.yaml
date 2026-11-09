@@ -1,0 +1,19 @@
+apiVersion: mao/v1
+kind: Type
+metadata: {name: note.raw, version: "1.0", description: 尚未转成短文的原稿}
+spec:
+  payload:
+    - {path: raw.txt, media_type: text/plain, required: true}
+  facts:
+    chars: int
+    lines: int
+  validators:
+    - name: count-raw
+      image: mao-test/tool@sha256:09b42648636a8405354592f2ae8985670dfda5b61377ac6c75e3cebbd22e0500
+      run: [count-text, /bean/payload/raw.txt]
+      emits: [chars, lines]
+      fixtures:
+        accept: [fixtures/note/ok.txt]
+        reject: [fixtures/note/empty.txt]
+  properties:
+    non_empty: "bean.facts.chars > 0"

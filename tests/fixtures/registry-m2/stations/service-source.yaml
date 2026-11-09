@@ -1,0 +1,12 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: service-source, version: 1}
+spec:
+  role: source
+  machine: servicebox@1
+  recipe: pull
+  operator: {runtime: script@1}
+  inputs: {}
+  outputs: {note: {type: note.text@1}}
+  limits: {timeout: 60s, budget_usd: 0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: source-local@1

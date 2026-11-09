@@ -1,0 +1,18 @@
+apiVersion: mao/v1
+kind: Line
+metadata: {name: note-pipeline, version: 1}
+spec:
+  interface:
+    inputs: {task: {type: agent.task@1, requires: [has_steps]}}
+  budget: {cap_usd: 5.0}
+  steps:
+    write:
+      station: write@1
+      in: {task: $inputs.task}
+    upper:
+      station: upper@1
+      in: {note: write.note}
+    publish:
+      station: publish-local@1
+      params: {dir: /tmp/published}
+      in: {note: upper.note}

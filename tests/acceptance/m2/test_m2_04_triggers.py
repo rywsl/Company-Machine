@@ -22,8 +22,8 @@ def _engine(tmp_path: Path):
 
 def test_bean_trigger_starts_run_once(tmp_path: Path) -> None:
     ctx, snapshot, engine, _clock = _engine(tmp_path)
-    bean = seal_input(ctx, snapshot, "brief.video@1")
-    ctx.warehouse.label(bean, "line", "explainer-multilang", by="acceptance")
+    bean = seal_input(ctx, snapshot, "note.text@1")
+    ctx.warehouse.label(bean, "line", "note-trigger", by="acceptance")
     first = engine.process()
     second = engine.process()
     assert len(first) == 1
@@ -32,10 +32,10 @@ def test_bean_trigger_starts_run_once(tmp_path: Path) -> None:
 
 def test_label_filter(tmp_path: Path) -> None:
     ctx, snapshot, engine, _clock = _engine(tmp_path)
-    bean = seal_input(ctx, snapshot, "brief.video@1")
+    bean = seal_input(ctx, snapshot, "note.text@1")
     ctx.warehouse.label(bean, "line", "other", by="acceptance")
     assert engine.process() == []
-    ctx.warehouse.label(bean, "line", "explainer-multilang", by="factoryctl")
+    ctx.warehouse.label(bean, "line", "note-trigger", by="factoryctl")
     assert engine.process()
 
 
@@ -60,8 +60,8 @@ def test_cursor_survives_restart(tmp_path: Path) -> None:
     from mao.runs import LineRunner, TriggerEngine
 
     ctx, snapshot, engine, _clock = _engine(tmp_path)
-    bean = seal_input(ctx, snapshot, "brief.video@1")
-    ctx.warehouse.label(bean, "line", "explainer-multilang", by="acceptance")
+    bean = seal_input(ctx, snapshot, "note.text@1")
+    ctx.warehouse.label(bean, "line", "note-trigger", by="acceptance")
     first = engine.process()
     assert first
     again = TriggerEngine(ctx, snapshot, LineRunner(ctx, snapshot, Runner(ctx, snapshot)))

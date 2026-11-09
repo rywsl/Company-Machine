@@ -1,0 +1,15 @@
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: servicebox, version: 1}
+spec:
+  form: service
+  runtime:
+    image: mao-test/tool@sha256:09b42648636a8405354592f2ae8985670dfda5b61377ac6c75e3cebbd22e0500
+    instance: per_job
+    resources: {cpus: 1, memory: 256Mi}
+    service: {name: api, port: 8080}
+  needs: {egress: none}
+  recipes:
+    pull:
+      outputs: {note: {type: note.text@1, harvest: /factory/out/note/note.txt}}
+      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]
