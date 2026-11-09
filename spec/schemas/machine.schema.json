@@ -96,7 +96,19 @@
               "task_template": {"type": "string"},
               "call": {"type": "object"},
               "run": {"$ref": "common.schema.json#/$defs/stringList"},
-              "propose": {"$ref": "common.schema.json#/$defs/stringList"}
+              "propose": {"$ref": "common.schema.json#/$defs/stringList"},
+              "receipt": {
+                "type": "object",
+                "required": ["target", "locator"],
+                "additionalProperties": false,
+                "properties": {
+                  "target": {"type": "string"},
+                  "locator": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"}
+                  }
+                }
+              }
             }
           }
         },

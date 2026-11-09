@@ -46,6 +46,10 @@ TOOL_SCRIPTS = {
     "exit-three": TOOLS / "exit_three.py",
     "exit-one": TOOLS / "exit_one.py",
     "write-proposal": TOOLS / "write_proposal.py",
+    "publish-copy": TOOLS / "publish_copy.py",
+    "publish-flaky": TOOLS / "publish_flaky.py",
+    "pull-notes": TOOLS / "pull_notes.py",
+    "local-file-check": TOOLS / "local_file_check.py",
 }
 FAKE_AGENT_COMMAND = "/opt/operator/bin/fake-agent"
 

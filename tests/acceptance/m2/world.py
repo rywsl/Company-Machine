@@ -10,6 +10,20 @@ ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE = ROOT / "spec" / "examples" / "registry"
 FIXTURE = ROOT / "tests" / "fixtures" / "registry-m2"
 LINE = "explainer-multilang@5"
+_REQUIRED = (
+    "lines/note-pipeline.yaml",
+    "lines/note-dead.yaml",
+    "lines/note-trigger.yaml",
+    "stations/publish-local.yaml",
+    "stations/publish-flaky.yaml",
+    "stations/publish-templated.yaml",
+    "stations/pull-notes.yaml",
+    "stations/quote.yaml",
+    "stations/publish-staged.yaml",
+)
+_missing = [name for name in _REQUIRED if not (FIXTURE / name).is_file()]
+if not FIXTURE.is_dir() or _missing:
+    raise FileNotFoundError(f"registry-m2 fixture is missing: {FIXTURE} {_missing}")
 
 
 def copy_example(dest: Path) -> Path:

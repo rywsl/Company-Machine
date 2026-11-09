@@ -22,20 +22,23 @@ spec:
       inputs:  {note: {type: note.text@1}}
       params:  {dir: {type: string}}
       outputs: {}
-      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]
+      run: [publish-copy, /factory/in/note/note.txt, "{{ params.dir }}"]
     local-file-check:
       inputs:  {note: {type: note.text@1}}
       outputs: {}
-      run: [count-text, /factory/in/note/note.txt]
+      run: [local-file-check]
     publish-flaky:
       inputs:  {note: {type: note.text@1}}
       outputs: {}
-      run: [exit-one]
+      run: [publish-flaky, /factory/in/note/note.txt]
     publish-templated:
       inputs:  {note: {type: note.text@1}}
       params:  {dir: {type: string}}
       outputs: {}
-      run: [upper-text, /factory/in/note/note.txt, /factory/out/note/note.txt]
+      run: [publish-copy, /factory/in/note/note.txt, "{{ params.dir }}"]
+      receipt:
+        target: "{{ params.dir }}"
+        locator: {path: "{{ params.dir }}/note.txt"}
     quote:
       inputs:  {note: {type: note.text@1}}
       params:  {cost_estimate_usd: {type: float, default: 0.2}}
@@ -49,7 +52,13 @@ spec:
     pull-notes:
       params:  {from_dir: {type: string}}
       outputs: {note: {type: note.text@1, harvest: /factory/out/note/note.txt}}
-      run: [upper-text, /factory/in/from_dir/note.txt, /factory/out/note/note.txt]
+      run: [pull-notes, "{{ params.from_dir }}", /factory/out/note/note.txt]
+    publish-staged:
+      inputs:  {note: {type: note.text@1}}
+      params:  {dir: {type: string}}
+      outputs: {}
+      propose: [write-proposal, "0", /factory/ctl/proposal.json]
+      run: [publish-copy, /factory/in/note/note.txt, "{{ params.dir }}"]
     idle:
       inputs:  {note: {type: note.text@1}}
       outputs: {note: {type: note.text@1}}

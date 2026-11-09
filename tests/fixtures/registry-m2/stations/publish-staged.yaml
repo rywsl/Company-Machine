@@ -1,0 +1,18 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: publish-staged, version: 1}
+spec:
+  role: sink
+  machine: toolbox@1
+  recipe: publish-staged
+  operator: {runtime: script@1}
+  params: {dir: {type: string}}
+  inputs: {note: {type: note.text@1}}
+  outputs: {}
+  phases: [propose, execute]
+  approval:
+    propose: {auto_if: "proposal.cost_estimate_usd <= 1.0", else: foreman}
+  idempotency_key: "{{ inputs.note.id }}:{{ params.dir }}"
+  verify_receipt: local-file-check
+  limits: {timeout: 60s, budget_usd: 0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: sink-local@1
