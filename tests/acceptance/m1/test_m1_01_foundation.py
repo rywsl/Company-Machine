@@ -160,7 +160,10 @@ def test_static_rules() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[3] / "src" / "mao"
-    for path in root.rglob("*.py"):
+    files = [path for path in root.rglob("*.py") if path.is_file()]
+    assert files
+    forbidden: list[str] = []
+    for path in files:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (
@@ -168,7 +171,8 @@ def test_static_rules() -> None:
                 and isinstance(node.func, ast.Name)
                 and node.func.id in {"eval", "exec"}
             ):
-                raise AssertionError(f"{path} 调用了 {node.func.id}")
+                forbidden.append(f"{path}:{node.lineno} {node.func.id}")
+    assert forbidden == []
 
 
 def test_database_pragmas_and_rows(tmp_path) -> None:

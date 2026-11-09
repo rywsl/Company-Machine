@@ -1,7 +1,7 @@
 {
   "gates": {
     "M0": {
-      "commit": "2900fb0",
+      "commit": "7c79532",
       "dirty": true,
       "evidence": [
         {
@@ -19,8 +19,8 @@
           "ok": true,
           "run": "uv run ruff format --check src tests tools",
           "seconds": 0.1,
-          "stdout_sha256": "3a21445bb7ec5bd865e583bec08d6571c4b3b289821acb041d1505c596e90257",
-          "tail": "75 files already formatted"
+          "stdout_sha256": "0e8875b6c474ca3639d7a7112ea95c546141b46dca674c9c33d3e55821b32afe",
+          "tail": "88 files already formatted"
         },
         {
           "exit": 0,
@@ -45,7 +45,7 @@
           "id": "conformance",
           "ok": true,
           "run": "uv run mrl conformance --json",
-          "seconds": 26.1,
+          "seconds": 26.0,
           "stdout_sha256": "68402dc6b324afb0877cc43cef261778c491f455cfebca5c7693157bf51dca64",
           "tail": "{\n  \"total\": 702,\n  \"passed\": 702,\n  \"failures\": []\n}"
         },
@@ -54,7 +54,7 @@
           "id": "coverage",
           "ok": true,
           "run": "uv run mrl coverage --json",
-          "seconds": 26.7,
+          "seconds": 26.1,
           "stdout_sha256": "3f9f21e0ca759038116e535a952d2f50e90dfd0a78e0770be17887dce881481d",
           "tail": "    \"W-NO-BUDGET\": [\n      \"factory.lines/line-without-budget-warns\",\n      \"factory.stations/agent-without-budget-warns\"\n    ],\n    \"W-PROPERTY-META\": [\n      \"factory.host/expr-property-on-meta-warns\"\n    ]\n  },\n  \"unexercised_codes\": [],\n  \"kernel_diag_rules\": 79,\n  \"unfired_rules\": []\n}"
         },
@@ -81,13 +81,13 @@
           "id": "pytest",
           "ok": true,
           "run": "uv run python tools/harness.py pytest tests",
-          "seconds": 56.0,
-          "stdout_sha256": "fd288ab70ea9ca3b3d5906d7ead4e1cec83073f52e0fda9d89b2f03332e0158a",
-          "tail": "SKIPPED [1] tests\\acceptance\\m2\\test_m2_11_source.py:9: could not import 'mao.connectors': No module named 'mao.connectors'\nSKIPPED [1] tests\\acceptance\\m2\\test_m2_12_scheduler.py:10: could not import 'mao.scheduler': No module named 'mao.scheduler'\nSKIPPED [1] tests\\acceptance\\m3\\test_m3_01_governance.py:11: could not import 'mao.governance': No module named 'mao.governance'\nSKIPPED [1] tests\\acceptance\\m3\\test_m3_04_reconciler.py:12: could not import 'mao.reconcile': No module named 'mao.reconcile'\nSKIPPED [1] tests\\acceptance\\m3\\test_m3_05_foreman.py:9: could not import 'mao.foreman': No module named 'mao.foreman'\nSKIPPED [1] tests\\acceptance\\m4\\test_m4_01_dynamic.py:9: could not import 'mao.dynamic': No module named 'mao.dynamic'\nSKIPPED [1] tests\\acceptance\\m4\\test_m4_02_plan.py:9: could not import 'mao.dynamic': No module named 'mao.dynamic'\nSKIPPED [1] tests\\acceptance\\m4\\test_m4_03_gateway.py:10: could not import 'mao.gateway': No module named 'mao.gateway'\nSKIPPED [1] tests\\acceptance\\m4\\test_m4_04_backends.py:14: could not import 'mao.backends': No module named 'mao.backends'\nSKIPPED [1] tests\\test_codebase_policy.py:146: factoryctl 尚未实现（M1-05）\nSKIPPED [1] tests\\test_codebase_policy.py:157: 还没有迁移文件（M1-01）\n742 passed, 31 skipped in 55.54s"
+          "seconds": 56.1,
+          "stdout_sha256": "006a159783b235f0dfb66e566f44a31181458e486735e8d952c7aa01d342b556",
+          "tail": "SKIPPED [1] tests\\system\\test_db.py:7: could not import 'mao.db': No module named 'mao.db'\nSKIPPED [1] tests\\system\\test_gate.py:7: could not import 'mao.gate': No module named 'mao.gate'\nSKIPPED [1] tests\\system\\test_jobs.py:7: could not import 'mao.jobs': No module named 'mao.jobs'\nSKIPPED [1] tests\\system\\test_operator.py:10: could not import 'mao.operator': No module named 'mao.operator'\nSKIPPED [1] tests\\system\\test_runner.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\system\\test_sandbox.py:7: could not import 'mao.sandbox': No module named 'mao.sandbox'\nSKIPPED [1] tests\\system\\test_snapshot.py:10: could not import 'mao.snapshot': No module named 'mao.snapshot'\nSKIPPED [1] tests\\system\\test_values.py:9: could not import 'mao.values': No module named 'mao.values'\nSKIPPED [1] tests\\system\\test_warehouse.py:7: could not import 'mao.warehouse': No module named 'mao.warehouse'\nSKIPPED [1] tests\\test_codebase_policy.py:146: factoryctl 尚未实现（M1-05）\nSKIPPED [1] tests\\test_codebase_policy.py:157: 还没有迁移文件（M1-01）\n742 passed, 44 skipped in 55.66s"
         }
       ],
       "status": "passed",
-      "updated_at": "2026-11-09T20:08:34Z"
+      "updated_at": "2026-11-09T20:22:27Z"
     }
   },
   "tasks": {

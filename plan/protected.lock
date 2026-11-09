@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-09T20:03:54Z",
+  "updated_at": "2026-11-09T20:18:30Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -141,7 +141,7 @@
     "spec/system/testing.md": "b061d39f5d0f9b7e7dc80c822bc50e9c7dc882f6bae44f0abb75f2632084a631",
     "spec/system/warehouse.md": "2e3f7b8fe9dc71f52515fe92206aaaa72b803a1c11b452226718a057bc1605e7",
     "tests/acceptance/m1/m1_data_helpers.py": "b20ec6f4bbf83ef4b7520224e70222c7d2261fa41b52b813cbc772f0e255cae9",
-    "tests/acceptance/m1/test_m1_01_foundation.py": "5fe73c4fa76814268cdb6073533b5f948df4192be6afceaaddc007890ac7357e",
+    "tests/acceptance/m1/test_m1_01_foundation.py": "b7306e4be5cfa45bf9ba64e55ea6384761ed0382b4de29e8612072fcc08c4af0",
     "tests/acceptance/m1/test_m1_02_snapshot.py": "2402336522ebd7cdd1b6ff0edac8cfb96f75e24b005e22a4fec347df35e9d322",
     "tests/acceptance/m1/test_m1_03_warehouse.py": "77eb29268392ebad733ddf0930722b9c513f3c1458af7066c42f0450be558663",
     "tests/acceptance/m1/test_m1_04_sandbox.py": "a31c5c6aa851900c44da0e6a8332a217d7af2a34cf490f3d11ce702278578e08",
