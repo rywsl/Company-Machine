@@ -125,7 +125,9 @@ def test_missing_image_does_not_pull(tmp_path: Path) -> None:
     image = [item for item in findings if item.detail.get("kind") == "image"]
     assert image
     assert all(item.state.value == "wake" for item in image)
-    recorded = log.read_text(encoding="utf-8") if log.exists() else ""
+    assert log.is_file()
+    recorded = log.read_text(encoding="utf-8")
+    assert recorded.strip()
     assert "pull" not in recorded.split()
 
 

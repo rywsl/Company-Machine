@@ -1,7 +1,7 @@
 {
   "gates": {
     "M0": {
-      "commit": "7c79532",
+      "commit": "2b1e17e",
       "dirty": true,
       "evidence": [
         {
@@ -45,7 +45,7 @@
           "id": "conformance",
           "ok": true,
           "run": "uv run mrl conformance --json",
-          "seconds": 26.0,
+          "seconds": 25.9,
           "stdout_sha256": "68402dc6b324afb0877cc43cef261778c491f455cfebca5c7693157bf51dca64",
           "tail": "{\n  \"total\": 702,\n  \"passed\": 702,\n  \"failures\": []\n}"
         },
@@ -54,7 +54,7 @@
           "id": "coverage",
           "ok": true,
           "run": "uv run mrl coverage --json",
-          "seconds": 26.1,
+          "seconds": 26.7,
           "stdout_sha256": "3f9f21e0ca759038116e535a952d2f50e90dfd0a78e0770be17887dce881481d",
           "tail": "    \"W-NO-BUDGET\": [\n      \"factory.lines/line-without-budget-warns\",\n      \"factory.stations/agent-without-budget-warns\"\n    ],\n    \"W-PROPERTY-META\": [\n      \"factory.host/expr-property-on-meta-warns\"\n    ]\n  },\n  \"unexercised_codes\": [],\n  \"kernel_diag_rules\": 79,\n  \"unfired_rules\": []\n}"
         },
@@ -72,7 +72,7 @@
           "id": "scenarios",
           "ok": true,
           "run": "uv run python tools/harness.py scenario run --all",
-          "seconds": 2.4,
+          "seconds": 2.5,
           "stdout_sha256": "dcfa9faa29233f0b618f833531380eb0d485125efa1e45fbc08a54d8965cd89d",
           "tail": "  ✔ 第 1 步 起点：示例 Registry 完全通过\n  ✔ 第 2 步 升级草稿：explainer 的字幕改为 VTT，转换库里还没有 VTT → SRT\n  ✔ 第 3 步 厂长编写 subs-convert@1（新增转换，不改变现有边的解析 → T1）\n  ✔ 第 4 步 产线源文件不需要任何修改；其余的边仍然直接连接\n场景 foreman-mistakes-13-4\n  ✔ 第 1 步 删掉 vertical 的 has_audio、not_silent 两个保证 → E-CONTRACT（publish-shorts 依赖它们）\n  ✔ 第 2 步 让 explainer 直接上传成品（绑定带 publish 出网的策略）→ I6 拒绝\n  ✔ 第 3 步 删掉 validator 的反样例来“放水” → I8 拒绝（删除反样例属于宪法级操作）\n  ✔ 第 4 步 把单个工位的预算提到宪法上限之上 → E-INVARIANT\n  ✔ 第 5 步 试图在宪法目录里写一个放松检查的模块 → 归属规则拒绝（E-CONSTITUTION），内核的错误照样报告\n  ✔ 第 6 步 删除宪法本身 → E-CONSTITUTION（删掉宪法不是绕过检查的办法）\n✔ 场景全部通过"
         },
@@ -81,13 +81,13 @@
           "id": "pytest",
           "ok": true,
           "run": "uv run python tools/harness.py pytest tests",
-          "seconds": 56.1,
-          "stdout_sha256": "006a159783b235f0dfb66e566f44a31181458e486735e8d952c7aa01d342b556",
-          "tail": "SKIPPED [1] tests\\system\\test_db.py:7: could not import 'mao.db': No module named 'mao.db'\nSKIPPED [1] tests\\system\\test_gate.py:7: could not import 'mao.gate': No module named 'mao.gate'\nSKIPPED [1] tests\\system\\test_jobs.py:7: could not import 'mao.jobs': No module named 'mao.jobs'\nSKIPPED [1] tests\\system\\test_operator.py:10: could not import 'mao.operator': No module named 'mao.operator'\nSKIPPED [1] tests\\system\\test_runner.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\system\\test_sandbox.py:7: could not import 'mao.sandbox': No module named 'mao.sandbox'\nSKIPPED [1] tests\\system\\test_snapshot.py:10: could not import 'mao.snapshot': No module named 'mao.snapshot'\nSKIPPED [1] tests\\system\\test_values.py:9: could not import 'mao.values': No module named 'mao.values'\nSKIPPED [1] tests\\system\\test_warehouse.py:7: could not import 'mao.warehouse': No module named 'mao.warehouse'\nSKIPPED [1] tests\\test_codebase_policy.py:146: factoryctl 尚未实现（M1-05）\nSKIPPED [1] tests\\test_codebase_policy.py:157: 还没有迁移文件（M1-01）\n742 passed, 44 skipped in 55.66s"
+          "seconds": 55.9,
+          "stdout_sha256": "5f5a3f9c336d98784f428d9c2299e46185cea20ae3339857621e9447e068a060",
+          "tail": "SKIPPED [1] tests\\system\\test_db.py:7: could not import 'mao.db': No module named 'mao.db'\nSKIPPED [1] tests\\system\\test_gate.py:7: could not import 'mao.gate': No module named 'mao.gate'\nSKIPPED [1] tests\\system\\test_jobs.py:7: could not import 'mao.jobs': No module named 'mao.jobs'\nSKIPPED [1] tests\\system\\test_operator.py:10: could not import 'mao.operator': No module named 'mao.operator'\nSKIPPED [1] tests\\system\\test_runner.py:10: could not import 'mao.runner': No module named 'mao.runner'\nSKIPPED [1] tests\\system\\test_sandbox.py:7: could not import 'mao.sandbox': No module named 'mao.sandbox'\nSKIPPED [1] tests\\system\\test_snapshot.py:10: could not import 'mao.snapshot': No module named 'mao.snapshot'\nSKIPPED [1] tests\\system\\test_values.py:9: could not import 'mao.values': No module named 'mao.values'\nSKIPPED [1] tests\\system\\test_warehouse.py:7: could not import 'mao.warehouse': No module named 'mao.warehouse'\nSKIPPED [1] tests\\test_codebase_policy.py:146: factoryctl 尚未实现（M1-05）\nSKIPPED [1] tests\\test_codebase_policy.py:157: 还没有迁移文件（M1-01）\n742 passed, 44 skipped in 55.38s"
         }
       ],
       "status": "passed",
-      "updated_at": "2026-11-09T20:22:27Z"
+      "updated_at": "2026-11-09T20:33:52Z"
     }
   },
   "tasks": {

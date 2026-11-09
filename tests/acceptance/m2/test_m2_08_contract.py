@@ -24,6 +24,12 @@ def test_validator_accept_and_reject(tmp_path: Path) -> None:
     result = _runner(tmp_path).run_validator("note.text@1", "count-text", timeout_s=30)
     assert result.verdict == Verdict.PASS
     assert result.kind == "validator"
+    accept = result.detail["accept"]
+    reject = result.detail["reject"]
+    assert accept
+    assert reject
+    assert all(item["ok"] is True for item in accept)
+    assert all(item["ok"] is True for item in reject)
 
 
 def test_reject_fixture_that_passes_fails(tmp_path: Path) -> None:

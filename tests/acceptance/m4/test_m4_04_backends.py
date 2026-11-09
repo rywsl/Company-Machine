@@ -43,6 +43,7 @@ class _S3State:
         self.puts = 0
         self.drop_puts = False
         self.lie_sha = False
+        self.authorizations: list[str] = []
 
 
 def _s3_server(state: _S3State) -> tuple[ThreadingHTTPServer, str]:
@@ -54,6 +55,7 @@ def _s3_server(state: _S3State) -> tuple[ThreadingHTTPServer, str]:
                 self.end_headers()
                 return
             body, sha = item
+            state.authorizations.append(self.headers.get("Authorization", ""))
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("x-amz-meta-sha256", "deadbeef" if state.lie_sha else sha)
@@ -66,6 +68,7 @@ def _s3_server(state: _S3State) -> tuple[ThreadingHTTPServer, str]:
                 self.end_headers()
                 return
             body, _sha = item
+            state.authorizations.append(self.headers.get("Authorization", ""))
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -74,6 +77,7 @@ def _s3_server(state: _S3State) -> tuple[ThreadingHTTPServer, str]:
         def do_PUT(self) -> None:  # noqa: N802
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length)
+            state.authorizations.append(self.headers.get("Authorization", ""))
             state.puts += 1
             sha = hashlib.sha256(body).hexdigest()
             if not state.drop_puts:
@@ -109,6 +113,7 @@ def test_s3_put_get_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         dest = tmp_path / "out"
         store.get_file(digest, dest)
         assert dest.read_bytes() == b"abc"
+        assert any(item.startswith("AWS4-HMAC-SHA256") for item in state.authorizations)
         puts_after_first = state.puts
         again = store.put_file(path)
         assert again == digest
@@ -243,6 +248,7 @@ def test_migrate_verify_and_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert pointer.is_file()
     stored = json.loads(pointer.read_text(encoding="utf-8"))
     assert stored["switched_at"]
+    assert any(body == b"migrated-bytes" for body, _sha in state.objects.values())
     assert any(digest.split(":", 1)[-1] in key for key in state.objects)
 
 
@@ -291,11 +297,27 @@ def test_migrate_failure_keeps_pointer(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_pragma_not_sent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mao.db import Database
+
     monkeypatch.setenv("TEST_DSN", "postgres://local/factory")
-    store = PostgresStore(dsn_env="TEST_DSN", psql=str(tmp_path / "psql"), timeout_s=1)
-    with pytest.raises(FactoryError) as ei:
-        store.migrate()
-    assert ei.value.code == "BACKEND_UNAVAILABLE"
+    log = tmp_path / "psql-stdin.txt"
+    script = tmp_path / "psql.py"
+    script.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        f"Path({str(log)!r}).write_text(sys.stdin.read(), encoding='utf-8')\n"
+        "sys.stdout.write('')\n",
+        encoding="utf-8",
+    )
+    store = PostgresStore(dsn_env="TEST_DSN", psql=f"python {script}", timeout_s=5)
+    version = store.migrate()
+    assert log.is_file()
+    sent = log.read_text(encoding="utf-8")
+    assert "PRAGMA" not in sent.upper()
+    local = Database(tmp_path / "factory.db")
+    try:
+        assert version == local.migrate()
+    finally:
+        local.close()
 
 
 def test_no_third_party_import() -> None:
