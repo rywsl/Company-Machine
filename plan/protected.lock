@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-09T21:40:00Z",
+  "updated_at": "2026-11-09T22:27:19Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -165,12 +165,12 @@
     "tests/acceptance/m2/test_m2_12_scheduler.py": "83775d8e7fa3b4de710d9f64b6b385963f23a461a6b5888e041bc71d4dd7ee07",
     "tests/acceptance/m2/world.py": "7228861077aff0c3c4decc466e70461984246a9ead626357bac25716502478cf",
     "tests/acceptance/m3/test_m3_01_governance.py": "8f301be8abfc238b20dd18db349c8970f7124eb403ca40df6b21fa6881634c4e",
-    "tests/acceptance/m3/test_m3_04_reconciler.py": "58343122c323d3714652c6521588e84c5e757fcb1cd427e5fb07eafd191a5eab",
+    "tests/acceptance/m3/test_m3_04_reconciler.py": "101843210e42c8847240a3deed65548c5964aad9a8d3764956531c6b06ae182f",
     "tests/acceptance/m3/test_m3_05_foreman.py": "1c5dd0404c69de83159e4355527f3c401725ec301da35e88a534378dc7fac377",
     "tests/acceptance/m4/test_m4_01_dynamic.py": "29d848439cb852417954dc58dd34ee040bff6b54f53bb9783993d3fcceb33fa6",
     "tests/acceptance/m4/test_m4_02_plan.py": "52dda293b1996ec621820da3572c85276f3acd6094a0b36596b21b91a86fddfd",
     "tests/acceptance/m4/test_m4_03_gateway.py": "f93958515aaefb62078d6f0e08d4fa8a03f63ec0094549b249512cc5eee24ac7",
-    "tests/acceptance/m4/test_m4_04_backends.py": "74e547f26aa8aeb3e61a84bb1c3b983a5fc5e520fbd5188dad253e316552dbd4",
+    "tests/acceptance/m4/test_m4_04_backends.py": "9c96cbf4179ed1d1141429c81d956f9d941652a73ba72a35baa51f6cfe603fd0",
     "tests/conftest.py": "985ae01c181878b34edfd5d8a6a71c0d608b608d1345bf3472d40cd470b9e240",
     "tests/fakes/fake_agent.py": "684f81785e0719447f320ce2ebff4cb82e25b95725921a926eb91d71a2ca5840",
     "tests/fakes/fakelib.py": "0764230c6d697b01f72ebe02b962a82a41c6a0a058177d8dbc406d030f83619c",

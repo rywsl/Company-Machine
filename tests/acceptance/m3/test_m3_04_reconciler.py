@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -51,7 +52,21 @@ def test_lineage_gap_is_i2(tmp_path: Path) -> None:
     ctx, snapshot, reconciler = _audit(tmp_path)
     bean_id = seal_input(ctx, snapshot, "note.text@1")
     missing = "sha256:" + "ab" * 32
-    ctx.warehouse.record_lineage("j-0001", {"note": [missing]}, {"note": [bean_id]})
+    # record_lineage 对不存在的输入抛 BEAN_NOT_FOUND。悬挂证明只能在外键关闭时写入。
+    conn = sqlite3.connect(ctx.db.path)
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO lineage (job_id, direction, port, ordinal, bean_id) VALUES (?, 'out', 'note', 0, ?)",
+            ("j-0001", bean_id),
+        )
+        conn.execute(
+            "INSERT INTO lineage (job_id, direction, port, ordinal, bean_id) VALUES (?, 'in', 'note', 0, ?)",
+            ("j-0001", missing),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     findings = reconciler.audit_once(timeout_s=5)
     assert findings
     assert any(item.invariant == "I2" and item.detail.get("missing_input") == missing for item in findings)
@@ -63,17 +78,23 @@ def test_unsealed_input_is_i3(tmp_path: Path) -> None:
         BeanDraft(type=snapshot.type_key("note.text@1").split(":", 1)[1], meta={}, files={})
     )
     assert draft.sealed is False
-    ctx.db.query(
-        "INSERT INTO jobs (id, station, state, inputs, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            "j-unsealed",
-            snapshot.key("Station", "upper@1"),
-            "RUNNING",
-            json.dumps({"note": [draft.id]}),
-            "2026-01-01T00:00:00.000Z",
-            "2026-01-01T00:00:00.000Z",
-        ),
-    )
+    with ctx.db.tx() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, station, epoch, state, attempt, inputs, params, outputs, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "j-unsealed",
+                snapshot.key("Station", "upper@1"),
+                snapshot.epoch,
+                "RUNNING",
+                1,
+                json.dumps({"note": [draft.id]}),
+                "{}",
+                "{}",
+                "2026-01-01T00:00:00.000Z",
+                "2026-01-01T00:00:00.000Z",
+            ),
+        )
     findings = reconciler.audit_once(timeout_s=5)
     assert findings
     assert any(item.invariant == "I3" and item.detail.get("bean") == draft.id for item in findings)
@@ -150,19 +171,19 @@ def test_secret_values_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 def test_baseline_breach_holds(tmp_path: Path) -> None:
     ctx, snapshot, reconciler = _audit(tmp_path)
     station = snapshot.key("Station", "upper@1")
-    ctx.db.query(
-        "INSERT INTO metrics (station, metric, value, at) VALUES (?, ?, ?, ?)",
-        (station, "cost_usd", 50.0, "2026-01-01T00:00:00.000Z"),
-    )
+    observed = "2026-01-01T00:00:00.000Z"
+    with ctx.db.tx() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, station, epoch, state, attempt, inputs, params, outputs, cost_usd, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("j-drift", station, snapshot.epoch, "SEALED", 1, "{}", "{}", "{}", 50.0, observed, observed),
+        )
     first = reconciler.audit_once(timeout_s=5)
     assert first
     assert station in reconciler.holds()
     assert any(item.invariant == "drift" and item.state.value == "held" for item in first)
-    ctx.db.query("DELETE FROM metrics WHERE station = ?", (station,))
-    ctx.db.query(
-        "INSERT INTO metrics (station, metric, value, at) VALUES (?, ?, ?, ?)",
-        (station, "cost_usd", 0.1, "2026-01-01T00:00:00.000Z"),
-    )
+    with ctx.db.tx() as conn:
+        conn.execute("UPDATE jobs SET cost_usd = ? WHERE id = ?", (0.1, "j-drift"))
     reconciler.audit_once(timeout_s=5)
     assert station not in reconciler.holds()
     kinds = [row["kind"] for row in ctx.db.query("SELECT kind FROM events")]
@@ -220,16 +241,21 @@ def test_hold_blocks_submit(tmp_path: Path) -> None:
 def test_i14_compares_tables(tmp_path: Path) -> None:
     ctx, snapshot, reconciler = _audit(tmp_path)
     epoch = EpochStore(ctx).current()
-    sidecar = ctx.root / "epochs" / epoch / "resolutions.json"
+    stored = list(snapshot.result.resolutions)
+    assert stored
+    original = dict(stored[0])
+    tampered = {
+        **original,
+        "status": "convert",
+        "chain": ["tampered-converter@1"],
+        "origin": "runtime",
+    }
+    sidecar = ctx.root / "epochs" / epoch / "resolution-runtime.json"
     sidecar.parent.mkdir(parents=True, exist_ok=True)
-    stored = [
-        {"line": "Line:note-pipeline@1", "step": "upper", "port": "note", "status": "direct", "chain": []}
-    ]
-    sidecar.write_text(json.dumps(stored), encoding="utf-8")
-    tampered = [{**stored[0], "chain": ["note-to-text@1"], "status": "convert"}]
-    sidecar.write_text(json.dumps(tampered), encoding="utf-8")
+    sidecar.write_text(json.dumps([tampered]), encoding="utf-8")
     before = sidecar.read_text(encoding="utf-8")
     findings = reconciler.audit_once(timeout_s=5)
     assert findings
     assert any(item.invariant == "I14" for item in findings)
     assert sidecar.read_text(encoding="utf-8") == before
+    assert "tampered-converter@1" in sidecar.read_text(encoding="utf-8")
