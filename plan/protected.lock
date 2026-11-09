@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-09T21:15:00Z",
+  "updated_at": "2026-11-09T21:23:38Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -158,7 +158,7 @@
     "tests/acceptance/m2/test_m2_05_cache.py": "37b63f71312c942bcb0d5d5a91a4900b7e1b374076c434edc9a71c0a2fb25dd1",
     "tests/acceptance/m2/test_m2_06_approvals.py": "7fcdef99ec83c4aa90748a2ec833d679cd4278e3c0f4a121cb5d093ba545ac9e",
     "tests/acceptance/m2/test_m2_07_egress.py": "cd5ac6398d3bd9d906cf8083a1ba811240e0dd3020952eddd38eda5fa3127410",
-    "tests/acceptance/m2/test_m2_08_contract.py": "3567a37feaf507fbb5e400eb019aa036ac16b5bba6122b62fbf7aaefdbf4a52a",
+    "tests/acceptance/m2/test_m2_08_contract.py": "723b092fb841ec8a7fffd10544a01354bd55c7ab4e5fd7df3a22c69a156f59c4",
     "tests/acceptance/m2/test_m2_09_profile_receipts.py": "43633b4ddb6cb143657322e42e48aaccd0409e807a507add83be22d7f049f18f",
     "tests/acceptance/m2/test_m2_10_sink.py": "ddb934fd4368e1df591f5adcaef9ebe932b018d63d71dfba224d74738befd607",
     "tests/acceptance/m2/test_m2_11_source.py": "e7ea2e0334d6223e934250d7e92dbe3b4ded780e5c9aaec2ced46fda2b1d089a",

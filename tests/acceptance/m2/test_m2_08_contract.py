@@ -37,7 +37,10 @@ def test_reject_fixture_that_passes_fails(tmp_path: Path) -> None:
     shutil.copytree(FIXTURE, registry)
     accept = registry / "fixtures" / "note" / "ok.txt"
     reject = registry / "fixtures" / "note" / "empty.txt"
+    assert reject.read_bytes() == b""
+    assert accept.read_bytes()
     shutil.copyfile(accept, reject)
+    assert reject.read_bytes() == accept.read_bytes()
     ctx, snapshot, runner, _clock = open_factory(tmp_path / "run", registry)
     result = ContractRunner(ctx, snapshot, runner).run_validator("note.text@1", "count-text", timeout_s=30)
     assert result.verdict == Verdict.FAIL
