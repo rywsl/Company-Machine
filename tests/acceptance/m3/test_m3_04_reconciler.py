@@ -41,6 +41,7 @@ def test_cas_mismatch_is_i1(tmp_path: Path) -> None:
     blob.write_bytes(original[:-1] + bytes([original[-1] ^ 0x01]))
     corrupted = blob.read_bytes()
     findings = reconciler.audit_once(timeout_s=5)
+    assert findings
     assert any(item.invariant == "I1" for item in findings)
     assert blob.read_bytes() == corrupted
     assert blob.read_bytes() != original
@@ -52,6 +53,7 @@ def test_lineage_gap_is_i2(tmp_path: Path) -> None:
     missing = "sha256:" + "ab" * 32
     ctx.warehouse.record_lineage("j-0001", {"note": [missing]}, {"note": [bean_id]})
     findings = reconciler.audit_once(timeout_s=5)
+    assert findings
     assert any(item.invariant == "I2" and item.detail.get("missing_input") == missing for item in findings)
 
 
@@ -73,6 +75,7 @@ def test_unsealed_input_is_i3(tmp_path: Path) -> None:
         ),
     )
     findings = reconciler.audit_once(timeout_s=5)
+    assert findings
     assert any(item.invariant == "I3" and item.detail.get("bean") == draft.id for item in findings)
     assert snapshot.key("Station", "upper@1") in reconciler.holds()
 
@@ -96,7 +99,9 @@ def test_git_ref_restored(tmp_path: Path) -> None:
         ("active", commit_a),
     )
     _git(repo, "update-ref", "refs/factory/active", commit_b)
-    reconciler.audit_once(timeout_s=5)
+    assert _git(repo, "rev-parse", "refs/factory/active") == commit_b
+    findings = reconciler.audit_once(timeout_s=5)
+    assert findings
     assert _git(repo, "rev-parse", "refs/factory/active") == commit_a
     stored = ctx.db.query("SELECT commit FROM epoch_pointers WHERE name = ?", ("active",))
     assert stored[0]["commit"] == commit_a
@@ -150,6 +155,7 @@ def test_baseline_breach_holds(tmp_path: Path) -> None:
         (station, "cost_usd", 50.0, "2026-01-01T00:00:00.000Z"),
     )
     first = reconciler.audit_once(timeout_s=5)
+    assert first
     assert station in reconciler.holds()
     assert any(item.invariant == "drift" and item.state.value == "held" for item in first)
     ctx.db.query("DELETE FROM metrics WHERE station = ?", (station,))
@@ -224,5 +230,6 @@ def test_i14_compares_tables(tmp_path: Path) -> None:
     sidecar.write_text(json.dumps(tampered), encoding="utf-8")
     before = sidecar.read_text(encoding="utf-8")
     findings = reconciler.audit_once(timeout_s=5)
+    assert findings
     assert any(item.invariant == "I14" for item in findings)
     assert sidecar.read_text(encoding="utf-8") == before
