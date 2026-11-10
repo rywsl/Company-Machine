@@ -162,7 +162,7 @@ CREATE UNIQUE INDEX audit_open ON audit_findings(invariant, subject) WHERE state
 | I8 | 若注入了能重跑样例的入口（与 `governance.md` 的 `ContractRunner` 相同协议），重跑 validator 的 accept/reject。反样例被接受即违反。未注入时写发现，`detail.missing = "contract-runner"`，状态 `wake`，禁止记成通过 | 唤醒。不删除样例 |
 | I9 | 见 5.2 | 能恢复的恢复；不能的唤醒 |
 | I10 | 每个 run：`spent_usd > budget_cap_usd` 即违反。等于不算超 | 记录并唤醒。不改账 |
-| I11 | `refs/heads/main` 上每个控制面创建的提交（提交说明含 `changeset:`）都能在 `changesets` 里找到，且 T2/T3 的复核条数不少于该行的 `reviews_required` | 记录并唤醒。不合入、也不回滚指针（回滚是治理命令） |
+| I11 | `refs/factory/active` 的第一父链（`git rev-list --first-parent`）上：说明以 `changeset:` 开头的提交都能在 `changesets` 里按 `commit` 找到，且 T2/T3 的 `approvals` 条数不少于该行的 `reviews_required`；其他提交必须只改了 `constitution/`（`governance.md` 5.3 的 `adopt`） | 记录并唤醒。不合入、也不回滚指针（回滚是治理命令） |
 | I12 | `retain` 为真的 commit 缺失检出目录，或某 run 的 epoch 在 `epochs` 表中不存在 | 记录。禁止为了“清磁盘”删除 |
 | I13 | `git log` 中修改了 `constitution/` 的提交，`git verify-commit` 必须成功 | 失败 → 唤醒，并把该 commit 记入发现。不把 `active` 指过去 |
 | I14 | 读 `$FACTORY_ROOT/epochs/<commit>/resolutions.json`（active epoch 冻结的解析表，规范 JSON 数组，项与 `check_registry` 的 `resolutions` 相同，`origin` 为 `precomputed`）。对 active Registry 再跑一次 `check_registry`，比较 `(line, step, port, status, chain)`。不读、不写 `resolution-runtime.json` | 不一致 → 唤醒。禁止用新结果覆盖 `resolutions.json` |
@@ -222,14 +222,14 @@ I14 的“再跑一次”必须用同一个 `check_registry`。禁止在调和�
 
 ## 7. 验收测试
 
-夹具复用 M1 仓库目录与一个本地 Git epoch（与 `governance.md` 的测试相同的建库方式）。`docker` 用一个假的可执行文件放在 `PATH` 前面，记录参数并按测试返回退出码。不访问网络。
+夹具用 `tests/acceptance/m3/gov_world.py`（与 `governance.md` 第 7 章相同的建库方式：Registry 是 Git 仓库，active 已 `init`）。`docker` 用一个假的可执行文件放在 `PATH` 前面，记录参数并按测试返回退出码。不访问网络。
 
 | 文件 | 测试 | 验证什么 |
 |---|---|---|
 | `tests/acceptance/m3/test_m3_04_reconciler.py` | `test_cas_mismatch_is_i1` | 改一个 CAS 文件的一个字节后，`audit_once` 产生 I1，且不把文件改回去 |
 | | `test_lineage_gap_is_i2` | 来源证明指向不存在的输入 → I2 |
 | | `test_unsealed_input_is_i3` | job 输入未封存 → I3，并且该工位出现在 `holds()` |
-| | `test_git_ref_restored` | 表是 commit A、引用被改成 B 时，审计把引用改回 A，不改表 |
+| | `test_git_ref_restored` | 表里 active 是初始 commit、`refs/factory/active` 被改成另一个 commit 时，审计把引用改回，不改表 |
 | | `test_missing_image_does_not_pull` | 假 docker 看不到声明的 digest 时，发现为 `wake`，参数列表里没有 `pull` |
 | | `test_secret_values_absent` | 发现的规范 JSON 不含测试故意写入环境的密钥值 |
 | | `test_baseline_breach_holds` | 夹具 Baseline 的 `max` 被实际值超过 → hold；下一次实际值回到界内 → `audit.release` |

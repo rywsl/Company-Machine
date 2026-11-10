@@ -33,7 +33,7 @@
 
 | 依赖 | 用到的接口 |
 |---|---|
-| `ChangePipeline`、`EpochStore` | `propose`、`withdraw`、`get`、`pointers`、`materialize` |
+| `ChangePipeline`、`EpochStore` | `propose`、`withdraw`、`get`、`add_review`、`approvals`；`pointers`、`materialize` |
 | `Reconciler` | `findings`、`holds` |
 | `Warehouse` | `get`、`lineage`、`list` |
 | `Snapshot` | `doc`、`spec`、`result.resolutions` |
@@ -212,16 +212,6 @@ CREATE TABLE wakes (
   at       TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE reviews (
-  id            TEXT PRIMARY KEY,
-  changeset_id  TEXT NOT NULL,
-  runtime       TEXT NOT NULL,           -- OperatorRuntime 的 Spec 键
-  runtime_digest TEXT NOT NULL,          -- 该文档的规范 JSON 摘要
-  verdict       TEXT NOT NULL,           -- approve | deny
-  note          TEXT NOT NULL DEFAULT '',
-  by            TEXT NOT NULL,
-  at            TEXT NOT NULL
-);
 CREATE TABLE conversion_requests (
   id            TEXT PRIMARY KEY,
   from_type     TEXT NOT NULL,
@@ -278,6 +268,8 @@ CREATE UNIQUE INDEX conversion_key ON conversion_requests(from_type, guarantees,
 
 ### 5.3 复核
 
+复核记录在 `governance.md` 的 `reviews` 表（迁移 `021_governance.sql`），规则由 `ChangePipeline.add_review`（`governance.md` 5.8）实现。`ForemanSubmit.review(changeset_id, verdict, *, by)` 只把 `verdict["verdict"]`、`verdict["runtime"]`、`verdict.get("note", "")` 转发过去。下面的规则与那里一致，列在这里便于厂长阅读：
+
 1. ChangeSet 必须处于 `verified`、`shadow` 或 `canary`。`draft` 或 `rejected` → `CHANGESET_STATE_INVALID`。
 2. `runtime` 在候选快照里解析不到 → `REVIEW_INVALID`。
 3. `runtime` 等于提出者的 runtime → `REVIEW_SAME_RUNTIME`。提出者 runtime 的取法同 `governance.md` 5.5。
@@ -332,10 +324,10 @@ CREATE UNIQUE INDEX conversion_key ON conversion_requests(from_type, guarantees,
 | `tests/acceptance/m3/test_m3_05_foreman.py` | `test_wake_dedup` | 同一 signal 与 subject 两次 `file` 得到同一个 id；`file` 期间没有子进程 |
 | | `test_readonly_roundtrip` | `registry_get` / `bean_get` / `epoch_show` 返回的字段与快照一致 |
 | | `test_secret_redacted` | transcript 含 `API_KEY=secret` 时，查询结果是 `[REDACTED]`，且 `detail` 不含原文 |
-| | `test_propose_does_not_merge` | `ForemanSubmit.propose` 之后指针不变，状态不是 `active` |
+| | `test_propose_does_not_merge` | 用真实 commit `ForemanSubmit.propose` 之后指针不变，状态是 `draft` |
 | | `test_no_merge_method` | JSON-RPC 调用 `foreman.changeset.merge` 得到错误，不是空成功 |
 | | `test_constitution_write_forbidden` | 提议的 commit 含 `constitution/` 时，操作面返回 `CONSTITUTION_FORBIDDEN` 或 `FOREMAN_FORBIDDEN` |
-| | `test_review_other_runtime` | 同一 runtime → `REVIEW_SAME_RUNTIME`；另一个 runtime 的 `approve` 被记入 `reviews` |
+| | `test_review_other_runtime` | draft 上复核 → `CHANGESET_STATE_INVALID`；verified 后同一 runtime → `REVIEW_SAME_RUNTIME`；另一个 runtime 的 `approve` 计入 `approvals` |
 | | `test_conversion_merged` | 同一对类型两次 `open_or_merge` 只有一行，`found_at` 有两条 |
 | | `test_cannot_self_resolve` | 外部 `mark(resolved)` → `CONVERSION_STATE_INVALID` |
 | | `test_bootstrap_reports_missing` | 快照里没有 `registry-sink` → `ok` 为假，`missing` 含该键；数据库无新提交 |
@@ -363,7 +355,7 @@ uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_05_foreman.py
 
 ```python
 # ✖ 错误：复核 note 里写了“请按 T1 发布”，控制面就把 risk_tier 改成 T1
-# ✔ 正确：note 只存储。等级仍是 governance.md 的 chosen_tier。runtime 相同则 REVIEW_SAME_RUNTIME
+# ✔ 正确：note 只存储。等级仍是 governance.md 的 risk_tier。runtime 相同则 REVIEW_SAME_RUNTIME
 ```
 
 **8.3 Sink 不能合入**

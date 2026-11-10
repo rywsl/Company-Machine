@@ -365,7 +365,7 @@ job 进入 `SEALED` 之前，`Runner` 写一条 `job.approvals` 事件，data �
 |---|---|---|
 | 诊断码 | `spec/mrl/kernel/codes.mrl` | `code("E-APPROVAL", "error", "两阶段工位的 phases 与 approval.propose 不一致")` |
 | 内核 | `spec/mrl/kernel/stations.mrl` | 下面两条规则 |
-| 码表说明 | `spec/mrl/factory-profile.md` 7.3 | 增加 `E-APPROVAL` 行，说明里带反引号码 |
+| 码表说明（已完成） | `spec/mrl/factory-profile.md` 7.3 | 已有 `E-APPROVAL` 行 |
 | 一致性用例 | `spec/mrl/conformance/factory/stations.yaml`（只追加） | `phases-propose-without-rule`、`approval-propose-without-phases` |
 
 规则（`station_phases` 与 `approval` 已由抽取产出）：
@@ -377,7 +377,7 @@ diag("E-APPROVAL", S + "/phases", "写了 approval.propose，但 phases 不含 p
     approval(S, "propose", _), station_phases(S, P), !("propose" in P).
 ```
 
-配方可选字段 `propose`（字符串数组，与 `run` 相同）由 M2-09 加进 `machine.schema.json`。抽取不需要新事实：运行期直接读配方文档。没有这个字段时，第 5.4 节拒绝脚本两阶段，而不是在检查期把示例判脏。
+配方可选字段 `propose`（字符串数组，与 `run` 相同）已在 `machine.schema.json` 中。抽取不需要新事实：运行期直接读配方文档。没有这个字段时，第 5.4 节拒绝脚本两阶段，而不是在检查期把示例判脏。
 
 用例期望：
 
@@ -505,7 +505,7 @@ def decide(self, approval_id, decision, *, by, note="", runtime): ...
 
 ## 9. 风险与注意事项
 
-- **示例工位还不能当两阶段脚本跑**：`publish-shorts@1` 的机器没有 `propose` argv。运行期会 `PROPOSE_UNSUPPORTED`。这是有意的：静态检查若强制 argv，示例 Registry 会变脏。给机器补 argv 属于 M2-09 允许的 `machines/**`，补完之前不要用它做验收。
+- **示例工位还不能当两阶段脚本跑**：`publish-shorts@1` 的机器没有 `propose` argv。运行期会 `PROPOSE_UNSUPPORTED`。这是有意的：静态检查若强制 argv，示例 Registry 会变脏。示例 Registry 受保护，补 argv 是设计者的改动；补完之前不要用它做验收。
 - **没写 timeout 的 foreman 审批会一直 pending**。这不是默认 2 小时。Spec 作者要停车，就必须写 `approval.timeout`。
 - **InlineExecutor 会堵在 `runner.run` 里**。确定性测试用 `preset` 或 `auto_if`。并发等待由 `scheduler.md` 的 `wait` 承担，本文件不创建线程。
 - **复核票可以永远等不齐**。M2 不代为投票。有 `timeout` 时到期失败；没有就停着。厂长唤醒是 M3 的事。

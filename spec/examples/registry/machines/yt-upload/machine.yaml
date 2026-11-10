@@ -13,3 +13,5 @@ spec:
         video: {type: video.mp4@1}
         meta:  {type: doc.script@1}
       run: ["upload-short", "--video", "/factory/in/video/video.mp4", "--meta", "/factory/in/meta/script.json"]
+    url-reachable:                          # 核验配方：回执里的视频地址可以访问
+      run: ["verify-url", "--receipt", "/factory/ctl/receipt.json"]

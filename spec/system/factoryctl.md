@@ -347,8 +347,10 @@ Runner 在调用 `factoryctl harvest` 之前写好 `harvest.json`：
 | 测试 | 验证 |
 |---|---|
 | `test_poll_once_writes_response_and_skips_done` | 5.4：处理一条请求，返回 1；再调用返回 0 |
+| `test_poll_once_rejects_invalid_request` | 5.4 第 3 步：缺 `op`、id 与文件名不一致 → 写 `ok: false`、`CTL_REQUEST_INVALID` 的响应并计数；handler 不被调用 |
 | `test_poll_once_defers_when_handler_returns_none` | 返回 None 时不写响应，返回 0；下次返回 dict 才写 |
 | `test_factoryctl_harvest_places_single_match` | 5.6：`drafts/a.txt` 复制为 `note.txt`，退出码 0，`harvest-result.json` 的 `ok` 为 true |
+| `test_factoryctl_harvest_ambiguous_empty_and_submitted` | 5.6：多个匹配 → `HARVEST_AMBIGUOUS` 且不复制；0 个匹配 → `HARVEST_EMPTY`，optional 时 `ok: true`；list 端口放到 `<i>/`；已有 submissions 的端口不出现在结果里；退出码仍是 0 |
 | `test_factoryctl_submit_and_inputs` | 3.2、5.2、5.3：submit 写出 submissions；`inputs --json` 读到 `job.json` 的 id |
 | `test_factoryctl_fail_and_log` | `fail` 退出码 1 且写出 `fail.json`；`log` 追加一行 |
 | `test_check_roundtrip_with_server` | 5.5：后台 `CtlServer` 回答 check，脚本退出码 0，handler 看到 `op == "check"` |

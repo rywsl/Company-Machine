@@ -16,3 +16,5 @@ spec:
         repo:   {type: string}
         branch: {type: string}
       run: ["publish-git", "--repo", "{{ params.repo }}", "--branch", "{{ params.branch }}", "/factory/in"]
+    git-commit-visible:                     # 核验配方：回执里的 commit 在远端分支上可见
+      run: ["verify-git", "--receipt", "/factory/ctl/receipt.json"]

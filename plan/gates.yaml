@@ -46,7 +46,7 @@ gates:
       - *pytest
       - id: acceptance-m1
         run: uv run python tools/harness.py pytest tests/acceptance/m1
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 98
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 2400
       - id: unit-m1
@@ -72,7 +72,7 @@ gates:
       - *pytest
       - id: acceptance-m1
         run: uv run python tools/harness.py pytest tests/acceptance/m1
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 98
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 2400
       - id: unit-m1
@@ -102,7 +102,7 @@ gates:
       - *pytest
       - id: acceptance-m1
         run: uv run python tools/harness.py pytest tests/acceptance/m1
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 98
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 2400
       - id: unit-m1
@@ -118,7 +118,7 @@ gates:
         timeout: 3600
       - id: acceptance-m3
         run: uv run python tools/harness.py pytest tests/acceptance/m3
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 28
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 58
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 3600
 
@@ -137,7 +137,7 @@ gates:
       - *pytest
       - id: acceptance-m1
         run: uv run python tools/harness.py pytest tests/acceptance/m1
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 98
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 2400
       - id: unit-m1
@@ -153,7 +153,7 @@ gates:
         timeout: 3600
       - id: acceptance-m3
         run: uv run python tools/harness.py pytest tests/acceptance/m3
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 28
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 58
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 3600
       - id: acceptance-m4

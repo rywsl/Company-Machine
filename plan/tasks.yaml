@@ -120,7 +120,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_01_foundation.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 27
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_base.py tests/system/test_db.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
@@ -139,7 +139,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_02_snapshot.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 13
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_snapshot.py tests/system/test_values.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
@@ -158,7 +158,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_03_warehouse.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_warehouse.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
@@ -177,7 +177,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_04_sandbox.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
         env: {MAO_REQUIRE_DOCKER: "1"}
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_sandbox.py
@@ -197,7 +197,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_05_factoryctl.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
         env: {MAO_REQUIRE_DOCKER: "1"}
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_ctl.py
@@ -217,7 +217,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_06_gate.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_gate.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
@@ -236,7 +236,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_07_operator.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_operator.py tests/system/test_brief.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
@@ -255,7 +255,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_08_runner.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_jobs.py tests/system/test_runner.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
@@ -274,7 +274,7 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_09_cli.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
       - id: unit
         run: uv run python tools/harness.py pytest tests/system/test_cli.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 5
@@ -293,12 +293,12 @@ tasks:
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_10_e2e.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 1800
       - id: all-m1
         run: uv run python tools/harness.py pytest tests/acceptance/m1
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 98
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 1800
       - *regress
@@ -489,14 +489,11 @@ tasks:
     deps: [M1-01, M1-02, M1-03, M1-04, M1-05, M1-06, M1-07, M1-08, M1-09, M1-10]
     spec: [spec/system/connectors.md, spec/system/approvals.md]
     paths:
-      - spec/schemas/machine.schema.json
-      - spec/schemas/station.schema.json
       - src/mrl/factory/extract.py
       - spec/mrl/kernel/stations.mrl
       - spec/mrl/kernel/codes.mrl
-      - spec/mrl/factory-profile.md
-      - spec/examples/registry/machines/**
       - spec/mrl/conformance/factory/**
+      - tests/system/test_mrl_*.py
     accept:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_09_profile_receipts.py
@@ -584,15 +581,70 @@ tasks:
   # ------------------------------------------------------------------ M3 治理与厂长
   - id: M3-01
     milestone: M3
-    title: Epoch 指针、ChangeSet 提交与回滚
+    title: Epoch 存储、指针、回滚与宪法采纳
     card: plan/tasks/M3-01.md
-    deps: [M2-08]
+    deps: []
     spec: [spec/system/governance.md]
-    paths: [src/mao/governance.py, src/mao/cli.py, src/mao/errors.py, tests/system/**]
+    paths:
+      - src/mao/governance/**
+      - src/mao/snapshot.py
+      - src/mao/migrations/021_governance.sql
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
     accept:
       - id: acceptance
-        run: uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_01_governance.py
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
+        run: uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_01_epochs.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M3-02
+    milestone: M3
+    title: ChangeSet 受理与验证（V1–V4）、风险分级与跨 runtime 复核
+    card: plan/tasks/M3-02.md
+    deps: [M3-01]
+    spec: [spec/system/governance.md]
+    paths:
+      - src/mao/governance/**
+      - src/mao/snapshot.py
+      - src/mao/migrations/021_governance.sql
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_02_changesets.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 14
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M3-03
+    milestone: M3
+    title: 影子运行、金丝雀、推广与自动回滚、安全模式
+    card: plan/tasks/M3-03.md
+    deps: [M3-02, M3-04, M3-05]
+    spec: [spec/system/governance.md]
+    paths:
+      - src/mao/governance/**
+      - src/mao/snapshot.py
+      - src/mao/migrations/021_governance.sql
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+      - src/mao/runs.py
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m3/test_m3_03_rollout.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 12
       - *regress
       - *lint
       - *format
@@ -628,7 +680,7 @@ tasks:
     milestone: M3
     title: 唤醒、只读查询、提议、转换需求与自举检查
     card: plan/tasks/M3-05.md
-    deps: [M3-01]
+    deps: [M3-02]
     spec: [spec/system/foreman.md, spec/system/governance.md]
     paths:
       - src/mao/foreman.py

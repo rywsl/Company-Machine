@@ -394,6 +394,8 @@ handler 只处理 `check` 和 `approval`。其他 `op`：返回 `ok: false`，`e
 | `test_submit_rejects_unsealed` | 5.2：未封存 Bean → `INTAKE_REJECTED`，`jobs` 表 0 行 |
 | `test_upper_seals` | 5.7：`upper@1` 把 `hello` 收成已封存的大写 `note.txt`，状态 `SEALED`，`outputs["note"]` 非空 |
 | `test_operator_fail_retries_then_dead` | 5.1：输入含 `#fail`，`failed: 1`，最终 `DEAD`，`attempt == 2`，错误码 `OPERATOR_FAILED` |
+| `test_gate_reject_records_feedback` | 5.7 第 6 步：产物不满足 `shouting` → `REJECTED`，`rejected: 0` 所以 `DEAD`、`attempt == 1`、`GATE_REJECTED`，`feedback` 提到 `shouting` |
+| `test_writer_harvests_and_seals` | 5.4–5.7：agent 工位按 `drafts/*.txt` 收货、封存；`brief.md` 含渲染后的任务与工厂契约；`cost_usd` 来自 transcript |
 | `test_budget_exceeded_does_not_seal_or_retry` | D14：writer 的脚本报告成本 2.0，预算 1.0，`DEAD` / `BUDGET_EXCEEDED`，`attempt == 1`，`outputs == {}` |
 | `test_in_run_approval_decide` | 5.6：成本 1.0 的审批不自动通过；另一个线程 `decide(..., "approve")` 之后 job 能封存 |
 

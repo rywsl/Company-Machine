@@ -174,7 +174,7 @@ ALTER TABLE jobs ADD COLUMN run_value TEXT;
 ### 4.3 核验配方的约定
 
 - 核验配方是 Sink 所在机器中的一个普通配方，名字就是工位的 `verify_receipt`。它必须有 `run`，不能有 `outputs`；这两条由 MRL 静态检查保证，见第 5.7 节。
-- 核验配方的沙箱与 Sink 的执行沙箱使用**同一个镜像、同一个策略**（出网与秘密），输入同样挂在 `/factory/in/<port>/`，`/factory/ctl/receipt.json` 只读提供。
+- 核验配方的沙箱与 Sink 的执行沙箱使用**同一个镜像、同一个策略**（出网与秘密），输入同样挂在 `/factory/in/<port>/`，`/factory/ctl/receipt.json` 只读提供。挂载按 Sink job 的输入，不按核验配方的 `inputs` 声明；核验配方可以不声明 `inputs`（示例 Registry 的 `git-commit-visible`、`url-reachable` 就没有）。
 - 退出码：
   - `0`：核验通过；
   - `1`：核验不通过，stdout 可以是 `{"detail": "…"}`；
@@ -272,14 +272,16 @@ ALTER TABLE jobs ADD COLUMN run_value TEXT;
 
 ### 5.7 MRL 与 schema 的改动（由 M2-09 实现）
 
+受保护的部分已由设计者完成：schema 的 `receipt`、`propose` 字段，示例 Registry 的三个核验配方与 rclone `copy` 的 `receipt` 模板，factory-profile 3.4 与 7.3 的文字。M2-09 只改未受保护的抽取、内核、码表与一致性用例（下表标“M2-09”的行）。
+
 | 改动 | 文件 | 内容 |
 |---|---|---|
-| Machine schema | `spec/schemas/machine.schema.json` | 配方新增可选字段 `receipt: {target: string, locator: {string: string}}`，`additionalProperties: false` |
-| 抽取 | `src/mrl/factory/extract.py`、factory-profile 3.4 | `recipes.R.receipt.target`、`recipes.R.receipt.locator.*` 中含 `{{` 的字符串是 `recipe-template` 位置；新增事实 `recipe_run(M, R)`（配方有 `run`） |
-| 内核 | `spec/mrl/kernel/stations.mrl` | 新诊断（码 `E-RECEIPT`）：(a) sink 的 `verify_receipt` 不是其机器的配方；(b) 该配方没有 `run`；(c) 该配方声明了 `outputs` |
-| 码表 | `spec/mrl/kernel/codes.mrl`、factory-profile 7.3 | `code("E-RECEIPT", "error", "Sink 的回执核验配方不存在、没有 run，或声明了输出")` |
-| 示例 Registry | `spec/examples/registry/machines/{rclone,git,yt-upload}/machine.yaml` | 补上核验配方 `s3-head-and-hash`、`git-commit-visible`、`url-reachable`，给 rclone 的 `copy` 配方加上 `receipt` 模板，使示例保持 clean |
-| 一致性用例 | `spec/mrl/conformance/factory/stations.yaml`（追加） | `receipt-recipe-missing`、`receipt-recipe-no-run`、`receipt-recipe-has-outputs`、`receipt-template-typo`（E-EXPR） |
+| Machine schema（已完成） | `spec/schemas/machine.schema.json` | 配方新增可选字段 `receipt: {target: string, locator: {string: string}}`，`additionalProperties: false` |
+| 抽取（M2-09） | `src/mrl/factory/extract.py`；文字见 factory-profile 3.4 | `recipes.R.receipt.target`、`recipes.R.receipt.locator.*` 中含 `{{` 的字符串是 `recipe-template` 位置；新增事实 `recipe_run(M, R)`（配方有 `run`） |
+| 内核（M2-09） | `spec/mrl/kernel/stations.mrl` | 新诊断（码 `E-RECEIPT`）：(a) sink 的 `verify_receipt` 不是其机器的配方；(b) 该配方没有 `run`；(c) 该配方声明了 `outputs` |
+| 码表（M2-09） | `spec/mrl/kernel/codes.mrl`；文字见 factory-profile 7.3 | `code("E-RECEIPT", "error", "Sink 的回执核验配方不存在、没有 run，或声明了输出")` |
+| 示例 Registry（已完成） | `spec/examples/registry/machines/{rclone,git,yt-upload}/machine.yaml` | 补上核验配方 `s3-head-and-hash`、`git-commit-visible`、`url-reachable`，给 rclone 的 `copy` 配方加上 `receipt` 模板，使示例保持 clean |
+| 一致性用例（M2-09） | `spec/mrl/conformance/factory/stations.yaml`（追加） | `receipt-recipe-missing`、`receipt-recipe-no-run`、`receipt-recipe-has-outputs`、`receipt-template-typo`（E-EXPR） |
 
 ---
 
@@ -399,6 +401,6 @@ with db.tx() as c:
 
 | ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
 |---|---|---|---|---|---|---|
-| M2-09 | MRL profile：核验配方的静态检查、配方 `receipt` 模板；两阶段工位的静态检查（见 `approvals.md` 5.7） | M1 全部 | 5.7；`approvals.md` 5.7 | `spec/schemas/machine.schema.json`、`spec/schemas/station.schema.json`、`src/mrl/factory/extract.py`、`spec/mrl/kernel/stations.mrl`、`spec/mrl/kernel/codes.mrl`、`spec/mrl/factory-profile.md`、`spec/examples/registry/machines/**`、`spec/mrl/conformance/factory/*.yaml`（只追加） | `test_m2_09_profile_receipts.py`；`mrl conformance`、`mrl coverage` 全通过 | M |
+| M2-09 | MRL profile：核验配方的静态检查、配方 `receipt` 模板；两阶段工位的静态检查（见 `approvals.md` 5.7） | M1 全部 | 5.7；`approvals.md` 5.7 | `src/mrl/factory/extract.py`、`spec/mrl/kernel/stations.mrl`、`spec/mrl/kernel/codes.mrl`、`spec/mrl/conformance/factory/*.yaml`（只追加） | `test_m2_09_profile_receipts.py`；`mrl conformance`、`mrl coverage` 全通过 | M |
 | M2-10 | Sink：幂等键、占用、回执、核验、作废、CLI | M2-03、M2-09 | 3、4、5.1–5.4、5.6 | `src/mao/connectors.py`、`src/mao/runner.py`（只增 sink 分支）、`src/mao/jobs.py`（只增转换）、`src/mao/ctl/factoryctl.py`（只增 `receipt`）、`src/mao/migrations/012_receipts.sql`、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_connectors_*.py` | `test_m2_10_sink.py`（≥ 10 通过） | L |
 | M2-11 | Source：执行流程、来源证明、`factory source run`、凭据边界二次检查 | M2-10 | 5.5、5.6 | `src/mao/connectors.py`、`src/mao/runner.py`（只增 source 分支与 5.6 检查）、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_source_*.py` | `test_m2_11_source.py`（≥ 6 通过） | M |

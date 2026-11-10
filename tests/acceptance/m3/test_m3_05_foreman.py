@@ -18,12 +18,27 @@ from mao.foreman import (  # noqa: E402
     bootstrap_check,
 )
 from mao.governance import ChangePipeline, EpochStore  # noqa: E402
-from tests.acceptance.m2.world import FIXTURE, open_factory  # noqa: E402
+from tests.acceptance.m3.gov_world import (  # noqa: E402
+    changeset_doc,
+    commit_change,
+    constitution_edit,
+    open_world,
+    toolbox_v2_image,
+    upsert,
+)
+from tests.acceptance.m3.test_m3_02_changesets import FakeContracts  # noqa: E402
 
 
 def _open(tmp_path: Path):
-    ctx, snapshot, _runner, _clock = open_factory(tmp_path, FIXTURE)
-    return ctx, snapshot
+    w = open_world(tmp_path)
+    return w.ctx, w.snapshot
+
+
+def _world_submit(tmp_path: Path):
+    w = open_world(tmp_path)
+    fake = FakeContracts()
+    pipe = ChangePipeline(w.ctx, w.epochs, contracts=lambda snapshot: fake)
+    return w, pipe, ForemanSubmit(w.ctx, pipe)
 
 
 def test_wake_dedup(tmp_path: Path) -> None:
@@ -53,43 +68,51 @@ def test_secret_redacted(tmp_path: Path) -> None:
 
 
 def test_propose_does_not_merge(tmp_path: Path) -> None:
-    ctx, _snapshot = _open(tmp_path)
-    submit = ForemanSubmit(ctx, ChangePipeline(ctx))
-    before = (ctx.root / "epoch").read_text(encoding="utf-8") if (ctx.root / "epoch").exists() else ""
-    change = submit.propose({"changes": []}, "abc", by="foreman", timeout_s=5)
-    after = (ctx.root / "epoch").read_text(encoding="utf-8") if (ctx.root / "epoch").exists() else ""
-    assert change.state != "active"
-    assert before == after
+    w, _pipe, submit = _world_submit(tmp_path)
+    before = w.epochs.pointers()
+    source = commit_change(w.repo, toolbox_v2_image())
+    change = submit.propose(
+        changeset_doc(w.base, [upsert("Machine", "toolbox")]), source, by="foreman", timeout_s=5
+    )
+    assert change.state == "draft"
+    assert w.epochs.pointers() == before
 
 
 def test_no_merge_method(tmp_path: Path) -> None:
-    ctx, _snapshot = _open(tmp_path)
-    submit = ForemanSubmit(ctx, ChangePipeline(ctx))
+    _w, _pipe, submit = _world_submit(tmp_path)
     assert not hasattr(submit, "merge")
+    assert not hasattr(submit, "advance")
+    assert not hasattr(submit, "rollback")
 
 
 def test_constitution_write_forbidden(tmp_path: Path) -> None:
-    ctx, _snapshot = _open(tmp_path)
-    submit = ForemanSubmit(ctx, ChangePipeline(ctx))
+    w, _pipe, submit = _world_submit(tmp_path)
+    source = commit_change(w.repo, constitution_edit())
     with pytest.raises(FactoryError) as ei:
-        submit.propose(
-            {"changes": [{"op": "upsert", "path": "constitution/invariants.mrl"}]},
-            "abc",
-            by="foreman",
-            timeout_s=5,
-        )
+        submit.propose(changeset_doc(w.base, [upsert("Station", "upper")]), source, by="foreman", timeout_s=5)
     assert ei.value.code in {"CONSTITUTION_FORBIDDEN", "FOREMAN_FORBIDDEN"}
 
 
 def test_review_other_runtime(tmp_path: Path) -> None:
-    ctx, _snapshot = _open(tmp_path)
-    submit = ForemanSubmit(ctx, ChangePipeline(ctx))
+    w, pipe, submit = _world_submit(tmp_path)
+    source = commit_change(w.repo, toolbox_v2_image())
     change = submit.propose(
-        {"changes": [{"op": "upsert", "path": "stations/upper.yaml"}]}, "abc", by="runtime-a", timeout_s=5
+        changeset_doc(w.base, [upsert("Machine", "toolbox")]), source, by="fake-agent@1", timeout_s=5
     )
     with pytest.raises(FactoryError) as ei:
-        submit.review(change.id, {"decision": "approve", "runtime": "runtime-a"}, by="runtime-a")
+        submit.review(change.id, {"verdict": "approve", "runtime": "script@1", "note": ""}, by="script")
+    assert ei.value.code == "CHANGESET_STATE_INVALID"
+    assert pipe.advance(change.id).state == "verified"
+    with pytest.raises(FactoryError) as ei:
+        submit.review(
+            change.id, {"verdict": "approve", "runtime": "fake-agent@1", "note": ""}, by="fake-agent"
+        )
     assert ei.value.code == "REVIEW_SAME_RUNTIME"
+    review_id = submit.review(
+        change.id, {"verdict": "approve", "runtime": "script@1", "note": ""}, by="script"
+    )
+    assert review_id.startswith("rv-")
+    assert pipe.approvals(change.id) == ["OperatorRuntime:script@1"]
 
 
 def test_conversion_merged(tmp_path: Path) -> None:

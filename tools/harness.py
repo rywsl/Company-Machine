@@ -59,12 +59,14 @@ DEFAULT_PROTECTED = [
     "spec/**/*.md",
     "spec/schemas/*.json",
     "spec/mrl/constitution/*.mrl",
+    "spec/mrl/governance/*.mrl",
     "spec/examples/registry/**/*",
     "plan/*.yaml",
     "plan/*.md",
     "plan/tasks/*.md",
     "plan/scenarios/*.yaml",
     "tests/conftest.py",
+    "tests/test_hooks.py",
     "tests/acceptance/**/*",
     "tests/fakes/**/*",
     "tests/fixtures/**/*",
@@ -718,6 +720,102 @@ def _error_code_problems() -> list[str]:
     ]
 
 
+ACCEPT_FILE_RE = re.compile(r"`(tests/acceptance/[\w/]+?/test_\w+\.py)`")
+TEST_NAME_RE = re.compile(r"`(test_\w+)`")
+ACCEPT_RUN_RE = re.compile(r"harness\.py pytest (tests/acceptance/\S+)")
+PASSED_RE = re.compile(r"out\.passed >= (\d+)")
+
+
+def _test_defs(path: Path) -> list[str]:
+    """验收文件里的顶层测试函数名（不导入文件，避免 importorskip 把问题藏起来）。"""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return [n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+
+
+def _spec_acceptance_tables() -> dict[str, dict[str, list[str]]]:
+    """spec/system/*.md 第 7 章：验收文件 → 规范列出的测试名。表格行里的测试名归属最近一次出现的文件。"""
+    out: dict[str, dict[str, list[str]]] = {}
+    for p in sorted((ROOT / "spec" / "system").glob("*.md")):
+        if p.name == "README.md":
+            continue
+        text = p.read_text(encoding="utf-8")
+        m = re.search(r"^##\s*7\s*[.、]?.*$", text, re.M)
+        if not m:
+            continue
+        end = re.search(r"^##\s*8\s*[.、]?", text[m.end() :], re.M)
+        chapter = text[m.end() : m.end() + end.start()] if end else text[m.end() :]
+        current: str | None = None
+        files: dict[str, list[str]] = {}
+        for line in chapter.splitlines():
+            found = ACCEPT_FILE_RE.findall(line)
+            if found:
+                current = found[-1]
+                files.setdefault(current, [])
+            if current and line.lstrip().startswith("|"):
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                for cell in cells[:2]:
+                    names = TEST_NAME_RE.findall(cell)
+                    if names:
+                        files[current].extend(n for n in names if n not in files[current])
+                        break
+        out[p.relative_to(ROOT).as_posix()] = files
+    return out
+
+
+def _acceptance_problems(tasks: dict[str, Any], gates: dict[str, Any]) -> list[str]:
+    """规范第 7 章、验收文件、tasks.yaml / gates.yaml 的门槛三者必须一致。"""
+    out: list[str] = []
+    claimed: dict[str, str] = {}
+    for spec, files in _spec_acceptance_tables().items():
+        for rel, names in files.items():
+            path = ROOT / rel
+            if not path.exists():
+                out.append(f"{spec} 第 7 章引用的验收文件 {rel} 不存在")
+                continue
+            claimed.setdefault(rel, spec)
+            defs = _test_defs(path)
+            for name in names:
+                if name not in defs:
+                    out.append(f"{spec} 第 7 章列出的 {name} 不在 {rel} 里")
+            for name in defs:
+                if name not in names and claimed[rel] == spec:
+                    out.append(f"{rel} 的 {name} 没有写进 {spec} 第 7 章")
+    for f in sorted((ROOT / "tests" / "acceptance").rglob("test_*.py")):
+        rel = f.relative_to(ROOT).as_posix()
+        if rel not in claimed:
+            out.append(f"验收文件 {rel} 没有被任何 spec/system 文档的第 7 章引用")
+
+    def count(target: str) -> int:
+        path = ROOT / target
+        files = sorted(path.rglob("test_*.py")) if path.is_dir() else [path] if path.exists() else []
+        return sum(len(_test_defs(x)) for x in files)
+
+    def checks_of() -> list[tuple[str, dict[str, Any]]]:
+        items = [(f"任务 {t.id}", c) for t in tasks.values() for c in t.accept]
+        for m, g in gates.items():
+            items += [(f"阶段门 {m}", c) for c in g.get("checks") or []]
+        return items
+
+    for owner, c in checks_of():
+        field = c.get if isinstance(c, dict) else lambda k, d=None, c=c: getattr(c, k, d)
+        hit = ACCEPT_RUN_RE.search(str(field("run", "") or ""))
+        if not hit:
+            continue
+        need = count(hit.group(1))
+        cond = str(field("assert", "") or field("assertion", "") or "")
+        got = PASSED_RE.search(cond)
+        if need and (not got or int(got.group(1)) < need):
+            have = got.group(1) if got else "无"
+            out.append(
+                f"{owner} 的验收项 {field('id')} 要求 passed >= {have}，但 {hit.group(1)} 有 {need} 个测试"
+            )
+        if need and "out.skipped == 0" not in cond:
+            out.append(f"{owner} 的验收项 {field('id')} 没有要求 out.skipped == 0")
+    return out
+
+
 def protected_patterns() -> list[str]:
     if LOCK_FILE.exists():
         return list(json.loads(LOCK_FILE.read_text(encoding="utf-8")).get("patterns") or DEFAULT_PROTECTED)
@@ -765,7 +863,8 @@ def lock_violations() -> list[str]:
 def cmd_lock(a: argparse.Namespace) -> int:
     if a.update:
         print("⚠ lock --update 会把当前内容登记为受保护的基准。只有人可以执行；agent 不得运行此命令。")
-        patterns = protected_patterns()
+        # 代码里新增的默认模式也要登记进来，否则新受保护的文件永远不会进入基准。
+        patterns = list(dict.fromkeys([*protected_patterns(), *DEFAULT_PROTECTED]))
         data = {
             "version": 1,
             "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
@@ -834,6 +933,7 @@ def doc_problems() -> list[str]:
         for m in milestones(tasks):
             if m not in gates:
                 out.append(f"gates.yaml 中没有里程碑 {m} 的阶段门")
+        out += _acceptance_problems(tasks, gates)
     return out
 
 

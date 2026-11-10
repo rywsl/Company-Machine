@@ -37,7 +37,7 @@
 | `LineRunner`、`Runner` | 提交展开后的节点。子产线用 `start_run` |
 | `mao.values` | `bean_value`、`inputs_value` |
 | `ConversionStore`（`foreman.md`） | 运行期 `no-converter` 时 `open_or_merge` |
-| `EpochStore`（`governance.md`） | Plan 与 run 必须同一 commit。缺失转换时把 run 标 `BLOCKED` 的规则见 `governance.md` 5.8；Plan 编译失败不走 `BLOCKED`，走 job `REJECTED` |
+| `EpochStore`（`governance.md`） | Plan 与 run 必须同一 commit。运行期缺失转换时登记到转换需求的 `blocked_runs`、推广后自动重建的规则见 `governance.md` 5.12（`RunState` 没有 `BLOCKED` 值）；Plan 编译失败不走 `BLOCKED`，走 job `REJECTED` |
 
 ---
 
@@ -180,7 +180,7 @@ schema 要求 `on`、`cases`、`default`。控制节点不提交 job。
    - 任一 map 的展开个数 `>` `max_fanout` → `PLAN_BOUNDS`。`max_items` 与 `max_fanout` 都存在时，有效上限是二者中较小的那个，不另造第三个数。
    - 嵌套：Plan 本身深度为 1。Plan 里的 `subline` 再加 1。出现 planner 角色的步骤 → `PLAN_BOUNDS`（禁止 Plan 再产出 Plan）。深度 `>` `max_depth` → `PLAN_BOUNDS`。
 4. **预算**。用与 `compile_run_plan` 相同的 `cost_item` 规则求和（含转换、含 map/until 倍数）。和 `>` `plan_bounds.budget_usd`（若声明了）→ `PLAN_BUDGET`。和 `>` `run.value()["budget"]["remaining_usd"]` → `PLAN_BUDGET`。等于允许。
-5. **V2**。把 Plan 的 steps 当作一条临时产线做与 5.2–5.4 相同的绑定、解析与环检查。解析只调用 factory-profile 的 `resolve`，并与“若这条边已在解析表里则必须得到同一条链”核对。表里没有的键可以追加（`origin: runtime`）。`no-converter` → 诊断 `E-NO-CONVERTER`，并 `ConversionStore.open_or_merge`。这使 `ok` 为假，job 走 `REJECTED`，**不**把父 run 标成 `BLOCKED`。planner 可以换一个不需要该转换的 Plan。
+5. **V2**。把 Plan 的 steps 当作一条临时产线做与 5.2–5.4 相同的绑定、解析与环检查。解析只调用 factory-profile 的 `resolve`，并与“若这条边已在解析表里则必须得到同一条链”核对。表里没有的键可以追加（`origin: runtime`）。`no-converter` → 诊断 `E-NO-CONVERTER`，并 `ConversionStore.open_or_merge`。这使 `ok` 为假，job 走 `REJECTED`，**不**把父 run 登记进转换需求的 `blocked_runs`。planner 可以换一个不需要该转换的 Plan。
 6. 父产线里若有普通工位的输入绑到 planner 的 plan 端口：`compile_dynamic` 在编译父产线时就失败，错误码 `PLAN_SHAPE`。plan 端口不是下游物料。子 DAG 由本模块挂上，不通过 Bean 传递给另一个工位。
 
 执行：
@@ -236,7 +236,7 @@ Plan 不合格不是上表的抛出路径：`compile_plan` 返回 `ok=False`，�
 | | `test_plan_cannot_define_specs` | Plan 文档夹带 Type 文档 → `ok` 为假，`PLAN_INVALID` |
 | | `test_budget_number_not_template` | `plan_bounds.budget_usd` 写成模板字符串 → schema 失败，不按模板求值 |
 | | `test_budget_remaining` | 子计划和大于 run 剩余 → `PLAN_BUDGET`；等于剩余则通过 |
-| | `test_missing_converter_rejects_plan` | 边无转换 → `E-NO-CONVERTER`，转换需求被 `open_or_merge`，父 run 不是 `BLOCKED` |
+| | `test_missing_converter_rejects_plan` | 边无转换 → `E-NO-CONVERTER`，转换需求被 `open_or_merge`，父 run 不在 `blocked_runs` 里 |
 | | `test_sealed_plan_same_epoch` | 通过后 plan Bean 已封存，子节点出现在父 run 上，epoch 相同 |
 | | `test_runtime_resolution_append_only` | 同一键第二次追加若链不同则 `RUN_PLAN_INVALID`，文件中的旧链不变 |
 

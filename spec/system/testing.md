@@ -100,6 +100,7 @@ uv run python tools/build_test_images.py
 | `test_local_upper_seals` | Local 下 upper 工位封存大写产物 |
 | `test_local_lineage` | 输出血缘指回输入 |
 | `test_docker_upper_matches_local` | 标记 `docker`。facts 与 Local 相同 |
+| `test_docker_agent_workspace_harvest` | 标记 `docker`。writer 工位：fake agent 从只读注入卷运行，在镜像初始化的工作区卷里写 `drafts/a.txt`，收货并封存 |
 | `test_registry_m1_matches_constitution` | 夹具宪法与参考宪法逐字节相同 |
 
 ---

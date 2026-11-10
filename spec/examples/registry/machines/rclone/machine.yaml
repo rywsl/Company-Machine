@@ -14,3 +14,9 @@ spec:
         bucket: {type: string}
         prefix: {type: string}
       run: ["rclone", "copy", "/factory/in/artifact", "s3:{{ params.bucket }}/{{ params.prefix }}"]
+      receipt:                              # 操作工不写 receipt.json 时由模板生成回执
+        target: "s3://{{ params.bucket }}/{{ params.prefix }}"
+        locator: {prefix: "{{ params.prefix }}"}
+    s3-head-and-hash:                       # 核验配方：对象存在且 hash 与 Bean 一致；退出码 0/1
+      inputs: {artifact: {type: any}}
+      run: ["verify-s3", "--receipt", "/factory/ctl/receipt.json", "/factory/in/artifact"]

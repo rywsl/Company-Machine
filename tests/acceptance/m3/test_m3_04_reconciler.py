@@ -16,14 +16,16 @@ pytest.importorskip("mao.governance")
 from mao.governance import EpochStore  # noqa: E402
 from mao.reconcile import Reconciler  # noqa: E402
 from mao.warehouse import BeanDraft  # noqa: E402
-from tests.acceptance.m2.world import FIXTURE, open_factory, seal_input  # noqa: E402
+from tests.acceptance.m2.world import seal_input  # noqa: E402
+from tests.acceptance.m3.gov_world import commit_change, git, open_world, upper_v2_limits  # noqa: E402
 
 CANARY = "CANARY-SECRET-VALUE-0123456789"
 
 
 def _audit(tmp_path: Path):
-    ctx, snapshot, _runner, _clock = open_factory(tmp_path, FIXTURE)
-    return ctx, snapshot, Reconciler(ctx, EpochStore(ctx))
+    """M3 的建库方式（governance.md 第 7 章）：Registry 是 Git 仓库，active 已 init。"""
+    w = open_world(tmp_path)
+    return w.ctx, w.snapshot, Reconciler(w.ctx, w.epochs)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -102,30 +104,16 @@ def test_unsealed_input_is_i3(tmp_path: Path) -> None:
 
 
 def test_git_ref_restored(tmp_path: Path) -> None:
-    ctx, _snapshot, reconciler = _audit(tmp_path)
-    repo = ctx.root
-    _git(repo, "init")
-    _git(repo, "config", "user.email", "acceptance@example.com")
-    _git(repo, "config", "user.name", "acceptance")
-    (repo / "README").write_text("a\n", encoding="utf-8")
-    _git(repo, "add", "README")
-    _git(repo, "commit", "-m", "A")
-    commit_a = _git(repo, "rev-parse", "HEAD")
-    (repo / "README").write_text("b\n", encoding="utf-8")
-    _git(repo, "add", "README")
-    _git(repo, "commit", "-m", "B")
-    commit_b = _git(repo, "rev-parse", "HEAD")
-    ctx.db.query(
-        "INSERT INTO epoch_pointers (name, commit) VALUES (?, ?)",
-        ("active", commit_a),
-    )
-    _git(repo, "update-ref", "refs/factory/active", commit_b)
-    assert _git(repo, "rev-parse", "refs/factory/active") == commit_b
+    w = open_world(tmp_path)
+    reconciler = Reconciler(w.ctx, w.epochs)
+    other = commit_change(w.repo, upper_v2_limits())
+    git(w.repo, "update-ref", "refs/factory/active", other)
+    assert git(w.repo, "rev-parse", "refs/factory/active") == other
     findings = reconciler.audit_once(timeout_s=5)
     assert findings
-    assert _git(repo, "rev-parse", "refs/factory/active") == commit_a
-    stored = ctx.db.query("SELECT commit FROM epoch_pointers WHERE name = ?", ("active",))
-    assert stored[0]["commit"] == commit_a
+    assert git(w.repo, "rev-parse", "refs/factory/active") == w.base
+    stored = w.ctx.db.query("SELECT commit FROM epoch_pointers WHERE name = ?", ("active",))
+    assert stored[0]["commit"] == w.base
 
 
 def test_missing_image_does_not_pull(tmp_path: Path) -> None:
@@ -217,10 +205,13 @@ def test_unrestorable_wakes(tmp_path: Path) -> None:
 
 
 def test_hold_blocks_submit(tmp_path: Path) -> None:
+    from mao.runner import Runner
     from mao.runs import LineRunner, NodeState, RunState
 
-    ctx, snapshot, runner, _clock = open_factory(tmp_path, FIXTURE)
-    reconciler = Reconciler(ctx, EpochStore(ctx))
+    w = open_world(tmp_path)
+    ctx, snapshot = w.ctx, w.snapshot
+    runner = Runner(ctx, snapshot)
+    reconciler = Reconciler(ctx, w.epochs)
     station = snapshot.key("Station", "upper@1")
     note = seal_input(ctx, snapshot, "note.text@1")
     ctx.db.query(

@@ -1,0 +1,196 @@
+// 治理（L0）：ChangeSet 的风险等级、复核条数与变更治理上限（架构文档 11.3、10.5、11.4）。
+//
+// 本文件是控制面的一部分，受 plan/protected.lock 保护，只有人能修改。厂长与实现者都不能改；
+// 厂长因此无法改变“自己的变更如何被评级”。
+//
+// 宿主 mao.governance 按 spec/system/governance.md 第 4.4 节从“基线 epoch → 候选 commit”的 diff
+// 抽取下面的 @input 关系，再读取输出关系 risk、tier_of、unscored、reviews、needs_stage、limit。
+// 等级用整数 0–3 表示 T0–T3。T4（修改宪法）不在这里评级：宿主在评级之前就以 CONSTITUTION_FORBIDDEN 拒绝。
+
+module governance.risk.
+
+// ---------- 宿主输入 ----------
+
+@doc("一项变更。id 由宿主按 (kind, name) 升序编号为 c0、c1……；op 见 governance.md 4.4")
+@input rel change(id: string, kind: string, op: string).
+@doc("op == modify 时变化的字段（顶层 spec 字段，或 4.4 表里的细分字段）")
+@input rel field_changed(id: string, field: string).
+@doc("工位类变更在基线或候选中的角色（两边都给出）")
+@input rel station_role(id: string, role: string).
+@doc("放水：删除反样例、删除 guarantee、删除 accept、提高出网等级、审批放宽为 auto 等")
+@input rel weakened(id: string, what: string).
+@doc("基线解析表中已有的边，在候选中解析结果不同")
+@input rel resolution_changed(line: string, step: string, port: string).
+@doc("本 ChangeSet 涉及的 Spec 文档数")
+@input rel spec_count(n: int).
+
+// ---------- 人设定的上限 ----------
+
+@doc("变更治理的数值上限。宿主只从这里读，不写死")
+rel limit(name: string, value: int).
+limit("changeset_max_specs", 20).
+limit("active_per_24h", 10).
+limit("concurrent_rollouts", 1).
+limit("safe_mode_rollbacks", 2).
+limit("safe_mode_window_s", 86400).
+limit("safe_mode_cooldown_s", 3600).
+
+@doc("各等级要求的跨 runtime 复核条数：复核者的 runtime 互不相同，且都不是提出者的 runtime")
+rel reviews(tier: int, n: int).
+reviews(0, 0).
+reviews(1, 0).
+reviews(2, 1).
+reviews(3, 2).
+
+@doc("各等级必须经过的发布阶段")
+rel needs_stage(tier: int, stage: string).
+needs_stage(1, "shadow").
+needs_stage(2, "shadow").
+needs_stage(2, "canary").
+needs_stage(3, "shadow").
+needs_stage(3, "canary").
+
+@doc("T3 的金丝雀样本数与观察期在 rollout 声明的基础上乘以这个倍数")
+rel stage_multiplier(tier: int, k: int).
+stage_multiplier(1, 1).
+stage_multiplier(2, 1).
+stage_multiplier(3, 2).
+
+// ---------- 规则表 ----------
+
+@doc("新增、退役、弃用、Type 新版本的等级")
+rel op_tier(kind: string, op: string, tier: int).
+op_tier("Type", "add", 2).
+op_tier("Type", "minor", 1).
+op_tier("Type", "major", 2).
+op_tier("Machine", "add", 2).
+op_tier("OperatorRuntime", "add", 2).
+op_tier("Station", "add", 2).
+op_tier("Line", "add", 2).
+op_tier("Policy", "add", 3).
+op_tier("GoldenSet", "add", 2).
+op_tier("Baseline", "add", 2).
+op_tier(K, "deprecate", 1) :- governed_kind(K).
+op_tier(K, "retire", 3) :- governed_kind(K).
+
+rel governed_kind(kind: string).
+governed_kind("Type").
+governed_kind("Machine").
+governed_kind("OperatorRuntime").
+governed_kind("Station").
+governed_kind("Line").
+governed_kind("Policy").
+governed_kind("GoldenSet").
+governed_kind("Baseline").
+
+@doc("原地修改：哪个字段变了就取哪个等级。表里没有的字段 → unscored（不默认为低风险）")
+rel field_tier(kind: string, field: string, tier: int).
+field_tier(K, "metadata", 1) :- governed_kind(K).
+field_tier("Machine", "operate", 1).
+field_tier("Machine", "recipes.task_template", 1).
+field_tier("Machine", "runtime.image", 2).
+field_tier("Machine", "runtime", 2).
+field_tier("Machine", "recipes", 2).
+field_tier("Machine", "form", 2).
+field_tier("Machine", "source", 2).
+field_tier("Machine", "probe", 2).
+field_tier("Machine", "conformance", 2).
+field_tier("Machine", "needs", 3).
+field_tier("Station", "limits", 1).
+field_tier("Station", "params", 1).
+field_tier("Station", "operator.model", 2).
+field_tier("Station", "operator", 2).
+field_tier("Station", "machine", 2).
+field_tier("Station", "recipe", 2).
+field_tier("Station", "inputs", 2).
+field_tier("Station", "outputs", 2).
+field_tier("Station", "gate", 2).
+field_tier("Station", "phases", 2).
+field_tier("Station", "converts", 2).
+field_tier("Station", "equivalence", 2).
+field_tier("Station", "cost", 2).
+field_tier("Station", "fixtures", 2).
+field_tier("Station", "plan_bounds", 2).
+field_tier("Station", "approval", 3).
+field_tier("Station", "policy", 3).
+field_tier("Station", "role", 3).
+field_tier("Station", "idempotency_key", 3).
+field_tier("Station", "verify_receipt", 3).
+field_tier("Type", F, 2) :- type_field_name(F).
+field_tier("OperatorRuntime", F, 2) :- runtime_field_name(F).
+field_tier("Line", F, 2) :- line_field_name(F).
+field_tier("GoldenSet", "spec", 2).
+field_tier("Baseline", "spec", 2).
+field_tier("Policy", F, 3) :- policy_field_name(F).
+
+rel type_field_name(f: string).
+type_field_name("extends").
+type_field_name("kind").
+type_field_name("fields").
+type_field_name("item").
+type_field_name("target").
+type_field_name("payload").
+type_field_name("meta_schema").
+type_field_name("facts").
+type_field_name("validators").
+type_field_name("properties").
+type_field_name("always").
+type_field_name("compat").
+type_field_name("retention").
+
+rel runtime_field_name(f: string).
+runtime_field_name("kind").
+runtime_field_name("inject").
+runtime_field_name("invoke").
+runtime_field_name("env").
+runtime_field_name("transcript").
+runtime_field_name("models_allowed").
+
+rel line_field_name(f: string).
+line_field_name("interface").
+line_field_name("trigger").
+line_field_name("budget").
+line_field_name("steps").
+line_field_name("keep").
+line_field_name("slo").
+
+rel policy_field_name(f: string).
+policy_field_name("applies_to").
+policy_field_name("egress").
+policy_field_name("secrets").
+policy_field_name("resources").
+policy_field_name("budget").
+policy_field_name("retention").
+
+// ---------- 评级 ----------
+
+rel converter_add(id: string).
+converter_add(I) :- change(I, "Station", "add"), station_role(I, "converter").
+
+rel moved(flag: string).
+moved("yes") :- resolution_changed(_, _, _).
+
+rel has_field(id: string).
+has_field(I) :- field_changed(I, _).
+
+@doc("每项变更（以及整体条件）对应的等级；一项变更可能有多条，取最大")
+rel tier_of(id: string, tier: int).
+tier_of(I, T) :- change(I, K, O), op_tier(K, O, T), !converter_add(I).
+tier_of(I, 1) :- converter_add(I), !moved("yes").
+tier_of(I, 2) :- converter_add(I), moved("yes").
+tier_of(I, T) :- change(I, K, "modify"), field_changed(I, F), field_tier(K, F, T).
+tier_of(I, 1) :- change(I, _, "modify"), !has_field(I).
+tier_of(I, 3) :- change(I, _, _), station_role(I, "source").
+tier_of(I, 3) :- change(I, _, _), station_role(I, "sink").
+tier_of(I, 3) :- weakened(I, _).
+tier_of("resolutions", 2) :- moved("yes").
+tier_of("size", 3) :- spec_count(N), limit("changeset_max_specs", M), N > M.
+
+@doc("没有任何规则能评级的变更。宿主看到任何一行就报 RISK_UNSCORED，不得当作 T0/T1")
+rel unscored(id: string, reason: string).
+unscored(I, "field " + F) :- change(I, K, "modify"), field_changed(I, F), !field_tier(K, F, _).
+unscored(I, "op " + O) :- change(I, K, O), O != "modify", !op_tier(K, O, _), !converter_add(I).
+
+@doc("整个 ChangeSet 的等级：所有 tier_of 的最大值")
+rel risk(tier: int).
+risk(max(T)) :- tier_of(_, T).

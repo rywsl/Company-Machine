@@ -179,8 +179,9 @@ texpr ::= "any" | name [ "@" major [ "." minor ] ] | "list<" texpr ">" | "ref<" 
 | `recipe(K, R)` | `spec.recipes` 的每个键 |
 | `recipe_in(K, R, P, texpr, optional)`、`recipe_out(...)` | `recipes.R.inputs/outputs.P`；optional 默认 false |
 | `recipe_param(K, R, X, ptype)` | `recipes.R.params.X.type` |
+| `recipe_run(K, R)` | 配方有 `run`（M2-09） |
 
-表达式位置（`recipe-template`）：`recipes.R.task_template`、`recipes.R.call` 中的字符串、`recipes.R.run` 中的字符串、`recipes.R.outputs.P.harvest`——只有含 `{{` 的字符串才是模板。
+表达式位置（`recipe-template`）：`recipes.R.task_template`、`recipes.R.call` 中的字符串、`recipes.R.run` 中的字符串、`recipes.R.outputs.P.harvest`、`recipes.R.receipt.target`、`recipes.R.receipt.locator.*`（后两项自 M2-09）——只有含 `{{` 的字符串才是模板。
 
 ### 3.5 OperatorRuntime
 
@@ -530,6 +531,8 @@ missing   ['non_empty']
 | `E-CONVERTER` | error | converter 结构不合要求：没有 converts、端口不是唯一的 `in`/`out`、converts 与端口类型不一致、没有 equivalence、没有正样例、输出可选；非 converter 声明了 converts | 按 9.2 节的 converter 定义修正 |
 | `E-PERMISSION` | error | 策略不适用于工位角色；模型不在 `models_allowed` 中；agent-cli 工位没有指定 model；（宪法）出网或凭据越级 | 换策略或模型；越级的问题交给人 |
 | `W-NO-BUDGET` | warning | agent 驱动的工位没有 `budget_usd`；产线没有 `budget.cap_usd` | 设置预算上限 |
+| `E-RECEIPT` | error | Sink 的 `verify_receipt` 不是其机器的配方、该配方没有 `run`，或声明了 `outputs`（M2-09 登记） | 在机器里补核验配方：有 `run`、没有 `outputs` |
+| `E-APPROVAL` | error | 两阶段工位的 `phases` 与 `approval.propose` 不一致（M2-09 登记） | 两者同时写或同时去掉 |
 
 ### 7.4 产线（`kernel/lines.mrl`）
 
