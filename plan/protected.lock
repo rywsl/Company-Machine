@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-11T09:38:21Z",
+  "updated_at": "2026-11-11T10:49:43Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -43,7 +43,7 @@
     "docs/architecture.md": "b4e7290aeb62994c03034f47e76798d238f96040f6d04bb4209860e80a46b0ed",
     "plan/README.md": "1fbf4a74aad9bf5783794140d7a1a062899ad93cb8e9d6a9f1d0ee5b11ce0153",
     "plan/acceptance.md": "7140662f523cf92b638e1ebe026f8931da470b0a43ed3b34855393af39ec0dda",
-    "plan/drift.md": "ac126aed0770f41bbaec7c0e75335225a459479be3d755d0164ec94f05af885b",
+    "plan/drift.md": "c38a7084c4deb5812af38e0239f7f5259f7eeaaee6fd4da9b7f210d3db2e6074",
     "plan/gates.yaml": "6104481530be6df384cdf6bc2f99599fb1dc46239eed72fd5680e4e83b28172a",
     "plan/milestones.md": "2b54a0c45c96d7498318b77edc723fa3a5e1142d48bc627b5d9085e046c3b4c1",
     "plan/risks.md": "3e5e68b5035ec5d318587ed28444dd8505a8a9fc80018e6a1295e04c1ff31272",
@@ -211,7 +211,7 @@
     "tests/acceptance/m2/world.py": "bcb6b407a4135a7fe0647b56fa3dd9b8548c8f885b5472e88653e26835f3a6df",
     "tests/acceptance/m3/gov_world.py": "466a4b58b51f63d4f02abca18dc23b3721c391d5c8889292ffb1e456d404a4bd",
     "tests/acceptance/m3/test_m3_01_epochs.py": "b5465ed12ae9c99230d5763d50871dd76f41320c18dca65f9f48f0b06dc2624e",
-    "tests/acceptance/m3/test_m3_02_changesets.py": "9238a11e6e1cef9f75e55b976faf7f79f1cabcc4b8ac97968c56afc74b49b93c",
+    "tests/acceptance/m3/test_m3_02_changesets.py": "c5474ac17613642e1ff5796c02a09277e3a24c002184cf59b76e87a377c80273",
     "tests/acceptance/m3/test_m3_03_rollout.py": "deddc99684923ed927fc4794f31fa93f21b766d9ef760eb228ac79bd77927464",
     "tests/acceptance/m3/test_m3_04_reconciler.py": "29f8e5c3cc4b4dc5cf44df5654edb0dd0799f0e4021c1fe110a3e3e7ec65c0b6",
     "tests/acceptance/m3/test_m3_05_foreman.py": "ad7d7f940a160f933189d2eaffb3f4049ecca923f826582684afed313181c347",
