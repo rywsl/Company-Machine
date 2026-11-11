@@ -124,7 +124,7 @@
 | `tests/acceptance/m2/test_m2_07_egress.py` | `_store` 用 `exist_ok`；直接插入 job 行时调用 `register_job_cap` |
 | `tests/acceptance/m2/test_m2_08_contract.py` | 重写。全部变体都在测试自己的副本上打补丁，与 `contract-tests.md` 第 7 章逐条对应（`CONTRACT_METRIC_MISSING` 是 `fail` 结果而不是异常；单阶段 Sink 用 `publish-local@1`，dry-run 用两阶段的 `publish-staged@1`） |
 | `tests/acceptance/m2/test_m2_11_source.py` | 来源目录里先写一份文本 |
-| `tests/acceptance/m3/test_m3_01_epochs.py`、`test_m3_04_reconciler.py` | SQL 里写 `"commit"` |
+| `tests/acceptance/m3/test_m3_01_epochs.py`、`test_m3_02_changesets.py`、`test_m3_04_reconciler.py` | SQL 里写 `"commit"`（`test_m3_02` 第 218 行在 2026-11-11 补改，此前 M5-01 因此受阻） |
 | `tests/acceptance/m4/test_m4_01_dynamic.py`、`test_m4_02_plan.py` | 启动产线时给出接口输入 |
 | `tests/fixtures/registry-m2/types/raw.yaml` | 声明 `has_lower`，`emits` 与 `count-text` 的输出一致 |
 | `tests/fixtures/registry-m2/goldens/`、`baselines/` | 由 `records/` 移入 Registry 布局 |

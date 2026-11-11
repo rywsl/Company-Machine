@@ -215,7 +215,7 @@ def test_freeze_and_rate_limit(tmp_path: Path) -> None:
     now = "2026-11-09T12:00:00.000Z"
     for i in range(10):
         w.ctx.db.query(
-            "INSERT INTO changesets (id, base_epoch, source_commit, commit, state, proposer, document, "
+            'INSERT INTO changesets (id, base_epoch, source_commit, "commit", state, proposer, document, '
             "activated_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', 'x', '{}', ?, ?, ?)",
             (f"cs-old{i}", w.base, w.base, f"{i:040d}", now, now, now),
         )
