@@ -11,11 +11,10 @@ pytest.importorskip("mao.errors")
 
 from mao.errors import FactoryError  # noqa: E402
 from mao.runs import NodeState, RunState  # noqa: E402
-from tests.acceptance.m2.world import start_line  # noqa: E402
-
 from mrl.expr import compile_expr  # noqa: E402
 from mrl.factory.sites import RUN  # noqa: E402
 from mrl.stdlib import make_table  # noqa: E402
+from tests.acceptance.m2.world import start_line  # noqa: E402
 
 LINE = "note-pipeline@1"
 

@@ -1,0 +1,31 @@
+# 参考 OperatorRuntime：Claude Code 无头模式（spec/system/runtimes.md 4.1）。
+# 部署时复制进 Registry，并把注入卷的 digest 换成 images.md 构建出的引用。
+# CLI 版本固定在 tools/live_versions.json；参数以该版本为准。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: claude-code, version: 1}
+spec:
+  kind: agent-cli
+  inject:
+    volume: mao-live/claude-code@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/claude, -p, "{{ brief.task }}",
+           --append-system-prompt, "{{ brief.factory_contract }}",
+           --output-format, stream-json, --verbose,
+           --max-turns, "{{ limits.max_turns }}",
+           --model, "{{ operator.model }}",
+           --permission-mode, bypassPermissions,
+           --strict-mcp-config]
+    mcp: {format: claude-json, flag: --mcp-config}
+  env:
+    ANTHROPIC_BASE_URL: "${MODEL_PROXY}"
+    ANTHROPIC_API_KEY: factory-proxy
+    ANTHROPIC_CUSTOM_HEADERS: "X-Factory-Job: ${FACTORY_JOB_ID}"
+    HOME: /workspace/.home
+    DISABLE_AUTOUPDATER: "1"
+    DISABLE_TELEMETRY: "1"
+    DISABLE_ERROR_REPORTING: "1"
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+  transcript: {format: stream-json, from: stdout}
+  models_allowed: [claude-opus-5-5, claude-sonnet-5-5]

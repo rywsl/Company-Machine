@@ -7,11 +7,12 @@ spec:
   facts:
     chars: int
     lines: int
+    has_lower: bool
   validators:
     - name: count-raw
       image: mao-test/tool@sha256:09b42648636a8405354592f2ae8985670dfda5b61377ac6c75e3cebbd22e0500
       run: [count-text, /bean/payload/raw.txt]
-      emits: [chars, lines]
+      emits: [chars, lines, has_lower]
       fixtures:
         accept: [fixtures/note/ok.txt]
         reject: [fixtures/note/empty.txt]

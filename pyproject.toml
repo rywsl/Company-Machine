@@ -41,3 +41,7 @@ src = ["src", "tests", "tools"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+# 固定分类：否则 ruff 按“模块文件是否存在”判断，尚未实现的 mao.* 会被当作第三方，实现后排序翻转
+known-first-party = ["mao", "mrl", "tests"]

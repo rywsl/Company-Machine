@@ -30,6 +30,20 @@ $FACTORY_IN/task/task.json（agent.task@1 输入 Bean 的 payload）。脚本格
     {"do": "garbage", "text": T}                   输出一行不是 JSON 的文本
     {"do": "echo_task", "path": P}                 把收到的 -p 文本写入 P
     {"do": "exit", "code": N}                      立即结束，退出码 N（N != 0 时 is_error 为 true）
+    {"do": "run", "argv": [...], "cwd": P, "allow_exit": [0], "save": P}
+                                                   运行一个命令（不经 shell）；argv 中的虚拟路径会被替换
+    {"do": "mcp", "calls": [{"name": N, "arguments": {...}}], "save": P, "allow_error": false}
+                                                   启动 `factoryctl mcp`，依次发送 initialize、
+                                                   notifications/initialized 和每个 tools/call；
+                                                   save 给出时把各调用的 result 列表写入 P；
+                                                   某个调用没有 result 或 isError 为真且 allow_error 为假时以错误结束
+
+替换（只用于 run 的 argv 和 mcp 的 arguments，递归处理字符串）：
+    "@file:P"          → 文件 P 的文本（去掉首尾空白）
+    "@json:P#a.b"      → 文件 P 的 JSON 中 a.b 处的值；没有 "#..." 时是整个 JSON
+
+角色（M5-06）：脚本有 "roles" 且环境变量 FACTORY_ROLE 在其中时，动作取 roles[FACTORY_ROLE]，
+忽略 attempts 和 default。
 
 路径：以 /factory/in、/factory/out、/factory/ctl、/workspace 开头的路径，按环境变量
 FACTORY_IN / FACTORY_OUT / FACTORY_CTL / FACTORY_WORKSPACE 换成真实路径（Docker 下不变，
@@ -194,9 +208,79 @@ class Agent:
                 f.write(self.opts["task"])
         elif do == "exit":
             return int(a.get("code", 0))
+        elif do == "run":
+            self.run_command(a)
+        elif do == "mcp":
+            self.mcp(a)
         else:
             raise AgentError(f"未知动作 {do}")
         return None
+
+    def run_command(self, a):
+        argv = [real_path(str(x)) for x in substitute(a.get("argv", []))]
+        if not argv:
+            raise AgentError("run 动作需要 argv")
+        cwd = real_path(a["cwd"]) if a.get("cwd") else None
+        r = subprocess.run(argv, cwd=cwd, capture_output=True, timeout=float(a.get("timeout", 600)))
+        if a.get("save"):
+            save_text(a["save"], r.stdout.decode("utf-8", "replace"))
+        if r.returncode not in a.get("allow_exit", [0]):
+            err = r.stderr.decode("utf-8", "replace").strip()
+            raise AgentError("{} 退出码 {}：{}".format(" ".join(argv), r.returncode, err))
+
+    def mcp(self, a):
+        tool = os.environ.get("FACTORYCTL")
+        if not tool:
+            raise AgentError("环境变量 FACTORYCTL 没有设置")
+        calls = a.get("calls", [])
+        messages = [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "fake-agent", "version": "1"},
+                },
+            },
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        ]
+        for i, call in enumerate(calls):
+            messages.append(
+                {
+                    "jsonrpc": "2.0",
+                    "id": i + 2,
+                    "method": "tools/call",
+                    "params": {"name": call["name"], "arguments": substitute(call.get("arguments", {}))},
+                }
+            )
+        stdin = "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in messages)
+        r = subprocess.run(
+            [sys.executable, tool, "mcp"],
+            input=stdin.encode("utf-8"),
+            capture_output=True,
+            timeout=float(a.get("timeout", 600)),
+        )
+        if r.returncode != 0:
+            err = r.stderr.decode("utf-8", "replace").strip()
+            raise AgentError(f"factoryctl mcp 退出码 {r.returncode}：{err}")
+        replies = {}
+        for line in r.stdout.decode("utf-8", "replace").splitlines():
+            if line.strip():
+                reply = json.loads(line)
+                replies[reply.get("id")] = reply
+        results = []
+        for i, call in enumerate(calls):
+            reply = replies.get(i + 2) or {}
+            result = reply.get("result")
+            if result is None or (result.get("isError") and not a.get("allow_error")):
+                raise AgentError(
+                    "MCP 调用 {} 失败：{}".format(call["name"], json.dumps(reply, ensure_ascii=False))
+                )
+            results.append(result)
+        if a.get("save"):
+            save_text(a["save"], json.dumps(results, ensure_ascii=False, sort_keys=True))
 
     def ctl(self, a):
         tool = os.environ.get("FACTORYCTL")
@@ -222,6 +306,34 @@ class Agent:
             raise AgentError("factoryctl {} 退出码 {}：{}".format(" ".join(args), r.returncode, err))
 
 
+def substitute(value):
+    if isinstance(value, dict):
+        return {k: substitute(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [substitute(v) for v in value]
+    if isinstance(value, str) and value.startswith("@file:"):
+        with open(real_path(value[len("@file:") :]), encoding="utf-8") as f:
+            return f.read().strip()
+    if isinstance(value, str) and value.startswith("@json:"):
+        spec = value[len("@json:") :]
+        path, _, dotted = spec.partition("#")
+        with open(real_path(path), encoding="utf-8") as f:
+            data = json.load(f)
+        for part in dotted.split(".") if dotted else []:
+            data = data[part]
+        return data
+    return value
+
+
+def save_text(path, text):
+    path = real_path(path)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
 def main(argv):
     opts = parse_args(argv)
     attempt = os.environ.get("FACTORY_ATTEMPT", "1")
@@ -233,8 +345,13 @@ def main(argv):
         Agent(opts, {}, session).finish(False, f"无法读取脚本：{e}")
         return 1
     agent = Agent(opts, script, session)
-    attempts = script.get("attempts") or {}
-    actions = attempts.get(attempt, script.get("default", []))
+    roles = script.get("roles") or {}
+    role = os.environ.get("FACTORY_ROLE")
+    if role in roles:
+        actions = roles[role]
+    else:
+        attempts = script.get("attempts") or {}
+        actions = attempts.get(attempt, script.get("default", []))
     try:
         code = agent.run(actions)
     except (AgentError, OSError, KeyError, ValueError, subprocess.TimeoutExpired) as e:

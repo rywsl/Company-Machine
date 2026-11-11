@@ -45,6 +45,10 @@ def image_id(name: str) -> str
 
 脚本查找：`FAKE_AGENT_SCRIPT`，否则 `$FACTORY_IN/task/task.json`。字段：`cost_usd`、`turns`、`default`、`attempts`。动作有 `write`、`copy`、`delete`、`require`、`ctl`、`sleep`、`cost`、`emit`、`garbage`、`echo_task`、`exit`。路径前缀 `/factory/in`、`/factory/out`、`/factory/ctl`、`/workspace` 按对应环境变量替换。stdout 是 stream-json，最后一条是 `type=result`。
 
+M5 起增加的动作与规则（`supervisor.md` 第 7 章）：`run`（执行 argv，可存输出）、`mcp`（经 `factory mcp` 调用工具）；脚本有 `roles` 且 `FACTORY_ROLE` 在其中时按角色取动作；动作参数里的 `${NAME}` 按环境变量替换。说明以 `tests/fakes/fake_agent.py` 的文件头为准。
+
+`fake_llm.py`（M6）：脚本化的模型上游，实现 Anthropic Messages 与 OpenAI Responses 的最小子集，供真实 CLI 在测试里使用（`runtimes.md`、`live.md` 第 7 章）。它记录每个请求的路径、模型、请求头、轮次与工具结果，测试用这些记录断言秘密没有进入沙箱。
+
 ### 4.2 夹具工具
 
 | 脚本 | 契约 |

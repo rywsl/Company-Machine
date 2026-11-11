@@ -39,6 +39,7 @@
 | `DockerProvider` 使用的 `docker` 命令 | 只读 `docker image inspect`。禁止 `--privileged`、禁止挂载 docker.sock 到业务容器（D11） |
 | `WakeQueue`（`foreman.md`） | `file` |
 | `JobCache` | 只读。审计不调用 `invalidate`，除非发现被复用的 Bean 未封存 |
+| `ContractRunner`（`contract-tests.md`） | `run_validator`（I8） |
 
 不新增第三方依赖（D2）。不使用 Docker SDK。
 
@@ -63,7 +64,10 @@ class Finding:
     at: str
 
 class Reconciler:
-    def __init__(self, ctx: Context, epochs: "EpochStore") -> None
+    def __init__(self, ctx: Context, epochs: "EpochStore", *,
+                 contracts: Callable[[Snapshot], "ContractRunner"] | None = None) -> None
+        # M5-01 增补（plan/drift.md D-13）。contracts 缺省与 governance.md 3.3 相同：
+        # lambda snap: ContractRunner(ctx, snap, Runner(ctx, snap))。None 表示“用缺省”，不表示“跳过 I8”
     def audit_once(self, *, timeout_s: float) -> list[Finding]
         # 跑完第 5 节的全部检查。同一轮内相同 (invariant, subject) 不重复插入。
     def findings(self, *, state: str | None = None) -> list[Finding]
@@ -159,7 +163,7 @@ CREATE UNIQUE INDEX audit_open ON audit_findings(invariant, subject) WHERE state
 | I5 | 任何 `lifecycle == retired` 的 Spec，不得出现在 `active` 或其他仍被 run 绑定的 epoch 的引用里 | 记录。ChangeSet 本应已拒绝；这里是持续审计 |
 | I6 | 对每个工位读策略的出网等级。`publish` 只允许 `sink`，`ingress` 只允许 `source`。再查最近一次 attempt 的环境变量**名字**是否与策略声明一致 | 名字不一致 → hold 该工位并唤醒。不打印值 |
 | I7 | 每个 `role == sink` 的工位都有 `idempotency_key` 与 `verify_receipt` | 记录并 hold |
-| I8 | 若注入了能重跑样例的入口（与 `governance.md` 的 `ContractRunner` 相同协议），重跑 validator 的 accept/reject。反样例被接受即违反。未注入时写发现，`detail.missing = "contract-runner"`，状态 `wake`，禁止记成通过 | 唤醒。不删除样例 |
+| I8 | 对 active 快照里每个类型的每个 validator，用 `contracts(snapshot).run_validator(type_id, name, timeout_s=timeout_s)` 重跑正反样例。verdict 为 `fail`（反样例被接受或正样例被拒绝）即违反，`detail` 含 `validator` 与 `code`。重跑本身抛错（例如镜像缺失）记为 `detail.missing = "contract-runner"`、状态 `wake`，禁止记成通过。**不得**在没有重跑的情况下每轮都写 `missing`（plan/drift.md D-13：那会让安全模式永远开启） | 唤醒。不删除样例 |
 | I9 | 见 5.2 | 能恢复的恢复；不能的唤醒 |
 | I10 | 每个 run：`spent_usd > budget_cap_usd` 即违反。等于不算超 | 记录并唤醒。不改账 |
 | I11 | `refs/factory/active` 的第一父链（`git rev-list --first-parent`）上：说明以 `changeset:` 开头的提交都能在 `changesets` 里按 `commit` 找到，且 T2/T3 的 `approvals` 条数不少于该行的 `reviews_required`；其他提交必须只改了 `constitution/`（`governance.md` 5.3 的 `adopt`） | 记录并唤醒。不合入、也不回滚指针（回滚是治理命令） |
@@ -189,7 +193,7 @@ I14 的“再跑一次”必须用同一个 `check_registry`。禁止在调和�
 
 ### 5.3 漂移
 
-对每个在 `active` 中有 Baseline 的工位：
+对每个在 `active` 中有 Baseline 的工位（Baseline 从 `epochs.materialize(active)` 的快照里用 `Snapshot.keys("Baseline")` 取；**禁止**扫描 `governance.registry` 工作区，那是人与厂长的工作目录，可能有未提议的修改。plan/drift.md D-15）：
 
 1. 窗口长度取 Baseline 的 `spec.window`，用 `parse_duration`。没有 Baseline 的工位不做漂移检查，也不使用一份全局默认窗口。
 2. 指标只计算 Baseline.`metrics` 里出现的键。每个键的对象里有哪些界（`max`、`min`、`max_p50` 等），就比较哪些。键名以 `max` 开头：实际值 `>` 界则违反；以 `min` 开头：实际值 `<` 界则违反。等于不算违反。

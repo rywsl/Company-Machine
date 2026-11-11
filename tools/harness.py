@@ -79,6 +79,13 @@ DEFAULT_PROTECTED = [
     ".claude/settings.json",
     "AGENTS.md",
     "CLAUDE.md",
+    "docs/*.md",
+    "tests/test_codebase_policy.py",
+    "tests/**/conftest.py",
+    "pytest.ini",
+    "tox.ini",
+    "setup.cfg",
+    "spec/runtimes/*.yaml",
 ]
 STATUSES = ("todo", "in_progress", "blocked", "done")
 EXIT_OK, EXIT_FAIL, EXIT_USAGE = 0, 1, 2

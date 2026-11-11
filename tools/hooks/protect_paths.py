@@ -48,6 +48,13 @@ DEFAULT_PROTECTED = [
     ".claude/settings.json",
     "AGENTS.md",
     "CLAUDE.md",
+    "docs/*.md",
+    "tests/test_codebase_policy.py",
+    "tests/**/conftest.py",
+    "pytest.ini",
+    "tox.ini",
+    "setup.cfg",
+    "spec/runtimes/*.yaml",
 ]
 
 EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit", "search_replace", "strreplace"}

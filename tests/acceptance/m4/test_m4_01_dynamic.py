@@ -14,7 +14,7 @@ from mao.dynamic import DynamicRunner, compile_dynamic  # noqa: E402
 from mao.errors import FactoryError  # noqa: E402
 from mao.runplan import compile_run_plan  # noqa: E402
 from mao.snapshot import Snapshot  # noqa: E402
-from tests.acceptance.m2.world import EXAMPLE, LINE, copy_example  # noqa: E402
+from tests.acceptance.m2.world import EXAMPLE, LINE, copy_example, line_inputs  # noqa: E402
 
 
 def _write(tmp_path: Path, name: str, body: str, *, keep: bool) -> Path:
@@ -75,7 +75,7 @@ def test_dynamic_overflow_reject(tmp_path: Path) -> None:
     ctx, snapshot, runner, _clock = open_factory(tmp_path / "run", registry)
     lines = LineRunner(ctx, snapshot, runner)
     DynamicRunner(ctx, snapshot, runner, lines)
-    run = lines.start_run(LINE, {})
+    run = lines.start_run(LINE, line_inputs(ctx, snapshot, LINE))
     DynamicRunner(ctx, snapshot, runner, lines).expand(run.id)
     lines.tick(run.id)
     failed = [node for node in lines.nodes(run.id) if node.state == NodeState.FAILED]
@@ -131,7 +131,7 @@ def test_switch_eval_error(tmp_path: Path) -> None:
     )
     ctx, snapshot, runner, _clock = open_factory(tmp_path / "fac", registry)
     lines = LineRunner(ctx, snapshot, runner)
-    run = lines.start_run(LINE, {})
+    run = lines.start_run(LINE, line_inputs(ctx, snapshot, LINE))
     DynamicRunner(ctx, snapshot, runner, lines).expand(run.id)
     assert run.id.startswith("r-")
 

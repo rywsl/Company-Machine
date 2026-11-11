@@ -1,0 +1,9 @@
+{"type":"thread.started","thread_id":"t-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"先看 ChangeSet 的状态"}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"factory","tool":"changeset_status","status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"状态是 verified，继续查看差异。"}}
+{"type":"turn.completed","usage":{"input_tokens":120,"cached_input_tokens":0,"output_tokens":30}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"已复核：approve"}}
+{"type":"turn.completed","usage":{"input_tokens":200,"cached_input_tokens":100,"output_tokens":20}}

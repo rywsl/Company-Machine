@@ -292,3 +292,9 @@ assert job.state == "SEALED"
 | S5 | 机器镜像的 Dockerfile 归使用者，仓库只放测试镜像（基于 python:alpine） | — |
 | S6 | M1 用 `max_turns`、超时和事后结算三道兜底；M2 由模型代理按 token 实时计量 | M1-08、M2 |
 | S7 | 所有写操作走 `Database.tx()`，事务内不做子进程调用和长耗时操作 | M1-01、M1-08 |
+| S8 | 厂长会话失控（反复失败、刷屏提议）：值守按 `backoff_s × 2^attempts` 退避，`max_attempts` 后置 failed 等人处理；会话与每日预算由模型代理强制；ChangeSet 仍走 V1–V4、影子、金丝雀与交叉复核 | M5-06 |
+| S9 | 真实 CLI 升级改变输出格式或参数：版本在 `tools/live_versions.json` 固定，基础镜像带 digest；升级先过 M6-03 再改 Registry 的 runtime | M6-03；升级时由厂长负责 |
+| S10 | 回收删掉仍在使用的字节：只删 `payload_files` 中全部引用者都已过期的 digest，且只在写事务内删除；`Warehouse.add` 在写事务内确认字节在场；钉住、隔离、在用的 Bean 不过期。按批提交（每批最多 1000 个 digest），这是 S7 “事务内不做长耗时操作”的有意例外 | M7-03 |
+| S11 | 控制台成为攻击面：只绑 127.0.0.1、令牌、Host 校验、CSP、全部转义、没有写操作 | M7-02 |
+| S12 | 备份泄露秘密或不一致：秘密值永不进入备份；先在线备份数据库再按其引用复制 CAS，全程持有 `gc` 租约；恢复前后都校验 | M7-04 |
+| S13 | 迁移编号插在已有编号之间，老库永远不执行：新迁移编号必须大于已有最大编号（`plan/drift.md` D-33） | 全部任务 |

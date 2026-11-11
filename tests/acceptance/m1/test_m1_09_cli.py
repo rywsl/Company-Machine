@@ -9,10 +9,9 @@ import pytest
 
 pytest.importorskip("mao.cli")
 
+import mao  # noqa: E402
 from mao.cli import build_parser, main  # noqa: E402
 from tests.fakes.fakelib import local_commands, render_registry  # noqa: E402
-
-import mao  # noqa: E402
 
 
 def _setup(tmp_path: Path) -> list[str]:

@@ -29,7 +29,7 @@ def test_init_sets_active_pointer_and_ref(tmp_path: Path) -> None:
     assert w.epochs.current() == w.base
     assert git(w.repo, "rev-parse", "refs/factory/active") == w.base
     assert w.snapshot.epoch == w.base
-    rows = w.ctx.db.query("SELECT commit FROM epoch_pointers WHERE name = 'active'")
+    rows = w.ctx.db.query("SELECT \"commit\" FROM epoch_pointers WHERE name = 'active'")
     assert [r["commit"] for r in rows] == [w.base]
 
 
@@ -60,7 +60,7 @@ def test_build_rejects_invalid_registry(tmp_path: Path) -> None:
     with pytest.raises(FactoryError) as ei:
         w.epochs.build(bad)
     assert ei.value.code == "REGISTRY_INVALID"
-    assert w.ctx.db.query("SELECT commit FROM epochs WHERE commit = ?", (bad,)) == []
+    assert w.ctx.db.query('SELECT "commit" FROM epochs WHERE "commit" = ?', (bad,)) == []
     assert not (w.ctx.root / "epochs" / bad).exists()
     assert w.epochs.current() == w.base
 

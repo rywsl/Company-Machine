@@ -55,6 +55,9 @@ class Snapshot:
     def always(self, tid: str) -> frozenset[str]
     def compiled(self, subject: str) -> "CompiledExpr | CompiledTemplate"
         # factory-profile 第 4 章的每一个表达式位置，按 subject 取出已编译的形式（编译期与运行期用同一份）
+    def keys(self, kind: str | None = None) -> list[str]
+        # M5-01 增补：本快照全部 Spec 键（"Station:upper@1" 这种形式），升序；给出 kind 时只列该 kind。
+        # 其他模块要遍历 Spec 时只能用它，禁止读 Snapshot 的私有成员（plan/drift.md D-02）
 ```
 
 ```python

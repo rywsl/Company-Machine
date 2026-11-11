@@ -1,3 +1,1 @@
-{"default": [{"do": "write", "path": "drafts/a.txt", "text": "a
-b
-"}]}
+{"default": [{"do": "write", "path": "drafts/a.txt", "text": "a\nb\n"}]}

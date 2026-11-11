@@ -213,19 +213,19 @@ factory governance tick [--json]          factory governance safe-mode [--json]
 
 ```sql
 CREATE TABLE epochs (
-  commit    TEXT PRIMARY KEY,
+  "commit"  TEXT PRIMARY KEY,
   tree      TEXT NOT NULL,
   built_at  TEXT NOT NULL
 );
 CREATE TABLE epoch_pointers (
   name    TEXT PRIMARY KEY,            -- active | candidate | previous
-  commit  TEXT NOT NULL
+  "commit" TEXT NOT NULL
 );
 CREATE TABLE changesets (
   id                TEXT PRIMARY KEY,
   base_epoch        TEXT NOT NULL,
   source_commit     TEXT NOT NULL,
-  commit            TEXT NOT NULL UNIQUE,
+  "commit"          TEXT NOT NULL UNIQUE,
   state             TEXT NOT NULL,
   risk_tier         TEXT,
   reviews_required  INTEGER NOT NULL DEFAULT 0,
@@ -258,6 +258,8 @@ CREATE TABLE governance_state (
   level   INTEGER NOT NULL DEFAULT 0
 );
 ```
+
+`commit` 是 SQLite 关键字。迁移和所有查询里，这个列名都必须写成 `"commit"`（双引号）。**禁止**在 `Database.query` 里用正则改写 SQL 来补引号：那会连字符串字面量和 `COMMIT` 语句一起改掉。
 
 `reviews` 表属于本迁移，不属于 `023_foreman.sql`：计数复核的是流水线。`foreman.md` 的 `ForemanSubmit.review` 只调用 `add_review`。
 

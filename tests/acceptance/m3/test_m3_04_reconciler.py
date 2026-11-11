@@ -112,7 +112,7 @@ def test_git_ref_restored(tmp_path: Path) -> None:
     findings = reconciler.audit_once(timeout_s=5)
     assert findings
     assert git(w.repo, "rev-parse", "refs/factory/active") == w.base
-    stored = w.ctx.db.query("SELECT commit FROM epoch_pointers WHERE name = ?", ("active",))
+    stored = w.ctx.db.query('SELECT "commit" FROM epoch_pointers WHERE name = ?', ("active",))
     assert stored[0]["commit"] == w.base
 
 

@@ -7,6 +7,8 @@
 ```
 M0 结构编译 ──▶ M1 单工位跑通 ──▶ M2 产线与外部世界 ──▶ M3 治理与厂长 ──▶ M4 动态结构与生产化
   （已完成）
+                                                                               │
+M7 运维与生产化 ◀── M6 真实接入 ◀── M5 自治闭环（含 M1–M4 纠偏） ◀──────────────────┘
 ```
 
 每个里程碑结束时，系统都处于可以使用、可以交接的状态，而不是半成品。
@@ -167,6 +169,60 @@ M1-01 基础设施 ──┬─▶ M1-02 快照与求值环境 ──┐
 **规范**：`spec/system/dynamic.md`、`gateway.md`、`backends.md`。
 
 **任务与退出条件**：见 `plan/tasks.yaml` 中的 M4 任务和 `plan/gates.yaml` 中的阶段门 M4。
+
+---
+
+## M5 自治闭环（含 M1–M4 纠偏）
+
+**目标**：
+- 纠正 M1–M4 交付中的偏移（`plan/drift.md`），让安全网在生产路径上真正生效；
+- 让“外部机器人维护整个流程”在没有人值守时也能发生：信号 → 唤醒票 → 现成 agent CLI 的厂长会话 → ChangeSet → 复核 → 发布。
+
+**范围**：
+- 删除面向测试的特例，补齐缺省路径、调和器不变量与迁移编号（M5-01）；
+- 规范列出的全部命令行（M5-02）；持久化执行与租约（M5-03）；
+- 守护进程 `factory serve` 与信号泵（M5-04）；MCP 操作面（M5-05）；
+- 厂长值守：为每张唤醒票在沙箱里启动 Claude Code / Codex 等现成 CLI，交叉复核（M5-06）；
+- 端到端：`serve` 托管值守（M5-07）。
+
+**不做**：系统不实现任何 agent，也不调用模型 API；验收用 `tests/fakes/fake_agent.py`。
+
+**规范**：`spec/system/corrections.md`、`commands.md`、`durable.md`、`daemon.md`、`mcp.md`、`supervisor.md`、`autonomy.md`；偏移清单 `plan/drift.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M5 任务和 `plan/gates.yaml` 中的阶段门 M5。
+
+---
+
+## M6 真实接入
+
+**目标**：用真实的 agent CLI（固定版本，运行在 Docker 里）跑通工位 job、厂长会话与复核会话，证明 M5 的闭环不依赖替身。
+
+**范围**：
+- 控制面变量、codex transcript、模型代理与出网代理的归属与绑定地址、`mao-egress` 网络（M6-01）；
+- 厂长为上游产品构建镜像（M6-02）；
+- 现场镜像与端到端（M6-03）：模型上游是 `tests/fakes/fake_llm.py`，不调用真实模型。
+
+**规范**：`spec/system/runtimes.md`、`images.md`、`live.md`；参考 runtime 文档 `spec/runtimes/`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M6 任务和 `plan/gates.yaml` 中的阶段门 M6。M6-03 需要 Docker 与现场镜像。
+
+---
+
+## M7 运维与生产化
+
+**目标**：无人值守长期运行时，人能看见状态、能限制增长、能备份恢复。
+
+**范围**：
+- 状态、Prometheus 指标、事件流（M7-01）；
+- 本机只读 Web 控制台（M7-02）；
+- 保留期、墓碑与回收（M7-03）；
+- 备份、校验与恢复（M7-04）。
+
+**不做**：推送告警、远程访问、Registry 中的保留期字段（`plan/drift.md` D-32，需要人改宪法）。
+
+**规范**：`spec/system/observability.md`、`console.md`、`retention.md`、`backup.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M7 任务和 `plan/gates.yaml` 中的阶段门 M7。
 
 ---
 

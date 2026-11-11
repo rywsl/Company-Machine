@@ -2091,7 +2091,10 @@ OpenMontage 的思路是“agent 即编排器”：在产品内部，由 agent �
 | M1 单工位 | Docker SandboxProvider、Station Gateway 与 `factoryctl`、claude-code 与 script runtime、V5 出厂检验、本地 Warehouse | `explainer`（A 形态）和 `vertical`（C 形态）能端到端产出带来源证明的 sealed Bean |
 | M2 产线与转换 | 调度器、Line、Source / Sink、缓存、死信、审批、V3/V4；转换库、自动转换与两级命中 | `explainer-multilang` 跑通，能发布到 MinIO 和测试仓库；重跑时命中缓存；Sink 幂等生效；类型不兼容的边能自动插入已有的转换 |
 | M3 治理与自治 | epoch、ChangeSet 流水线、影子运行与金丝雀、调和器、漂移监测、安全模式、厂长（控制面 MCP + AGENTS.md）；转换需求与转换优化（差分测试） | 复现 13.2：缺少转换 → 厂长编写 → 自动衔接 → 推广，且运行中的 run 不受影响；复现 13.4 中的各项拦截；复现 13.5 的转换固化 |
-| M4 动态与生产化 | map / switch / plan、B 形态 Gateway、Postgres / S3、持久化执行、Web 控制台 | 复现 13.3：plan 编译失败后的反馈回路能生效 |
+| M4 动态与生产化 | map / switch / plan、B 形态 Gateway、Postgres / S3 | 复现 13.3：plan 编译失败后的反馈回路能生效 |
+| M5 自治闭环 | M1–M4 纠偏、完整命令行、持久化执行、守护进程与信号泵、MCP 操作面、厂长值守（现成 CLI 会话与交叉复核） | 无人值守复现 13.2：信号 → 唤醒 → 厂长会话提议 → 另一 runtime 复核 → 推广 |
+| M6 真实接入 | 固定版本的 Claude Code / Codex 在 Docker 里运行；模型代理与出网代理的归属与网络；厂长构建镜像 | 真实 CLI 跑通工位 job、厂长会话与复核会话，秘密不进沙箱，预算实时生效 |
+| M7 运维与生产化 | 状态与指标、只读 Web 控制台、保留期与回收、备份与恢复 | 长期运行时状态可见、存储增长受控、能从备份恢复出可用的工厂 |
 
 ---
 

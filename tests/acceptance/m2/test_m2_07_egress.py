@@ -20,7 +20,7 @@ CANARY = "CANARY-SECRET-VALUE-0123456789"
 
 def _store(tmp_path: Path) -> SecretStore:
     root = tmp_path / "secrets-root"
-    (root / "secrets" / "values").mkdir(parents=True)
+    (root / "secrets" / "values").mkdir(parents=True, exist_ok=True)
     (root / "secrets" / "manifest.json").write_text(
         '{"TOOL_TOKEN": "other", "MODEL_TOKEN": "model"}',
         encoding="utf-8",
@@ -143,19 +143,24 @@ def _post_model(port: int, job_id: str, body: dict) -> tuple[int, dict]:
 
 
 def _running_job(ctx, snapshot, job_id: str, state: str = "RUNNING") -> None:
+    from mao.egress import register_job_cap
+
+    station = snapshot.key("Station", "explainer@3")
     with ctx.db.tx() as conn:
         conn.execute(
             "INSERT INTO jobs (id, station, epoch, state, attempt, inputs, params, outputs, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, 1, '{}', '{}', '{}', ?, ?)",
             (
                 job_id,
-                snapshot.key("Station", "explainer@3"),
+                station,
                 snapshot.epoch,
                 state,
                 "2026-01-01T00:00:00.000Z",
                 "2026-01-01T00:00:00.000Z",
             ),
         )
+    # Runner 在 PROVISIONING 登记上限；这里直接插入 job 行，所以由测试代为登记（egress.md 3.3、5.5）
+    register_job_cap(ctx.db, job_id, station, (snapshot.spec(station).get("limits") or {}).get("budget_usd"))
 
 
 def test_model_proxy_meters(tmp_path: Path) -> None:

@@ -24,6 +24,20 @@
 | `cli.md` | `factory` 命令行 | `mao.cli` | M1 | M1-09 |
 | `testing.md` | 测试分层、替身（fake agent / fake tools）、测试镜像、夹具 Registry | `tests/` | M1 | M1-10 |
 | `lines.md` 等 M2–M4 文档 | 产线执行、Source/Sink、缓存、V3/V4、治理、动态结构 | 见各文档 | M2–M4 | 见 `plan/tasks.yaml` |
+| `corrections.md` | M1–M4 纠偏（对应 `plan/drift.md`） | 多个模块 | M5 | M5-01 |
+| `commands.md` | 补齐的命令行 | `mao.cli` `mao.commands` | M5 | M5-02 |
+| `durable.md` | 租约与持久化执行 | `mao.durable` | M5 | M5-03 |
+| `daemon.md` | 守护进程与信号泵 | `mao.daemon` | M5 | M5-04 |
+| `mcp.md` | MCP 操作面 | `mao.mcp` | M5 | M5-05 |
+| `supervisor.md` | 厂长值守 | `mao.supervisor` | M5 | M5-06 |
+| `autonomy.md` | 自治闭环端到端 | `mao.daemon` `mao.supervisor` | M5 | M5-07 |
+| `runtimes.md` | 真实 CLI 接入：控制面变量、代理归属与网络 | `mao.operator` `mao.egress` | M6 | M6-01 |
+| `images.md` | 厂长构建机器镜像 | `mao.images` | M6 | M6-02 |
+| `live.md` | 真实 CLI 在 Docker 里的端到端 | 测试与 `tools/` | M6 | M6-03 |
+| `observability.md` | 状态、指标、事件流 | `mao.status` | M7 | M7-01 |
+| `console.md` | 本机只读 Web 控制台 | `mao.console` | M7 | M7-02 |
+| `retention.md` | 保留期、墓碑与回收 | `mao.retention` | M7 | M7-03 |
+| `backup.md` | 备份、校验与恢复 | `mao.backup` | M7 | M7-04 |
 
 每份组件规范都必须按第 7 节的模板组织。
 
@@ -198,7 +212,12 @@ class IdSource(Protocol):
   | `001` | `warehouse.md` |
   | `002` | `runner.md`，含 jobs / events / approvals |
   | `003`–`009` | 留给 M1 内的增补 |
-  | `010` 起 | M2+ |
+  | `010`–`023` | M2–M3（已发布） |
+  | `024`–`026` | M5-01 纠偏（`model_caps`、`run_sink_mode`、`backend_lock`） |
+  | `030`、`031` | M5-03、M5-06 |
+  | `033`、`034` | M6-02、M7-03 |
+
+  `mao.db` 按 `user_version` 跳过编号不大于它的文件，所以**新迁移的编号必须大于仓库里已有的最大编号**，不得插空或复用（`plan/drift.md` D-33）。
 
 - 所有写操作都在 `with db.tx():` 中完成。一个逻辑操作（例如“封存一个 job 的全部产物”）必须在同一个事务里。
 
@@ -283,6 +302,9 @@ class Snapshot:
     def always(self, tid: str) -> frozenset[str]
     def compiled(self, subject: str) -> "CompiledExpr | CompiledTemplate"
         # factory-profile 第 4 章的每一个表达式位置，按 subject 取出已编译的形式（编译期与运行期用同一份）
+    def keys(self, kind: str | None = None) -> list[str]
+        # M5-01 增补：本快照全部 Spec 键（"Station:upper@1" 这种形式），升序；给出 kind 时只列该 kind。
+        # 其他模块要遍历 Spec 时只能用它，禁止读 Snapshot 的私有成员（plan/drift.md D-02）
 ```
 
 ### 4.3 `mao.values`（snapshot.md）

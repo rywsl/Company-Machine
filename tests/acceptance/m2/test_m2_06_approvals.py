@@ -21,6 +21,30 @@ def _approvals(tmp_path: Path):
     return ctx, snapshot, Approvals(ctx, snapshot), clock
 
 
+def _review_approvals(tmp_path: Path, *, quorum: bool):
+    """第 7 章的补丁：quote@1 的 propose 改成 else: review；quorum 为真时，宪法副本加上法定人数 2。
+
+    补丁只落在测试自己的副本上，不改受保护的夹具原件。规范本身不规定 2 这个数。
+    """
+    import shutil
+
+    registry = tmp_path / "registry"
+    shutil.copytree(FIXTURE, registry)
+    station = registry / "stations" / "quote.yaml"
+    old = 'propose: {auto_if: "proposal.cost_estimate_usd <= 1.0", else: foreman}'
+    text = station.read_text(encoding="utf-8")
+    assert old in text
+    station.write_text(
+        text.replace(old, old.replace("else: foreman", "else: review")), encoding="utf-8", newline="\n"
+    )
+    if quorum:
+        constitution = registry / "constitution" / "invariants.mrl"
+        body = constitution.read_text(encoding="utf-8") + 'limit("approval_review_quorum", 2.0).\n'
+        constitution.write_text(body, encoding="utf-8", newline="\n")
+    ctx, snapshot, _runner, clock = open_factory(tmp_path / "run", registry)
+    return ctx, snapshot, Approvals(ctx, snapshot), clock
+
+
 def test_conformance_approval_cases() -> None:
     import json
     import subprocess
@@ -182,7 +206,8 @@ def test_timeout_uses_spec_not_default(tmp_path: Path) -> None:
 
 
 def test_review_quorum_unset(tmp_path: Path) -> None:
-    _ctx, snapshot, approvals, _clock = _approvals(tmp_path)
+    ctx, snapshot, approvals, _clock = _review_approvals(tmp_path, quorum=False)
+    _insert_job(ctx, snapshot, "j-0008")
     with pytest.raises(FactoryError) as ei:
         approvals.open_proposal(
             job_id="j-0008",
@@ -193,10 +218,15 @@ def test_review_quorum_unset(tmp_path: Path) -> None:
             params={},
         )
     assert ei.value.code == "REVIEW_QUORUM_UNSET"
+    # 不停车：没有 pending 行，job 失败
+    assert ctx.db.query("SELECT id FROM approvals WHERE job_id = ? AND status = 'pending'", ("j-0008",)) == []
+    assert ctx.db.query("SELECT state FROM jobs WHERE id = ?", ("j-0008",))[0]["state"] == "FAILED"
 
 
 def test_review_counts_distinct_runtimes(tmp_path: Path) -> None:
-    _ctx, snapshot, approvals, _clock = _approvals(tmp_path)
+    ctx, snapshot, approvals, _clock = _review_approvals(tmp_path, quorum=True)
+    _insert_job(ctx, snapshot, "j-0009")
+    _insert_job(ctx, snapshot, "j-0014")
     opened = approvals.open_proposal(
         job_id="j-0009",
         attempt=1,
@@ -213,6 +243,21 @@ def test_review_counts_distinct_runtimes(tmp_path: Path) -> None:
     second = approvals.apply_decision(opened.id, "approve", by="runtime-b")
     assert second.status.value == "approved"
     assert {vote.runtime for vote in approvals.votes(opened.id)} == {"runtime-a", "runtime-b"}
+    split = approvals.open_proposal(
+        job_id="j-0014",
+        attempt=1,
+        station_key=snapshot.key("Station", "quote@1"),
+        payload={"summary": "quote", "cost_estimate_usd": 9.0, "time_estimate_s": 1},
+        inputs={},
+        params={},
+    )
+    assert split.route == "review"
+    approvals.apply_decision(split.id, "approve", by="runtime-a")
+    denied = approvals.apply_decision(split.id, "deny", by="runtime-b")
+    assert denied.status.value == "denied"
+    job = ctx.db.query("SELECT state, error FROM jobs WHERE id = ?", ("j-0014",))[0]
+    assert job["state"] == "FAILED"
+    assert __import__("json").loads(job["error"])["code"] == "APPROVAL_REVIEW_SPLIT"
 
 
 def test_eval_error_is_not_true(tmp_path: Path) -> None:

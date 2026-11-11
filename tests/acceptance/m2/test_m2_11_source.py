@@ -21,7 +21,10 @@ def _runner(tmp_path: Path):
 
 def test_source_ingests_and_seals(tmp_path: Path) -> None:
     ctx, snapshot, runner = _runner(tmp_path)
-    job = runner.submit(snapshot.key("Station", "pull-notes@1"), {}, {"from_dir": str(tmp_path)})
+    folder = tmp_path / "incoming-notes"
+    folder.mkdir()
+    (folder / "a.txt").write_text("hello source\n", encoding="utf-8", newline="\n")
+    job = runner.submit(snapshot.key("Station", "pull-notes@1"), {}, {"from_dir": str(folder)})
     done = runner.run(job.id)
     assert done.state.value == "SEALED"
     assert done.outputs

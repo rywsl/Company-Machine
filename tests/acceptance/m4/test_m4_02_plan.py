@@ -11,7 +11,7 @@ pytest.importorskip("mao.errors")
 
 from mao.dynamic import compile_plan  # noqa: E402
 from mao.errors import FactoryError  # noqa: E402
-from tests.acceptance.m2.world import EXAMPLE, open_factory  # noqa: E402
+from tests.acceptance.m2.world import EXAMPLE, line_inputs, open_factory  # noqa: E402
 
 
 def _plan(tmp_path: Path, document: dict):
@@ -19,7 +19,7 @@ def _plan(tmp_path: Path, document: dict):
     from mao.runs import LineRunner
 
     lines = LineRunner(ctx, snapshot, runner)
-    run = lines.start_run("explainer-multilang@5", {})
+    run = lines.start_run("explainer-multilang@5", line_inputs(ctx, snapshot, "explainer-multilang@5"))
     return compile_plan(snapshot, document, planner_key=snapshot.key("Station", "explainer@3"), run=run)
 
 
@@ -74,7 +74,7 @@ def test_sealed_plan_same_epoch(tmp_path: Path) -> None:
     from mao.runs import LineRunner
 
     lines = LineRunner(ctx, snapshot, _runner)
-    run = lines.start_run("explainer-multilang@5", {})
+    run = lines.start_run("explainer-multilang@5", line_inputs(ctx, snapshot, "explainer-multilang@5"))
     check = compile_plan(
         snapshot,
         {"spec": {"steps": {"a": {"station": "vertical@1"}}}},

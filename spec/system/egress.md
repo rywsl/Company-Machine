@@ -108,7 +108,13 @@ class ModelProxy:
         # 测试传入 0。8080 被占用 → MODEL_PROXY_BIND_FAILED，不要悄悄换端口
     def close(self) -> None
     def spent(self, job_id: str) -> float
+
+def register_job_cap(db: Database, job_id: str, station_key: str, cap_usd: float | None) -> None
+    # Runner 在 PROVISIONING 调用（build_egress 之后，启动沙箱之前）。cap_usd 是该工位 limits.budget_usd，
+    # 没有则传 None。同一 job 再次调用（重试的新 attempt）以最后一次为准（INSERT OR REPLACE）
 ```
+
+ModelProxy 只从 `model_caps` 表读预算上限。它**不**加载 Registry，**不**按 epoch 去磁盘上找快照，更不能在当前目录、示例 Registry 或测试夹具里找。
 
 两个代理都是宿主进程，不是沙箱里的进程，也不是新的容器镜像。
 
@@ -180,6 +186,16 @@ CREATE TABLE budget_stops (
   job_id TEXT PRIMARY KEY,
   code   TEXT NOT NULL,
   at     TEXT NOT NULL
+);
+```
+
+迁移 `src/mao/migrations/024_model_caps.sql`（M5-01 增补）：
+
+```sql
+CREATE TABLE model_caps (
+  job_id   TEXT PRIMARY KEY,
+  station  TEXT NOT NULL,
+  cap_usd  REAL
 );
 ```
 
@@ -288,7 +304,7 @@ HTTPS 与方法：
 ### 5.5 模型代理与实时计量
 
 1. 同样要求 `X-Factory-Job`，且 job 处于第 5.4 节的三种状态。
-2. 转发前：工位没有 `limits.budget_usd` → 不转发，HTTP 402，`{"code":"MODEL_BUDGET_UNSET"}`，写 `budget_stops`。不要当成无限预算。
+2. 转发前：读 `model_caps` 中该 job 的行。没有行 → HTTP 403，`EGRESS_JOB_INVALID`（job 没有经过 Runner 的 PROVISIONING）。`cap_usd` 为 NULL（工位没有 `limits.budget_usd`）→ 不转发，HTTP 402，`{"code":"MODEL_BUDGET_UNSET"}`，写 `budget_stops`。不要当成无限预算。
 3. 已有 `budget_stops`，或 `spent > cap`（`>`，等于上限仍可再转发一次直到越过）：不转发，HTTP 402，`{"code":"BUDGET_EXCEEDED"}`。
 4. 模型名取请求 JSON 的 `model`，没有则为 `""`。用它查 `upstreams.json`，没有再查 `"*"`。都没有：`MODEL_UPSTREAM_UNKNOWN`，不转发。
 5. 上游请求加上 `header: secret值`。这个头不写日志。上游 URL 不经过出网白名单：模型流量不占用 `providers` / `web_read`（架构 6.4）。上游连接由宿主进程拨出。

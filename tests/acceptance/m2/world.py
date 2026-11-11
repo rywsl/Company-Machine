@@ -65,7 +65,7 @@ def open_factory(tmp: Path, registry: Path):
     from tests.fakes.fakelib import local_commands
 
     root = tmp / "factory"
-    root.mkdir()
+    root.mkdir(parents=True)
     clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
     provider = LocalProvider(root, commands=local_commands(), clock=clock)
     ctx = Context.open(root, provider=provider, clock=clock, ids=CounterIds())
@@ -75,6 +75,17 @@ def open_factory(tmp: Path, registry: Path):
 
 def line_spec(snapshot, line_ref: str) -> dict:
     return snapshot.spec(snapshot.key("Line", line_ref))
+
+
+def _sample_bytes(snapshot, spec: dict, item: dict) -> bytes:
+    """载荷字节。JSON 载荷（例如 fake agent 的行为脚本）取该类型第一个 validator 的第一个正样例，
+    这样 agent 工位拿到的是能执行的脚本；其他载荷用固定文本。"""
+    if item.get("media_type") == "application/json":
+        for validator in spec.get("validators") or []:
+            accept = (validator.get("fixtures") or {}).get("accept") or []
+            if accept:
+                return (Path(snapshot.root) / accept[0]).read_bytes()
+    return b"acceptance\n"
 
 
 def seal_input(ctx, snapshot, type_ref: str) -> str:
@@ -89,7 +100,7 @@ def seal_input(ctx, snapshot, type_ref: str) -> str:
         rel = str(item.get("path", "payload.bin")).replace("*", "item.txt")
         path = incoming / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"acceptance\n")
+        path.write_bytes(_sample_bytes(snapshot, spec, item))
         files[rel] = path
     facts = {}
     for name, typ in snapshot.facts_decl(type_id).items():
@@ -102,15 +113,21 @@ def seal_input(ctx, snapshot, type_ref: str) -> str:
     return bean.id
 
 
-def start_line(tmp, line_ref: str, registry=None):
-    from mao.runs import LineRunner
-
-    registry = registry or FIXTURE
-    ctx, snapshot, runner, clock = open_factory(tmp, registry)
+def line_inputs(ctx, snapshot, line_ref: str) -> dict:
+    """为产线接口的每个输入封存一个 Bean。接口要求的输入不能省略（lines.md 5.2 的 INPUT_MISSING）。"""
     spec = line_spec(snapshot, line_ref)
     inputs = {}
     for name, decl in (spec.get("interface") or {}).get("inputs", {}).items():
         type_ref = decl["type"] if isinstance(decl, dict) else decl
         inputs[name] = seal_input(ctx, snapshot, type_ref)
+    return inputs
+
+
+def start_line(tmp, line_ref: str, registry=None):
+    from mao.runs import LineRunner
+
+    registry = registry or FIXTURE
+    ctx, snapshot, runner, clock = open_factory(tmp, registry)
+    inputs = line_inputs(ctx, snapshot, line_ref)
     lines = LineRunner(ctx, snapshot, runner, cache=None)
     return ctx, snapshot, runner, clock, lines, inputs

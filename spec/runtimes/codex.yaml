@@ -1,0 +1,29 @@
+# 参考 OperatorRuntime：Codex CLI 非交互模式（spec/system/runtimes.md 4.1）。
+# 部署时复制进 Registry，并把注入卷的 digest 换成 images.md 构建出的引用。
+# CLI 版本固定在 tools/live_versions.json；参数以该版本为准。
+# Codex 没有追加系统提示的参数，工厂契约放在提示的开头。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: codex, version: 1}
+spec:
+  kind: agent-cli
+  inject:
+    volume: mao-live/codex@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/codex, exec, --json, --skip-git-repo-check,
+           --dangerously-bypass-approvals-and-sandbox,
+           --model, "{{ operator.model }}",
+           -c, "model_provider=\"factory\"",
+           -c, "model_providers.factory.name=\"factory\"",
+           -c, "model_providers.factory.base_url=\"${MODEL_PROXY}/v1\"",
+           -c, "model_providers.factory.wire_api=\"responses\"",
+           -c, "model_providers.factory.env_key=\"FACTORY_MODEL_KEY\"",
+           -c, "model_providers.factory.http_headers={\"X-Factory-Job\"=\"${FACTORY_JOB_ID}\"}",
+           "{{ brief.factory_contract }}\n\n{{ brief.task }}"]
+    mcp: {format: codex-toml}
+  env:
+    FACTORY_MODEL_KEY: factory-proxy
+    HOME: /workspace/.home
+  transcript: {format: codex-jsonl, from: stdout}
+  models_allowed: [gpt-5-codex]

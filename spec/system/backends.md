@@ -202,7 +202,7 @@ SQLite 迁移文件已发布的不得修改。Postgres 使用同编号的翻译�
 
 `factory backend migrate --from local --to FILE`：
 
-1. 取得写锁：在 SQLite 里插入 `backend_lock` 行（本文件的迁移 `032_backend_lock.sql` 只含这张表，本地库与目标库都执行）。已有未完成的锁 → `MIGRATE_IN_PROGRESS`。
+1. 取得写锁：在 SQLite 里插入 `backend_lock` 行（本文件的迁移 `026_backend_lock.sql` 只含这张表（编号见 `plan/drift.md` D-33），本地库与目标库都执行）。已有未完成的锁 → `MIGRATE_IN_PROGRESS`。
 2. 按外键顺序复制每张业务表。顺序由 SQLite 的 `sqlite_master` 与目标上已翻译的表结构决定，不是手写的表名清单（避免漏表）。
 3. 复制 CAS：每个本地文件 `put_file` 到目标 BlobStore。
 4. 在目标上计算 4.4 的摘要，与源的摘要比较。任一张表或 blob 集合不一致 → `MIGRATE_VERIFY_FAILED`，不写 `backend-active.json`，删除锁。目标上的数据保留，便于复查，但不被 `open_context` 使用。

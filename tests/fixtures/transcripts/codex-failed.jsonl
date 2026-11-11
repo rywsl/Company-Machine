@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"t-2"}
+{"type":"turn.started"}
+{"type":"error","message":"stream disconnected before completion"}
+{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}
+this line is not json
