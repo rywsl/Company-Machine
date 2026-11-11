@@ -22,8 +22,20 @@ def _writer(snap: Snapshot) -> str:
 
 
 def test_recipe_env_keeps_inputs_and_params() -> None:
-    env = recipe_env({"note": "hello"}, {"times": 2})
-    assert env["inputs"]["note"] == "hello"
+    bean = type(
+        "Bean",
+        (),
+        {
+            "id": "sha256:" + "ab" * 32,
+            "type": "note.text@1.0",
+            "facts": {"chars": 5},
+            "meta": {},
+            "payload": [],
+        },
+    )()
+    env = recipe_env({"note": bean}, {"times": 2})
+    assert env["inputs"]["note"]["id"] == bean.id
+    assert env["inputs"]["note"]["facts"]["chars"] == 5
     assert env["params"]["times"] == 2
 
 

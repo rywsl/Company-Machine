@@ -45,6 +45,7 @@ module kernel.schema.
 @input rel recipe_in(machine: string, recipe: string, port: string, texpr: string, optional: bool).
 @input rel recipe_out(machine: string, recipe: string, port: string, texpr: string, optional: bool).
 @input rel recipe_param(machine: string, recipe: string, param: string, ptype: string).
+@input rel recipe_run(machine: string, recipe: string).
 
 // ---------- OperatorRuntime ----------
 @input rel runtime(key: string, kind: string).

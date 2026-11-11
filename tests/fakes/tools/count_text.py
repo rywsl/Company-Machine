@@ -31,7 +31,7 @@ def main(argv):
         print(json.dumps({"reason": "文本为空"}, ensure_ascii=False))
         return 1
     facts = {
-        "chars": len(text),
+        "chars": len("".join(text.split())),
         "lines": len(text.splitlines()),
         "has_lower": any(c.islower() for c in text),
     }

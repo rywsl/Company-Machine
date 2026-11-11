@@ -45,3 +45,5 @@ code("I-CONVERT", "info", "边上插入了转换（自动解析或显式指定�
 
 // 宪法
 code("E-INVARIANT", "error", "违反宪法不变量").
+code("E-RECEIPT", "error", "Sink 的回执核验配方不存在、没有 run，或声明了输出").
+code("E-APPROVAL", "error", "两阶段工位的 phases 与 approval.propose 不一致").

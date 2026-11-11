@@ -11,6 +11,8 @@ pytest.importorskip("mao.operator")
 pytest.importorskip("mao.brief")
 pytest.importorskip("mao.snapshot")
 
+from types import SimpleNamespace  # noqa: E402
+
 from mao.brief import render_brief  # noqa: E402
 from mao.operator import build_invocation, parse_transcript  # noqa: E402
 from mao.snapshot import Snapshot  # noqa: E402
@@ -18,11 +20,21 @@ from mao.snapshot import Snapshot  # noqa: E402
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "registry-m1"
 
 
+def _task():
+    return SimpleNamespace(
+        id="sha256:" + "11" * 32,
+        type="agent.task@1.0",
+        facts={"steps": 1},
+        meta={},
+        payload=[],
+    )
+
+
 def _brief(feedback: str | None):
     return render_brief(
         Snapshot.load(FIXTURE),
         "Station:writer@1",
-        inputs={},
+        inputs={"task": _task()},
         params={},
         attempt=1,
         feedback=feedback,

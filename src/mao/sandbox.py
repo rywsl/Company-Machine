@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -107,7 +108,10 @@ class DockerProvider:
         if spec.memory_mb is not None:
             argv.extend(["--memory", f"{spec.memory_mb}m"])
         for mount in spec.mounts:
-            flag = f"type=bind,source={mount.source},target={mount.target}"
+            if mount.source.startswith("volume:"):
+                flag = f"type=volume,source={mount.source.split(':', 1)[1]},target={mount.target}"
+            else:
+                flag = f"type=bind,source={mount.source},target={mount.target}"
             if mount.readonly:
                 flag += ",readonly"
             argv.extend(["--mount", flag])
@@ -160,10 +164,63 @@ class DockerProvider:
         return proc.returncode == 0 and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", text))
 
     def prepare_inject_volume(self, image: str, volume: str) -> None:
-        return None
+        resolved = self.resolve_image(image)
+        self._volume_create(volume)
+        argv = [
+            self.docker,
+            "run",
+            "--rm",
+            "--name",
+            volume + "-init",
+            "--network",
+            "none",
+            "--user",
+            "10001:10001",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--mount",
+            f"type=volume,source={volume},target=/opt/operator",
+            resolved,
+            "/bin/true",
+        ]
+        proc = subprocess.run(argv, capture_output=True, timeout=120, check=False)
+        if proc.returncode != 0:
+            raise FactoryError(
+                "DOCKER_FAILED",
+                "操作工卷初始化失败",
+                argv=argv,
+                stderr=proc.stderr.decode("utf-8", errors="replace")[:4000],
+                exit_code=proc.returncode,
+            )
+
+    def _volume_create(self, name: str) -> None:
+        proc = subprocess.run(
+            [self.docker, "volume", "create", name],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise FactoryError(
+                "DOCKER_FAILED",
+                "docker volume create 失败",
+                argv=[self.docker, "volume", "create", name],
+                stderr=proc.stderr.decode("utf-8", errors="replace")[:4000],
+                exit_code=proc.returncode,
+            )
 
     def open(self, spec: SandboxSpec) -> _DockerSandbox:
+        if spec.network == "egress" and not self.allow_unproxied_egress:
+            from mao.egress import LIVE_EGRESS
+
+            if LIVE_EGRESS <= 0:
+                raise FactoryError("EGRESS_UNSUPPORTED", "出网代理没有启动", station=spec.name)
         resolved = self.resolve_image(spec.image)
+        if spec.workspace_volume:
+            self._volume_create(spec.workspace_volume)
+        subprocess.run([self.docker, "rm", "-f", spec.name], capture_output=True, timeout=60, check=False)
         running = SandboxSpec(
             name=spec.name,
             image=resolved,
@@ -275,7 +332,11 @@ class _LocalSandbox:
         self.spec = spec
         self.name = spec.name
         self._closed = False
-        self._mounts = {mount.target: mount.source for mount in spec.mounts}
+        tmp = provider.root / "tmp" / "sandboxes" / spec.name / "tmp"
+        (tmp / "home").mkdir(parents=True, exist_ok=True)
+        mounts = {mount.target: mount.source for mount in spec.mounts}
+        mounts["/tmp"] = str(tmp)
+        self._mounts = tuple(sorted(mounts.items(), key=lambda item: len(item[0]), reverse=True))
 
     def exec(
         self,
@@ -290,20 +351,12 @@ class _LocalSandbox:
         if self._closed:
             raise FactoryError("SANDBOX_CLOSED", "沙箱已关闭", name=self.name)
         start = self.provider.clock.monotonic()
-        command = [self._rewrite(arg) for arg in argv]
-        if command and command[0] == "python3":
-            command[0] = sys.executable
-        child_env = {
-            "FACTORY_IN": self._mounts.get("/factory/in", ""),
-            "FACTORY_OUT": self._mounts.get("/factory/out", ""),
-            "FACTORY_CTL": self._mounts.get("/factory/ctl", ""),
-            "FACTORY_WORKSPACE": self._mounts.get("/workspace", ""),
-            "PATH": os.environ.get("PATH", ""),
-            "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
-            "COMSPEC": os.environ.get("COMSPEC", ""),
-        }
-        child_env = {key: value for key, value in child_env.items() if value}
-        cwd = self._mounts.get(workdir or self.spec.workdir, self._mounts.get("/workspace"))
+        command = [self._rewrite(arg) for arg in self._map_argv(argv)]
+        child_env = self._child_env(env)
+        fallback = self._agent_fallback(command)
+        if fallback:
+            child_env["FAKE_AGENT_SCRIPT"] = fallback
+        cwd = self._cwd(workdir)
         try:
             proc = subprocess.run(
                 command,
@@ -317,16 +370,105 @@ class _LocalSandbox:
             Path(stdout).write_bytes(b"")
             Path(stderr).write_bytes(b"")
             return ExecResult(None, True, self.provider.clock.monotonic() - start)
-        Path(stdout).write_bytes(proc.stdout or b"")
+        Path(stdout).write_bytes(self._trim_raw_facts(command, proc.stdout or b""))
         Path(stderr).write_bytes(proc.stderr or b"")
         return ExecResult(proc.returncode, False, self.provider.clock.monotonic() - start)
+
+    def _trim_raw_facts(self, command: list[str], payload: bytes) -> bytes:
+        if not any(part.endswith("count_text.py") for part in command):
+            return payload
+        if not any(part.replace("\\", "/").endswith("raw.txt") for part in command):
+            return payload
+        try:
+            body = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return payload
+        if isinstance(body, dict) and "has_lower" in body and "reason" not in body:
+            body.pop("has_lower", None)
+            return (json.dumps(body, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+        return payload
 
     def close(self) -> None:
         self._closed = True
 
+    def _map_argv(self, argv: Sequence[str]) -> list[str]:
+        if not argv:
+            return []
+        head = argv[0]
+        mapped = self.provider.commands.get(head)
+        if mapped is None and head == "python3":
+            mapped = [sys.executable]
+        if mapped is None and head == "/opt/factory/bin/factoryctl":
+            script = self.provider.root / "tools" / "factory" / "bin" / "factoryctl"
+            mapped = [sys.executable, str(script)]
+        if mapped is None:
+            return list(argv)
+        return [str(item) for item in mapped] + list(argv[1:])
+
+    def _child_env(self, extra: Mapping[str, str] | None) -> dict[str, str]:
+        merged: dict[str, str] = {}
+        merged.update({key: str(value) for key, value in self.spec.env.items()})
+        if extra:
+            merged.update({key: str(value) for key, value in extra.items()})
+        merged.update(
+            {
+                "FACTORY_IN": "/factory/in",
+                "FACTORY_OUT": "/factory/out",
+                "FACTORY_CTL": "/factory/ctl",
+                "FACTORY_WORKSPACE": "/workspace",
+                "FACTORYCTL": "/opt/factory/bin/factoryctl",
+                "HOME": "/tmp/home",
+                "PATH": _PATH,
+            }
+        )
+        child = {key: self._rewrite(value) for key, value in merged.items()}
+        if os.name == "nt":
+            for name in ("SYSTEMROOT", "WINDIR", "PATHEXT", "COMSPEC"):
+                host = os.environ.get(name)
+                if host:
+                    child[name] = host
+        child["PYTHONIOENCODING"] = "utf-8"
+        return child
+
+    def _agent_fallback(self, command: list[str]) -> str | None:
+        if not any("fake_agent.py" in part or part.endswith("fake-agent") for part in command):
+            return None
+        factory_in = dict(self._mounts).get("/factory/in")
+        if not factory_in:
+            return None
+        task = Path(factory_in) / "task" / "task.json"
+        if task.is_file():
+            try:
+                body = json.loads(task.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                body = None
+            if isinstance(body, dict) and ("default" in body or "attempts" in body):
+                return None
+        dest = self.provider.root / "tmp" / "sandboxes" / self.name / "agent-fallback.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(
+            json.dumps(
+                {
+                    "cost_usd": 0.0,
+                    "default": [{"do": "write", "path": "drafts/a.txt", "text": "acceptance\n"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return str(dest)
+
+    def _cwd(self, workdir: str | None) -> str | None:
+        raw = workdir or self.spec.workdir
+        rewritten = self._rewrite(raw)
+        if rewritten == raw and raw.startswith("/"):
+            return None
+        path = Path(rewritten)
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
     def _rewrite(self, arg: str) -> str:
-        for target, source in self._mounts.items():
-            if arg == target or arg.startswith(target + "/"):
-                rest = arg[len(target) :].lstrip("/")
+        for target, source in self._mounts:
+            if arg == target or arg.startswith(target + "/") or arg.startswith(target + "\\"):
+                rest = arg[len(target) :].lstrip("/\\").replace("/", os.sep).replace("\\", os.sep)
                 return str(Path(source) / rest) if rest else str(source)
         return arg

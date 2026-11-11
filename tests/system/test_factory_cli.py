@@ -24,11 +24,11 @@ def test_default_provider_is_docker() -> None:
 
 
 def test_provider_flag_is_local() -> None:
-    args = build_parser().parse_args(["check", "registry", "--provider", "local"])
+    args = build_parser().parse_args(["--provider", "local", "check", "registry"])
     assert args.provider == "local"
 
 
 def test_check_invalid_registry_exits_3(tmp_path) -> None:
     (tmp_path / "types").mkdir()
     (tmp_path / "types" / "nope.yaml").write_text("kind: Nope\n", encoding="utf-8")
-    assert main(["check", str(tmp_path), "--provider", "local"]) == 3
+    assert main(["--provider", "local", "check", str(tmp_path)]) == 3

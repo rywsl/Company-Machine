@@ -100,3 +100,15 @@ diag("E-PERMISSION", S + "/operator", "agent-cli 运行时 " + RT + " 必须指�
     station_operator(S, RT, ""), resolved("OperatorRuntime", RT, RK), runtime(RK, "agent-cli").
 diag("W-NO-BUDGET", S + "/limits", "由 agent 驱动的工位没有设置 budget_usd") :-
     station_operator(S, RT, _), resolved("OperatorRuntime", RT, RK), runtime(RK, "agent-cli"), !station_budget(S, _).
+
+// ---------- 回执核验配方与两阶段审批 ----------
+diag("E-RECEIPT", S + "/verify_receipt", "verify_receipt " + R + " 不是机器的配方") :-
+    station(S, "sink"), sink_verify(S, R), station_machine(S, M, _), resolved("Machine", M, MK), !recipe(MK, R).
+diag("E-RECEIPT", S + "/verify_receipt", "核验配方 " + R + " 没有 run") :-
+    station(S, "sink"), sink_verify(S, R), station_machine(S, M, _), resolved("Machine", M, MK), recipe(MK, R), !recipe_run(MK, R).
+diag("E-RECEIPT", S + "/verify_receipt", "核验配方 " + R + " 声明了输出") :-
+    station(S, "sink"), sink_verify(S, R), station_machine(S, M, _), resolved("Machine", M, MK), recipe_out(MK, R, _, _, _).
+diag("E-APPROVAL", S + "/approval.propose", "phases 含 propose，但没有 approval.propose") :-
+    station_phases(S, P), "propose" in P, !approval(S, "propose", _).
+diag("E-APPROVAL", S + "/phases", "写了 approval.propose，但 phases 不含 propose") :-
+    approval(S, "propose", _), station_phases(S, P), !("propose" in P).

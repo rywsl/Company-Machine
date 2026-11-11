@@ -185,6 +185,8 @@ def _machine(x: Extraction, doc: SpecDoc, key: str, meta: dict, spec: dict) -> N
                 x.add("recipe_out", key, rname, port, t, bool(p.get("optional", False)))
         for pname, pdecl in (r.get("params") or {}).items():
             x.add("recipe_param", key, rname, pname, pdecl["type"])
+        if "run" in r:
+            x.add("recipe_run", key, rname)
         ctx = {"machine": key, "recipe": rname}
         for path, text in _templates(r.get("task_template"), "task_template"):
             _template_site(x, doc, "recipe-template", key, f"recipes.{rname}.{path}", text, ctx)
@@ -195,6 +197,8 @@ def _machine(x: Extraction, doc: SpecDoc, key: str, meta: dict, spec: dict) -> N
         for port, p in (r.get("outputs") or {}).items():
             for path, text in _templates(p.get("harvest"), f"outputs.{port}.harvest"):
                 _template_site(x, doc, "recipe-template", key, f"recipes.{rname}.{path}", text, ctx)
+        for path, text in _templates(r.get("receipt"), "receipt"):
+            _template_site(x, doc, "recipe-template", key, f"recipes.{rname}.{path}", text, ctx)
 
 
 # ---------- OperatorRuntime ----------

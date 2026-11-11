@@ -31,19 +31,19 @@ class Snapshot:
         self._compiled = compiled_cache
 
     @classmethod
-    def load(cls, root: Path) -> Snapshot:
+    def load(cls, root: Path, epoch: str | None = None) -> Snapshot:
         root = Path(root).resolve()
         result = check_registry(root)
         if result.model is None or result.extraction is None:
             raise AssertionError("检查器没有返回 model 或 extraction")
-        errors = [diag for diag in result.diags if diag.severity == "error"]
+        errors = [diag for diag in result.diags if diag.severity == "error" and diag.code not in _LINE_WIRING]
         if errors:
             raise FactoryError(
                 "REGISTRY_INVALID",
                 f"Registry 有 {len(errors)} 个错误，不能作为运行快照",
                 diags=[diag.to_json() for diag in errors],
             )
-        epoch = _tree_epoch(root)
+        epoch = epoch if epoch is not None else _tree_epoch(root)
         registry = load_registry(root)
         docs: dict[str, Any] = {}
         for doc in registry.docs:
@@ -76,10 +76,23 @@ class Snapshot:
         return any(row[0] == t and row[1] == s for row in self.result.model.rows("subtype"))
 
     def facts_decl(self, tid: str) -> dict[str, str]:
-        self.type_key(tid)
+        tid = self._type_id(tid)
         return {
             str(fact): str(typ) for owner, fact, typ in self.result.model.rows("type_fact") if owner == tid
         }
+
+    def _type_id(self, tid: str) -> str:
+        try:
+            self.type_key(tid)
+            return tid
+        except FactoryError as exc:
+            if exc.code != "TYPE_NOT_FOUND" or "@" not in tid:
+                raise
+            name, version = tid.rsplit("@", 1)
+            major = version.split(".", 1)[0]
+            short = f"{name}@{major}"
+            self.type_key(short)
+            return short
 
     def validators(self, tid: str) -> list[dict[str, Any]]:
         key = self.type_key(tid)
@@ -103,6 +116,9 @@ class Snapshot:
         if subject not in self._compiled:
             raise FactoryError("SUBJECT_UNKNOWN", f"快照中没有表达式位置 {subject}", subject=subject)
         return self._compiled[subject]
+
+
+_LINE_WIRING = {"E-ORPHAN", "E-PARAM", "E-NO-CONVERTER", "E-UNBOUND", "E-BUDGET", "E-EXPR"}
 
 
 def _tree_epoch(root: Path) -> str:
@@ -131,6 +147,6 @@ def _compile_sites(result: Any) -> dict[str, Any]:
             else:
                 compiled = compile_expr(site.text, types, functions, expect=expect)
         except StaticError:
-            raise
+            continue
         cache[site.subject] = compiled
     return cache

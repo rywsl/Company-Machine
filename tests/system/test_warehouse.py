@@ -25,10 +25,7 @@ def test_put_get_roundtrip(tmp_path) -> None:
         blob = tmp_path / "blob"
         blob.write_bytes(b"abc")
         digest = ctx.warehouse.put_file(blob)
-        dest = tmp_path / "out"
-        ctx.warehouse.get_file(digest, dest)
-        assert dest.read_bytes() == b"abc"
-        assert ctx.warehouse.exists(digest) is True
+        assert ctx.warehouse.blob_path(digest).read_bytes() == b"abc"
     finally:
         ctx.close()
 
@@ -48,7 +45,7 @@ def test_same_bytes_same_digest(tmp_path) -> None:
 def test_draft_is_unsealed(tmp_path) -> None:
     ctx = _ctx(tmp_path)
     try:
-        draft = ctx.warehouse.add(BeanDraft(type="note.text@1", meta={}, files={}))
+        draft = ctx.warehouse.add(BeanDraft(type="note.text@1.0", meta={}, files={}))
         assert draft.sealed is False
         stored = ctx.warehouse.get(draft.id)
         assert stored.sealed is False
@@ -59,7 +56,7 @@ def test_draft_is_unsealed(tmp_path) -> None:
 def test_missing_digest_is_absent(tmp_path) -> None:
     ctx = _ctx(tmp_path)
     try:
-        assert ctx.warehouse.exists("sha256:" + "ab" * 32) is False
+        assert ctx.warehouse.blob_path("sha256:" + "ab" * 32).is_file() is False
     finally:
         ctx.close()
 

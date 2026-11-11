@@ -215,6 +215,22 @@ def cmd_approval(args):
     _request("approval", {"kind": args.kind, "summary": args.summary, "cost_usd": cost})
 
 
+def _harvest_source(workspace, rel):
+    text = rel.replace("\\", "/")
+    if os.path.isabs(text) or (len(text) > 2 and text[1] == ":"):
+        return text.replace("/", os.sep)
+    return os.path.join(workspace, text.replace("/", os.sep))
+
+
+def _harvest_copy(src, dest):
+    if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dest)):
+        return
+    parent = os.path.dirname(dest)
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent)
+    shutil.copyfile(src, dest)
+
+
 def _matches(pattern):
     workspace = os.environ.get("FACTORY_WORKSPACE") or ""
     if pattern.startswith("/"):
@@ -291,18 +307,14 @@ def cmd_harvest(_args):
             out_root = _real("/factory/out")
             if listed:
                 for index, rel in enumerate(matches):
-                    src = os.path.join(workspace, rel.replace("/", os.sep))
+                    src = _harvest_source(workspace, rel)
                     dest = os.path.join(out_root, port, str(index), place)
-                    if not os.path.isdir(os.path.dirname(dest)):
-                        os.makedirs(os.path.dirname(dest))
-                    shutil.copyfile(src, dest)
+                    _harvest_copy(src, dest)
                     files.append(f"{index}/{place}")
             else:
-                src = os.path.join(workspace, matches[0].replace("/", os.sep))
+                src = _harvest_source(workspace, matches[0])
                 dest = os.path.join(out_root, port, place)
-                if not os.path.isdir(os.path.dirname(dest)):
-                    os.makedirs(os.path.dirname(dest))
-                shutil.copyfile(src, dest)
+                _harvest_copy(src, dest)
                 files.append(place)
         except OSError:
             ports[port] = {"ok": False, "code": "HARVEST_IO", "files": [], "matches": matches}

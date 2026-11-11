@@ -61,10 +61,11 @@ class BeanDraft:
 
 
 class Warehouse:
-    def __init__(self, root: Path, db: Any, clock: Any) -> None:
+    def __init__(self, root: Path, db: Any, clock: Any, ids: Any = None) -> None:
         self.root = Path(root)
         self.db = db
         self.clock = clock
+        self.ids = ids
 
     def blob_path(self, digest: str) -> Path:
         if _DIGEST.fullmatch(digest) is None:
@@ -206,6 +207,35 @@ class Warehouse:
                         (bean_id, job_id, report_digest, facts_json, utc_iso(self.clock.now())),
                     )
 
+    def label(self, bean_id: str, key: str, value: str, *, by: str) -> None:
+        self.get(bean_id)
+        now = utc_iso(self.clock.now())
+        with self.db.tx() as conn:
+            conn.execute(
+                """INSERT INTO bean_labels (bean_id, key, value, set_by, at) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(bean_id, key) DO UPDATE SET value = excluded.value, set_by = excluded.set_by, at = excluded.at""",
+                (bean_id, key, value, by, now),
+            )
+
+    def labels(self, bean_id: str) -> dict[str, str]:
+        self.get(bean_id)
+        rows = self.db.query("SELECT key, value FROM bean_labels WHERE bean_id = ?", (bean_id,))
+        return {row["key"]: row["value"] for row in rows}
+
+    def _bean_sealed_event(self, conn: Any, bean_id: str, job_id: str | None) -> None:
+        if self.ids is None:
+            return
+        bean = self.get(bean_id)
+        conn.execute(
+            "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'bean.sealed', ?, ?)",
+            (
+                self.ids.new("ev"),
+                utc_iso(self.clock.now()),
+                job_id,
+                canonical_json({"bean": bean_id, "job": job_id, "type": bean.type, "station": ""}),
+            ),
+        )
+
     def materialize(self, bean_id: str, dest: Path, *, layout: str) -> None:
         bean = self.get(bean_id)
         if layout not in ("port", "bean"):
@@ -252,9 +282,21 @@ class Warehouse:
                     )
 
     def lineage(self, bean_id: str, direction: str) -> dict[str, Any]:
-        self.get(bean_id)
         if direction not in ("up", "down"):
             raise ValueError("direction 必须是 up 或 down")
+        receipts = self._receipt_ids(bean_id) if direction == "down" else []
+        try:
+            self.get(bean_id)
+        except FactoryError:
+            if not receipts:
+                raise
+            return {
+                "id": bean_id,
+                "direction": direction,
+                "jobs": [],
+                "beans": [],
+                "receipts": receipts,
+            }
         visited_beans = {bean_id}
         visited_jobs: set[str] = set()
         queue = [bean_id]
@@ -288,12 +330,30 @@ class Warehouse:
             jobs.append(
                 {"job_id": job_id, "inputs": self._ports(job_id, "in"), "outputs": self._ports(job_id, "out")}
             )
-        return {
+        body = {
             "id": bean_id,
             "direction": direction,
             "jobs": jobs,
             "beans": sorted(visited_beans - {bean_id}),
         }
+        if direction == "down" and receipts:
+            body["receipts"] = receipts
+        return body
+
+    def _receipt_ids(self, bean_id: str) -> list[str]:
+        try:
+            rows = self.db.query("SELECT id, inputs FROM receipts")
+        except Exception:
+            return []
+        found: list[str] = []
+        for row in rows:
+            try:
+                inputs = json.loads(row["inputs"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if any(bean_id in [str(item) for item in value] for value in inputs.values()):
+                found.append(str(row["id"]))
+        return found
 
     def verify(self) -> list[dict[str, str]]:
         problems: list[dict[str, str]] = []

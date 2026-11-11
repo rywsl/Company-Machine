@@ -40,7 +40,7 @@ class Context:
         install_factoryctl(root)
         clock = clock if clock is not None else SystemClock()
         ids = ids if ids is not None else RandomIds()
-        return cls(root, clock, ids, db, Warehouse(root, db, clock), provider)
+        return cls(root, clock, ids, db, Warehouse(root, db, clock, ids), provider)
 
     def close(self) -> None:
         self.db.close()

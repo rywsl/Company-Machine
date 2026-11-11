@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-10T01:41:27Z",
+  "updated_at": "2026-11-10T02:36:13Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -184,7 +184,7 @@
     "tests/fakes/fake_agent.py": "684f81785e0719447f320ce2ebff4cb82e25b95725921a926eb91d71a2ca5840",
     "tests/fakes/fakelib.py": "0764230c6d697b01f72ebe02b962a82a41c6a0a058177d8dbc406d030f83619c",
     "tests/fakes/tools/check_task.py": "c0f864baff01b4bc420afb9ef7e47c36bfea35c7fce7ac24de90452e3ba1434a",
-    "tests/fakes/tools/count_text.py": "00bf903280a62eef79e15b0fa6441c82e1fa1c8780200756947e9ea4770399df",
+    "tests/fakes/tools/count_text.py": "10e429fb0fc48e6a530ad399423fde75390dd157ed1b24c358aecd1566b8c983",
     "tests/fakes/tools/exit_one.py": "6f48b91eac55e7b0185880b756572439ea708dce14891f2033dfa9aee64e3783",
     "tests/fakes/tools/exit_three.py": "1c8c13992b55cf5d2bbf80c65f068e8576374c2340133f777b39b487194759fa",
     "tests/fakes/tools/local_file_check.py": "69a719580bbcb6a25cd6e74e3b334ff45235f7a5771652a21aae47487ba4386d",

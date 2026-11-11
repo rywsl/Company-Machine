@@ -237,3 +237,41 @@ cases:
     expect:
       codes: [E-CONVERTER]
       diags: [{code: E-CONVERTER, subject: "Station:subs-convert@1/converts", message: "converts.to（subtitle.vtt@1）与输出端口 out 的类型（subtitle.srt@1）不一致"}]
+
+  # ---------- 回执核验与两阶段审批（M2-09） ----------
+  - id: receipt-recipe-missing
+    patch:
+      - {file: stations/sinks.yaml, doc: 0, set: {spec.verify_receipt: no-such-recipe}}
+    expect:
+      codes: [E-RECEIPT]
+      diags: [{code: E-RECEIPT, subject: "Station:publish-s3@2/verify_receipt", message: "不是机器的配方"}]
+  - id: receipt-recipe-no-run
+    patch:
+      - {file: machines/rclone/machine.yaml, unset: [spec.recipes.s3-head-and-hash.run]}
+    expect:
+      codes: [E-RECEIPT]
+      diags: [{code: E-RECEIPT, subject: "Station:publish-s3@2/verify_receipt", message: "没有 run"}]
+  - id: receipt-recipe-has-outputs
+    patch:
+      - {file: machines/rclone/machine.yaml, set: {spec.recipes.s3-head-and-hash.outputs: {ok: {type: any}}}}
+    expect:
+      codes: [E-RECEIPT]
+      diags: [{code: E-RECEIPT, subject: "Station:publish-s3@2/verify_receipt", message: "声明了输出"}]
+  - id: receipt-template-typo
+    patch:
+      - {file: machines/rclone/machine.yaml, set: {spec.recipes.copy.receipt.target: "s3://{{ params.buckett }}/{{ params.prefix }}"}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Machine:rclone@1/recipes.copy.receipt.target"}]
+  - id: phases-propose-without-rule
+    patch:
+      - {file: stations/explainer.yaml, unset: [spec.approval]}
+    expect:
+      codes: [E-APPROVAL]
+      diags: [{code: E-APPROVAL, subject: "Station:explainer@3/approval.propose", message: "没有 approval.propose"}]
+  - id: approval-propose-without-phases
+    patch:
+      - {file: stations/explainer.yaml, unset: [spec.phases]}
+    expect:
+      codes: [E-APPROVAL]
+      diags: [{code: E-APPROVAL, subject: "Station:explainer@3/phases", message: "phases 不含 propose"}]

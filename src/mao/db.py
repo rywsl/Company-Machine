@@ -85,6 +85,8 @@ class Database:
         return _Tx(self)
 
     def query(self, sql: str, params: Any = ()) -> list[sqlite3.Row]:
+        # commit 是 SQLite 关键字。规范把 epoch 列命名为 commit，调用方按列名书写。
+        sql = re.sub(r'(?<!")\bcommit\b(?!")', '"commit"', sql, flags=re.IGNORECASE)
         with self._lock:
             return list(self._conn.execute(sql, params).fetchall())
 
