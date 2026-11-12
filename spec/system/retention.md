@@ -185,7 +185,7 @@ Postgres 后端用同名迁移（`backends.md` 的迁移规则）。
 | `Warehouse.lineage` | 照常返回；节点带 `expired: true` |
 | 触发器 | 墓碑不触发 run |
 
-`expired_at` 一旦写入就不再清除。墓碑不会“复活”：同样内容再次进入仓库会成为一个新 Bean。
+`expired_at` 一旦写入就不再清除。Bean id 是 type、meta、payload 的摘要（`warehouse.md` 第 3 章），所以身份与墓碑完全相同的 `add` 按 `warehouse.md` 的幂等规则返回墓碑本身，墓碑不会“复活”，之后对它的使用照常得到 `BEAN_EXPIRED`。要再次使用同样的字节，生产者必须产生身份不同（例如 meta 不同）的新 Bean；它与墓碑共用 payload 摘要，字节已被清扫时由 `add` 按 5.2 补回。
 
 ### 5.4 目录回收
 
@@ -235,9 +235,9 @@ Postgres 后端用同名迁移（`backends.md` 的迁移规则）。
 | `tests/acceptance/m7/test_m7_03_retention.py` | `test_config_validation` | 合法段被读出；负数、未知键 → `RETENTION_CONFIG_INVALID`；没有段时 `factory gc` 退出码 4 |
 | | `test_expire_by_type_age` | 只有超龄且类型匹配的 Bean 过期；墓碑 `get` 得到 `expired_at` 与原 payload 索引；blob 被删；`bean.expired` 事件；`list` 缺省不含墓碑 |
 | | `test_pin_quarantine_in_use_kept` | 钉住、隔离、被未终态 job 引用的超龄 Bean 都保留，`kept` 计数正确；job 终态后再回收即过期 |
-| | `test_shared_blob_survives` | 两个内容相同的 Bean 一个过期一个未过期，blob 仍在；两个都过期后 blob 被删 |
-| | `test_tombstone_rejected` | 以墓碑为输入 `submit` → `BEAN_EXPIRED`，没有新 job；`materialize` → `BEAN_EXPIRED`；`verify` 不报墓碑 |
-| | `test_add_restores_deleted_blob` | 一个 digest 的 blob 已被清扫后，新 Bean 以同样内容 `add`，blob 重新出现且 `verify` 为空 |
+| | `test_shared_blob_survives` | 两个 payload 相同、meta 不同（因此 id 不同）的 Bean 一个过期一个未过期，blob 仍在；两个都过期后 blob 被删 |
+| | `test_tombstone_rejected` | 以墓碑为输入 `submit` → `BEAN_EXPIRED`，没有新 job；`materialize` → `BEAN_EXPIRED`；`verify` 不报墓碑；身份相同的 `add` 返回墓碑本身且仍是墓碑 |
+| | `test_add_restores_deleted_blob` | 一个 digest 的 blob 已被清扫后，meta 不同、payload 相同的新 Bean `add`，得到未过期的新 id，blob 重新出现且 `verify` 为空 |
 | | `test_dry_run` | `collect(dry_run=True)` 的报告与随后真实回收的报告相同（除 `dry_run`）；dry-run 后 Bean 表、事件数与 CAS 不变 |
 | | `test_directories` | 超龄终态 job 的 `workspace/` 被删而 `logs/` 保留；未终态 job 的目录不动；超龄会话目录被删、行保留 |
 

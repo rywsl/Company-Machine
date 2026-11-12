@@ -109,6 +109,8 @@
 | D-32 | 架构第 2 节 Policy 的“保留期”；`spec/mrl/kernel` | Registry 里没有任何保留期字段。加字段要改内核 schema（L0），只有人能改 | 无法按架构把保留期写进 Policy | M7-03 把保留期放在 `factory.json` 的 `retention` 段（操作员配置，`retention.md` 4.1）。人以后若通过宪法提交加入 Registry 字段，由人改 `retention.md` |
 | D-33 | `src/mao/db.py` 的 `migrate`；`egress.md`、`corrections.md`、`backends.md`、`images.md` 的迁移编号 | `migrate` 用 `PRAGMA user_version` 记录已应用的最大编号，跳过 `<=` 它的文件。规范曾把新迁移编为 `017`、`018`（小于已有的 `023`），`backend_lock` 与 `images` 都用了 `032` | 已有数据库永远不会执行插在中间的迁移；同号迁移让 `DB_MIGRATION_INVALID` 在启动时失败 | 重新编号：`024_model_caps`、`025_run_sink_mode`（M5-01）、`026_backend_lock`（M5-01 补齐 `backends.md`）、`030_leases`（M5-03）、`031_supervisor`（M5-06）、`033_images`（M6-02）、`034_retention`（M7-03）。**规则**：新迁移的编号必须大于仓库里已有的最大编号；不得复用、不得插空 |
 
+M7-03 的验收曾有一处设计方错误：`test_shared_blob_survives` 用同一类型、同一 meta、同一字节两次 `add` 却断言两个 id，违反 `warehouse.md` 的内容寻址（id 是 type、meta、payload 的摘要）。2026-11-12 改为第二个 Bean 用不同 meta；`test_add_restores_deleted_blob` 同样改用不同 meta（原写法拿到的是墓碑本身，测不到补回字节）；`retention.md` 5.3 写明身份相同的 `add` 返回墓碑。实现方按 `plan/README.md` 第 5 节记录并阻塞是正确做法（`plan/journal/2026-11-11-M7-03-shared-blob.md`）。
+
 另有一处设计方遗留：`tests/acceptance/m4/test_m4_02_plan.py` 有 5 个测试比 `dynamic.md` 第 7 章的描述弱（`test_plan_feedback_on_bounds` 不检查 job `REJECTED` 与 Bean 未封存；`test_budget_remaining` 不检查“等于剩余则通过”；`test_missing_converter_rejects_plan` 不检查转换需求；`test_sealed_plan_same_epoch` 不检查 plan Bean 已封存；`test_runtime_resolution_append_only` 测的不是追加规则）。实现方仍按规范第 7 章的描述实现；设计方会补强这些测试，补强后它们进入 M5-01 的验收范围。
 
 ---

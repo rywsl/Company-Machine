@@ -35,7 +35,7 @@ def _gc(w, **kwargs):
     return collect(w.ctx, RetentionConfig.load(w.ctx.root), **kwargs)
 
 
-def _bean(w, type_ref: str, content: bytes) -> str:
+def _bean(w, type_ref: str, content: bytes, meta: dict | None = None) -> str:
     from mao.warehouse import BeanDraft
 
     type_key = w.snapshot.type_key(type_ref)
@@ -50,7 +50,7 @@ def _bean(w, type_ref: str, content: bytes) -> str:
         name: {"int": 1, "float": 1.0, "string": "x", "bool": True}.get(typ, 1)
         for name, typ in w.snapshot.facts_decl(type_id).items()
     }
-    bean = w.ctx.warehouse.add(BeanDraft(type=type_id, meta={}, files={rel: src}))
+    bean = w.ctx.warehouse.add(BeanDraft(type=type_id, meta=meta or {}, files={rel: src}))
     w.ctx.warehouse.seal_many([(bean.id, facts)], job_id=None, report_digest="sha256:" + "0" * 64)
     return bean.id
 
@@ -137,7 +137,9 @@ def test_shared_blob_survives(tmp_path: Path) -> None:
     w = _world(tmp_path)
     first = _bean(w, "note.text@1", b"same\n")
     w.clock.advance(10 * DAY)
-    second = _bean(w, "note.text@1", b"same\n")
+    # Bean id 是 type、meta、payload 的摘要（warehouse.md 第 3 章）：meta 不同才是另一个 Bean，payload 摘要相同
+    second = _bean(w, "note.text@1", b"same\n", meta={"copy": 2})
+    assert first != second
     assert _blob(w, first) == _blob(w, second)
     report = _gc(w)
     assert report.expired == [first] and report.blobs_deleted == 0
@@ -165,6 +167,8 @@ def test_tombstone_rejected(tmp_path: Path) -> None:
         w.ctx.warehouse.materialize(old, tmp_path / "out", layout="bean")
     assert err.value.code == "BEAN_EXPIRED"
     assert w.ctx.warehouse.verify() == []
+    assert _bean(w, "note.text@1", b"old\n") == old
+    assert w.ctx.warehouse.get(old).expired_at is not None
 
 
 def test_add_restores_deleted_blob(tmp_path: Path) -> None:
@@ -174,7 +178,9 @@ def test_add_restores_deleted_blob(tmp_path: Path) -> None:
     w.clock.advance(10 * DAY)
     assert _gc(w).blobs_deleted == 1
     assert not blob.exists()
-    fresh = _bean(w, "note.text@1", b"again\n")
+    fresh = _bean(w, "note.text@1", b"again\n", meta={"copy": 2})
+    assert fresh != old
+    assert w.ctx.warehouse.get(fresh).expired_at is None
     assert _blob(w, fresh) == blob
     assert blob.read_bytes() == b"again\n"
     assert w.ctx.warehouse.verify() == []
