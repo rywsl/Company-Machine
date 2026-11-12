@@ -5,7 +5,7 @@ ARG BASE
 FROM ${BASE}
 ARG CODEX_VERSION
 RUN test -n "${CODEX_VERSION}" \
- && npm install -g --prefix /tmp/codex "@openai/codex@${CODEX_VERSION}" \
+ && npm install -g --registry https://registry.npmmirror.com --prefix /tmp/codex "@openai/codex@${CODEX_VERSION}" \
  && bin="$(find /tmp/codex -type f -name codex -path "*$(uname -m)-unknown-linux-musl*" | head -n 1)" \
  && test -n "$bin" \
  && mkdir -p /opt/operator/bin \

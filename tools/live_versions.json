@@ -1,5 +1,5 @@
 {
-  "base": "PIN_ME: node:22-bookworm-slim@sha256:<64 hex>",
-  "claude_code": "PIN_ME: x.y.z",
-  "codex": "PIN_ME: x.y.z"
+  "base": "node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d",
+  "claude_code": "2.1.322",
+  "codex": "0.98.0"
 }
