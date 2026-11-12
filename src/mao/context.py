@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,8 @@ class Context:
     db: Database
     warehouse: Warehouse
     provider: Any
+    proxies: Any = None
+    owner: str = ""
 
     @classmethod
     def open(
@@ -31,6 +34,7 @@ class Context:
         provider: Any,
         clock: Any = None,
         ids: Any = None,
+        proxies: Any = None,
     ) -> Context:
         root = Path(root).resolve()
         for path in (root, root / "cas", root / "jobs", root / "tmp", root / "tools" / "factory" / "bin"):
@@ -40,7 +44,17 @@ class Context:
         install_factoryctl(root)
         clock = clock if clock is not None else SystemClock()
         ids = ids if ids is not None else RandomIds()
-        return cls(root, clock, ids, db, Warehouse(root, db, clock, ids), provider)
+        owner = f"{socket.gethostname()}:{os.getpid()}:{ids.new('o')}"
+        return cls(
+            root,
+            clock,
+            ids,
+            db,
+            Warehouse(root, db, clock, ids),
+            provider,
+            proxies,
+            owner,
+        )
 
     def close(self) -> None:
         self.db.close()

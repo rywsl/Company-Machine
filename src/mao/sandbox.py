@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -75,13 +74,7 @@ class DockerProvider:
 
     def build_run_argv(self, spec: SandboxSpec) -> list[str]:
         self._validate(spec)
-        network = "none"
-        if spec.network == "egress":
-            if not self.allow_unproxied_egress:
-                raise FactoryError("EGRESS_UNSUPPORTED", "M1 不允许出网", station="", network=spec.network)
-            network = "bridge"
-        elif spec.network != "none":
-            raise FactoryError("SANDBOX_SPEC_INVALID", "未知网络模式", field="network")
+        network_argv = self._network_argv(spec)
         argv = [
             self.docker,
             "run",
@@ -98,8 +91,7 @@ class DockerProvider:
             "--read-only",
             "--pids-limit",
             "256",
-            "--network",
-            network,
+            *network_argv,
             "--tmpfs",
             "/tmp:rw,nosuid,size=256m",
         ]
@@ -140,7 +132,11 @@ class DockerProvider:
             raise FactoryError("IMAGE_REF_INVALID", "镜像引用不合法", image=image)
         if not shutil.which(self.docker) and not Path(self.docker).exists():
             raise FactoryError("DOCKER_UNAVAILABLE", "找不到 docker", docker=self.docker, error="not found")
-        if self._inspect(image):
+        found = self._inspect_id(image)
+        if found:
+            digest = image.split("@", 1)[1] if "@" in image else ""
+            if digest == found:
+                return found
             return image
         if "@" in image:
             bare = image.split("@", 1)[1]
@@ -149,6 +145,9 @@ class DockerProvider:
         raise FactoryError("IMAGE_NOT_FOUND", "找不到镜像", image=image)
 
     def _inspect(self, image: str) -> bool:
+        return self._inspect_id(image) is not None
+
+    def _inspect_id(self, image: str) -> str | None:
         try:
             proc = subprocess.run(
                 [self.docker, "image", "inspect", "--format", "{{.Id}}", image],
@@ -161,7 +160,9 @@ class DockerProvider:
                 "DOCKER_UNAVAILABLE", "docker inspect 超时", docker=self.docker, error=str(exc)
             ) from exc
         text = proc.stdout.decode("utf-8", errors="replace").strip()
-        return proc.returncode == 0 and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", text))
+        if proc.returncode == 0 and re.fullmatch(r"sha256:[0-9a-f]{64}", text):
+            return text
+        return None
 
     def prepare_inject_volume(self, image: str, volume: str) -> None:
         resolved = self.resolve_image(image)
@@ -211,12 +212,24 @@ class DockerProvider:
                 exit_code=proc.returncode,
             )
 
-    def open(self, spec: SandboxSpec) -> _DockerSandbox:
-        if spec.network == "egress" and not self.allow_unproxied_egress:
-            from mao.egress import LIVE_EGRESS
+    def reap(self, job_id: str, attempt: int) -> int:
+        name = f"mao-{job_id}-{attempt}"
+        removed = 0
+        for argv in (
+            [self.docker, "rm", "-f", name],
+            [self.docker, "network", "rm", name],
+        ):
+            try:
+                proc = subprocess.run(argv, capture_output=True, timeout=60, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if proc.returncode == 0:
+                removed += 1
+        return removed
 
-            if LIVE_EGRESS <= 0:
-                raise FactoryError("EGRESS_UNSUPPORTED", "出网代理没有启动", station=spec.name)
+    def open(self, spec: SandboxSpec) -> _DockerSandbox:
+        if spec.network == "egress" and not self.allow_unproxied_egress and not self._proxy_ready(spec):
+            raise FactoryError("EGRESS_UNSUPPORTED", "出网代理没有启动", station=spec.name)
         resolved = self.resolve_image(spec.image)
         if spec.workspace_volume:
             self._volume_create(spec.workspace_volume)
@@ -244,8 +257,48 @@ class DockerProvider:
             )
         return _DockerSandbox(self, running)
 
-    def remove_volume(self, name: str) -> None:
-        return None
+    def remove_volume(self, name: str) -> bool:
+        proc = subprocess.run(
+            [self.docker, "volume", "rm", name],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return True
+        err = proc.stderr.decode("utf-8", errors="replace")
+        if "no such volume" in err.lower():
+            return False
+        raise FactoryError("VOLUME_REMOVE_FAILED", "删除卷失败", name=name, stderr=err)
+
+    def _network_argv(self, spec: SandboxSpec) -> list[str]:
+        if spec.network == "none":
+            return ["--network", "none"]
+        if spec.network != "egress":
+            raise FactoryError("SANDBOX_SPEC_INVALID", "未知网络模式", field="network")
+        if self.allow_unproxied_egress:
+            return ["--network", "bridge"]
+        if self._proxy_ready(spec):
+            from mao.egress import egress_run_args
+
+            argv = []
+            alias = getattr(self, "egress_alias", None)
+            if alias:
+                argv.extend([f"--add-host=model-proxy:{alias}", f"--add-host=egress:{alias}"])
+            argv.extend(egress_run_args("egress"))
+            return argv
+        raise FactoryError("EGRESS_UNSUPPORTED", "M1 不允许出网", station="", network=spec.network)
+
+    def _proxy_ready(self, spec: SandboxSpec) -> bool:
+        raw = str(spec.env.get("HTTP_PROXY") or spec.env.get("http_proxy") or "")
+        if "://" not in raw:
+            return False
+        port = raw.rsplit(":", 1)[-1]
+        if not port.isdigit():
+            return False
+        from mao.egress import proxy_online
+
+        return proxy_online(str(getattr(self, "proxy_host", "127.0.0.1")), int(port))
 
     def _validate(self, spec: SandboxSpec) -> None:
         if _NAME.fullmatch(spec.name) is None:
@@ -319,11 +372,16 @@ class LocalProvider:
     def open(self, spec: SandboxSpec) -> _LocalSandbox:
         return _LocalSandbox(self, spec)
 
-    def remove_volume(self, name: str) -> None:
-        return None
+    def remove_volume(self, name: str) -> bool:
+        del name
+        return False
 
     def prepare_inject_volume(self, image: str, volume: str) -> None:
         return None
+
+    def reap(self, job_id: str, attempt: int) -> int:
+        del job_id, attempt
+        return 0
 
 
 class _LocalSandbox:
@@ -353,9 +411,6 @@ class _LocalSandbox:
         start = self.provider.clock.monotonic()
         command = [self._rewrite(arg) for arg in self._map_argv(argv)]
         child_env = self._child_env(env)
-        fallback = self._agent_fallback(command)
-        if fallback:
-            child_env["FAKE_AGENT_SCRIPT"] = fallback
         cwd = self._cwd(workdir)
         try:
             proc = subprocess.run(
@@ -370,23 +425,9 @@ class _LocalSandbox:
             Path(stdout).write_bytes(b"")
             Path(stderr).write_bytes(b"")
             return ExecResult(None, True, self.provider.clock.monotonic() - start)
-        Path(stdout).write_bytes(self._trim_raw_facts(command, proc.stdout or b""))
+        Path(stdout).write_bytes(proc.stdout or b"")
         Path(stderr).write_bytes(proc.stderr or b"")
         return ExecResult(proc.returncode, False, self.provider.clock.monotonic() - start)
-
-    def _trim_raw_facts(self, command: list[str], payload: bytes) -> bytes:
-        if not any(part.endswith("count_text.py") for part in command):
-            return payload
-        if not any(part.replace("\\", "/").endswith("raw.txt") for part in command):
-            return payload
-        try:
-            body = json.loads(payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return payload
-        if isinstance(body, dict) and "has_lower" in body and "reason" not in body:
-            body.pop("has_lower", None)
-            return (json.dumps(body, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
-        return payload
 
     def close(self) -> None:
         self._closed = True
@@ -428,34 +469,10 @@ class _LocalSandbox:
                 if host:
                     child[name] = host
         child["PYTHONIOENCODING"] = "utf-8"
+        git_bin = shutil.which("git")
+        if git_bin:
+            child["PATH"] = str(Path(git_bin).parent) + os.pathsep + child.get("PATH", "")
         return child
-
-    def _agent_fallback(self, command: list[str]) -> str | None:
-        if not any("fake_agent.py" in part or part.endswith("fake-agent") for part in command):
-            return None
-        factory_in = dict(self._mounts).get("/factory/in")
-        if not factory_in:
-            return None
-        task = Path(factory_in) / "task" / "task.json"
-        if task.is_file():
-            try:
-                body = json.loads(task.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                body = None
-            if isinstance(body, dict) and ("default" in body or "attempts" in body):
-                return None
-        dest = self.provider.root / "tmp" / "sandboxes" / self.name / "agent-fallback.json"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(
-            json.dumps(
-                {
-                    "cost_usd": 0.0,
-                    "default": [{"do": "write", "path": "drafts/a.txt", "text": "acceptance\n"}],
-                }
-            ),
-            encoding="utf-8",
-        )
-        return str(dest)
 
     def _cwd(self, workdir: str | None) -> str | None:
         raw = workdir or self.spec.workdir

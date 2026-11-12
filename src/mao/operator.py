@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,13 +16,19 @@ from mao.errors import FactoryError
 from mao.values import params_value, recipe_env, runtime_env
 
 __all__ = [
+    "CONTROL_VARS",
     "Brief",
     "Invocation",
     "TranscriptSummary",
     "build_invocation",
+    "build_runtime_invocation",
+    "expand_control_vars",
     "parse_transcript",
     "render_brief",
 ]
+
+CONTROL_VARS: tuple[str, ...] = ("FACTORY_JOB_ID", "FACTORY_ATTEMPT", "MODEL_PROXY", "EGRESS_PROXY")
+_CONTROL_VAR = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 
 @dataclass(frozen=True)
@@ -57,9 +64,9 @@ def build_invocation(
     kind = resolved.runtime.get("kind")
     if kind == "script":
         argv = _script_argv(snapshot, resolved, inputs, params)
-        return Invocation(tuple(argv), {}, timeout_s, None)
+        return _checked(Invocation(tuple(argv), {}, timeout_s, None))
     if kind == "agent-cli":
-        return _agent_invocation(snapshot, resolved, brief, inputs, params, timeout_s)
+        return _checked(_agent_invocation(snapshot, resolved, brief, inputs, params, timeout_s))
     raise FactoryError(
         "INVOCATION_INVALID",
         f"未知的 runtime kind {kind!r}",
@@ -68,9 +75,76 @@ def build_invocation(
     )
 
 
+def build_runtime_invocation(
+    snapshot: Any,
+    runtime: str,
+    *,
+    task: str,
+    contract: str,
+    model: str,
+    max_turns: int,
+    budget_usd: float,
+    timeout_s: float,
+) -> Invocation:
+    runtime_key = snapshot.key("OperatorRuntime", runtime)
+    spec = snapshot.spec(runtime_key)
+    if spec.get("kind") != "agent-cli":
+        raise FactoryError(
+            "INVOCATION_INVALID",
+            "会话需要 agent-cli runtime",
+            reason="会话需要 agent-cli runtime",
+        )
+    if (
+        isinstance(timeout_s, bool)
+        or not isinstance(timeout_s, (int, float))
+        or float(timeout_s) != int(timeout_s)
+    ):
+        raise FactoryError("TIMEOUT_NOT_INTEGRAL", "timeout_s 不是整秒", timeout=timeout_s)
+    timeout = float(int(timeout_s))
+    runtime_ref = runtime_key.split(":", 1)[1]
+    return _checked(
+        _render_agent(
+            snapshot,
+            runtime_key,
+            spec,
+            Brief(task, contract, ""),
+            model,
+            max_turns,
+            float(budget_usd),
+            timeout,
+            runtime_ref,
+            station=runtime_key,
+        )
+    )
+
+
+def expand_control_vars(inv: Invocation, values: Mapping[str, str]) -> Invocation:
+    def replace(text: str) -> str:
+        def one(match: re.Match[str]) -> str:
+            name = match.group(1)
+            if name not in values:
+                raise FactoryError(
+                    "EGRESS_PROXY_UNAVAILABLE",
+                    f"控制面变量 {name} 没有值",
+                    var=name,
+                )
+            return str(values[name])
+
+        return _CONTROL_VAR.sub(one, text)
+
+    return Invocation(
+        tuple(replace(item) for item in inv.argv),
+        {key: replace(value) for key, value in inv.env.items()},
+        inv.timeout_s,
+        inv.transcript,
+    )
+
+
 def parse_transcript(path: Path, fmt: str) -> TranscriptSummary:
+    if fmt == "codex-jsonl":
+        return _parse_codex(path)
     if fmt != "stream-json":
-        raise FactoryError("TRANSCRIPT_FORMAT", "transcript 格式不是 stream-json", format=fmt)
+        raise FactoryError("TRANSCRIPT_FORMAT", "transcript 格式不是 stream-json 或 codex-jsonl", format=fmt)
     path = Path(path)
     if not path.is_file():
         raise FactoryError("TRANSCRIPT_MISSING", "transcript 文件不存在", path=str(path))
@@ -146,60 +220,87 @@ def _agent_invocation(
     timeout_s: float,
 ) -> Invocation:
     del inputs, params
-    argv_spec = (resolved.runtime.get("invoke") or {}).get("argv")
-    if not argv_spec:
-        raise FactoryError(
-            "INVOCATION_INVALID",
-            "runtime 没有 invoke.argv",
-            station=resolved.station_key,
-            reason="runtime 没有 invoke.argv",
-        )
     max_turns = (resolved.station.get("operator") or {}).get("max_turns", 1)
-    if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
-        raise FactoryError(
-            "INVOCATION_INVALID",
-            "max_turns 不合法",
-            station=resolved.station_key,
-            reason="max_turns 不合法",
-        )
     limits = resolved.station.get("limits") or {}
     budget = float(limits.get("budget_usd", 0.0))
     model = (resolved.station.get("operator") or {}).get("model", "")
     if not isinstance(model, str):
         model = str(model)
     runtime_ref = resolved.runtime_key.split(":", 1)[1]
-    _check_model(resolved, model)
+    return _render_agent(
+        snapshot,
+        resolved.runtime_key,
+        resolved.runtime,
+        brief,
+        model,
+        max_turns,
+        budget,
+        timeout_s,
+        runtime_ref,
+        station=resolved.station_key,
+    )
+
+
+def _render_agent(
+    snapshot: Any,
+    runtime_key: str,
+    runtime: Mapping[str, Any],
+    brief: Brief,
+    model: str,
+    max_turns: Any,
+    budget: float,
+    timeout_s: float,
+    runtime_ref: str,
+    *,
+    station: str,
+) -> Invocation:
+    argv_spec = (runtime.get("invoke") or {}).get("argv")
+    if not argv_spec:
+        raise FactoryError(
+            "INVOCATION_INVALID",
+            "runtime 没有 invoke.argv",
+            station=station,
+            reason="runtime 没有 invoke.argv",
+        )
+    if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
+        raise FactoryError(
+            "INVOCATION_INVALID",
+            "max_turns 不合法",
+            station=station,
+            reason="max_turns 不合法",
+        )
+    _check_model(runtime_key, runtime, model)
     values = runtime_env(
         brief,
         {"max_turns": max_turns, "timeout_s": int(timeout_s), "budget_usd": budget},
         {"model": model, "runtime": runtime_ref},
     )
     argv = tuple(
-        _render_item(snapshot, item, f"{resolved.runtime_key}/invoke.argv[{index}]", values)
+        _render_item(snapshot, item, f"{runtime_key}/invoke.argv[{index}]", values)
         for index, item in enumerate(argv_spec)
     )
     env: dict[str, str] = {}
-    for name in sorted(resolved.runtime.get("env") or {}):
-        raw = resolved.runtime["env"][name]
-        env[name] = _render_item(snapshot, raw, f"{resolved.runtime_key}/env.{name}", values)
-    return Invocation(argv, env, timeout_s, _transcript_format(resolved.runtime))
+    for name in sorted(runtime.get("env") or {}):
+        raw = runtime["env"][name]
+        env[name] = _render_item(snapshot, raw, f"{runtime_key}/env.{name}", values)
+    return Invocation(argv, env, timeout_s, _transcript_format(runtime))
 
 
-def _check_model(resolved: Any, model: str) -> None:
-    allowed = list(resolved.runtime.get("models_allowed") or [])
+def _check_model(runtime_key: str, runtime: Mapping[str, Any], model: str) -> None:
+    allowed = list(runtime.get("models_allowed") or [])
     if model and model not in allowed:
         raise FactoryError(
             "MODEL_NOT_ALLOWED",
             f"模型 {model} 不在 runtime 允许列表中",
             model=model,
-            runtime=resolved.runtime_key,
+            runtime=runtime_key,
         )
     if not model and allowed:
         raise FactoryError(
             "MODEL_NOT_ALLOWED",
             "工位没有指定模型",
             model=model,
-            runtime=resolved.runtime_key,
+            runtime=runtime_key,
         )
 
 
@@ -208,9 +309,63 @@ def _transcript_format(runtime: Mapping[str, Any]) -> str | None:
         return None
     transcript = runtime.get("transcript") or {}
     fmt = transcript.get("format") if isinstance(transcript, Mapping) else None
-    if fmt == "stream-json":
-        return "stream-json"
-    raise FactoryError("TRANSCRIPT_FORMAT", "runtime transcript 格式不是 stream-json", format=fmt)
+    if fmt in ("stream-json", "codex-jsonl"):
+        return str(fmt)
+    raise FactoryError(
+        "TRANSCRIPT_FORMAT", "runtime transcript 格式不是 stream-json 或 codex-jsonl", format=fmt
+    )
+
+
+def _checked(inv: Invocation) -> Invocation:
+    for text in (*inv.argv, *inv.env.values()):
+        for match in _CONTROL_VAR.finditer(text):
+            name = match.group(1)
+            if name not in CONTROL_VARS:
+                raise FactoryError(
+                    "INVOCATION_INVALID",
+                    f"未知控制面变量 {name}",
+                    var=name,
+                    reason=f"未知控制面变量 {name}",
+                )
+    return inv
+
+
+def _parse_codex(path: Path) -> TranscriptSummary:
+    path = Path(path)
+    if not path.is_file():
+        raise FactoryError("TRANSCRIPT_MISSING", "transcript 文件不存在", path=str(path))
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    events = 0
+    malformed = 0
+    turns = 0
+    failed = False
+    result: str | None = None
+    for line in text.splitlines():
+        if line == "":
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            malformed += 1
+            continue
+        if not isinstance(obj, dict):
+            malformed += 1
+            continue
+        events += 1
+        kind = obj.get("type")
+        if kind == "turn.completed":
+            turns += 1
+        elif kind in ("turn.failed", "error"):
+            failed = True
+        elif kind == "item.completed":
+            item = obj.get("item")
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "agent_message"
+                and isinstance(item.get("text"), str)
+            ):
+                result = item["text"]
+    return TranscriptSummary(0.0, turns, failed or turns == 0, result, events, malformed)
 
 
 def _render_item(snapshot: Any, item: Any, subject: str, env: Mapping[str, Any]) -> str:
