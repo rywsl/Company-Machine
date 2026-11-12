@@ -35,6 +35,13 @@ class LocalBlobStore:
     def exists(self, digest: str) -> bool:
         return self._path(digest).is_file()
 
+    def delete(self, digest: str) -> bool:
+        path = self._path(digest)
+        if not path.is_file():
+            return False
+        path.unlink()
+        return True
+
     def _path(self, digest: str) -> Path:
         hexpart = digest.split(":", 1)[-1]
         return self.root / "blobs" / hexpart[:2] / hexpart
@@ -78,6 +85,15 @@ class S3BlobStore:
         if response is None:
             raise FactoryError("CAS_MISSING", "对象不存在", digest=digest)
         Path(dest).write_bytes(response.read())
+
+    def exists(self, digest: str) -> bool:
+        return self._request("HEAD", self._key(digest)) is not None
+
+    def delete(self, digest: str) -> bool:
+        if not self.exists(digest):
+            return False
+        self._request("DELETE", self._key(digest))
+        return True
 
     def _key(self, digest: str) -> str:
         return "/" + self.bucket + "/" + digest.split(":", 1)[-1]

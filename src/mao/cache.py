@@ -226,7 +226,7 @@ class JobCache:
                     bean = self.ctx.warehouse.get(bean_id)
                 except FactoryError:
                     return False
-                if not bean.sealed:
+                if not bean.sealed or bean.expired_at is not None:
                     return False
         return True
 

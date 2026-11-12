@@ -26,6 +26,15 @@ _MEDIA = {
 }
 
 
+def reject_expired(warehouse: Any, inputs: Mapping[str, Any]) -> None:
+    for ids in inputs.values():
+        values = ids if isinstance(ids, (list, tuple)) else [ids]
+        for bean_id in values:
+            bean = warehouse.get(str(bean_id))
+            if bean.expired_at is not None:
+                raise FactoryError("BEAN_EXPIRED", "Bean 已过期", bean_id=bean.id)
+
+
 def media_type_of(path: str) -> str:
     name = PurePosixPath(path.replace("\\", "/")).name
     if "." not in name:
@@ -51,6 +60,7 @@ class Bean:
     payload: list[FileRef]
     sealed: bool
     created_at: str
+    expired_at: str | None = None
 
 
 @dataclass
@@ -99,9 +109,11 @@ class Warehouse:
             raise FactoryError("BEAN_TYPE_INVALID", "Bean 类型必须带 minor", type=draft.type)
         canonical_json(draft.meta)
         records = []
+        sources: dict[str, Path] = {}
         for rel, host in draft.files.items():
             _check_payload_path(rel)
             digest = self.put_file(Path(host))
+            sources[digest] = Path(host)
             records.append(
                 {
                     "path": rel,
@@ -113,6 +125,9 @@ class Warehouse:
         records.sort(key=lambda item: item["path"])
         bean_id = digest_bytes(canonical_bytes({"type": draft.type, "meta": draft.meta, "payload": records}))
         with self.db.tx() as conn:
+            for digest, host in sources.items():
+                if not self.blob_path(digest).is_file():
+                    self.put_file(host)
             existing = conn.execute("SELECT id FROM beans WHERE id = ?", (bean_id,)).fetchone()
             if existing is None:
                 conn.execute(
@@ -154,19 +169,56 @@ class Warehouse:
             ],
             sealed=bool(row["sealed"]),
             created_at=row["created_at"],
+            expired_at=None if row["expired_at"] is None else str(row["expired_at"]),
         )
 
-    def list(self, type_prefix: str | None = None, sealed_only: bool = True) -> list[Bean]:
+    def list(
+        self, type_prefix: str | None = None, sealed_only: bool = True, include_expired: bool = False
+    ) -> list[Bean]:
         sql = "SELECT id FROM beans"
-        params: list[Any] = []
+        where: list[str] = []
         if sealed_only:
-            sql += " WHERE sealed = 1"
+            where.append("sealed = 1")
+        if not include_expired:
+            where.append("expired_at IS NULL")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY created_at, id"
-        rows = self.db.query(sql, params)
+        rows = self.db.query(sql)
         beans = [self.get(row["id"]) for row in rows]
         if type_prefix is not None:
             beans = [bean for bean in beans if bean.type.startswith(type_prefix)]
         return beans
+
+    def expire(self, bean_id: str, *, by: str, reason: str) -> Bean:
+        bean = self.get(bean_id)
+        if not bean.sealed:
+            raise FactoryError("BEAN_NOT_SEALED", "未封存的 Bean 不能过期", bean_id=bean_id)
+        if bean.expired_at is not None:
+            return bean
+        now = utc_iso(self.clock.now())
+        with self.db.tx() as conn:
+            conn.execute(
+                "UPDATE beans SET expired_at = ? WHERE id = ? AND expired_at IS NULL",
+                (now, bean_id),
+            )
+            if self.ids is not None:
+                conn.execute(
+                    "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'bean.expired', NULL, ?)",
+                    (
+                        self.ids.new("ev"),
+                        now,
+                        canonical_json({"bean_id": bean_id, "type": bean.type, "by": by, "reason": reason}),
+                    ),
+                )
+        return self.get(bean_id)
+
+    def delete_blob(self, digest: str) -> bool:
+        path = self.blob_path(digest)
+        if not path.is_file():
+            return False
+        path.unlink()
+        return True
 
     def seal_many(
         self, items: list[tuple[str, dict[str, Any]]], job_id: str | None, report_digest: str
@@ -238,6 +290,8 @@ class Warehouse:
 
     def materialize(self, bean_id: str, dest: Path, *, layout: str) -> None:
         bean = self.get(bean_id)
+        if bean.expired_at is not None:
+            raise FactoryError("BEAN_EXPIRED", "Bean 已过期", bean_id=bean_id)
         if layout not in ("port", "bean"):
             raise ValueError("layout 必须是 port 或 bean")
         dest = Path(dest)
@@ -336,15 +390,15 @@ class Warehouse:
             "jobs": jobs,
             "beans": sorted(visited_beans - {bean_id}),
         }
+        subject = self.get(bean_id)
+        if subject.expired_at is not None:
+            body["expired"] = True
         if direction == "down" and receipts:
             body["receipts"] = receipts
         return body
 
     def _receipt_ids(self, bean_id: str) -> list[str]:
-        try:
-            rows = self.db.query("SELECT id, inputs FROM receipts")
-        except Exception:
-            return []
+        rows = self.db.query("SELECT id, inputs FROM receipts")
         found: list[str] = []
         for row in rows:
             try:
@@ -367,7 +421,10 @@ class Warehouse:
                     problems.append(
                         {"kind": "digest_mismatch", "path": str(path), "bean_id": "", "digest": expected}
                     )
+        expired = {row["id"] for row in self.db.query("SELECT id FROM beans WHERE expired_at IS NOT NULL")}
         for row in self.db.query("SELECT bean_id, path, digest FROM payload_files"):
+            if row["bean_id"] in expired:
+                continue
             if not self.blob_path(row["digest"]).is_file():
                 problems.append(
                     {

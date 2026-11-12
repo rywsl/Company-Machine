@@ -80,6 +80,7 @@ class Run:
     use_cache: bool
     created_at: str
     updated_at: str
+    sink_mode: str = "execute"
 
     def value(self) -> dict[str, Any]:
         return {
@@ -123,10 +124,18 @@ class LineRunner:
         trigger: Mapping[str, Any] | None = None,
         use_cache: bool = True,
         rebuilt_from: str | None = None,
+        sink_mode: str = "execute",
     ) -> Run:
+        if sink_mode not in ("execute", "dry-run"):
+            raise FactoryError(
+                "RUN_INPUT_INVALID", "sink_mode 只能是 execute 或 dry-run", sink_mode=sink_mode
+            )
         plan = _compile_line(self.snapshot, line_ref)
         cap = _budget_cap(plan, budget_usd)
         stored = _normalize_inputs(inputs)
+        from mao.warehouse import reject_expired
+
+        reject_expired(self.ctx.warehouse, stored)
         _check_inputs(self.snapshot, self.ctx.warehouse, plan, stored)
         variant_map = _check_variants(plan, variants or {})
         trig = dict(trigger or {"on": "manual", "by": ""})
@@ -138,8 +147,8 @@ class LineRunner:
                 """INSERT INTO runs
                    (id, line, epoch, state, plan, plan_digest, inputs, variants, budget_cap_usd,
                     spent_usd, reserved_usd, outputs, error, trigger, rebuilt_from, use_cache,
-                    created_at, updated_at)
-                   VALUES (?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, 0, 0, '{}', NULL, ?, ?, ?, ?, ?)""",
+                    created_at, updated_at, sink_mode)
+                   VALUES (?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, 0, 0, '{}', NULL, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     plan.line,
@@ -154,6 +163,7 @@ class LineRunner:
                     1 if use_cache else 0,
                     now,
                     now,
+                    sink_mode,
                 ),
             )
             for ordinal, node in enumerate(plan.nodes):
@@ -196,6 +206,13 @@ class LineRunner:
             (run_id,),
         )
         return [_node_from_row(row) for row in rows]
+
+    def list(self, *, state: str | None = None) -> list[Run]:
+        if state is None:
+            rows = self.ctx.db.query("SELECT * FROM runs ORDER BY id")
+        else:
+            rows = self.ctx.db.query("SELECT * FROM runs WHERE state = ? ORDER BY id", (state,))
+        return [_run_from_row(row) for row in rows]
 
     def plan(self, run_id: str) -> RunPlan:
         row = self.ctx.db.query("SELECT plan FROM runs WHERE id = ?", (run_id,))
@@ -255,6 +272,9 @@ class LineRunner:
                     if self.ctx.db.query(
                         "SELECT station FROM station_holds WHERE station = ?", (spec.station,)
                     ):
+                        continue
+                    if run.sink_mode == "dry-run" and spec.role == "sink":
+                        self._dry_sink(conn, run, stored, spec)
                         continue
                     job_id = self._submit_node(conn, run, stored, spec, nodes)
                     if job_id is None:
@@ -496,6 +516,53 @@ class LineRunner:
             self.cache.bind(job.id, material)
         return job.id
 
+    def _dry_sink(self, conn: Any, run: Run, stored: RunNode, spec: Any) -> None:
+        station = self.snapshot.spec(spec.station)
+        phases = list(station.get("phases") or [])
+        now = utc_iso(self.ctx.clock.now())
+        if "propose" in phases:
+            from mao.contract import ContractRunner
+
+            result = ContractRunner(self.ctx, self.snapshot, self.runner).run_sink_dry_run(
+                spec.station, inputs={}, params=spec.params, timeout_s=None
+            )
+            self._event(
+                conn,
+                run.id,
+                "run.sink_dry_run",
+                {"run": run.id, "node": spec.id, "station": spec.station, "result": result.id},
+            )
+            if result.verdict != "pass":
+                conn.execute(
+                    """UPDATE run_nodes SET state = 'FAILED', error = ?, updated_at = ?
+                       WHERE run_id = ? AND node_id = ?""",
+                    (
+                        canonical_json(
+                            {
+                                "code": "SHADOW_SINK_REJECTED",
+                                "message": "影子运行拒绝了 Sink",
+                                "detail": {"run": run.id, "node": spec.id, "result": result.id},
+                            }
+                        ),
+                        now,
+                        run.id,
+                        spec.id,
+                    ),
+                )
+                return
+        else:
+            self._event(
+                conn,
+                run.id,
+                "run.sink_skipped",
+                {"run": run.id, "node": spec.id, "station": spec.station},
+            )
+        conn.execute(
+            """UPDATE run_nodes SET state = 'DONE', outputs = '{}', updated_at = ?
+               WHERE run_id = ? AND node_id = ?""",
+            (now, run.id, spec.id),
+        )
+
     def _finish_node(
         self,
         conn: Any,
@@ -616,7 +683,7 @@ class TriggerEngine:
         self.snapshot = snapshot
         self.lines = lines
 
-    def process(self) -> list[str]:
+    def process(self, *, route: Any | None = None) -> list[str]:
         created: list[str] = []
         with self.ctx.db.tx() as conn:
             cursor = conn.execute("SELECT seq FROM cursors WHERE name = 'trigger.bean'").fetchone()
@@ -637,7 +704,7 @@ class TriggerEngine:
                 if bean.id not in seen:
                     seen.append(bean.id)
             for bean_id in seen:
-                created.extend(self._fire(conn, bean_id))
+                created.extend(self._fire(conn, bean_id, route=route))
             max_seq = conn.execute("SELECT COALESCE(MAX(seq), 0) AS seq FROM events").fetchone()
             newest = max(newest, int(max_seq["seq"]) if max_seq else 0)
             if cursor is None:
@@ -646,10 +713,12 @@ class TriggerEngine:
                 conn.execute("UPDATE cursors SET seq = ? WHERE name = 'trigger.bean'", (newest,))
         return sorted(created)
 
-    def _fire(self, conn: Any, bean_id: str) -> list[str]:
+    def _fire(self, conn: Any, bean_id: str, *, route: Any | None = None) -> list[str]:
         try:
             bean = self.ctx.warehouse.get(bean_id)
         except FactoryError:
+            return []
+        if bean.expired_at is not None:
             return []
         labels = self.ctx.warehouse.labels(bean_id)
         created: list[str] = []
@@ -689,7 +758,8 @@ class TriggerEngine:
                 ).fetchone():
                     continue
                 ref = key.split(":", 1)[1]
-                run = self.lines.start_run(
+                lines = self.lines if route is None else route(key + ":" + canonical_json({port: bean_id}))
+                run = lines.start_run(
                     ref,
                     {port: bean_id},
                     trigger={"on": "bean", "bean": bean_id, "label": label},
@@ -709,7 +779,7 @@ class TriggerEngine:
         return created
 
     def _line_keys(self) -> list[str]:
-        return sorted(key for key in self.snapshot._docs if key.startswith("Line:"))
+        return self.snapshot.keys("Line")
 
     def _invalid(self, conn: Any, line: str, reason: str) -> None:
         conn.execute(
@@ -753,10 +823,9 @@ def _normalize_inputs(inputs: Mapping[str, Any]) -> dict[str, list[str]]:
 
 def _check_inputs(snapshot: Any, warehouse: Any, plan: RunPlan, inputs: Mapping[str, list[str]]) -> None:
     problems: list[dict[str, Any]] = []
-    if inputs or "explainer" not in plan.line:
-        for name in plan.inputs:
-            if name not in inputs:
-                problems.append({"port": name, "reason": "missing", "detail": "缺少接口输入"})
+    for name in plan.inputs:
+        if name not in inputs:
+            problems.append({"port": name, "reason": "missing", "detail": "缺少接口输入"})
     for name in inputs:
         if name not in plan.inputs:
             problems.append({"port": name, "reason": "extra", "detail": "接口没有这个输入"})
@@ -860,6 +929,7 @@ def _run_from_row(row: Any) -> Run:
         use_cache=bool(row["use_cache"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        sink_mode=str(row["sink_mode"] if "sink_mode" in row.keys() else "execute"),
     )
 
 

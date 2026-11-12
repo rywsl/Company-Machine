@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from mao.ctl.server import CtlServer
 from mao.errors import FactoryError
 from mao.gate import Gate
 from mao.jobs import TERMINAL, Job, JobState, dump_job, ensure_edge, load_job
-from mao.operator import build_invocation, parse_transcript, render_brief
+from mao.operator import build_invocation, expand_control_vars, parse_transcript, render_brief
 from mao.sandbox import Mount, SandboxSpec
 from mao.values import approval_env, bean_value, params_value
 from mrl.errors import EvalError
@@ -67,6 +68,9 @@ class Runner:
             )
         self._policy_defense(station_key, station, run)
         stored, checked = _split_inputs(inputs)
+        from mao.warehouse import reject_expired
+
+        reject_expired(self.ctx.warehouse, stored)
         if inputs or ":" not in str(station_ref):
             self.gate.check_inputs(station_key, checked)
         normalized = params_value(self.snapshot, station_key, params)
@@ -121,9 +125,32 @@ class Runner:
             raise FactoryError(
                 "JOB_STATE_INVALID", "run 看见不认识的状态", job_id=job.id, state=job.state.value
             )
-        while job.state not in TERMINAL:
-            job = self._step(job)
-        return job
+        from mao.durable import LeaseKeeper, LeaseStore
+
+        store = LeaseStore(self.ctx)
+        resource = f"job:{job.id}"
+        if not store.acquire(resource, owner=self.ctx.owner):
+            holder = store.holder(resource)
+            raise FactoryError(
+                "JOB_LEASED",
+                "job 租约被占用",
+                job=job.id,
+                owner="" if holder is None else holder.owner,
+                expires_at="" if holder is None else holder.expires_at,
+            )
+        keeper = LeaseKeeper(store, resource, owner=self.ctx.owner)
+        keeper.start()
+        try:
+            while job.state not in TERMINAL:
+                if keeper.lost.is_set():
+                    return load_job(self.ctx.db, job.id)
+                job = self._step(job)
+                if job.state == JobState.FAILED and self._budget_code(job.id):
+                    return job
+            return job
+        finally:
+            keeper.stop()
+            store.release(resource, owner=self.ctx.owner)
 
     def decide(self, approval_id: str, decision: str, *, by: str, note: str = "") -> None:
         rows = self.ctx.db.query("SELECT * FROM approvals WHERE id = ?", (approval_id,))
@@ -150,6 +177,11 @@ class Runner:
             problem = self._static_problem(job)
             if problem is not None and problem.code == "FORM_UNSUPPORTED":
                 raise problem
+            claimed = self._claim_sink(job)
+            if claimed == "duplicate":
+                return self._transition(job, JobState.SEALED, "duplicate")
+            if isinstance(claimed, FactoryError):
+                return self._dead(job, claimed)
             job = self._transition(job, JobState.PROVISIONING, "start")
             if problem is not None:
                 return self._dead(job, problem)
@@ -170,7 +202,8 @@ class Runner:
     def _provision_execute(self, job: Job, *, already_running: bool) -> Job:
         sandbox = None
         try:
-            prepared = self._prepare(job, reset_out=True)
+            prepared = self._bind_control(job, self._prepare(job, reset_out=True))
+            self._register_cap(job)
             sandbox = self.ctx.provider.open(prepared.spec)
             if not already_running:
                 job = self._transition(job, JobState.RUNNING, "ready")
@@ -208,7 +241,6 @@ class Runner:
                     _LOG.exception("沙箱 close 失败")
 
     def _prepare(self, job: Job, *, reset_out: bool) -> _Prepared:
-        self._seed_source_dir(job)
         station = self.snapshot.spec(job.station)
         machine_key = self.snapshot.key("Machine", station["machine"])
         machine = self.snapshot.spec(machine_key)
@@ -264,6 +296,10 @@ class Runner:
         invocation = build_invocation(
             self.snapshot, job.station, brief, inputs=prepared.beans, params=job.params
         )
+        try:
+            invocation = expand_control_vars(invocation, self._control_values(job))
+        except FactoryError as exc:
+            return self._fail(job, exc.code, exc.message, dict(exc.detail))
         logs = prepared.attempt_dir / "logs"
         stdout = logs / "operator.stdout"
         stderr = logs / "operator.stderr"
@@ -281,14 +317,22 @@ class Runner:
             )
         finally:
             server.stop()
+        stop = self._budget_code(job.id)
+        counted, spent = self._usage_spent(job.id)
+        if stop:
+            if counted:
+                job = self._set_cost(job, spent)
+            return self._budget_fail(job, stop)
         cost = 0.0
         summary = None
-        if invocation.transcript == "stream-json":
-            summary = parse_transcript(stdout, "stream-json")
+        if invocation.transcript in {"stream-json", "codex-jsonl"}:
+            summary = parse_transcript(stdout, invocation.transcript)
             cost = summary.cost_usd
+        if counted:
+            cost = spent
         job = self._set_cost(job, cost)
         budget = float((prepared.station.get("limits") or {}).get("budget_usd", 0.0))
-        if cost > budget:
+        if counted == 0 and cost > budget:
             return self._dead(
                 job,
                 {
@@ -504,6 +548,13 @@ class Runner:
         workspace_volume = None
         if getattr(self.ctx.provider, "name", "") == "docker" and form == "workspace":
             workspace_volume = volume
+            if job.attempt == 1 and mode != "resume":
+                subprocess.run(
+                    [self.ctx.provider.docker, "volume", "rm", "-f", volume],
+                    capture_output=True,
+                    timeout=60,
+                    check=False,
+                )
         else:
             mounts.append(
                 Mount(source=str((attempt_dir / "workspace").resolve()), target="/workspace", readonly=False)
@@ -607,17 +658,94 @@ class Runner:
         ]
         return sorted(paths)
 
-    def _seed_source_dir(self, job: Job) -> None:
+    def _claim_sink(self, job: Job) -> str | FactoryError | None:
         station = self.snapshot.spec(job.station)
-        if station.get("role") != "source":
+        if station.get("role") != "sink" or "idempotency_key" not in station:
+            return None
+        from mao.connectors import ReceiptStore, idempotency_key
+
+        try:
+            key = idempotency_key(self.snapshot, job.station, job.inputs, job.params, {})
+            claim = ReceiptStore(self.ctx).claim(
+                station_key=job.station,
+                key=key,
+                job_id=job.id,
+                run_id=None,
+                inputs=job.inputs,
+                verify_method=str(station.get("verify_receipt") or ""),
+            )
+        except FactoryError as exc:
+            return exc
+        return claim.kind
+
+    def _bind_control(self, job: Job, prepared: _Prepared) -> _Prepared:
+        station = self.snapshot.spec(job.station)
+        if not station.get("policy"):
+            return prepared
+        from mao.egress import SecretStore, build_egress, proxy_env
+
+        plan = build_egress(self.snapshot, job.station, SecretStore(self.ctx.root))
+        if plan.network != "egress":
+            return prepared
+        self._ensure_proxies()
+        docker = getattr(self.ctx.provider, "name", "") == "docker"
+        env = dict(prepared.spec.env)
+        env.update(plan.env)
+        env.update(proxy_env(self.ctx.proxies, docker=docker))
+        prepared.spec = SandboxSpec(
+            name=prepared.spec.name,
+            image=prepared.spec.image,
+            mounts=prepared.spec.mounts,
+            workdir=prepared.spec.workdir,
+            env=env,
+            network="egress",
+            cpus=prepared.spec.cpus,
+            memory_mb=prepared.spec.memory_mb,
+            workspace_volume=prepared.spec.workspace_volume,
+        )
+        return prepared
+
+    def _ensure_proxies(self) -> None:
+        if getattr(self.ctx, "proxies", None) is not None:
             return
-        raw = job.params.get("from_dir")
-        if not isinstance(raw, str) or raw == "":
-            return
-        folder = Path(raw)
-        if not folder.is_dir() or any(folder.glob("*.txt")):
-            return
-        (folder / "note.txt").write_text("ingested\n", encoding="utf-8")
+        from mao.egress import start_owned_proxies
+
+        start_owned_proxies(self.ctx, model_port=0, timeout_s=60.0)
+
+    def _control_values(self, job: Job) -> dict[str, str]:
+        values = {"FACTORY_JOB_ID": job.id, "FACTORY_ATTEMPT": str(job.attempt)}
+        proxies = getattr(self.ctx, "proxies", None)
+        if proxies is not None:
+            from mao.egress import proxy_env
+
+            urls = proxy_env(proxies, docker=getattr(self.ctx.provider, "name", "") == "docker")
+            values["MODEL_PROXY"] = urls["MODEL_PROXY"]
+            values["EGRESS_PROXY"] = urls["EGRESS_PROXY"]
+        return values
+
+    def _usage_spent(self, job_id: str) -> tuple[int, float]:
+        rows = self.ctx.db.query(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS spent FROM model_usage WHERE job_id = ?",
+            (job_id,),
+        )
+        return int(rows[0]["n"]), float(rows[0]["spent"])
+
+    def _budget_code(self, job_id: str) -> str | None:
+        rows = self.ctx.db.query("SELECT code FROM budget_stops WHERE job_id = ?", (job_id,))
+        if not rows:
+            return None
+        return str(rows[0]["code"])
+
+    def _budget_fail(self, job: Job, code: str) -> Job:
+        body = {"code": code, "message": "模型预算停止", "detail": {"job": job.id}}
+        return self._transition(job, JobState.FAILED, code, error=body)
+
+    def _register_cap(self, job: Job) -> None:
+        from mao.egress import register_job_cap
+
+        limits = self.snapshot.spec(job.station).get("limits") or {}
+        cap = float(limits["budget_usd"]) if "budget_usd" in limits else None
+        register_job_cap(self.ctx.db, job.id, job.station, cap)
 
     def _policy_defense(
         self, station_key: str, station: Mapping[str, Any], run: Mapping[str, Any] | None
