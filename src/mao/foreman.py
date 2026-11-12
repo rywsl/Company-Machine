@@ -24,23 +24,35 @@ class Wake:
     payload: dict[str, Any]
     status: str
     at: str
+    attempts: int = 0
+    not_before: str | None = None
 
 
 class WakeQueue:
     def __init__(self, ctx: Any) -> None:
         self.ctx = ctx
 
-    def file(self, signal: str, subject: str, payload: Mapping[str, Any]) -> Wake:
+    def file(
+        self, signal: str, subject: str, payload: Mapping[str, Any], *, since: str | None = None
+    ) -> Wake:
         body = {str(key): value for key, value in payload.items()}
         for value in body.values():
             if isinstance(value, str) and len(value) > 500:
                 raise FactoryError("WAKE_NOT_FOUND", "唤醒载荷过长", id=subject)
         rows = self.ctx.db.query(
-            "SELECT * FROM wakes WHERE signal = ? AND subject = ? AND status = 'open' ORDER BY at, id",
+            "SELECT * FROM wakes WHERE signal = ? AND subject = ? AND status IN ('open', 'taken', 'failed') "
+            "ORDER BY at, id",
             (signal, subject),
         )
         if rows:
             return _wake(rows[0])
+        if since is not None:
+            done = self.ctx.db.query(
+                "SELECT * FROM wakes WHERE signal = ? AND subject = ? AND status = 'done' AND at >= ? ORDER BY at, id",
+                (signal, subject, since),
+            )
+            if done:
+                return _wake(done[0])
         wake_id = self.ctx.ids.new("wk")
         now = utc_iso(self.ctx.clock.now())
         with self.ctx.db.tx() as conn:
@@ -56,7 +68,12 @@ class WakeQueue:
         )
 
     def next(self, *, by: str) -> Wake | None:
-        rows = self.ctx.db.query("SELECT * FROM wakes WHERE status = 'open' ORDER BY at, id LIMIT 1")
+        now = utc_iso(self.ctx.clock.now())
+        rows = self.ctx.db.query(
+            "SELECT * FROM wakes WHERE status = 'open' AND (not_before IS NULL OR not_before <= ?) "
+            "ORDER BY at, id LIMIT 1",
+            (now,),
+        )
         if not rows:
             return None
         now = utc_iso(self.ctx.clock.now())
@@ -79,6 +96,67 @@ class WakeQueue:
             )
         return _wake(self.ctx.db.query("SELECT * FROM wakes WHERE id = ?", (wake_id,))[0])
 
+    def get(self, wake_id: str) -> Wake:
+        rows = self.ctx.db.query("SELECT * FROM wakes WHERE id = ?", (wake_id,))
+        if not rows:
+            raise FactoryError("WAKE_NOT_FOUND", "找不到唤醒票", id=wake_id)
+        return _wake(rows[0])
+
+    def reopen(self, wake_id: str, *, not_before: str | None, failed: bool, by: str) -> Wake:
+        wake = self.get(wake_id)
+        if wake.status != "taken":
+            raise FactoryError(
+                "WAKE_STATE_INVALID", "只有 taken 票可以重开", wake=wake_id, status=wake.status
+            )
+        attempts = wake.attempts + 1 if failed else wake.attempts
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE wakes SET status = 'open', not_before = ?, attempts = ?, by = ?, updated_at = ? WHERE id = ?",
+                (not_before, attempts, by, now, wake_id),
+            )
+            conn.execute(
+                "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'foreman.wake.reopened', NULL, ?)",
+                (
+                    self.ctx.ids.new("ev"),
+                    now,
+                    canonical_json({"wake": wake_id, "attempts": attempts, "not_before": not_before}),
+                ),
+            )
+        return self.get(wake_id)
+
+    def fail(self, wake_id: str, *, code: str, by: str) -> Wake:
+        wake = self.get(wake_id)
+        if wake.status != "taken":
+            raise FactoryError(
+                "WAKE_STATE_INVALID", "只有 taken 票可以放弃", wake=wake_id, status=wake.status
+            )
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE wakes SET status = 'failed', by = ?, updated_at = ? WHERE id = ?",
+                (by, now, wake_id),
+            )
+            conn.execute(
+                "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'foreman.wake.failed', NULL, ?)",
+                (self.ctx.ids.new("ev"), now, canonical_json({"wake": wake_id, "code": code})),
+            )
+        return self.get(wake_id)
+
+    def retry(self, wake_id: str, *, by: str) -> Wake:
+        wake = self.get(wake_id)
+        if wake.status != "failed":
+            raise FactoryError(
+                "WAKE_STATE_INVALID", "只有 failed 票可以重开", wake=wake_id, status=wake.status
+            )
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE wakes SET status = 'open', attempts = 0, not_before = NULL, by = ?, updated_at = ? WHERE id = ?",
+                (by, now, wake_id),
+            )
+        return self.get(wake_id)
+
     def list(self, *, status: str | None = None) -> list[Wake]:
         if status is None:
             rows = self.ctx.db.query("SELECT * FROM wakes ORDER BY at, id")
@@ -94,13 +172,37 @@ class ForemanQuery:
 
     def registry_get(self, key: str) -> dict[str, Any]:
         snapshot = self.epochs.materialize(self.epochs.current())
-        if key not in snapshot._docs:
+        if key not in snapshot.keys():
             raise FactoryError("QUERY_DENIED", "找不到 Spec", reason="not-found", key=key)
         return self._redact(snapshot.doc(key))
 
     def registry_list(self, kind: str) -> list[str]:
         snapshot = self.epochs.materialize(self.epochs.current())
-        return sorted(key for key in snapshot._docs if key.startswith(kind + ":"))
+        return snapshot.keys(kind)
+
+    def registry_diff(self, base: str, commit: str, *, timeout_s: float) -> dict[str, Any]:
+        from mao.governance.git import git
+
+        limit = min(float(timeout_s), float(self.epochs.timeout_s))
+        repo = self.epochs.registry
+        try:
+            base_id = git(repo, "rev-parse", "--verify", f"{base}^{{commit}}", timeout_s=limit).strip()
+            commit_id = git(repo, "rev-parse", "--verify", f"{commit}^{{commit}}", timeout_s=limit).strip()
+        except FactoryError as exc:
+            raise FactoryError("COMMIT_NOT_FOUND", "找不到提交", commit=commit, base=base) from exc
+        raw = git(
+            repo,
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            base_id,
+            commit_id,
+            timeout_s=limit,
+        )
+        files = sorted(item for item in raw.split("\0") if item)
+        stat = git(repo, "diff", "--stat", base_id, commit_id, timeout_s=limit)
+        return {"files": files, "stat": stat}
 
     def epoch_list(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.ctx.db.query("SELECT * FROM epochs")]
@@ -348,8 +450,48 @@ class BootstrapReport:
     sink_can_merge: bool
 
 
+def file_conversions(
+    ctx: Any,
+    diags: Sequence[Mapping[str, Any]],
+    resolutions: Sequence[Mapping[str, Any]],
+    *,
+    found_at: Mapping[str, Any],
+    run_id: str | None = None,
+) -> list[str]:
+    subjects = {str(item.get("subject")) for item in diags if item.get("code") == "E-NO-CONVERTER"}
+    found: list[str] = []
+    store = ConversionStore(ctx)
+    for item in resolutions:
+        if item.get("status") != "no-converter":
+            continue
+        subject = f"{item.get('line')}/steps.{item.get('step')}.in.{item.get('port')}"
+        if subject not in subjects:
+            continue
+        request = store.open_or_merge(
+            from_type=str(item.get("from")),
+            guarantees=list(item.get("guarantees") or []),
+            to_type=str(item.get("to")),
+            requires=list(item.get("requires") or []),
+            found_at={
+                **dict(found_at),
+                "line": item.get("line"),
+                "step": item.get("step"),
+                "port": item.get("port"),
+            },
+            run_id=run_id,
+        )
+        if request.id not in found:
+            found.append(request.id)
+    return sorted(found)
+
+
+def redact(ctx: Any, snapshot: Any, text: str) -> str:
+    del ctx, snapshot
+    return _SECRET.sub("[REDACTED]", text)
+
+
 def bootstrap_check(snapshot: Any, sink_token_ops: Sequence[str]) -> BootstrapReport:
-    keys = list(getattr(snapshot, "_docs", {}))
+    keys = snapshot.keys()
     missing = []
     if not any(key.startswith("Line:onboard-machine@") for key in keys):
         missing.append("Line:onboard-machine")
@@ -368,6 +510,10 @@ def _wake(row: Mapping[str, Any]) -> Wake:
         payload=json.loads(row["payload"]),
         status=str(row["status"]),
         at=str(row["at"]),
+        attempts=int(row["attempts"]) if "attempts" in row.keys() and row["attempts"] is not None else 0,
+        not_before=None
+        if "not_before" not in row.keys() or row["not_before"] is None
+        else str(row["not_before"]),
     )
 
 
@@ -388,10 +534,8 @@ def _conversion(row: Mapping[str, Any]) -> ConversionRequest:
 
 
 def _convertible(snapshot: Any, from_type: str, to_type: str) -> bool:
-    for key, doc in getattr(snapshot, "_docs", {}).items():
-        if not str(key).startswith("Station:"):
-            continue
-        spec = (doc or {}).get("spec") or {}
+    for key in snapshot.keys("Station"):
+        spec = snapshot.spec(key)
         if spec.get("role") != "converter":
             continue
         converts = spec.get("converts") or {}
