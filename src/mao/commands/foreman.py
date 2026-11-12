@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 from pathlib import Path
 
-from mao.commands.common import actor_from_env, finish, open_context
+from mao.commands.common import actor_from_env, finish, install_stop_signals, open_context
 from mao.errors import FactoryError
 from mao.foreman import ConversionStore, ForemanQuery, ForemanSubmit, WakeQueue
 from mao.governance.changesets import ChangePipeline
@@ -246,7 +247,9 @@ def cmd_supervise(args: argparse.Namespace) -> int:
             record = sup.run_once()
             sup.shutdown()
             return finish(args, None if record is None else record.to_json(), null=record is None)
-        sup.shutdown()
+        stop = threading.Event()
+        install_stop_signals(stop)
+        sup.serve(stop)
     return 0
 
 

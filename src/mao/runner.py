@@ -741,11 +741,17 @@ class Runner:
         return self._transition(job, JobState.FAILED, code, error=body)
 
     def _register_cap(self, job: Job) -> None:
-        from mao.egress import register_job_cap
+        from mao.egress import EgressPlan, SecretStore, build_egress, register_job_cap, register_job_egress
 
         limits = self.snapshot.spec(job.station).get("limits") or {}
         cap = float(limits["budget_usd"]) if "budget_usd" in limits else None
         register_job_cap(self.ctx.db, job.id, job.station, cap)
+        station = self.snapshot.spec(job.station)
+        if station.get("policy"):
+            plan = build_egress(self.snapshot, job.station, SecretStore(self.ctx.root))
+        else:
+            plan = EgressPlan("none", (), (), (), {})
+        register_job_egress(self.ctx.db, job.id, plan)
 
     def _policy_defense(
         self, station_key: str, station: Mapping[str, Any], run: Mapping[str, Any] | None

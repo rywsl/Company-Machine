@@ -57,6 +57,9 @@ class Context:
         )
 
     def close(self) -> None:
+        from mao.egress import stop_owned_forwarder
+
+        stop_owned_forwarder(self)
         self.db.close()
 
     def __enter__(self) -> Context:

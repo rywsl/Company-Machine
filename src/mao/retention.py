@@ -175,27 +175,27 @@ def _sweep_blobs(ctx: Any, extra: set[str], *, dry_run: bool) -> tuple[int, int]
     deleted = 0
     freed = 0
     while True:
-        dead = [
-            (digest, size)
-            for digest, size in _dead_digests(ctx, extra)
-            if ctx.warehouse.blob_path(digest).is_file()
-        ][:1000]
-        if not dead:
-            return deleted, freed
-        with ctx.db.tx():
+        with ctx.db.tx() as conn:
+            dead = [
+                (digest, size)
+                for digest, size in _dead_digests_conn(conn, extra)
+                if ctx.warehouse.blob_path(digest).is_file()
+            ][:1000]
+            if not dead:
+                return deleted, freed
             for digest, size in dead:
                 if dry_run or ctx.warehouse.delete_blob(digest):
                     deleted += 1
                     freed += size
-        if dry_run:
+        if dry_run or len(dead) < 1000:
             return deleted, freed
 
 
-def _dead_digests(ctx: Any, extra: set[str]) -> list[tuple[str, int]]:
-    rows = ctx.db.query(
+def _dead_digests_conn(conn: Any, extra: set[str]) -> list[tuple[str, int]]:
+    rows = conn.execute(
         "SELECT pf.digest, pf.size, pf.bean_id, b.expired_at FROM payload_files pf "
         "JOIN beans b ON b.id = pf.bean_id"
-    )
+    ).fetchall()
     grouped: dict[str, list[tuple[bool, int]]] = {}
     for row in rows:
         expired = row["expired_at"] is not None or str(row["bean_id"]) in extra

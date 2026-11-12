@@ -312,6 +312,7 @@ class ConversionRequest:
     status: ConversionState
     changeset_id: str | None
     at: str
+    updated_at: str = ""
 
 
 class ConversionStore:
@@ -416,6 +417,35 @@ class ConversionStore:
             conn.execute(
                 "UPDATE conversion_requests SET status = ?, changeset_id = ?, updated_at = ? WHERE id = ?",
                 (status, changeset_id, now, request_id),
+            )
+        return self._get(request_id)
+
+    def reopen(self, request_id: str) -> ConversionRequest:
+        current = self._get(request_id)
+        if current.status != ConversionState.IN_PROGRESS:
+            raise FactoryError(
+                "CONVERSION_STATE_INVALID",
+                "只能重开 in_progress 的转换需求",
+                id=request_id,
+                state=current.status.value,
+                op="reopen",
+            )
+        changeset_id = current.changeset_id
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE conversion_requests SET status = 'open', changeset_id = NULL, updated_at = ? WHERE id = ?",
+                (now, request_id),
+            )
+            conn.execute(
+                "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'conversion.reopened', NULL, ?)",
+                (
+                    self.ctx.ids.new("ev"),
+                    now,
+                    canonical_json(
+                        {"id": request_id, "changeset_id": changeset_id, "changeset": changeset_id}
+                    ),
+                ),
             )
         return self._get(request_id)
 
@@ -530,6 +560,7 @@ def _conversion(row: Mapping[str, Any]) -> ConversionRequest:
         status=ConversionState(str(row["status"])),
         changeset_id=None if row["changeset_id"] is None else str(row["changeset_id"]),
         at=str(row["at"]),
+        updated_at=str(row["updated_at"]) if "updated_at" in row.keys() and row["updated_at"] else "",
     )
 
 

@@ -6,8 +6,8 @@ import argparse
 import sys
 import threading
 
-from mao.commands.common import GLOBAL, finish, open_context
-from mao.daemon import Daemon, ProcessExecutor, ServeConfig
+from mao.commands.common import GLOBAL, finish, install_stop_signals, open_context
+from mao.daemon import Daemon, ProcessExecutor, ServeConfig, run_serve
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -59,5 +59,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
                     return 0
             return finish(args, report)
         stop = threading.Event()
-        daemon.serve(stop)
+        install_stop_signals(stop)
+        run_serve(ctx, config, executor=executor, stop=stop, registry=args.registry)
     return 0

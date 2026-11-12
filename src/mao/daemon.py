@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import threading
@@ -39,6 +40,7 @@ class ServeConfig:
     supervise: bool
     model_port: int = 8080
     gc_every_s: float | None = None
+    forwarder_image: str | None = None
 
     @classmethod
     def load(cls, root: Path) -> ServeConfig:
@@ -63,7 +65,15 @@ class ServeConfig:
         gc_every_s = None
         if "gc_every_s" in serve:
             gc_every_s = _serve_value("gc_every_s", serve["gc_every_s"])
-        return cls(**values, model_port=model_port, gc_every_s=gc_every_s)
+        forwarder_image = None
+        if "forwarder_image" in serve:
+            forwarder_image = _serve_value("forwarder_image", serve["forwarder_image"])
+        return cls(
+            **values,
+            model_port=model_port,
+            gc_every_s=gc_every_s,
+            forwarder_image=forwarder_image,
+        )
 
 
 @dataclass(frozen=True)
@@ -327,7 +337,11 @@ class Daemon:
                 except FactoryError as exc:
                     if exc.code == "LEASE_LOST":
                         break
-                    raise
+                    _event(self.ctx, "serve.tick_failed", {"tick": self._ticks, "code": exc.code})
+                    logging.getLogger("mao").error("serve tick 失败 code=%s", exc.code)
+                except OSError:
+                    _event(self.ctx, "serve.tick_failed", {"tick": self._ticks, "code": "OS_ERROR"})
+                    logging.getLogger("mao").exception("serve tick 失败")
                 stop.wait(self.config.tick_s)
         finally:
             self.shutdown(timeout_s=60)
@@ -339,10 +353,9 @@ class Daemon:
                 proxy.close()
         self._model = None
         self._egress = None
-        forwarder = getattr(self.ctx.provider, "egress_forwarder", None)
-        docker = getattr(self.ctx.provider, "docker", None)
-        if forwarder and docker:
-            subprocess.run([docker, "rm", "-f", forwarder], capture_output=True, timeout=60, check=False)
+        from mao.egress import stop_owned_forwarder
+
+        stop_owned_forwarder(self.ctx)
         if self._keeper is not None:
             self._keeper.stop()
             self._keeper = None
@@ -431,9 +444,26 @@ class Daemon:
         self._last_canary = at
         return found
 
+    def _reopen_failed_conversions(self) -> None:
+        if self.pipeline is None:
+            return
+        from mao.foreman import ConversionStore
+
+        store = ConversionStore(self.ctx)
+        for request in store.list(status="in_progress"):
+            if not request.changeset_id:
+                continue
+            try:
+                changeset = self.pipeline.get(request.changeset_id)
+            except FactoryError:
+                continue
+            if changeset.state in {"rejected", "withdrawn", "rolled-back"}:
+                store.reopen(request.id)
+
     def _pump(self) -> list[str]:
         from mao.foreman import ConversionStore, WakeQueue
 
+        self._reopen_failed_conversions()
         queue = WakeQueue(self.ctx)
         before = {wake.id for wake in queue.list(status="open")}
         now = utc_iso(self.ctx.clock.now())
@@ -502,11 +532,14 @@ class Daemon:
         }
         proxies = getattr(self.ctx, "proxies", None)
         if proxies is not None:
-            body["proxies"] = {
+            recorded = {
                 "host": proxies.host,
                 "egress_port": proxies.egress_port,
                 "model_port": proxies.model_port,
             }
+            if getattr(proxies, "alias", None):
+                recorded["alias"] = proxies.alias
+            body["proxies"] = recorded
         target = Path(self.ctx.root) / "serve.json"
         part = Path(self.ctx.root) / "tmp" / "serve.json.part"
         part.parent.mkdir(parents=True, exist_ok=True)
@@ -531,6 +564,10 @@ def _serve_value(name: str, value: Any) -> Any:
     if name == "supervise":
         if not isinstance(value, bool):
             raise FactoryError("SERVE_CONFIG_INVALID", f"serve.{name} 类型不对", field=name)
+        return value
+    if name == "forwarder_image":
+        if not isinstance(value, str) or "@sha256:" not in value:
+            raise FactoryError("SERVE_CONFIG_INVALID", "forwarder_image 必须带 digest", field=name)
         return value
     if name == "gc_every_s":
         if value is None:
@@ -578,6 +615,40 @@ def _event(ctx: Any, kind: str, data: dict[str, Any]) -> None:
             "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, ?, NULL, ?)",
             (ctx.ids.new("ev"), utc_iso(ctx.clock.now()), kind, canonical_json(data)),
         )
+
+
+def run_serve(
+    ctx: Any,
+    config: ServeConfig,
+    *,
+    executor: Any,
+    stop: threading.Event,
+    registry: Path | None = None,
+    epochs: Any | None = None,
+    pipeline: Any | None = None,
+) -> None:
+    daemon = Daemon(ctx, config, executor=executor, registry=registry, epochs=epochs, pipeline=pipeline)
+    thread: threading.Thread | None = None
+    if config.supervise:
+        from mao.supervisor import ForemanSupervisor, SupervisorConfig
+
+        sup = ForemanSupervisor(
+            ctx,
+            daemon.epochs,
+            SupervisorConfig.load(ctx.root),
+            pipeline=daemon.pipeline,
+        )
+        thread = threading.Thread(target=sup.serve, args=(stop,), name="mao-supervisor", daemon=True)
+        thread.start()
+    try:
+        daemon.serve(stop)
+    finally:
+        stop.set()
+        if thread is not None:
+            from mao.supervisor import SupervisorConfig
+
+            timeout = float(SupervisorConfig.load(ctx.root).session_timeout_s) + 60
+            thread.join(timeout)
 
 
 def _default_executor(ctx: Any, config: ServeConfig) -> ProcessExecutor:

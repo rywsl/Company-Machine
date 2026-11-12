@@ -8,6 +8,7 @@ import getpass
 import json
 import os
 import sys
+import threading
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -79,7 +80,29 @@ def open_context(args: argparse.Namespace) -> Context:
         provider: Any = LocalProvider(root, commands=commands)
     else:
         provider = DockerProvider(root)
-    return Context.open(root, provider=provider)
+    ctx = Context.open(root, provider=provider)
+    from mao.egress import discover_proxies
+
+    ctx.proxies = discover_proxies(ctx)
+    if ctx.proxies is not None:
+        provider.proxies = ctx.proxies
+        if ctx.proxies.alias:
+            provider.egress_alias = ctx.proxies.alias
+    return ctx
+
+
+def install_stop_signals(stop: threading.Event) -> None:
+    import signal
+
+    def _stop(signum: int, frame: object) -> None:
+        del signum, frame
+        stop.set()
+
+    signal.signal(signal.SIGINT, _stop)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _stop)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _stop)
 
 
 def open_snapshot(

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
@@ -200,12 +202,61 @@ class ForemanSupervisor:
         LeaseStore(self.ctx).release("supervisor", owner=self.ctx.owner)
         self._started = False
 
+    def serve(self, stop: threading.Event, *, idle_s: float = 5.0) -> None:
+        if not self._started:
+            self.start()
+        try:
+            while not stop.is_set():
+                if self._keeper is not None and self._keeper.lost.is_set():
+                    break
+                try:
+                    record = self.run_once()
+                except Exception:
+                    logging.getLogger("mao").exception("值守会话失败")
+                    self._note_session_exception()
+                    if stop.wait(idle_s):
+                        break
+                    continue
+                if record is None and stop.wait(idle_s):
+                    break
+                if self._keeper is not None and self._keeper.lost.is_set():
+                    break
+        finally:
+            self.shutdown()
+
     def _ensure_proxies(self) -> None:
         if getattr(self.ctx, "proxies", None) is not None:
             return
         from mao.egress import start_owned_proxies
 
         start_owned_proxies(self.ctx, model_port=0, timeout_s=60.0)
+
+    def _note_session_exception(self) -> None:
+        rows = self.ctx.db.query(
+            "SELECT id, wake_id, role FROM foreman_sessions WHERE state = 'running' ORDER BY id"
+        )
+        for row in rows:
+            error = {"code": "SESSION_FAILED", "detail": {}}
+            now = utc_iso(self.ctx.clock.now())
+            with self.ctx.db.tx() as conn:
+                conn.execute(
+                    "UPDATE foreman_sessions SET state = 'failed', error = ?, ended_at = ? WHERE id = ?",
+                    (canonical_json(error), now, row["id"]),
+                )
+            wake = WakeQueue(self.ctx).get(str(row["wake_id"]))
+            if wake.status == "taken":
+                self._close_wake(wake, str(row["role"]), "failed", error, {"proposed": [], "reviewed": []})
+        running = {
+            str(row["wake_id"])
+            for row in self.ctx.db.query("SELECT wake_id FROM foreman_sessions WHERE state = 'running'")
+        }
+        for row in self.ctx.db.query("SELECT id FROM wakes WHERE status = 'taken' ORDER BY id"):
+            if str(row["id"]) in running:
+                continue
+            wake = WakeQueue(self.ctx).get(str(row["id"]))
+            delay = self.config.backoff_s * (2**wake.attempts)
+            not_before = utc_iso(self.ctx.clock.now() + timedelta(seconds=delay))
+            WakeQueue(self.ctx).reopen(wake.id, not_before=not_before, failed=True, by="supervisor")
 
     def _over_budget(self) -> bool:
         cutoff = utc_iso(self.ctx.clock.now() - timedelta(hours=24))
@@ -378,7 +429,8 @@ class ForemanSupervisor:
         )
         if mcp_format == "codex-toml":
             env["CODEX_HOME"] = "/workspace/.codex"
-        if self.config.network == "egress":
+        network = _session_network(self.config.network, runtime)
+        if network == "egress":
             self._ensure_proxies()
             from mao.egress import proxy_env
 
@@ -427,7 +479,7 @@ class ForemanSupervisor:
             mounts=tuple(mounts),
             workdir="/workspace/registry",
             env=env,
-            network="none" if self.config.network == "none" else "egress",
+            network=network,
         )
         git_bin = shutil.which("git")
         commands = getattr(self.ctx.provider, "commands", None)
@@ -587,6 +639,21 @@ class ForemanSupervisor:
         for row in taken:
             WakeQueue(self.ctx).reopen(str(row["id"]), not_before=None, failed=False, by="supervisor")
         return found
+
+
+def _references_model_proxy(runtime: Mapping[str, Any]) -> bool:
+    texts: list[str] = []
+    for item in (runtime.get("invoke") or {}).get("argv") or []:
+        texts.append(item if isinstance(item, str) else str(item))
+    for value in (runtime.get("env") or {}).values():
+        texts.append(value if isinstance(value, str) else str(value))
+    return any("${MODEL_PROXY}" in text for text in texts)
+
+
+def _session_network(config_network: str, runtime: Mapping[str, Any]) -> str:
+    if _references_model_proxy(runtime):
+        return "egress"
+    return config_network
 
 
 def _validate(config: SupervisorConfig) -> SupervisorConfig:

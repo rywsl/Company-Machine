@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import http.client
 import json
-import os
+import logging
 import socket
 import sqlite3
 import subprocess
@@ -17,7 +19,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from mao.base import utc_iso
+from mao.base import canonical_json, utc_iso
 from mao.errors import FactoryError
 
 LIVE_EGRESS = 0
@@ -52,6 +54,7 @@ class ProxyEndpoints:
     host: str
     egress_port: int
     model_port: int
+    alias: str | None = None
 
 
 class SecretStore:
@@ -137,6 +140,74 @@ def register_job_cap(db: Any, job_id: str, station_key: str, cap_usd: float | No
         )
 
 
+def register_job_egress(db: Any, job_id: str, plan: EgressPlan) -> None:
+    body = {
+        "network": plan.network,
+        "allow": [
+            {"tier": rule.tier, "host": rule.host, "methods": sorted(rule.methods)} for rule in plan.allow
+        ],
+        "secret_names": list(plan.secret_names),
+        "withheld": list(plan.withheld),
+    }
+    with db.tx() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO egress_plans (job_id, plan, at) VALUES (?, ?, ?)",
+            (job_id, canonical_json(body), _plan_at(db, job_id)),
+        )
+
+
+def plans_from_db(db: Any) -> Callable[[str], EgressPlan | None]:
+    def plan_for(job_id: str) -> EgressPlan | None:
+        rows = db.query("SELECT state FROM jobs WHERE id = ?", (job_id,))
+        if not rows or str(rows[0]["state"]) not in _ALLOWED_JOB:
+            return None
+        stored = db.query("SELECT plan FROM egress_plans WHERE job_id = ?", (job_id,))
+        if not stored:
+            return EgressPlan("none", (), (), (), {})
+        return _plan_from_json(str(stored[0]["plan"]))
+
+    return plan_for
+
+
+def load_forwarder_image(root: Path) -> str:
+    path = Path(root) / "factory.json"
+    image: Any = None
+    present = False
+    if path.is_file():
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            body = None
+        serve = body.get("serve") if isinstance(body, dict) else None
+        if isinstance(serve, dict) and "forwarder_image" in serve:
+            present = True
+            image = serve.get("forwarder_image")
+    if not present:
+        raise FactoryError("EGRESS_PROXY_UNAVAILABLE", "没有配置转发镜像", reason="forwarder-image")
+    if not isinstance(image, str) or "@sha256:" not in image:
+        raise FactoryError("SERVE_CONFIG_INVALID", "forwarder_image 必须带 digest", field="forwarder_image")
+    return image
+
+
+def forwarder_name(owner: str) -> str:
+    return "mao-fwd-" + hashlib.sha256(owner.encode("utf-8")).hexdigest()[:12]
+
+
+def stop_owned_forwarder(ctx: Any) -> None:
+    provider = getattr(ctx, "provider", None)
+    if provider is None:
+        return
+    name = getattr(provider, "egress_forwarder", None)
+    docker = getattr(provider, "docker", None)
+    if not name or not docker:
+        return
+    try:
+        subprocess.run([docker, "rm", "-f", str(name)], capture_output=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        logging.getLogger("mao").error("删除转发容器失败 name=%s", name)
+    provider.egress_forwarder = None
+
+
 def build_egress(snapshot: Any, station_key: str, store: SecretStore) -> EgressPlan:
     station_key = snapshot.key("Station", station_key)
     station = snapshot.spec(station_key)
@@ -196,7 +267,9 @@ def discover_proxies(ctx: Any) -> ProxyEndpoints | None:
         return None
     if not proxy_online(host, model_port):
         return None
-    return ProxyEndpoints(host, egress_port, model_port)
+    raw_alias = proxies.get("alias")
+    alias = None if raw_alias is None else str(raw_alias)
+    return ProxyEndpoints(host, egress_port, model_port, alias)
 
 
 def proxy_online(host: str, port: int, *, timeout_s: float = 1.0) -> bool:
@@ -316,80 +389,77 @@ _FWD_JS = (
 )
 
 
-def ensure_desktop_forwarder(docker: str, *, ports: list[int], timeout_s: float) -> str:
+def ensure_desktop_forwarder(
+    docker: str, *, ports: list[int], timeout_s: float, image: str, owner: str
+) -> str:
     """Docker Desktop 的 internal 网络到不了 host-gateway。返回转发容器在 mao-egress 上的地址。"""
-    shown = subprocess.run(
+    if "@sha256:" not in image:
+        raise FactoryError("SERVE_CONFIG_INVALID", "forwarder_image 必须带 digest", field="forwarder_image")
+    name = forwarder_name(owner)
+    try:
+        return _start_forwarder(docker, name, ports, timeout_s, image)
+    except FactoryError:
+        _docker_call(docker, ["rm", "-f", name], timeout_s, fatal=False)
+        raise
+
+
+def _start_forwarder(docker: str, name: str, ports: list[int], timeout_s: float, image: str) -> str:
+    _docker_call(docker, ["rm", "-f", name], timeout_s, fatal=False)
+    made = _docker_call(
+        docker,
         [
-            docker,
-            "run",
-            "--rm",
-            "--add-host=probe:host-gateway",
-            "node:22-bookworm-slim",
-            "node",
-            "-e",
-            "const dns=require('dns'); dns.lookup('probe', (e, a)=>{ if(e) process.exit(1); process.stdout.write(a); });",
-        ],
-        capture_output=True,
-        timeout=timeout_s,
-        check=False,
-    )
-    host = shown.stdout.decode("utf-8", errors="replace").strip()
-    if shown.returncode != 0 or not host:
-        raise FactoryError(
-            "EGRESS_PROXY_UNAVAILABLE",
-            "解析 host-gateway 失败",
-            reason=shown.stderr.decode("utf-8", errors="replace").strip(),
-        )
-    name = f"mao-fwd-{os.getpid()}"
-    subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=60, check=False)
-    made = subprocess.run(
-        [
-            docker,
             "run",
             "-d",
+            "--rm",
             "--name",
             name,
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
             "--network",
             "bridge",
+            "--add-host=fwd-host:host-gateway",
             "-e",
-            f"FWD_HOST={host}",
+            "FWD_HOST=fwd-host",
             "-e",
             "FWD_PORTS=" + ",".join(str(port) for port in ports),
-            "node:22-bookworm-slim",
+            image,
             "node",
             "-e",
             _FWD_JS,
         ],
-        capture_output=True,
-        timeout=timeout_s,
-        check=False,
+        timeout_s,
     )
     if made.returncode != 0:
+        _docker_call(docker, ["rm", "-f", name], timeout_s, fatal=False)
         raise FactoryError(
             "EGRESS_PROXY_UNAVAILABLE",
             "启动出网转发失败",
             reason=made.stderr.decode("utf-8", errors="replace").strip(),
         )
-    subprocess.run(
-        [docker, "network", "connect", "mao-egress", name],
-        capture_output=True,
-        timeout=timeout_s,
-        check=False,
-    )
-    ip = subprocess.run(
+    connected = _docker_call(docker, ["network", "connect", "mao-egress", name], timeout_s)
+    if connected.returncode != 0:
+        _docker_call(docker, ["rm", "-f", name], timeout_s, fatal=False)
+        raise FactoryError(
+            "EGRESS_PROXY_UNAVAILABLE",
+            "连接 mao-egress 失败",
+            reason=connected.stderr.decode("utf-8", errors="replace").strip(),
+        )
+    inspected = _docker_call(
+        docker,
         [
-            docker,
             "inspect",
             name,
             "--format",
             '{{index .NetworkSettings.Networks "mao-egress" "IPAddress"}}',
         ],
-        capture_output=True,
-        timeout=timeout_s,
-        check=False,
+        timeout_s,
     )
-    alias = ip.stdout.decode("utf-8", errors="replace").strip()
-    if ip.returncode != 0 or not alias:
+    alias = inspected.stdout.decode("utf-8", errors="replace").strip()
+    if inspected.returncode != 0 or not alias:
+        _docker_call(docker, ["rm", "-f", name], timeout_s, fatal=False)
         raise FactoryError("EGRESS_PROXY_UNAVAILABLE", "转发出网地址不可用", reason="no-alias")
     return alias
 
@@ -404,33 +474,59 @@ def start_owned_proxies(ctx: Any, *, model_port: int, timeout_s: float) -> tuple
     else:
         host = "127.0.0.1"
     store = SecretStore(ctx.root)
-    egress = EgressProxy(lambda _job: EgressPlan("none", (), (), (), {}), store, ctx.clock)
+    egress = EgressProxy(plans_from_db(ctx.db), store, ctx.clock, db=ctx.db)
+    model: ModelProxy | None = None
     try:
         egress_port = egress.start(host, 0)
         model = ModelProxy(store, ctx.clock, ctx.root)
         bound = model.start(host, model_port)
     except Exception:
         egress.close()
+        if model is not None:
+            model.close()
         raise
-    ctx.proxies = ProxyEndpoints(host, egress_port, bound)
+    alias = None
     if host == "127.0.0.1" and docker:
-        provider.egress_alias = ensure_desktop_forwarder(
-            docker, ports=[egress_port, bound], timeout_s=timeout_s
-        )
-        provider.egress_forwarder = f"mao-fwd-{os.getpid()}"
+        try:
+            image = load_forwarder_image(ctx.root)
+            alias = ensure_desktop_forwarder(
+                docker,
+                ports=[egress_port, bound],
+                timeout_s=timeout_s,
+                image=image,
+                owner=str(ctx.owner),
+            )
+        except Exception:
+            egress.close()
+            model.close()
+            raise
+        provider.egress_alias = alias
+        provider.egress_forwarder = forwarder_name(str(ctx.owner))
+    ctx.proxies = ProxyEndpoints(host, egress_port, bound, alias)
+    provider.proxies = ctx.proxies
     return egress, model
 
 
 class EgressProxy:
-    def __init__(self, plan_for: Callable[[str], EgressPlan], store: SecretStore, clock: Any) -> None:
+    def __init__(
+        self,
+        plan_for: Callable[[str], EgressPlan | None],
+        store: SecretStore,
+        clock: Any,
+        *,
+        db: Any | None = None,
+    ) -> None:
         self.plan_for = plan_for
         self.store = store
         self.clock = clock
+        self.db = db
         self._server: ThreadingHTTPServer | None = None
+        self._event_seq = 0
+        self._event_lock = threading.Lock()
 
     def start(self, host: str = "127.0.0.1", port: int = 0) -> int:
         global LIVE_EGRESS
-        self._server = ThreadingHTTPServer((host, port), BaseHTTPRequestHandler)
+        self._server = ThreadingHTTPServer((host, port), self._handler())
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
         with _LIVE_LOCK:
             LIVE_EGRESS += 1
@@ -444,6 +540,106 @@ class EgressProxy:
             self._server = None
             with _LIVE_LOCK:
                 LIVE_EGRESS = max(0, LIVE_EGRESS - 1)
+
+    def _handler(self) -> type[BaseHTTPRequestHandler]:
+        proxy = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                proxy._handle_http(self)
+
+            do_HEAD = do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = do_GET
+
+            def do_CONNECT(self) -> None:  # noqa: N802
+                proxy._handle_connect(self)
+
+            def log_message(self, fmt: str, *args: object) -> None:
+                del fmt, args
+
+        return Handler
+
+    def _handle_http(self, handler: BaseHTTPRequestHandler) -> None:
+        parsed = _absolute_target(handler.path or "")
+        if parsed is None:
+            _send_status(handler, 400, b"")
+            return
+        host, port, path = parsed
+        job_id = handler.headers.get("X-Factory-Job") or ""
+        plan = self._plan(job_id)
+        if plan is None:
+            self._deny(handler, job_id, handler.command, host, "EGRESS_JOB_INVALID")
+            return
+        rules = [rule for rule in plan.allow if rule.host.lower() == host]
+        if not rules or not _method_allowed(rules, handler.command):
+            self._deny(handler, job_id, handler.command, host, "EGRESS_DENIED")
+            return
+        self._event(job_id, "egress.allowed", {"job_id": job_id, "method": handler.command, "host": host})
+        body = _read_body(handler)
+        try:
+            _relay_http(handler, host, port, path, body)
+        except OSError:
+            if not handler.wfile.closed:
+                _send_status(handler, 502, b"")
+
+    def _handle_connect(self, handler: BaseHTTPRequestHandler) -> None:
+        parsed = _connect_target(handler.path or "")
+        if parsed is None:
+            _send_status(handler, 400, b"")
+            return
+        host, port = parsed
+        job_id = handler.headers.get("X-Factory-Job") or ""
+        plan = self._plan(job_id)
+        if plan is None:
+            self._deny(handler, job_id, "CONNECT", host, "EGRESS_JOB_INVALID")
+            return
+        rules = [rule for rule in plan.allow if rule.host.lower() == host]
+        if not rules:
+            self._deny(handler, job_id, "CONNECT", host, "EGRESS_DENIED")
+            return
+        if not any("*" in rule.methods for rule in rules):
+            # TLS 终结不在本任务范围。方法受限时不开隧道，避免未检查的 CONNECT。
+            self._deny(handler, job_id, "CONNECT", host, "EGRESS_METHOD_OPAQUE")
+            return
+        self._event(job_id, "egress.allowed", {"job_id": job_id, "method": "CONNECT", "host": host})
+        try:
+            upstream = socket.create_connection((host, port), timeout=30)
+        except OSError:
+            _send_status(handler, 502, b"")
+            return
+        handler.send_response(200, "Connection Established")
+        handler.end_headers()
+        _tunnel(handler.connection, upstream)
+
+    def _plan(self, job_id: str) -> EgressPlan | None:
+        if not job_id:
+            return None
+        plan = self.plan_for(job_id)
+        if plan is None:
+            return None
+        if self.db is not None and not _job_open(self.db, job_id):
+            return None
+        return plan
+
+    def _deny(self, handler: BaseHTTPRequestHandler, job_id: str, method: str, host: str, code: str) -> None:
+        self._event(
+            job_id,
+            "egress.denied",
+            {"job_id": job_id, "method": method, "host": host, "code": code},
+        )
+        _send_status(handler, 403, json.dumps({"code": code}).encode("utf-8"))
+
+    def _event(self, job_id: str, kind: str, data: dict[str, Any]) -> None:
+        if self.db is None:
+            return
+        with self._event_lock:
+            self._event_seq += 1
+            event_id = f"ev-px{self._event_seq:06d}"
+        at = _plan_at(self.db, job_id)
+        with self.db.tx() as conn:
+            conn.execute(
+                "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, ?, NULL, ?)",
+                (event_id, at, kind, canonical_json(data)),
+            )
 
 
 class ModelProxy:
@@ -663,6 +859,155 @@ class ModelProxy:
         finally:
             conn.close()
         return row is not None
+
+
+def _plan_at(db: Any, job_id: str) -> str:
+    rows = db.query("SELECT updated_at FROM jobs WHERE id = ?", (job_id,))
+    if rows and rows[0]["updated_at"]:
+        return str(rows[0]["updated_at"])
+    events = db.query("SELECT at FROM events ORDER BY at DESC LIMIT 1")
+    if events and events[0]["at"]:
+        return str(events[0]["at"])
+    return "1970-01-01T00:00:00.000Z"
+
+
+def _plan_from_json(text: str) -> EgressPlan:
+    body = json.loads(text)
+    rules = []
+    for item in body.get("allow") or []:
+        rules.append(
+            AllowRule(
+                tier=str(item["tier"]),
+                host=str(item["host"]),
+                methods=frozenset(str(method) for method in item.get("methods") or []),
+            )
+        )
+    return EgressPlan(
+        str(body.get("network") or "none"),
+        tuple(rules),
+        tuple(str(name) for name in body.get("secret_names") or []),
+        tuple(str(name) for name in body.get("withheld") or []),
+        {},
+    )
+
+
+def _job_open(db: Any, job_id: str) -> bool:
+    rows = db.query("SELECT state FROM jobs WHERE id = ?", (job_id,))
+    return bool(rows) and str(rows[0]["state"]) in _ALLOWED_JOB
+
+
+def _docker_call(
+    docker: str, args: list[str], timeout_s: float, *, fatal: bool = True
+) -> subprocess.CompletedProcess[bytes]:
+    try:
+        return subprocess.run([docker, *args], capture_output=True, timeout=timeout_s, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if not fatal:
+            return subprocess.CompletedProcess(args, 1, b"", str(exc).encode("utf-8"))
+        raise FactoryError("EGRESS_PROXY_UNAVAILABLE", "docker 调用失败", reason=str(exc)) from exc
+
+
+def _absolute_target(target: str) -> tuple[str, int, str] | None:
+    if not target.lower().startswith(("http://", "https://")):
+        return None
+    parsed = urlsplit(target)
+    if not parsed.hostname:
+        return None
+    host = parsed.hostname.lower()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    return host, port, path
+
+
+def _connect_target(target: str) -> tuple[str, int] | None:
+    if "://" in target or not target or "/" in target:
+        return None
+    host, sep, port_text = target.rpartition(":")
+    if not sep:
+        return target.lower(), 443
+    if not host or not port_text.isdigit():
+        return None
+    return host.lower(), int(port_text)
+
+
+def _method_allowed(rules: Sequence[AllowRule], method: str) -> bool:
+    return any("*" in rule.methods or method in rule.methods for rule in rules)
+
+
+def _read_body(handler: BaseHTTPRequestHandler) -> bytes | None:
+    raw = handler.headers.get("Content-Length")
+    if not raw:
+        return None
+    try:
+        length = int(raw)
+    except ValueError:
+        return None
+    if length < 0:
+        return None
+    return handler.rfile.read(length)
+
+
+def _relay_http(handler: BaseHTTPRequestHandler, host: str, port: int, path: str, body: bytes | None) -> None:
+    headers: dict[str, str] = {}
+    for key, value in handler.headers.items():
+        lower = key.lower()
+        if lower in {"host", "content-length", "transfer-encoding", "connection"}:
+            continue
+        if lower == "x-factory-job" or lower.startswith("proxy-"):
+            continue
+        headers[key] = value
+    upstream = http.client.HTTPConnection(host, port, timeout=30)
+    try:
+        upstream.request(handler.command, path, body=body, headers=headers)
+        response = upstream.getresponse()
+        payload = response.read()
+        handler.send_response(response.status)
+        for key, value in response.getheaders():
+            if key.lower() in {"transfer-encoding", "connection"}:
+                continue
+            handler.send_header(key, value)
+        if not any(key.lower() == "content-length" for key, _value in response.getheaders()):
+            handler.send_header("Content-Length", str(len(payload)))
+        handler.end_headers()
+        if handler.command != "HEAD":
+            handler.wfile.write(payload)
+    finally:
+        upstream.close()
+
+
+def _send_status(handler: BaseHTTPRequestHandler, status: int, payload: bytes) -> None:
+    handler.send_response(status)
+    if payload:
+        handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(payload)))
+    handler.end_headers()
+    handler.wfile.write(payload)
+
+
+def _tunnel(left: socket.socket, right: socket.socket) -> None:
+    def _copy(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while True:
+                chunk = src.recv(65536)
+                if not chunk:
+                    break
+                dst.sendall(chunk)
+        except OSError:
+            return
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                return
+
+    left_to_right = threading.Thread(target=_copy, args=(left, right), daemon=True)
+    right_to_left = threading.Thread(target=_copy, args=(right, left), daemon=True)
+    left_to_right.start()
+    right_to_left.start()
+    left_to_right.join()
+    right_to_left.join()
 
 
 def _rules(

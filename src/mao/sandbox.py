@@ -282,9 +282,10 @@ class DockerProvider:
             from mao.egress import egress_run_args
 
             argv = []
-            alias = getattr(self, "egress_alias", None)
+            endpoints = getattr(self, "proxies", None)
+            alias = getattr(endpoints, "alias", None) or getattr(self, "egress_alias", None)
             if alias:
-                argv.extend([f"--add-host=model-proxy:{alias}", f"--add-host=egress:{alias}"])
+                argv.extend([f"--add-host=egress:{alias}", f"--add-host=model-proxy:{alias}"])
             argv.extend(egress_run_args("egress"))
             return argv
         raise FactoryError("EGRESS_UNSUPPORTED", "M1 不允许出网", station="", network=spec.network)
