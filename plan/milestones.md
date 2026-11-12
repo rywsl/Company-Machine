@@ -11,7 +11,7 @@ M0 结构编译 ──▶ M1 单工位跑通 ──▶ M2 产线与外部世界 
 M7 运维与生产化 ◀── M6 真实接入 ◀── M5 自治闭环（含 M1–M4 纠偏） ◀──────────────────┘
    │
    ▼
-M8 交付审查纠偏
+M8 交付审查纠偏 ──▶ M9 闭环审查纠偏
 ```
 
 每个里程碑结束时，系统都处于可以使用、可以交接的状态，而不是半成品。
@@ -238,6 +238,18 @@ M1-01 基础设施 ──┬─▶ M1-02 快照与求值环境 ──┐
 **规范**：`spec/system/hardening.md`；审查清单 `plan/review-m5-m7.md`。
 
 **任务与退出条件**：见 `plan/tasks.yaml` 中的 M8-01 和 `plan/gates.yaml` 中的阶段门 M8（继承 M7 的全部检查）。
+
+---
+
+## M9 闭环审查纠偏
+
+**目标**：阶段门 M8 通过之后的闭环审查（`plan/review-closure.md`）发现，M4 的动态结构、Plan、B 形态网关、生产后端只有被验收直接调用的纯函数，运行期没有调用者，部分实现按验收字面值写死。M9 让这四项能力在生产路径上真正运行。
+
+**范围**：`LineRunner.tick` 执行动态构造；planner 的出厂检验、Plan 挂接与执行；`Runner` 经 `ServiceGateway` 执行服务型工位且生产路径都装上网关；S3 SigV4、命令按 `backend-active.json` 打开后端、Postgres 只经 `psql`、运行期 SQL 可移植。
+
+**规范**：`spec/system/closure.md`；审查清单 `plan/review-closure.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M9-01 至 M9-04 和 `plan/gates.yaml` 中的阶段门 M9（继承 M8 的全部检查）。
 
 ---
 

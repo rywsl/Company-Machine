@@ -39,6 +39,7 @@
 | `retention.md` | 保留期、墓碑与回收 | `mao.retention` | M7 | M7-03 |
 | `backup.md` | 备份、校验与恢复 | `mao.backup` | M7 | M7-04 |
 | `hardening.md` | M5–M7 审查纠偏（对应 `plan/review-m5-m7.md`） | 多个模块 | M8 | M8-01 |
+| `closure.md` | M4 交付在生产路径上闭环（对应 `plan/review-closure.md`） | 多个模块 | M9 | M9-01 至 M9-04 |
 
 每份组件规范都必须按第 7 节的模板组织。
 

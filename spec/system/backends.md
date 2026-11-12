@@ -4,6 +4,7 @@
 > 依据：架构文档 5.5、14.1；README D2、D8。
 > M1–M3 的 `Warehouse` 与 `Database` 签名不改变。那些模块不得读取本文件的配置，也不得在未安装后端时访问 S3 或 Postgres。
 > 不新增第三方依赖（D2）。S3 用标准库 HTTP。Postgres 用 `psql` 命令行，与 Docker 用 `docker` 命令行同一原则。
+> SigV4 细节、`psql` 会话协议、迁移翻译的补充、命令按指针打开后端见 `closure.md` 4.4–4.6 与 5.4（M9），冲突时以 `closure.md` 为准。
 
 ---
 

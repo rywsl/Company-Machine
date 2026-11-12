@@ -4,6 +4,7 @@
 > 依据：架构文档 10.2、10.3；`spec/mrl/kernel/lines.mrl`；`spec/mrl/factory-profile.md` 第 3.7、4.2、5 章；`spec/schemas/line.schema.json` 与 `records.schema.json` 的 `plan`。
 > `lines.md` 第 5.1 步对这四种构造抛 `LINE_UNSUPPORTED`。那个函数保持不变，M2 验收继续依赖它。本文件是这些构造成为合法运行计划的地方。
 > 跨组件约定见 `README.md`。本文件只增加接口，不改变已列出的签名与语义。
+> 运行期接入（`tick` 调用 `expand`、planner 的出厂检验与挂接）以及对 5.5 的补充见 `closure.md`（M9），冲突时以 `closure.md` 为准。
 
 ---
 
@@ -219,6 +220,8 @@ Plan 不合格不是上表的抛出路径：`compile_plan` 返回 `ok=False`，�
 
 夹具在 `tests/fixtures/registry-m2/` 上打补丁，或在 `tmp_path` 建最小 Registry。`LocalProvider`、`FakeClock`、`CounterIds`。
 
+`test_m4_02_plan.py` 于 2026-11-13 由设计方重写（`plan/review-closure.md` C-08）：夹具用 `tests/acceptance/m9/closure_world.py` 的 `planner@1` 与 `note-plan@1`，补充规定见 `closure.md` 5.2。
+
 | 文件 | 测试 | 验证什么 |
 |---|---|---|
 | `tests/acceptance/m4/test_m4_01_dynamic.py` | `test_m2_compiler_still_rejects` | `compile_run_plan` 对含 map 的产线仍抛 `LINE_UNSUPPORTED` |
@@ -232,13 +235,13 @@ Plan 不合格不是上表的抛出路径：`compile_plan` 返回 `ok=False`，�
 | | `test_until_stops` | 条件在第 2 次为真时不再创建 `@3`，且预留按 `max_iter` 计算 |
 | | `test_until_exhausted` | `max_iter` 用尽仍为假 → `UNTIL_EXHAUSTED`，下游拿不到最后一次输出 |
 | | `test_subline_same_epoch` | 子 run 的 epoch 等于父 run；子 run 失败 → `SUBLINE_FAILED` |
-| `tests/acceptance/m4/test_m4_02_plan.py` | `test_plan_feedback_on_bounds` | 步骤数超过该工位 `max_steps` 时 job `REJECTED`，`feedback` 含 `PLAN_BOUNDS`，Bean 未封存 |
-| | `test_plan_cannot_define_specs` | Plan 文档夹带 Type 文档 → `ok` 为假，`PLAN_INVALID` |
-| | `test_budget_number_not_template` | `plan_bounds.budget_usd` 写成模板字符串 → schema 失败，不按模板求值 |
+| `tests/acceptance/m4/test_m4_02_plan.py` | `test_plan_feedback_on_bounds` | Plan 步骤数超过 planner 工位的 `max_steps`：两次 `REJECTED` 后 job `DEAD`，`feedback` 含 `PLAN_BOUNDS`，没有封存，没有子节点 |
+| | `test_plan_cannot_define_specs` | `kind` 不是 `Plan`，或引用当前 epoch 没有的工位 → `ok` 为假，`PLAN_INVALID` |
+| | `test_budget_number_not_template` | `plan_bounds.budget_usd` 写成模板字符串 → 快照加载失败，`E-SCHEMA` 指向该工位，不按模板求值 |
 | | `test_budget_remaining` | 子计划和大于 run 剩余 → `PLAN_BUDGET`；等于剩余则通过 |
-| | `test_missing_converter_rejects_plan` | 边无转换 → `E-NO-CONVERTER`，转换需求被 `open_or_merge`，父 run 不在 `blocked_runs` 里 |
-| | `test_sealed_plan_same_epoch` | 通过后 plan Bean 已封存，子节点出现在父 run 上，epoch 相同 |
-| | `test_runtime_resolution_append_only` | 同一键第二次追加若链不同则 `RUN_PLAN_INVALID`，文件中的旧链不变 |
+| | `test_missing_converter_rejects_plan` | `agent.task@1 → note.text@1` 无转换 → `E-NO-CONVERTER`，转换需求被 `open_or_merge`，父 run 不在 `blocked_runs` 里 |
+| | `test_sealed_plan_same_epoch` | 合格 Plan 的 `PlanCheck.plan` 节点 id 不带前缀、epoch 相同；运行后 plan Bean 已封存，子节点 `plan/shout` 出现在父 run 上 |
+| | `test_runtime_resolution_append_only` | 侧车里已有同键而链不同的行 → 抛 `RUN_PLAN_INVALID`，文件内容不变 |
 
 ```
 uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_01_dynamic.py

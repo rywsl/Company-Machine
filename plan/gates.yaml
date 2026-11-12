@@ -371,3 +371,67 @@ gates:
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
         env: {MAO_REQUIRE_DOCKER: "1"}
         timeout: 3600
+
+  M9:
+    title: 闭环审查纠偏
+    requires_gates: [M8]
+    checks:
+      - *lint
+      - *format
+      - *lock
+      - *doccheck
+      - *conformance
+      - *coverage
+      - *example
+      - *scenarios
+      - *pytest
+      - id: unit-m1
+        run: uv run python tools/harness.py pytest tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
+      - id: policy
+        run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 12
+      - id: acceptance-m1
+        run: uv run python tools/harness.py pytest tests/acceptance/m1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 98
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 2400
+      - id: acceptance-m2
+        run: uv run python tools/harness.py pytest tests/acceptance/m2
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 111
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m3
+        run: uv run python tools/harness.py pytest tests/acceptance/m3
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 58
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m4
+        run: uv run python tools/harness.py pytest tests/acceptance/m4
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 40
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m5
+        run: uv run python tools/harness.py pytest tests/acceptance/m5
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 63
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m6
+        run: uv run python tools/harness.py pytest tests/acceptance/m6
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 25
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 5400
+      - id: acceptance-m7
+        run: uv run python tools/harness.py pytest tests/acceptance/m7
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 29
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m8
+        run: uv run python tools/harness.py pytest tests/acceptance/m8
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m9
+        run: uv run python tools/harness.py pytest tests/acceptance/m9
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 23
+        timeout: 3600
