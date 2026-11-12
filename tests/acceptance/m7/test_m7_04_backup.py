@@ -45,9 +45,9 @@ def _open(root: Path):
 
 
 def _files(dest: Path) -> list[str]:
-    return sorted(
-        p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file() and p.name != "manifest.json"
-    )
+    # 只排除备份根上的清单；config/secrets/manifest.json 是普通的备份文件
+    rels = (p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file())
+    return sorted(rel for rel in rels if rel != "manifest.json")
 
 
 def _problems(report: dict) -> set[tuple[str, str]]:

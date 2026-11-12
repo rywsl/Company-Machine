@@ -111,6 +111,8 @@
 
 M7-03 的验收曾有一处设计方错误：`test_shared_blob_survives` 用同一类型、同一 meta、同一字节两次 `add` 却断言两个 id，违反 `warehouse.md` 的内容寻址（id 是 type、meta、payload 的摘要）。2026-11-12 改为第二个 Bean 用不同 meta；`test_add_restores_deleted_blob` 同样改用不同 meta（原写法拿到的是墓碑本身，测不到补回字节）；`retention.md` 5.3 写明身份相同的 `add` 返回墓碑。实现方按 `plan/README.md` 第 5 节记录并阻塞是正确做法（`plan/journal/2026-11-11-M7-03-shared-blob.md`）。
 
+M7-04 的验收也有一处设计方错误：`test_create_layout` 的辅助函数 `_files` 排除了所有名为 `manifest.json` 的文件，把 `config/secrets/manifest.json` 也排除了，而同一测试要求清单列出它。2026-11-12 改为只排除备份根目录的 `manifest.json`，`backup.md` 4.2、5.2 同步写明（`plan/journal/2026-11-12-M7-04-files-helper.md`）。
+
 另有一处设计方遗留：`tests/acceptance/m4/test_m4_02_plan.py` 有 5 个测试比 `dynamic.md` 第 7 章的描述弱（`test_plan_feedback_on_bounds` 不检查 job `REJECTED` 与 Bean 未封存；`test_budget_remaining` 不检查“等于剩余则通过”；`test_missing_converter_rejects_plan` 不检查转换需求；`test_sealed_plan_same_epoch` 不检查 plan Bean 已封存；`test_runtime_resolution_append_only` 测的不是追加规则）。实现方仍按规范第 7 章的描述实现；设计方会补强这些测试，补强后它们进入 M5-01 的验收范围。
 
 ---

@@ -109,7 +109,7 @@ DEST/
 }
 ```
 
-- `files`：除 `manifest.json` 外的每个文件，路径用 `/` 分隔、相对 `DEST`，按 `path` 升序。
+- `files`：除备份根目录的 `manifest.json` 外的每个文件（`config/secrets/manifest.json` 等同名文件照常列出），路径用 `/` 分隔、相对 `DEST`，按 `path` 升序。
 - `schema_version`：备份库的 `PRAGMA user_version`（`mao.db` 用它记录已应用的迁移编号）。
 - `registry`：没有治理配置时为 `null`。`refs` 是 `git for-each-ref --format=%(refname) %(objectname)` 的全部引用；`head` 是 `git symbolic-ref HEAD`（游离时为 `null`）。
 - `secrets`：`secrets/manifest.json` 的键，升序；没有该文件时为 `[]`。
@@ -147,7 +147,7 @@ DEST/
 | `manifest` | `manifest.json` 缺失、不是 JSON、`format` 不是 `mao-backup/1` |
 | `missing` | 清单列出的文件不存在 |
 | `mismatch` | 文件大小或 sha256 与清单不符 |
-| `extra` | 存在清单没有列出的文件（`manifest.json` 除外） |
+| `extra` | 存在清单没有列出的文件（备份根目录的 `manifest.json` 除外） |
 | `database` | `factory.db` 的 `PRAGMA integrity_check` 结果不是 `ok` |
 | `blob` | 备份库中未过期 Bean 的某个 digest，在 `cas/` 下没有对应文件（`path` 为该 digest） |
 | `bundle` | `registry` 不为 `null` 而 `git bundle verify` 失败 |
