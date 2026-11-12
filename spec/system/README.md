@@ -38,6 +38,7 @@
 | `console.md` | 本机只读 Web 控制台 | `mao.console` | M7 | M7-02 |
 | `retention.md` | 保留期、墓碑与回收 | `mao.retention` | M7 | M7-03 |
 | `backup.md` | 备份、校验与恢复 | `mao.backup` | M7 | M7-04 |
+| `hardening.md` | M5–M7 审查纠偏（对应 `plan/review-m5-m7.md`） | 多个模块 | M8 | M8-01 |
 
 每份组件规范都必须按第 7 节的模板组织。
 
@@ -216,6 +217,7 @@ class IdSource(Protocol):
   | `024`–`026` | M5-01 纠偏（`model_caps`、`run_sink_mode`、`backend_lock`） |
   | `030`、`031` | M5-03、M5-06 |
   | `033`、`034` | M6-02、M7-03 |
+  | `035` | M8-01（`egress_plans`） |
 
   `mao.db` 按 `user_version` 跳过编号不大于它的文件，所以**新迁移的编号必须大于仓库里已有的最大编号**，不得插空或复用（`plan/drift.md` D-33）。
 

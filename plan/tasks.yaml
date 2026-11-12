@@ -1139,3 +1139,24 @@ tasks:
       - *doccheck
       - id: lock
         run: uv run python tools/harness.py lock --verify
+
+  # ------------------------------------------------------------------ M8 交付审查纠偏
+  - id: M8-01
+    milestone: M8
+    title: M5–M7 审查纠偏：出网代理、代理归属、常驻值守、转换重开、回收竞态、serve 韧性
+    card: plan/tasks/M8-01.md
+    deps: [M7-04]
+    spec: [spec/system/hardening.md, plan/review-m5-m7.md]
+    paths:
+      - src/mao/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m8/test_m8_01_hardening.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+      - *regress
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
