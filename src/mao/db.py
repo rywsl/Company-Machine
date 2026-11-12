@@ -85,13 +85,26 @@ class Database:
         return _Tx(self)
 
     def query(self, sql: str, params: Any = ()) -> list[sqlite3.Row]:
-        # commit 是 SQLite 关键字。规范把 epoch 列命名为 commit，调用方按列名书写。
-        sql = re.sub(r'(?<!")\bcommit\b(?!")', '"commit"', sql, flags=re.IGNORECASE)
         with self._lock:
             return list(self._conn.execute(sql, params).fetchall())
 
     def close(self) -> None:
         self._conn.close()
+
+    def backup_to(self, path: Path) -> None:
+        target = Path(path)
+        if target.exists():
+            raise ValueError("备份目标已存在")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        dest = sqlite3.connect(str(target))
+        try:
+            with self._lock:
+                self._conn.backup(dest)
+        except Exception:
+            dest.close()
+            target.unlink(missing_ok=True)
+            raise
+        dest.close()
 
     def migrate(self, migrations_dir: Path | None = None) -> int:
         if self._depth > 0:
