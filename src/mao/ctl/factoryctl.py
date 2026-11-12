@@ -160,6 +160,72 @@ def cmd_log(args):
         handle.write(line)
 
 
+def cmd_mcp():
+    job_path = os.path.join(_ctl_dir(), "job.json")
+    if not os.path.isfile(job_path):
+        _die(4, "缺少 job.json")
+    job = _read_json(job_path)
+    try:
+        timeout_s = float(job.get("timeout_s", 60))
+    except (TypeError, ValueError):
+        timeout_s = 60.0
+    for raw in sys.stdin:
+        line = raw.strip()
+        if line == "":
+            continue
+        try:
+            message = json.loads(line)
+        except ValueError:
+            sys.stdout.write(
+                _dump({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+                + "\n"
+            )
+            sys.stdout.flush()
+            continue
+        rid = "r-" + uuid.uuid4().hex[:8]
+        body = {"id": rid, "op": "mcp", "args": {"message": message}}
+        _atomic(os.path.join(_ctl_dir(), "requests", rid + ".json"), _dump(body))
+        response = os.path.join(_ctl_dir(), "responses", rid + ".json")
+        deadline = time.time() + timeout_s
+        found = None
+        while time.time() < deadline:
+            if os.path.isfile(response):
+                found = _read_json(response)
+                break
+            time.sleep(0.05)
+        request_id = message.get("id") if isinstance(message, dict) else None
+        if found is None:
+            if isinstance(message, dict) and "id" in message:
+                sys.stdout.write(
+                    _dump(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "error": {"code": -32603, "message": "timeout"},
+                        }
+                    )
+                    + "\n"
+                )
+                sys.stdout.flush()
+            continue
+        if found.get("ok") and (found.get("result") or {}).get("message") is not None:
+            sys.stdout.write(_dump(found["result"]["message"]) + "\n")
+            sys.stdout.flush()
+        elif not found.get("ok") and isinstance(message, dict) and "id" in message:
+            error = found.get("error") or {}
+            sys.stdout.write(
+                _dump(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32603, "message": str(error.get("code") or "error")},
+                    }
+                )
+                + "\n"
+            )
+            sys.stdout.flush()
+
+
 def cmd_fail(args):
     _atomic(os.path.join(_ctl_dir(), "fail.json"), _dump({"reason": args.reason}))
     raise SystemExit(1)
@@ -356,6 +422,7 @@ def main(argv):
     fail = sub.add_parser("fail")
     fail.add_argument("reason")
     sub.add_parser("harvest")
+    sub.add_parser("mcp")
     try:
         args = parser.parse_args(argv)
     except SystemExit:
@@ -378,6 +445,8 @@ def main(argv):
         cmd_check(args)
     elif args.cmd == "approval":
         cmd_approval(args)
+    elif args.cmd == "mcp":
+        cmd_mcp()
     else:
         _die(2, "未知子命令")
 
