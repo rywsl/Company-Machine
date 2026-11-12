@@ -206,6 +206,8 @@ uv run python tools/harness.py pytest tests/acceptance/m8/test_m8_01_hardening.p
 
 断言：`out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8`。
 
+M6 的实况夹具（`tests/acceptance/m6/live_world.py`）在 `serve` 段写入 `forwarder_image`，取 `tools/live_versions.json` 的 `base`（已固定 digest、带 `node`），因此 Docker Desktop 上的阶段门 M8 经由 M6 实况测试真实启动转发容器。
+
 R-04（Docker Desktop 转发）、R-07（竞态）、R-09 以及 Runner 的登记调用（5.2 第 1 条）没有确定性的验收，由阶段门审查代码确认，并由实现方在 `tests/system/` 写单元测试。
 
 ---

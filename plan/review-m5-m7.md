@@ -55,6 +55,7 @@ M0–M7 的阶段门全部记录为通过；lint、format、lock、doccheck、�
 | `tests/acceptance/m8/test_m8_01_hardening.py` | 新增 8 个验收：真实上游收发、真实值守与守护进程循环 |
 | `plan/tasks.yaml`、`plan/gates.yaml`、`plan/milestones.md`、`plan/tasks/M8-01.md` | 任务 M8-01 与阶段门 M8（继承 M7 的全部检查） |
 | `spec/system/README.md` | 文档地图与迁移编号表（`035`） |
+| `tests/acceptance/m6/live_world.py` | 2026-11-12 补：`serve.forwarder_image` 取 `tools/live_versions.json` 的 `base`。此前 Docker Desktop 上的 M6 实况测试按 `hardening.md` 5.4 必然失败，实现方正确地阻塞了 M8-01（`plan/journal/2026-11-12-M8-01-forwarder-image.md`） |
 
 M2 的弱验收（`test_m2_07_egress.py` 中只检查计划与端口的几条）不改名、不删除；行为由 M8 的验收覆盖。
 

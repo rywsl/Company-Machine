@@ -280,6 +280,10 @@ def live_world(tmp: Path, script: dict[str, Any], *, drop: tuple[str, ...] = (),
             "docker_timeout_s": 120.0,
             "supervise": False,
             "model_port": 0,
+            # Docker Desktop 的出网转发容器（hardening.md 5.4）：用已固定 digest、带 node 的现场基础镜像
+            "forwarder_image": json.loads(
+                (REPO / "tools" / "live_versions.json").read_text(encoding="utf-8")
+            )["base"],
         },
         "foreman": section,
     }
