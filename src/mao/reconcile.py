@@ -35,19 +35,27 @@ class Finding:
 
 
 class Reconciler:
-    def __init__(self, ctx: Any, epochs: Any) -> None:
+    def __init__(self, ctx: Any, epochs: Any, *, contracts: Any = None) -> None:
         self.ctx = ctx
         self.epochs = epochs
+        self.contracts = contracts
+        self._timeout_s = 60.0
 
     def audit_once(self, *, timeout_s: float) -> list[Finding]:
+        self._timeout_s = timeout_s
         self._cas()
         self._lineage()
         self._unsealed_inputs()
+        self._registry_clean()
+        self._egress_roles()
+        self._sink_fields()
         self._git_refs(timeout_s)
         self._images(timeout_s)
+        self._budget_runs()
+        self._epoch_bindings()
         self._drift()
         self._resolutions()
-        self._missing_contract()
+        self._validators()
         return self.findings()
 
     def findings(self, *, state: str | None = None) -> list[Finding]:
@@ -167,9 +175,8 @@ class Reconciler:
     def _images(self, timeout_s: float) -> None:
         snapshot = self.epochs.materialize(self.epochs.current())
         images = []
-        for key, doc in snapshot._docs.items():
-            if not str(key).startswith("Machine:"):
-                continue
+        for key in snapshot.keys("Machine"):
+            doc = snapshot.doc(key)
             image = str(((doc.get("spec") or {}).get("runtime") or {}).get("image") or "")
             if image:
                 images.append(image)
@@ -193,9 +200,9 @@ class Reconciler:
 
     def _drift(self) -> None:
         snapshot = self.epochs.materialize(self.epochs.current())
-        baselines = _baselines(Path(self.epochs.registry))
         seen: set[str] = set()
-        for baseline in baselines:
+        for key in snapshot.keys("Baseline"):
+            baseline = snapshot.doc(key)
             spec = baseline.get("spec") or {}
             station_ref = str(spec.get("station") or "")
             if not station_ref:
@@ -239,13 +246,145 @@ class Reconciler:
                 },
             )
 
-    def _missing_contract(self) -> None:
-        self._record(
-            "I8",
-            "contract-runner",
-            FindingState.WAKE,
-            {"validator": "", "polarity": "", "path": "", "missing": "contract-runner"},
-        )
+    def _contract_runner(self, snapshot: Any) -> Any:
+        if self.contracts is not None:
+            return self.contracts(snapshot)
+        from mao.contract import ContractRunner
+        from mao.runner import Runner
+
+        return ContractRunner(self.ctx, snapshot, Runner(self.ctx, snapshot))
+
+    def _registry_clean(self) -> None:
+        epoch = self.epochs.current()
+        try:
+            snapshot = self.epochs.materialize(epoch)
+        except FactoryError as exc:
+            self._record("I4", epoch, FindingState.WAKE, {"epoch": epoch, "diags": [exc.code]})
+            return
+        errors = [
+            diag.to_json()
+            for diag in getattr(snapshot.result, "diags", [])
+            if getattr(diag, "severity", "") == "error"
+        ]
+        if errors:
+            finding = self._record("I4", epoch, FindingState.WAKE, {"epoch": epoch, "diags": errors})
+            self._wake(finding, "invariant")
+
+    def _egress_roles(self) -> None:
+        snapshot = self.epochs.materialize(self.epochs.current())
+        for key in snapshot.keys("Station"):
+            spec = snapshot.spec(key)
+            role = str(spec.get("role") or "")
+            policy_name = spec.get("policy")
+            if not policy_name:
+                continue
+            try:
+                policy = snapshot.spec(snapshot.key("Policy", policy_name))
+            except FactoryError:
+                continue
+            egress = policy.get("egress") or {}
+            if "publish" in egress and role != "sink":
+                finding = self._record(
+                    "I6", key, FindingState.HELD, {"station": key, "role": role, "tier": "publish"}
+                )
+                self._hold(key, finding.id)
+                self._wake(finding, "invariant")
+            if "ingress" in egress and role != "source":
+                finding = self._record(
+                    "I6", key, FindingState.HELD, {"station": key, "role": role, "tier": "ingress"}
+                )
+                self._hold(key, finding.id)
+                self._wake(finding, "invariant")
+
+    def _sink_fields(self) -> None:
+        snapshot = self.epochs.materialize(self.epochs.current())
+        for key in snapshot.keys("Station"):
+            spec = snapshot.spec(key)
+            if spec.get("role") != "sink":
+                continue
+            missing = [name for name in ("idempotency_key", "verify_receipt") if not spec.get(name)]
+            if not missing:
+                continue
+            finding = self._record("I7", key, FindingState.HELD, {"station": key, "missing": missing[0]})
+            self._hold(key, finding.id)
+
+    def _budget_runs(self) -> None:
+        for row in self.ctx.db.query("SELECT id, spent_usd, budget_cap_usd FROM runs"):
+            cap = row["budget_cap_usd"]
+            if cap is None or float(row["spent_usd"] or 0) <= float(cap):
+                continue
+            finding = self._record(
+                "I10",
+                str(row["id"]),
+                FindingState.WAKE,
+                {"run": str(row["id"]), "spent": float(row["spent_usd"]), "cap": float(cap)},
+            )
+            self._wake(finding, "invariant")
+
+    def _epoch_bindings(self) -> None:
+        known = {str(row["commit"]) for row in self.ctx.db.query('SELECT "commit" FROM epochs')}
+        for row in self.ctx.db.query("SELECT id, epoch FROM runs"):
+            epoch = str(row["epoch"])
+            if epoch in known:
+                continue
+            self._record(
+                "I12",
+                str(row["id"]),
+                FindingState.OPEN,
+                {"commit": epoch, "reason": "run-epoch-missing"},
+            )
+
+    def _validators(self) -> None:
+        snapshot = self.epochs.materialize(self.epochs.current())
+        try:
+            runner = self._contract_runner(snapshot)
+        except FactoryError as exc:
+            finding = self._record(
+                "I8",
+                "contract-runner",
+                FindingState.WAKE,
+                {"validator": "", "polarity": "", "path": "", "missing": "contract-runner", "code": exc.code},
+            )
+            self._wake(finding, "invariant")
+            return
+        for key in snapshot.keys("Type"):
+            spec = snapshot.spec(key)
+            type_id = key.split(":", 1)[1]
+            if "@" in type_id and "." in type_id.rsplit("@", 1)[1]:
+                name, version = type_id.rsplit("@", 1)
+                type_id = f"{name}@{version.split('.', 1)[0]}"
+            for item in spec.get("validators") or []:
+                name = str(item.get("name") or "")
+                try:
+                    result = runner.run_validator(type_id, name, timeout_s=self._timeout_s)
+                except FactoryError as exc:
+                    finding = self._record(
+                        "I8",
+                        f"{type_id}/{name}",
+                        FindingState.WAKE,
+                        {
+                            "validator": name,
+                            "polarity": "",
+                            "path": "",
+                            "missing": "contract-runner",
+                            "code": exc.code,
+                        },
+                    )
+                    self._wake(finding, "invariant")
+                    continue
+                if result.verdict != "pass":
+                    finding = self._record(
+                        "I8",
+                        f"{type_id}/{name}",
+                        FindingState.WAKE,
+                        {
+                            "validator": name,
+                            "code": (result.detail or {}).get("code", ""),
+                            "polarity": "",
+                            "path": "",
+                        },
+                    )
+                    self._wake(finding, "invariant")
 
     def _record(self, invariant: str, subject: str, state: FindingState, detail: dict[str, Any]) -> Finding:
         now = utc_iso(self.ctx.clock.now())

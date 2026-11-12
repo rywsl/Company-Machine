@@ -1,0 +1,1 @@
+ALTER TABLE runs ADD COLUMN sink_mode TEXT NOT NULL DEFAULT 'execute';

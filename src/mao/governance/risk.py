@@ -95,8 +95,8 @@ def _risk_program() -> Program:
 
 
 def _changes(base: Any, candidate: Any) -> list[dict[str, Any]]:
-    base_docs = dict(base._docs)
-    cand_docs = dict(candidate._docs)
+    base_docs = {key: base.doc(key) for key in base.keys()}
+    cand_docs = {key: candidate.doc(key) for key in candidate.keys()}
     grouped_base: dict[tuple[str, str], list[str]] = {}
     for key in base_docs:
         kind, name, _version = _split(key)

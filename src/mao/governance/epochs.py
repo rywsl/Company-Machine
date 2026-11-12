@@ -66,6 +66,7 @@ class EpochStore:
         if dest.exists():
             shutil.rmtree(dest)
         os.replace(part, dest)
+        snapshot = Snapshot.load(dest / "registry", epoch=commit)
         frozen = dest / "resolutions.json"
         if not frozen.is_file():
             payload = [{**dict(item), "origin": "precomputed"} for item in snapshot.result.resolutions]
@@ -208,6 +209,9 @@ class EpochStore:
             f"SELECT id FROM {table} WHERE {column} = ? AND {state_col} NOT IN ({marks})",
             (commit, *terminal),
         )
+
+    def verify_commit(self, commit: str) -> str:
+        return self._verify(commit)
 
     def _verify(self, commit: str) -> str:
         try:

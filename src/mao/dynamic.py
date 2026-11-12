@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import mao.approvals  # noqa: F401
 from mao.base import canonical_json, utc_iso
 from mao.errors import FactoryError
 from mao.runplan import PlanNode, RunPlan, compile_run_plan
@@ -47,6 +46,15 @@ def compile_dynamic(snapshot: Any, line_ref: str) -> RunPlan:
             continue
         nodes.append(_node(step, "station", step, body, snapshot))
     iface = spec.get("interface") or {}
+    inputs: dict[str, str] = {}
+    requires: dict[str, tuple[str, ...]] = {}
+    for name, decl in (iface.get("inputs") or {}).items():
+        if isinstance(decl, dict):
+            inputs[name] = str(decl.get("type", ""))
+            requires[name] = tuple(str(item) for item in decl.get("requires") or [])
+        else:
+            inputs[name] = str(decl)
+            requires[name] = ()
     budget = iface.get("budget") or spec.get("budget") or {}
     cap = budget.get("cap_usd")
     return RunPlan(
@@ -55,8 +63,8 @@ def compile_dynamic(snapshot: Any, line_ref: str) -> RunPlan:
         nodes=tuple(nodes),
         outputs={},
         keep=tuple(),
-        inputs={},
-        input_requires={},
+        inputs=inputs,
+        input_requires=requires,
         budget_cap_usd=None if cap is None else float(cap),
         budget_items=tuple(),
     )

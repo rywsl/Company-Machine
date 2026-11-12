@@ -53,6 +53,13 @@ class Snapshot:
         compiled_cache = _compile_sites(result)
         return cls(root, epoch, result, docs, compiled_cache)
 
+    def keys(self, kind: str | None = None) -> list[str]:
+        found = sorted(self._docs)
+        if kind is None:
+            return found
+        prefix = kind + ":"
+        return [key for key in found if key.startswith(prefix)]
+
     def key(self, kind: str, ref: str) -> str:
         if ":" in ref:
             return ref

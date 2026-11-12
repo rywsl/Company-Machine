@@ -117,11 +117,30 @@ class Scheduler:
                 conn.execute("DELETE FROM schedule_queue WHERE job_id = ?", (job_id,))
         return pumped
 
-    def tick(self) -> dict[str, list[str]]:
+    def admit(self, *, running: Sequence[str]) -> list[str]:
+        del running
+        self._require()
+        epoch = self.snapshot.epoch
+        rows = self.ctx.db.query(
+            "SELECT id FROM jobs WHERE state = 'PENDING' AND epoch = ? ORDER BY id",
+            (epoch,),
+        )
+        chosen = [str(row["id"]) for row in rows]
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            for job_id in chosen:
+                conn.execute(
+                    "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'scheduler.admitted', ?, ?)",
+                    (self.ctx.ids.new("ev"), now, job_id, canonical_json({"job": job_id})),
+                )
+        return chosen
+
+    def tick(self, *, pump: bool = True, route: Any | None = None) -> dict[str, list[str]]:
+        del route
         self._require()
         self._open_breakers()
         cron = self._cron()
-        pumped = self.pump()
+        pumped = self.pump() if pump else []
         return {"expired": [], "cron": cron, "triggered": [], "pumped": pumped, "dead": []}
 
     def wait_change(self, timeout_s: float) -> None:
@@ -248,10 +267,8 @@ class Scheduler:
         if cap == 0:
             return []
         enabled = (self.config or {}).get("cron") is True
-        for key, doc in self.snapshot._docs.items():
-            if not key.startswith("Line:"):
-                continue
-            spec = doc.get("spec") or {}
+        for key in self.snapshot.keys("Line"):
+            spec = self.snapshot.spec(key)
             triggers = spec.get("trigger") or []
             if not any(item.get("on") == "cron" for item in triggers):
                 continue

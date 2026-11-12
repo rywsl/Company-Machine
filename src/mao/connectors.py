@@ -314,8 +314,13 @@ def _inputs_env(snapshot: Any, station_key: str, inputs: Mapping[str, Any]) -> d
         if value is None or value == {} or value == []:
             out[name] = {"id": ""}
             continue
+        declared = (spec.get("inputs") or {}).get(name)
+        type_expr = declared.get("type") if isinstance(declared, dict) else str(declared or "")
+        listed = type_expr.startswith("list<")
         if isinstance(value, str):
             out[name] = {"id": value}
+        elif isinstance(value, (list, tuple)) and not listed and len(value) == 1:
+            out[name] = {"id": str(value[0])}
         elif isinstance(value, (list, tuple)):
             out[name] = (
                 [{"id": str(item)} for item in value] if value and isinstance(value[0], str) else value

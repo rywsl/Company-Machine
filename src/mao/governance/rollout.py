@@ -71,7 +71,9 @@ class EpochRouter:
         self.epochs = epochs
 
     def choose(self, key: str) -> str:
-        rows = self.ctx.db.query("SELECT commit, document FROM changesets WHERE state = 'canary' ORDER BY id")
+        rows = self.ctx.db.query(
+            "SELECT \"commit\", document FROM changesets WHERE state = 'canary' ORDER BY id"
+        )
         active = self.epochs.current()
         if not rows:
             return active
@@ -231,11 +233,9 @@ def _from_verified(pipeline: Any, current: Any) -> Any:
         return _stay(pipeline, current, "reviews")
     if _queued(pipeline):
         return _stay(pipeline, current, "queued")
-    if pipeline.epochs.current() != current.base_epoch and not pipeline.epochs.current().startswith(
-        current.base_epoch
-    ):
+    if pipeline.epochs.current() != current.base_epoch:
         pipeline.epochs.set_pointer("candidate", None, by="governance", reason="stale")
-        return pipeline._reject(current, "CHANGESET_STALE", {"base_epoch": current.base_epoch})
+        return pipeline.reject_changeset(current, "CHANGESET_STALE", {"base_epoch": current.base_epoch})
     pipeline.epochs.set_pointer("candidate", current.commit, by="governance", reason="shadow")
     report = _shadow(pipeline, current)
     rollout = (current.document.get("spec") or {}).get("rollout") or {}
@@ -243,7 +243,7 @@ def _from_verified(pipeline: Any, current: Any) -> Any:
     failed = (not report.ok) or bool(report.regressions) or report.spent_usd > budget
     if failed:
         pipeline.epochs.set_pointer("candidate", None, by="governance", reason="shadow-failed")
-        return pipeline._reject(current, "SHADOW_FAILED", {"regressions": list(report.regressions)})
+        return pipeline.reject_changeset(current, "SHADOW_FAILED", {"regressions": list(report.regressions)})
     return _move(pipeline, current, "shadow", {"ok": True, "runs": report.runs})
 
 
@@ -300,18 +300,18 @@ def _shadow(pipeline: Any, current: Any) -> ShadowReport:
     golden_only = (current.risk_tier == "T1") and "runs" not in (rollout.get("shadow") or {})
     runner = pipeline.shadow
     if runner is None:
-        return ShadowReport(True, 0, 0.0, [])
+        from mao.governance.shadow import LineShadowRunner
+
+        runner = LineShadowRunner(pipeline.ctx)
     candidate = pipeline.epochs.materialize(current.commit)
     active = pipeline.epochs.materialize(pipeline.epochs.current())
     return runner.run(current, candidate=candidate, active=active, rollout=rollout, golden_only=golden_only)
 
 
 def _promote(pipeline: Any, current: Any) -> Any:
-    if pipeline.epochs.current() != current.base_epoch and not str(pipeline.epochs.current()).startswith(
-        current.base_epoch
-    ):
+    if pipeline.epochs.current() != current.base_epoch:
         pipeline.epochs.set_pointer("candidate", None, by="governance", reason="stale")
-        return pipeline._reject(
+        return pipeline.reject_changeset(
             current,
             "CHANGESET_STALE",
             {"base_epoch": current.base_epoch, "active": pipeline.epochs.current()},

@@ -69,6 +69,26 @@ class ChangePipeline:
     ) -> None:
         self.ctx = ctx
         self.epochs = epochs or EpochStore(ctx)
+        if contracts is None:
+
+            def contracts(snap: Any) -> Any:
+                from mao.contract import ContractRunner
+                from mao.runner import Runner
+
+                return ContractRunner(ctx, snap, Runner(ctx, snap))
+
+        if shadow is None:
+            from mao.governance.shadow import LineShadowRunner
+
+            shadow = LineShadowRunner(ctx)
+        if rebuild is None:
+
+            def rebuild(run_id: str, snap: Any) -> str:
+                from mao.runner import Runner
+                from mao.runs import LineRunner
+
+                return LineRunner(ctx, snap, Runner(ctx, snap)).rebuild(run_id, by="governance").id
+
         self.contracts = contracts
         self.shadow = shadow
         self.rebuild = rebuild
@@ -78,7 +98,7 @@ class ChangePipeline:
         self._validate(doc)
         self._freeze()
         self._rate()
-        source = self.epochs._verify(commit)
+        source = self.epochs.verify_commit(commit)
         active = self.epochs.current()
         base = str((doc.get("spec") or {}).get("base_epoch", ""))
         if not (7 <= len(base) <= 40 and active.startswith(base)):
@@ -114,7 +134,9 @@ class ChangePipeline:
         ).strip()
         git(self.epochs.registry, "update-ref", f"refs/changesets/{cs_id}", created, timeout_s=timeout_s)
         now = utc_iso(self.ctx.clock.now())
-        runtime = None if by.startswith("human:") else None
+        runtime = None
+        if not by.startswith("human:"):
+            runtime = self.epochs.materialize(active).key("OperatorRuntime", by)
         with self.ctx.db.tx() as conn:
             conn.execute(
                 """INSERT INTO changesets
@@ -234,16 +256,51 @@ class ChangePipeline:
         current = self.get(cs_id)
         try:
             candidate = self.epochs.materialize(current.commit)
+            missing = [item.to_json() for item in candidate.result.diags if item.code == "E-NO-CONVERTER"]
+            if missing:
+                from mao.foreman import file_conversions
+
+                names = {
+                    str(change.get("name"))
+                    for change in ((current.document.get("spec") or {}).get("changes") or [])
+                    if change.get("kind") == "Line"
+                }
+                scoped = [
+                    item
+                    for item in candidate.result.resolutions
+                    if item.get("status") == "no-converter"
+                    and str(item.get("line", "")).split(":", 1)[-1].split("@", 1)[0] in names
+                ]
+                file_conversions(
+                    self.ctx,
+                    missing,
+                    scoped
+                    or [
+                        item for item in candidate.result.resolutions if item.get("status") == "no-converter"
+                    ],
+                    found_at={"changeset": current.id},
+                )
+                return self.reject_changeset(current, "REGISTRY_INVALID", {"diags": missing})
         except FactoryError as exc:
             if exc.code == "REGISTRY_INVALID":
-                return self._reject(current, "REGISTRY_INVALID", {"diags": exc.detail.get("diags", [])})
+                from mao.foreman import file_conversions
+
+                file_conversions(
+                    self.ctx,
+                    list(exc.detail.get("diags") or []),
+                    list(exc.detail.get("resolutions") or []),
+                    found_at={"changeset": current.id},
+                )
+                return self.reject_changeset(
+                    current, "REGISTRY_INVALID", {"diags": exc.detail.get("diags", [])}
+                )
             raise
         runtime = self._proposer_runtime(current, candidate)
         if isinstance(runtime, str) and runtime.startswith("!"):
-            return self._reject(current, "PROPOSER_UNKNOWN", {"by": current.proposer})
+            return self.reject_changeset(current, "PROPOSER_UNKNOWN", {"by": current.proposer})
         problem = self._immutable(self.epochs.materialize(current.base_epoch), candidate)
         if problem:
-            return self._reject(current, "V3_IMMUTABLE", problem)
+            return self.reject_changeset(current, "V3_IMMUTABLE", problem)
         facts, changes = diff_facts(
             self.epochs.materialize(current.base_epoch),
             candidate,
@@ -251,19 +308,19 @@ class ChangePipeline:
         )
         mismatch = self._mismatch(current.document, changes)
         if mismatch:
-            return self._reject(current, "CHANGESET_MISMATCH", mismatch)
+            return self.reject_changeset(current, "CHANGESET_MISMATCH", mismatch)
         incompatible = self._incompatible(self.epochs.materialize(current.base_epoch), candidate, changes)
         if incompatible:
-            return self._reject(current, "V3_INCOMPATIBLE", incompatible)
+            return self.reject_changeset(current, "V3_INCOMPATIBLE", incompatible)
         try:
             risk = score_risk(facts)
         except FactoryError as exc:
             if exc.code == "RISK_UNSCORED":
-                return self._reject(current, "RISK_UNSCORED", exc.detail)
+                return self.reject_changeset(current, "RISK_UNSCORED", exc.detail)
             raise
         failed = self._v4(candidate, changes)
         if failed:
-            return self._reject(current, failed[0], failed[1])
+            return self.reject_changeset(current, failed[0], failed[1])
         impact = {
             "lines": [],
             "runs": [],
@@ -335,13 +392,15 @@ class ChangePipeline:
             return "!missing"
 
     def _immutable(self, base: Any, candidate: Any) -> dict[str, Any] | None:
-        for key, doc in candidate._docs.items():
-            if key not in base._docs:
+        base_keys = set(base.keys())
+        cand_keys = set(candidate.keys())
+        for key in candidate.keys():
+            if key not in base_keys:
                 continue
-            if _norm(base._docs[key]) != _norm(doc):
+            if _norm(base.doc(key)) != _norm(candidate.doc(key)):
                 return {"key": key, "reason": "modified"}
-        for key in base._docs:
-            if key not in candidate._docs and _split_kind(key) in {
+        for key in base.keys():
+            if key not in cand_keys and _split_kind(key) in {
                 "Type",
                 "Machine",
                 "OperatorRuntime",
@@ -385,26 +444,30 @@ class ChangePipeline:
         return None
 
     def _v4(self, snapshot: Any, changes: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:
-        if self.contracts is None:
-            return None
         runner = self.contracts(snapshot)
         results = []
         names = {item["name"] for item in changes if item["kind"] == "Station"}
+        timeout = float(getattr(self.epochs, "timeout_s", 60) or 60)
         try:
             for item in changes:
+                spec = (item.get("doc") or {}).get("spec") or {}
                 if item["kind"] == "Station" and item["op"] == "modify":
-                    results.append(runner.run_diff(item["key"]))
+                    results.append(runner.run_diff(item["key"], timeout_s=timeout))
+                if item["kind"] == "Station" and spec.get("role") == "converter":
+                    results.append(runner.run_equivalence(item["key"], timeout_s=timeout))
                 if item["kind"] == "Type" and item["op"] in ("add", "minor", "major"):
-                    for validator in ((item.get("doc") or {}).get("spec") or {}).get("validators") or []:
+                    for validator in spec.get("validators") or []:
                         results.append(
-                            runner.run_validator(item["key"].split(":", 1)[1], validator.get("name"))
+                            runner.run_validator(
+                                item["key"].split(":", 1)[1],
+                                validator.get("name"),
+                                timeout_s=timeout,
+                            )
                         )
-            for key, doc in snapshot._docs.items():
-                if not key.startswith("GoldenSet:"):
-                    continue
-                station = str((doc.get("spec") or {}).get("station", ""))
+            for key in snapshot.keys("GoldenSet"):
+                station = str((snapshot.doc(key).get("spec") or {}).get("station", ""))
                 if station.split("@", 1)[0] in names:
-                    results.append(runner.run_golden(key))
+                    results.append(runner.run_golden(key, None, timeout_s=timeout))
         except FactoryError as exc:
             return "V4_ERROR", {"cause": exc.code}
         failed = [result.id for result in results if getattr(result, "verdict", None) != "pass"]
@@ -412,7 +475,7 @@ class ChangePipeline:
             return "V4_FAILED", {"results": failed}
         return None
 
-    def _reject(self, current: ChangeSet, code: str, detail: Mapping[str, Any]) -> ChangeSet:
+    def reject_changeset(self, current: ChangeSet, code: str, detail: Mapping[str, Any]) -> ChangeSet:
         report = {"stage": "verifying", "ok": False, "code": code, "detail": dict(detail)}
         now = utc_iso(self.ctx.clock.now())
         with self.ctx.db.tx() as conn:

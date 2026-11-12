@@ -1,0 +1,5 @@
+CREATE TABLE backend_lock (
+  id   INTEGER PRIMARY KEY CHECK (id = 1),
+  at   TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0
+);

@@ -10,17 +10,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-import mao.approvals  # noqa: F401  # 安装 factory 目录的 mkdir 包装，须在 egress 之后
 from mao.base import canonical_json, digest_file, utc_iso
 from mao.egress import SecretStore
 from mao.errors import FactoryError
 from mao.jobs import JobState
 from mao.sandbox import Mount, SandboxSpec
 from mao.values import bean_value, params_value
-from mrl.expr import compile_expr
-from mrl.stdlib import make_table
-from mrl.types import BOOL, DYN
-from mrl.yamlio import YamlError, load_documents
 
 _COMPUTABLE = {"cost_usd", "gate_reject_rate"}
 
@@ -47,7 +42,6 @@ class ContractRunner:
         self.runner = runner
         self._secrets = SecretStore(ctx.root)
         self._seq = 0
-        self._install_converter()
 
     def run_validator(self, type_id: str, validator: str, *, timeout_s: float) -> ContractResult:
         self._need_timeout(timeout_s, None, type_id)
@@ -91,7 +85,14 @@ class ContractRunner:
             baseline = self._record("Baseline", baseline_key)
             if baseline is None:
                 self._cannot("CONTRACT_NOT_FOUND", f"找不到 Baseline {baseline_key}", subject=baseline_key)
-            self._unknown_metrics(baseline["spec"].get("metrics") or {})
+            missing = self._missing_metric(baseline["spec"].get("metrics") or {})
+            if missing:
+                return self._store(
+                    "golden",
+                    golden_key,
+                    Verdict.FAIL,
+                    {"code": "CONTRACT_METRIC_MISSING", "metric": missing},
+                )
         budget = float(spec["budget_usd"])
         cases: list[dict[str, Any]] = []
         spent = 0.0
@@ -224,13 +225,6 @@ class ContractRunner:
         self._need_timeout(timeout_s, spec, key)
         phases = list(spec.get("phases") or [])
         if "propose" not in phases:
-            if not phases:
-                return self._store(
-                    "sink_dry_run",
-                    key,
-                    Verdict.PASS,
-                    {"approval": None, "receipt": None, "executed_run": False},
-                )
             self._cannot("CONTRACT_SINK_NO_PROPOSE", "phases 不含 propose", station=key)
         job = self.runner.submit(key, dict(inputs), dict(params))
         approval = self._propose_only(key, spec, job)
@@ -299,69 +293,6 @@ class ContractRunner:
         baselines.sort(key=lambda doc: _doc_key("Baseline", doc))
         baseline_key = _doc_key("Baseline", baselines[0]) if baselines else None
         return self.run_golden(_doc_key("GoldenSet", chosen), baseline_key, timeout_s=None)
-
-    def _install_converter(self) -> None:
-        key = "Station:subs-convert@1"
-        if key in self.snapshot._docs:
-            return
-        machine_key = "Machine:toolbox@1"
-        if machine_key not in self.snapshot._docs:
-            return
-        recipes = self.snapshot._docs[machine_key]["spec"].setdefault("recipes", {})
-        recipes.setdefault(
-            "subs-keep",
-            {
-                "inputs": {"note": {"type": "note.text@1"}},
-                "outputs": {"note": {"type": "note.text@1"}},
-                "run": ["publish-copy", "/factory/in/note/note.txt", "/factory/out/note"],
-            },
-        )
-        common = {
-            "role": "converter",
-            "machine": "toolbox@1",
-            "operator": {"runtime": "script@1"},
-            "inputs": {"note": {"type": "note.text@1"}},
-            "outputs": {"note": {"type": "note.text@1", "guarantees": ["non_empty"]}},
-            "limits": {
-                "timeout": "60s",
-                "budget_usd": 1,
-                "retries": {"rejected": 0, "failed": 0, "mode": "fresh"},
-            },
-            "policy": "converter-default@1",
-        }
-        self.snapshot._docs[key] = {
-            "apiVersion": "mao/v1",
-            "kind": "Station",
-            "metadata": {"name": "subs-convert", "version": 1},
-            "spec": {
-                **common,
-                "recipe": "upper",
-                "equivalence": ["dst.facts.chars == src.facts.chars"],
-                "fixtures": {"accept": ["fixtures/note/ok.txt"], "reject": ["fixtures/note/empty.txt"]},
-            },
-        }
-        self.snapshot._docs["Station:subs-convert@0"] = {
-            "apiVersion": "mao/v1",
-            "kind": "Station",
-            "metadata": {"name": "subs-convert", "version": 0},
-            "spec": {
-                **common,
-                "recipe": "subs-keep",
-                "equivalence": ["dst.facts.chars == src.facts.chars"],
-                "fixtures": {"accept": ["fixtures/note/fail.txt"], "reject": []},
-            },
-        }
-        subject = f"{key}/equivalence[0]"
-        if subject not in self.snapshot._compiled:
-            self.snapshot._compiled[subject] = compile_expr(
-                "dst.facts.chars == src.facts.chars",
-                {"src": DYN, "dst": DYN, "params": DYN},
-                make_table(),
-                expect=BOOL,
-            )
-        old_subject = "Station:subs-convert@0/equivalence[0]"
-        if old_subject not in self.snapshot._compiled:
-            self.snapshot._compiled[old_subject] = self.snapshot._compiled[subject]
 
     def _validator(self, type_id: str, name: str) -> dict[str, Any] | None:
         try:
@@ -655,38 +586,12 @@ class ContractRunner:
 
     def _record(self, kind: str, ref: str) -> dict[str, Any] | None:
         key = self.snapshot.key(kind, ref)
-        if key in self.snapshot._docs:
-            return self.snapshot.doc(key)
-        name, version = _name_version(key)
-        for doc in self._scan(kind):
-            meta = doc.get("metadata") or {}
-            if meta.get("name") == name and str(meta.get("version")) == version:
-                return doc
-        builtin = _BUILTIN.get((kind, name, version))
-        return builtin
+        if key not in self.snapshot.keys(kind):
+            return None
+        return self.snapshot.doc(key)
 
     def _all_records(self, kind: str) -> list[dict[str, Any]]:
-        found = [doc for key, doc in self.snapshot._docs.items() if key.startswith(kind + ":")]
-        found.extend(self._scan(kind))
-        found.extend(doc for (doc_kind, _name, _version), doc in _BUILTIN.items() if doc_kind == kind)
-        return found
-
-    def _scan(self, kind: str) -> list[dict[str, Any]]:
-        root = Path(self.snapshot.root)
-        found: list[dict[str, Any]] = []
-        if not root.is_dir():
-            return found
-        for path in sorted(root.rglob("*.yaml")):
-            try:
-                text = path.read_text(encoding="utf-8")
-                docs = load_documents(text)
-            except (OSError, YamlError, UnicodeError):
-                continue
-            for doc in docs:
-                data = doc.data
-                if isinstance(data, dict) and data.get("kind") == kind:
-                    found.append(data)
-        return found
+        return [self.snapshot.doc(key) for key in self.snapshot.keys(kind)]
 
     def _station(self, ref: str) -> tuple[str, dict[str, Any]]:
         key = self.snapshot.key("Station", ref)
@@ -700,9 +605,8 @@ class ContractRunner:
         name = key.split(":", 1)[1].rsplit("@", 1)[0]
         current = _version_tuple(key.rsplit("@", 1)[1])
         best: tuple[tuple[int, ...], str] | None = None
-        for doc_key, doc in self.snapshot._docs.items():
-            if not doc_key.startswith("Station:"):
-                continue
+        for doc_key in self.snapshot.keys("Station"):
+            doc = self.snapshot.doc(doc_key)
             meta = doc.get("metadata") or {}
             if meta.get("name") != name:
                 continue
@@ -723,10 +627,17 @@ class ContractRunner:
                 return [str(path) for path in (item.get("fixtures") or {}).get("reject") or []]
         self._cannot("CONTRACT_NOT_FOUND", f"找不到 validator {validator}", subject=validator)
 
-    def _unknown_metrics(self, metrics: Mapping[str, Any]) -> None:
-        for name, body in metrics.items():
+    def _missing_metric(self, metrics: Mapping[str, Any]) -> str | None:
+        for name in metrics:
             if name not in _COMPUTABLE:
-                self._cannot("CONTRACT_METRIC_MISSING", f"不会计算指标 {name}", metric=name)
+                return str(name)
+        return None
+
+    def _unknown_metrics(self, metrics: Mapping[str, Any]) -> None:
+        missing = self._missing_metric(metrics)
+        if missing:
+            self._cannot("CONTRACT_METRIC_MISSING", f"不会计算指标 {missing}", metric=missing)
+        for name, body in metrics.items():
             if not isinstance(body, Mapping):
                 self._cannot("CONTRACT_METRIC_UNKNOWN", f"指标 {name} 不是对象", metric=name)
             for key, value in body.items():
@@ -871,29 +782,3 @@ def _row_result(row: Mapping[str, Any]) -> ContractResult:
         json.loads(row["detail"]),
         str(row["at"]),
     )
-
-
-_BUILTIN: dict[tuple[str, str, str], dict[str, Any]] = {
-    ("GoldenSet", "golden", "1"): {
-        "kind": "GoldenSet",
-        "metadata": {"name": "golden", "version": 1},
-        "spec": {
-            "station": "upper@1",
-            "budget_usd": 1.0,
-            "cases": [{"name": "ok", "inputs": {"note": "fixtures/note/ok.txt"}}],
-        },
-    },
-    ("GoldenSet", "golden-no-budget", "1"): {
-        "kind": "GoldenSet",
-        "metadata": {"name": "golden-no-budget", "version": 1},
-        "spec": {
-            "station": "upper@1",
-            "cases": [{"name": "ok", "inputs": {"note": "fixtures/note/ok.txt"}}],
-        },
-    },
-    ("Baseline", "baseline-judge", "1"): {
-        "kind": "Baseline",
-        "metadata": {"name": "baseline-judge", "version": 1},
-        "spec": {"station": "upper@1", "window": "7d", "metrics": {"judge_score": {"max": 1.0}}},
-    },
-}

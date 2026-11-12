@@ -7,24 +7,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
 
 from mao.base import canonical_json, parse_duration, utc_iso
 from mao.errors import FactoryError
 from mao.values import approval_env
 from mrl.errors import EvalError
-
-_mkdir = Path.mkdir
-
-
-def _mkdir_parents(self: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False) -> None:
-    if self.name == "factory" and not self.parent.exists():
-        self.parent.mkdir(parents=True, exist_ok=True)
-    _mkdir(self, mode, parents, exist_ok)
-
-
-Path.mkdir = _mkdir_parents  # type: ignore[method-assign]
 
 
 class ApprovalStatus(StrEnum):
@@ -115,7 +103,7 @@ class Approvals:
                 status=current.status.value,
                 op="decide",
             )
-        if current.route == "review" or by.startswith("runtime"):
+        if current.route == "review":
             return self._vote(current, decision, by, note)
         return self._settle(current, decision, by, note)
 
@@ -209,14 +197,6 @@ class Approvals:
                 )
         self._ensure_job(job_id, station_key)
         route, note, auto = self._route(station_key, phase, rule, payload, inputs, params)
-        if (
-            job_id == "j-0008"
-            and phase == ApprovalPhase.PROPOSE
-            and (spec.get("approval") or {}).get("timeout")
-            and self._quorum() is None
-            and not auto
-        ):
-            raise FactoryError("REVIEW_QUORUM_UNSET", "复核法定人数没有设置", station=station_key)
         if route == "review" and self._quorum() is None:
             self._fail_job(job_id, "REVIEW_QUORUM_UNSET", "")
             raise FactoryError("REVIEW_QUORUM_UNSET", "复核法定人数没有设置", station=station_key)
@@ -350,7 +330,8 @@ class Approvals:
                 (status.value, decision, by, by, note, now, current.id),
             )
         if decision == "deny" and current.phase == ApprovalPhase.PROPOSE and by != "timeout":
-            self._fail_job(current.job_id, "APPROVAL_DENIED", current.id)
+            code = "APPROVAL_REVIEW_SPLIT" if current.route == "review" else "APPROVAL_DENIED"
+            self._fail_job(current.job_id, code, current.id)
         return self.get(current.id)
 
     def _deadline(self, spec: Mapping[str, Any]) -> str | None:
