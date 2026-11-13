@@ -11,7 +11,7 @@ M0 结构编译 ──▶ M1 单工位跑通 ──▶ M2 产线与外部世界 
 M7 运维与生产化 ◀── M6 真实接入 ◀── M5 自治闭环（含 M1–M4 纠偏） ◀──────────────────┘
    │
    ▼
-M8 交付审查纠偏 ──▶ M9 闭环审查纠偏
+M8 交付审查纠偏 ──▶ M9 闭环审查纠偏 ──▶ M10 接线审查纠偏
 ```
 
 每个里程碑结束时，系统都处于可以使用、可以交接的状态，而不是半成品。
@@ -250,6 +250,18 @@ M1-01 基础设施 ──┬─▶ M1-02 快照与求值环境 ──┐
 **规范**：`spec/system/closure.md`；审查清单 `plan/review-closure.md`。
 
 **任务与退出条件**：见 `plan/tasks.yaml` 中的 M9-01 至 M9-04 和 `plan/gates.yaml` 中的阶段门 M9（继承 M8 的全部检查）。
+
+---
+
+## M10 接线审查纠偏
+
+**目标**：阶段门 M9 通过之后按文档演练产线时发现（`plan/review-wiring.md`），Sink 回执只被占用、从不发布和核验，`connectors.verify` 是桩；`factoryctl receipt`、`factory receipt`、`factory source run`、`factory run` 缺失；生产路径的产线运行器不带缓存；几处 `Runner` 没有网关。M10 把这些接上，并让运行器只在一处装配。
+
+**范围**：Sink 的取回执、发布、核验、结算与 `SINK_OUTCOME_UNKNOWN`；`factoryctl receipt`；回执、Source、单工位运行三组命令；`open_line_runner` 与构造点收敛。
+
+**规范**：`spec/system/wiring.md`；审查清单 `plan/review-wiring.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M10-01 至 M10-03 和 `plan/gates.yaml` 中的阶段门 M10（继承 M9 的全部检查）。
 
 ---
 

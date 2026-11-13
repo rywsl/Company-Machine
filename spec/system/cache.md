@@ -3,6 +3,7 @@
 > 规范性文档，M2。模块：`mao.cache`。
 > 依据：架构文档 6.8（缓存键）、9.4（转换的实例级命中）、9.6（转换升级后产生新的缓存键）。
 > 跨组件约定见 `README.md`；run 的推进见 `lines.md`。
+> 生产路径的接线（`open_line_runner` 带 `JobCache`）与 `factory run` 的参数和输出见 `wiring.md`（M10），冲突时以 `wiring.md` 为准。
 
 ---
 

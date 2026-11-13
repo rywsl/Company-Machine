@@ -1250,3 +1250,69 @@ tasks:
       - *doccheck
       - id: lock
         run: uv run python tools/harness.py lock --verify
+  - id: M10-01
+    milestone: M10
+    title: 接线：Sink 在生产路径上取得、发布并核验回执；factoryctl receipt
+    card: plan/tasks/M10-01.md
+    deps: [M9-04]
+    spec: [spec/system/wiring.md, spec/system/connectors.md, spec/system/cache.md, plan/review-wiring.md]
+    paths:
+      - src/mao/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m10/test_m10_01_sink_receipts.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 10
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m10/test_m10_02_commands.py --ignore=tests/acceptance/m10/test_m10_03_wiring.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 3600
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M10-02
+    milestone: M10
+    title: 接线：factory receipt、factory source run、factory run
+    card: plan/tasks/M10-02.md
+    deps: [M10-01]
+    spec: [spec/system/wiring.md, spec/system/connectors.md, spec/system/cache.md, plan/review-wiring.md]
+    paths:
+      - src/mao/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m10/test_m10_02_commands.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m10/test_m10_03_wiring.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 3600
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M10-03
+    milestone: M10
+    title: 接线：只经 open_runner / open_line_runner 构造；生产路径带缓存
+    card: plan/tasks/M10-03.md
+    deps: [M10-02]
+    spec: [spec/system/wiring.md, spec/system/connectors.md, spec/system/cache.md, plan/review-wiring.md]
+    paths:
+      - src/mao/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m10/test_m10_03_wiring.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 3600
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify

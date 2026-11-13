@@ -4,6 +4,7 @@
 > 依据：架构文档 7.4（V3）、8.3–8.5、9.5、10.1、10.4–10.6、11.1–11.4、A.9；README D4、D10、D11。
 > 风险规则：`spec/mrl/governance/risk.mrl`（L0，受保护，只有人能改）。
 > 跨组件约定见 `README.md`。厂长操作面见 `foreman.md`。审计与调和见 `reconciler.md`。
+> `rebuild`、`contracts` 的缺省构造改用 `open_line_runner` / `open_runner`，见 `wiring.md` 5.3（M10）。
 
 ---
 

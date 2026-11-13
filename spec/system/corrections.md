@@ -3,6 +3,7 @@
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M5-01**。
 > 偏移清单与来龙去脉见 `plan/drift.md`（D-01 至 D-24）。本文件只写纠偏后**必须成立**的接口与行为，以及验收测试。
 > 各组件规范已经同步修改的部分（`egress.md`、`governance.md`、`reconciler.md`、`snapshot.md`、README 4.2），以那里为准；本文件不重复它们的全文。
+> 影子运行与治理流水线缺省值中的 `Runner(...)` / `LineRunner(...)` 改用 `open_runner` / `open_line_runner`，见 `wiring.md` 5.3（M10）。
 
 ---
 

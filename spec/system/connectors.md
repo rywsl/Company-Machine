@@ -3,6 +3,7 @@
 > 规范性文档，M2。模块：`mao.connectors`（幂等键、回执、核验、Source 的来源证明）。
 > 依据：架构文档 5.4（Source 与 Sink 的连接机制）、6.8（Sink 幂等）、7.6（回执核验）、12.2（权限矩阵）、12.3（I3、I6、I7）。
 > 跨组件约定见 `README.md`。
+> Sink 回执在生产路径上的取得、发布与核验，`factoryctl receipt`、`factory receipt …`、`factory source run`，以及对 5.3 的补充见 `wiring.md`（M10），冲突时以 `wiring.md` 为准。
 
 ---
 

@@ -3,6 +3,7 @@
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M1-08**。
 > 模块：`mao.jobs`、`mao.runner`。迁移：`src/mao/migrations/002_jobs.sql`。
 > 依据：README D4、D9、D10、D12、D14、第 4.7–4.9 节、第 5 节。架构文档 6.5 的状态名已经定了。
+> 状态表 `GATING` 行增加 `DEAD`，只用于 Sink 的回执核验，见 `wiring.md` 5.1（M10）。
 
 ---
 

@@ -3,6 +3,7 @@
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M5-02**。
 > M2–M4 各组件规范的“接口”章都列了命令行，实现只做了 `backend migrate`（`plan/drift.md` D-19）。厂长、人和守护进程都靠这些命令操作工厂，所以必须补齐。
 > 每条命令的参数与语义**以所在组件规范为准**。本文件只规定：命令清单、全局选项、快照的选择、JSON 输出的形状、退出码的映射和代码组织。
+> M10 增加 `factory receipt`、`factory source run`、`factory run` 三组命令，见 `wiring.md` 5.2。
 
 ---
 
