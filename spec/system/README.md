@@ -47,6 +47,7 @@
 | `instances.md` | 机器的实例模式（`once`、`pooled`、`resident`）、主进程、租借与 `reset`、调和与恢复、主动产出 `emit`（对应 `plan/design-resident.md`） | `mao.instances`、`mao.sandbox`、`mao.runner` | M12 | M12-01 至 M12-04 |
 | `ingress.md` | 入站网关：路由、认证、投递到 Bean 或常驻实例（M13 起也投给 Agent） | `mao.ingress` | M12 | M12-05 |
 | `agents.md` | 常驻 Agent：`Agent` kind、邮箱与订阅、续接对话的轮次、预算、上下文轮换、厂长常驻模式 | `mao.agents` | M13 | M13-01 至 M13-05 |
+| `admit.md` | 工位的跨端口来料约束（`admit`）：表达式位置、`W-ADMIT-META`、来料检验时求值（对应 `plan/design-admit.md`） | `mrl.factory`、`mao.gate`、`mao.runner` | M14 | M14-01、M14-02 |
 
 每份组件规范都必须按第 7 节的模板组织。
 

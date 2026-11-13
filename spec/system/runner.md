@@ -245,7 +245,7 @@ PENDING → PROVISIONING → RUNNING ⇄ AWAITING_APPROVAL
 
 1. `station_key = snapshot.key("Station", station_ref)`。快照不是当前 `Runner` 持有的那个：编程错误（调用方保证同一个 `Snapshot`）。
 2. 规范化输入：每个端口的值收成 `list[str]`，保持顺序。空字符串的 id：`INTAKE_REJECTED`。
-3. **在事务外**调用 `Gate.check_inputs(station_key, inputs)`。它检查存在、已封存、类型兼容、`requires`。失败抛 `INTAKE_REJECTED`，本方法不捕获、不插行。
+3. **在事务外**调用 `Gate.check_inputs(station_key, inputs, params)`（M14 起传入未规范化的 `params`，见 `admit.md` 3.3）。它检查存在、已封存、类型兼容、`requires`，以及工位的 `admit`。失败抛 `INTAKE_REJECTED`，本方法不捕获、不插行。
 4. `params = params_value(...)`。失败不插行。
 5. 一个事务里：插入 `jobs`（`state=PENDING`，`attempt=1`，`outputs={}`，`cost_usd=0`，`error=null`），写 `job.created`。`id = ids.new("j")`，时间用 `clock`。
 6. 返回 `load_job`。

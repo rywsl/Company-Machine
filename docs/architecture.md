@@ -889,6 +889,7 @@ $ factory check lines/explainer-multilang.yaml
 ### 7.6 V5 运行时检验
 
 - **来料检验**：job 开始前，确认每个输入 Bean 都已 sealed、类型兼容，并且满足本工位的 `requires`（用 CEL 实际计算）。Source 摄入的外部物料同样要过检验。
+- **跨端口约束（M14）**：工位还可以写 `admit`，约束几个输入之间的关系，例如固件的目标车型必须等于这台车的车型。它在全部端口通过之后、建 job 之前求值，不成立就拒收（`spec/system/admit.md`、`plan/design-admit.md`）。
 - **出厂检验**：见 6.7。
 - **回执核验**：Sink 提交后，核实结果确实存在，例如 S3 对象存在且 hash 与 Bean 一致、Git 提交可见、发布页面可以访问。核验结果写入回执记录。
 

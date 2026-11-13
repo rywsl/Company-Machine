@@ -1,0 +1,44 @@
+suite: factory.admit
+kind: factory
+base: example
+description: 工位 admit：跨端口来料约束的表达式位置、W-ADMIT-META、没有输入端口的工位（spec/system/admit.md）。
+cases:
+  - id: admit-clean
+    description: admit 可以同时引用多个输入端口的实测 facts
+    patch:
+      - {file: stations/dub.yaml, set: {spec.admit: ["inputs.subtitle.facts.last_cue_end_s <= inputs.video.facts.duration_s + 1.0"]}}
+    expect: {clean: true}
+  - id: admit-reads-params
+    patch:
+      - {file: stations/dub.yaml, set: {spec.admit: ["params.target_language != ''"]}}
+    expect: {clean: true}
+  - id: admit-typo
+    patch:
+      - {file: stations/dub.yaml, set: {spec.admit: ["inputs.subtitle.facts.last_cue <= inputs.video.facts.duration_s"]}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Station:dub@2/admit[0]", message: MRL-NO-FIELD}]
+  - id: admit-unknown-port
+    patch:
+      - {file: stations/dub.yaml, set: {spec.admit: ["inputs.audio.facts.duration_s > 0.0"]}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Station:dub@2/admit[0]", message: MRL-NO-FIELD}]
+  - id: admit-not-bool
+    patch:
+      - {file: stations/dub.yaml, set: {spec.admit: ["inputs.video.facts.duration_s"]}}
+    expect:
+      codes: [E-EXPR]
+      diags: [{code: E-EXPR, subject: "Station:dub@2/admit[0]"}]
+  - id: admit-on-meta-warns
+    patch:
+      - {file: stations/dub.yaml, set: {spec.admit: ["has(inputs.video.meta.language) && inputs.video.meta.language == params.target_language"]}}
+    expect:
+      codes: [W-ADMIT-META]
+      diags: [{code: W-ADMIT-META, severity: warning, subject: "Station:dub@2/admit[0]"}]
+  - id: admit-without-inputs
+    patch:
+      - {file: stations/intake-brief.yaml, set: {spec.admit: ["true"]}}
+    expect:
+      codes: [E-PORT]
+      diags: [{code: E-PORT, subject: "Station:intake-brief@1/admit", message: "没有输入端口的工位不能写 admit"}]
