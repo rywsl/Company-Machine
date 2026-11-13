@@ -3,6 +3,7 @@
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M10-01 至 M10-03**。
 > 阶段门 M9 通过之后，按文档演练实际运行产线时发现（`plan/review-wiring.md`）：Sink 的回执在生产路径上只被占用、从不发布和核验，`connectors.verify` 是永远返回通过的桩；`factoryctl receipt`、`factory receipt …`、`factory source run`、`factory run` 没有实现；生产路径上没有一处产线运行器带缓存；几处 `Runner` 没有装网关。本文件规定这些能力怎样接上，并补上 `connectors.md`、`cache.md`、`commands.md`、`governance.md`、`corrections.md`、`closure.md` 写错或漏写的部分。
 > 本文件与上述规范冲突时，以本文件为准；其余以原文为准。
+> 回执核验沙箱注入秘密、登记 `check` 出网主体、使用机器的沙箱资源，见 `capabilities.md` 5.5、5.6（M11）。
 
 ---
 

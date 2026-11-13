@@ -4,6 +4,7 @@
 > 模块：`mao.jobs`、`mao.runner`。迁移：`src/mao/migrations/002_jobs.sql`。
 > 依据：README D4、D9、D10、D12、D14、第 4.7–4.9 节、第 5 节。架构文档 6.5 的状态名已经定了。
 > 状态表 `GATING` 行增加 `DEAD`，只用于 Sink 的回执核验，见 `wiring.md` 5.1（M10）。
+> 审批接线见 `delegation.md` 5.9；出网与秘密的静态拒绝作废、每个 attempt 的出网令牌与沙箱资源见 `capabilities.md`；ctl op `ask`、`handoff`、`egress` 见 `delegation.md`、`inbox.md`、`capabilities.md`（M11），冲突时以它们为准。
 
 ---
 
@@ -262,8 +263,8 @@ PENDING → PROVISIONING → RUNNING ⇄ AWAITING_APPROVAL
 | `phases` 存在且不等于 `["execute"]` | `PHASE_UNSUPPORTED` |
 | 机器 `form` 不是 `tool` 或 `workspace` | `FORM_UNSUPPORTED`（与 `connectors.md` 同一个码；detail 含 `station`、`machine`、`form`） |
 | 机器 runtime 有 `compose` 且没有 `image` | `COMPOSE_UNSUPPORTED` |
-| 策略 `egress` 的键集合不是 `{"none"}` | `EGRESS_UNSUPPORTED` |
-| 策略 `secrets` 是非空列表，或是 `from-machine` 且机器 `needs.secrets` 非空 | `SECRETS_UNSUPPORTED` |
+| 策略 `egress` 的键集合不是 `{"none"}` | `EGRESS_UNSUPPORTED`（M11 起作废，见 `capabilities.md` 5.0） |
+| 策略 `secrets` 是非空列表，或是 `from-machine` 且机器 `needs.secrets` 非空 | `SECRETS_UNSUPPORTED`（M11 起作废，见 `capabilities.md` 5.0） |
 
 `gate.judge` 存在时不报错，也不运行。M2 再接。
 
@@ -311,7 +312,7 @@ handler 只处理 `check` 和 `approval`。其他 `op`：返回 `ok: false`，`e
 
 **check**：把 `args.path` 映射到宿主路径（按沙箱 mount 反查），复制到 `tmp/check/<port>/`，调用 `Gate.inspect` 只作为预览。预览**不**封存、不改变 job 状态。返回 `ok: true`，`result` 为 `{"verdict", "feedback"}`。设施故障时 `verdict` 为 `error`。M1 的预览允许和正式检验一样调用 `inspect`；正式检验在 5.7 再做一次。不要把预览的候选 Bean 留在仓库里当输入。若 `inspect` 会 `warehouse.add`，预览用的 Bean 保持未封存，且不写进 `job.outputs`。
 
-**approval**：
+**approval**（M11 起由 `delegation.md` 5.9 取代：经 `Approvals.open_request`，响应用 `approvals.md` 4.3 的格式）：
 
 1. 按 `request_id` 查找。没有则插入 `pending` 行，`id = ids.new("a")`，`phase=in_run`，`kind/summary/cost_usd` 来自 args。并把 job 改为 `AWAITING_APPROVAL`（若当前是 `RUNNING`）。
 2. 读工位 `approval.in_run`。没有这条规则：立刻 `denied`，响应 `APPROVAL_DENIED`，job 回到 `RUNNING`。

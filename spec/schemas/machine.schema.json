@@ -48,7 +48,20 @@
             "egress": {},
             "budget_knobs": {"type": "array"},
             "config_render": {},
-            "rate_limits": {}
+            "rate_limits": {},
+            "secret_checks": {
+              "type": "object",
+              "propertyNames": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+              "additionalProperties": {
+                "type": "object",
+                "required": ["run", "timeout_s"],
+                "additionalProperties": false,
+                "properties": {
+                  "run": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                  "timeout_s": {"type": "number", "exclusiveMinimum": 0}
+                }
+              }
+            }
           }
         },
         "recipes": {

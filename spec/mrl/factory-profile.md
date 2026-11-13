@@ -107,6 +107,7 @@ diag(code, subject, message)  ◀── 嵌入表达式的静态检查（第 4 �
 | `Station:K/machine`、`/recipe`、`/operator`、`/policy`、`/limits`、`/params.X` | 对应字段 |
 | `Station:K/converts`、`/equivalence`、`/equivalence[i]`、`/fixtures` | converter 字段 |
 | `Station:K/idempotency_key`、`/approval.propose`、`/approval.in_run`、`/gate.judge` | 对应字段 |
+| `Station:K/monitors.<name>`（M11） | `spec.monitors.<name>.when` |
 | `Type:K/extends`、`/fields.F`、`/facts.F`、`/properties.P`、`/always`、`/validators.V` | 类型字段 |
 | `Machine:K/source`、`/recipes.R.<路径>` | 机器字段与配方模板 |
 | `OperatorRuntime:K/invoke.argv[i]`、`/env.NAME` | 运行时模板 |
@@ -299,6 +300,7 @@ Spec 中的每一处嵌入表达式或模板都在规定的类型环境下编译
 | `equivalence`（converter） | `src`：`converts.from` 的 Bean；`dst`：`converts.to` 的 Bean；`params` | `bool` |
 | `approval`，phase = propose | `proposal`：`{summary: string, cost_estimate_usd: num, time_estimate_s: num}`；`inputs`；`params` | `bool` |
 | `approval`，phase = in_run | `request`：`{kind: string, summary: string, cost_usd: num}`；`inputs`；`params` | `bool` |
+| `monitor`（M11，`capabilities.md` 5.4） | 与 `approval`、phase = in_run 相同 | `bool` |
 | `idempotency`（Sink 的幂等键，模板） | `inputs`；`params`；`run` | 模板 |
 | `step-param`（步骤参数中的模板） | `run`；`inputs`：产线接口输入组成的记录；map 的 `as` 名字（见下） | 模板 |
 | `switch`（`cases[i].when`） | `bean`：被观察来源的 Bean | `bool` |

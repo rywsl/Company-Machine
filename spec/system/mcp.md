@@ -3,6 +3,7 @@
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M5-05**。
 > `foreman.md` 3.6 要求 `factory mcp`，实现没有做（`plan/drift.md` D-20）。
 > 原文的方法名（`foreman.get` 等）也不是 MCP 协议，Claude Code、Codex 这类客户端连不上，这是设计错误。本文件取代 `foreman.md` 3.6 中关于 `factory mcp` 的那一段，其余命令行不变。
+> 厂长新增 `approval_get`、`approval_decide`、`approval_escalate`（`delegation.md` 3.3）与 `escalate`、`inbox_get`、`inbox_list`、`secret_request`、`secret_verify`（`inbox.md` 3.5），M11。
 
 ---
 

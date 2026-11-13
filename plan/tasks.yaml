@@ -1316,3 +1316,210 @@ tasks:
       - *doccheck
       - id: lock
         run: uv run python tools/harness.py lock --verify
+  - id: M11-01
+    milestone: M11
+    title: 委托与能力：人工收件箱、通知钩子、控制台写入
+    card: plan/tasks/M11-01.md
+    deps: [M10-03]
+    spec: [spec/system/inbox.md, spec/system/console.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_01_inbox.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m11/test_m11_02_approvals.py --ignore=tests/acceptance/m11/test_m11_03_signoff.py --ignore=tests/acceptance/m11/test_m11_04_egress.py --ignore=tests/acceptance/m11/test_m11_05_secrets.py --ignore=tests/acceptance/m11/test_m11_06_handoff.py --ignore=tests/acceptance/m11/test_m11_07_monitors.py --ignore=tests/acceptance/m11/test_m11_08_sandbox.py --ignore=tests/acceptance/m11/test_m11_09_onboarding.py --deselect tests/acceptance/m8/test_m8_01_hardening.py::test_egress_denials
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M11-02
+    milestone: M11
+    title: 委托与能力：审批委托：bypass、厂长与人的路由、定向申请 factoryctl ask
+    card: plan/tasks/M11-02.md
+    deps: [M11-01]
+    spec: [spec/system/delegation.md, spec/system/approvals.md, spec/system/runner.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_02_approvals.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m11/test_m11_03_signoff.py --ignore=tests/acceptance/m11/test_m11_04_egress.py --ignore=tests/acceptance/m11/test_m11_05_secrets.py --ignore=tests/acceptance/m11/test_m11_06_handoff.py --ignore=tests/acceptance/m11/test_m11_07_monitors.py --ignore=tests/acceptance/m11/test_m11_08_sandbox.py --ignore=tests/acceptance/m11/test_m11_09_onboarding.py --deselect tests/acceptance/m8/test_m8_01_hardening.py::test_egress_denials
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M11-03
+    milestone: M11
+    title: 委托与能力：ChangeSet 签核、只在 review 方式开复核票、新产线路由到候选
+    card: plan/tasks/M11-03.md
+    deps: [M11-02]
+    spec: [spec/system/delegation.md, spec/system/governance.md, spec/system/daemon.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_03_signoff.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m11/test_m11_04_egress.py --ignore=tests/acceptance/m11/test_m11_05_secrets.py --ignore=tests/acceptance/m11/test_m11_06_handoff.py --ignore=tests/acceptance/m11/test_m11_07_monitors.py --ignore=tests/acceptance/m11/test_m11_08_sandbox.py --ignore=tests/acceptance/m11/test_m11_09_onboarding.py --deselect tests/acceptance/m8/test_m8_01_hardening.py::test_egress_denials
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M11-04
+    milestone: M11
+    title: 委托与能力：出网：主体令牌、407、通配域名、按需放行、核验沙箱的秘密与代理
+    card: plan/tasks/M11-04.md
+    deps: [M11-03]
+    spec: [spec/system/capabilities.md, spec/system/egress.md, spec/system/wiring.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_04_egress.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m11/test_m11_05_secrets.py --ignore=tests/acceptance/m11/test_m11_06_handoff.py --ignore=tests/acceptance/m11/test_m11_07_monitors.py --ignore=tests/acceptance/m11/test_m11_08_sandbox.py --ignore=tests/acceptance/m11/test_m11_09_onboarding.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M11-05
+    milestone: M11
+    title: 委托与能力：秘密申请：人填值、先核验后保存、secret set/verify
+    card: plan/tasks/M11-05.md
+    deps: [M11-04]
+    spec: [spec/system/inbox.md, spec/system/capabilities.md, spec/system/egress.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_05_secrets.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m11/test_m11_06_handoff.py --ignore=tests/acceptance/m11/test_m11_07_monitors.py --ignore=tests/acceptance/m11/test_m11_08_sandbox.py --ignore=tests/acceptance/m11/test_m11_09_onboarding.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M11-06
+    milestone: M11
+    title: 委托与能力：人工协助：factoryctl handoff、截图、点击回答
+    card: plan/tasks/M11-06.md
+    deps: [M11-05]
+    spec: [spec/system/inbox.md, spec/system/factoryctl.md, spec/system/console.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_06_handoff.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m11/test_m11_07_monitors.py --ignore=tests/acceptance/m11/test_m11_08_sandbox.py --ignore=tests/acceptance/m11/test_m11_09_onboarding.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M11-07
+    milestone: M11
+    title: 委托与能力：工位监控规则：出网命中后挂起、拒绝或唤醒厂长
+    card: plan/tasks/M11-07.md
+    deps: [M11-06]
+    spec: [spec/system/capabilities.md, spec/mrl/factory-profile.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_07_monitors.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m11/test_m11_08_sandbox.py --ignore=tests/acceptance/m11/test_m11_09_onboarding.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M11-08
+    milestone: M11
+    title: 委托与能力：沙箱资源与镜像构建网络
+    card: plan/tasks/M11-08.md
+    deps: [M11-07]
+    spec: [spec/system/capabilities.md, spec/system/sandbox.md, spec/system/images.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_08_sandbox.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 3
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m11/test_m11_09_onboarding.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M11-09
+    milestone: M11
+    title: 委托与能力：端到端：bypass 下厂长接入一条发布产线
+    card: plan/tasks/M11-09.md
+    deps: [M11-08]
+    spec: [spec/system/delegation.md, spec/system/inbox.md, spec/system/capabilities.md, plan/design-delegation.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m11/test_m11_09_onboarding.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify

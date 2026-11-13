@@ -143,7 +143,8 @@ def test_egress_denials(tmp_path: Path) -> None:
         assert (status, json.loads(body)) == (403, {"code": "EGRESS_DENIED"})
         assert b"denied.example.invalid" not in body and b"secret-path" not in body
         status, body = _via_proxy(port, "GET", url, None)
-        assert (status, json.loads(body)) == (403, {"code": "EGRESS_JOB_INVALID"})
+        # M11（capabilities.md 5.1）：不带任何身份的请求回 407，要求代理认证
+        assert (status, json.loads(body)) == (407, {"code": "EGRESS_AUTH_REQUIRED"})
         status, body = _via_proxy(port, "GET", url, "j-done")
         assert (status, json.loads(body)) == (403, {"code": "EGRESS_JOB_INVALID"})
         status, body = _via_proxy(port, "CONNECT", "127.0.0.1:443", "j-run")

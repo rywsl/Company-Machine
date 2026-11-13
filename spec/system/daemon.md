@@ -6,6 +6,7 @@
 > - `conversion`、`dead-letter`、`review` 三类唤醒票没有生产者（D-24）。
 >
 > 本文件定义一个确定性的主循环。它不是 agent，不调用模型（D10）。
+> 信号泵只在签核方式为 `review` 时开复核唤醒票，见 `delegation.md` 5.7（M11）。
 
 ---
 

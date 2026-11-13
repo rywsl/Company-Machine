@@ -19,7 +19,9 @@ from tests.acceptance.m3.gov_world import open_world  # noqa: E402
 TOKEN = "t" * 40
 HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+        # M11（inbox.md 5.12）：截图需要 img-src 'self'
+        "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; "
+        "frame-ancestors 'none'; base-uri 'none'"
     ),
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",

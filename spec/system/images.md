@@ -2,6 +2,7 @@
 
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M6-02**。
 > 架构 11 节把“接入新产品（上游常常不提供 Docker，需要自己写 Dockerfile）”列为厂长的职责。但厂长在沙箱里，没有 docker.sock（D11），Spec 又要求镜像按 digest 固定。M1–M5 里没有任何路径能把厂长写的 Dockerfile 变成一个可以写进 Spec 的引用。本文件补上这条路径。
+> `images.network` 的缺省值改为 `"default"`，见 `capabilities.md` 5.7（M11）。
 
 ---
 

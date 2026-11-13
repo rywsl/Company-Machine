@@ -4,6 +4,7 @@
 > 依据：架构文档 9.5、11.1、11.5、11.8–11.10、12.2。
 > 跨组件约定见 `README.md`。指针与流水线见 `governance.md`。审计发现见 `reconciler.md`。
 > 控制面不调用任何 LLM API（D10）。厂长是仓库外的现成 CLI，通过本文件的命令或 stdio JSON-RPC 进来。
+> 唤醒信号新增 `approval`、`inbox`、`monitor`，见 `delegation.md`、`inbox.md`、`capabilities.md`（M11）。
 
 ---
 

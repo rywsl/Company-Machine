@@ -2,6 +2,7 @@
 
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M7-02**。
 > `factory status` 适合脚本和监控。人排查问题时还要能点进一次 run、一个 job、一张唤醒票、一次厂长会话，看前因后果。本文件定义一个只绑本机、只读、要令牌的 Web 控制台。它不提供任何写操作：改东西仍然走命令行和 ChangeSet。
+> 收件箱页面、`POST /inbox/<id>`（控制台因此不再完全只读）、截图与 CSP 的 `img-src 'self'` 见 `inbox.md` 5.4、5.12（M11），冲突时以 `inbox.md` 为准。
 
 ---
 

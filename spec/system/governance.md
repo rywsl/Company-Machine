@@ -5,6 +5,7 @@
 > 风险规则：`spec/mrl/governance/risk.mrl`（L0，受保护，只有人能改）。
 > 跨组件约定见 `README.md`。厂长操作面见 `foreman.md`。审计与调和见 `reconciler.md`。
 > `rebuild`、`contracts` 的缺省构造改用 `open_line_runner` / `open_runner`，见 `wiring.md` 5.3（M10）。
+> `verified` 阶段按签核方式（`auto`、`review`、`human`）判断、`ChangePipeline.signoff`、金丝雀路由对新产线的处理见 `delegation.md` 5.6、5.7（M11），冲突时以它为准。
 
 ---
 

@@ -4,6 +4,7 @@
 > 依据：架构文档 6.3（审批人）、6.6（两阶段工位）；factory-profile 4.2 的 `approval` 类型环境。
 > 跨组件约定见 `README.md`。M1 的 `JobState.AWAITING_APPROVAL` 与 `Runner.decide` 签名不改。本文件只在其上增加路由。
 > 两阶段 Sink 的 execute、占用幂等键、回执核验仍归 `connectors.md`。本文件只规定 propose，以及何时才可以进入 execute。
+> 路由改写（`bypass`）、`foreman` 路由的唤醒票、`human` 路由的收件箱、定向审批 `open_directed`、改道 `escalate`，以及 `Runner` 经 `Approvals` 处理 ctl 审批，见 `delegation.md`（M11），冲突时以 `delegation.md` 为准。
 
 ---
 

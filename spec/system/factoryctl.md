@@ -3,6 +3,7 @@
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M1-05**。
 > 沙箱内脚本：`src/mao/ctl/factoryctl.py`。宿主侧：`mao.ctl`。
 > 依据：README D7、第 4.6 节、第 5–6 节。架构文档 6.2 的命令名已经定了，**禁止改名**。
+> 新命令 `factoryctl ask`（`delegation.md` 3.4）与 `factoryctl handoff`（`inbox.md` 3.6），M11。
 
 ---
 

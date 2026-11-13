@@ -6,7 +6,7 @@
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "additionalProperties": false,
   "$defs": {
-    "approver": {"enum": ["auto", "foreman", "review"]},
+    "approver": {"enum": ["auto", "foreman", "review", "human"]},
     "approvalRule": {
       "oneOf": [
         {"$ref": "#/$defs/approver"},
@@ -171,7 +171,22 @@
         },
         "idempotency_key": {"$ref": "common.schema.json#/$defs/template"},
         "verify_receipt": {"$ref": "common.schema.json#/$defs/name"},
-        "policy": {"$ref": "common.schema.json#/$defs/ref"}
+        "policy": {"$ref": "common.schema.json#/$defs/ref"},
+        "monitors": {
+          "type": "object",
+          "propertyNames": {"$ref": "common.schema.json#/$defs/name"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["on", "when", "action"],
+            "additionalProperties": false,
+            "properties": {
+              "on": {"enum": ["egress"]},
+              "when": {"$ref": "common.schema.json#/$defs/expr"},
+              "action": {"enum": ["hold", "deny", "wake"]},
+              "timeout": {"$ref": "common.schema.json#/$defs/duration"}
+            }
+          }
+        }
       }
     }
   }

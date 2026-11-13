@@ -41,6 +41,9 @@
 | `hardening.md` | M5–M7 审查纠偏（对应 `plan/review-m5-m7.md`） | 多个模块 | M8 | M8-01 |
 | `closure.md` | M4 交付在生产路径上闭环（对应 `plan/review-closure.md`） | 多个模块 | M9 | M9-01 至 M9-04 |
 | `wiring.md` | Sink 回执、命令补全、缓存与网关接线（对应 `plan/review-wiring.md`） | 多个模块 | M10 | M10-01 至 M10-03 |
+| `inbox.md` | 人工收件箱、通知钩子、控制台写入、秘密申请与核验、人工协助（验证码） | `mao.inbox`、`mao.secrets`、`mao.handoff` | M11 | M11-01、M11-05、M11-06 |
+| `delegation.md` | 授权模式（`bypass`）、审批委托与改道、定向申请、ChangeSet 签核（对应 `plan/design-delegation.md`） | `mao.delegation`、`mao.approvals` 等 | M11 | M11-02、M11-03 |
+| `capabilities.md` | 出网令牌、通配域名、按需放行、监控规则、沙箱资源、镜像构建网络 | `mao.egress`、`mao.monitors`、`mao.sandbox` | M11 | M11-04、M11-07、M11-08 |
 
 每份组件规范都必须按第 7 节的模板组织。
 

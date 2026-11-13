@@ -265,6 +265,18 @@ M1-01 基础设施 ──┬─▶ M1-02 快照与求值环境 ──┐
 
 ---
 
+## M11 委托与能力
+
+**目标**：让厂长能自主接入一台新机器（例如 B 站投稿：镜像、Playwright 脚本、Machine、Station、Policy、产线），人可以用配置把审批全部交给厂长（`bypass`），厂长与操作工都有独立的申请渠道，秘密由人填写并在保存前核验，验证码交给人处理。同时修掉演练时发现的接线问题：带出网的工位到不了沙箱、秘密没有注入、`Runner` 的审批绕过 `Approvals`、出网只靠请求头识别 job、新产线在金丝雀阶段无法运行（`plan/design-delegation.md` 第 1 章）。
+
+**范围**：人工收件箱与通知钩子；授权模式、审批委托与改道、定向申请、ChangeSet 签核；出网令牌、通配域名、按需放行、监控规则；秘密申请与核验；人工协助；沙箱资源与镜像构建网络。
+
+**规范**：`spec/system/inbox.md`、`spec/system/delegation.md`、`spec/system/capabilities.md`；设计 `plan/design-delegation.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M11-01 至 M11-09 和 `plan/gates.yaml` 中的阶段门 M11（继承 M10 的全部检查）。
+
+---
+
 ## 里程碑之间的交接规则
 
 1. **退出前提**：阶段门通过，才能开始下一个里程碑的任务。harness 用 `requires_gates` 和任务依赖强制这一点。
