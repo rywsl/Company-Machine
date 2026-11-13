@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
-from mao.base import canonical_json, utc_iso
+from mao.base import canonical_json, parse_duration, utc_iso
 from mao.errors import FactoryError
 from mrl.errors import EvalError
 
@@ -199,7 +201,11 @@ class ReceiptStore:
 
     def settle(self, receipt_id: str, *, ok: bool, detail: str) -> Receipt:
         current = self.get(receipt_id)
-        if current.status != ReceiptStatus.PUBLISHED:
+        if current.status not in (
+            ReceiptStatus.PUBLISHED,
+            ReceiptStatus.VERIFIED,
+            ReceiptStatus.FAILED,
+        ):
             raise FactoryError(
                 "RECEIPT_STATE_INVALID",
                 "回执不在可核验状态",
@@ -224,6 +230,15 @@ class ReceiptStore:
                 {"receipt": receipt_id, "method": current.verify_method, "detail": detail},
             )
         return self.get(receipt_id)
+
+    def note_format_error(self, receipt_id: str, problems: Sequence[str]) -> None:
+        detail = "receipt.json 格式错误：" + ", ".join(str(item) for item in problems)
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE receipts SET verify_detail = ?, updated_at = ? WHERE id = ?",
+                (detail, now, receipt_id),
+            )
 
     def void(self, receipt_id: str, *, by: str, reason: str) -> Receipt:
         current = self.get(receipt_id)
@@ -289,8 +304,266 @@ class ReceiptStore:
 
 
 def verify(ctx: Any, snapshot: Any, receipt: Receipt) -> tuple[bool, str]:
-    del ctx, snapshot
-    return True, receipt.verify_detail or ""
+    if receipt.status not in (ReceiptStatus.PUBLISHED, ReceiptStatus.VERIFIED, ReceiptStatus.FAILED):
+        raise FactoryError(
+            "RECEIPT_STATE_INVALID",
+            "回执不在可核验状态",
+            receipt=receipt.id,
+            status=receipt.status.value,
+            op="verify",
+        )
+    try:
+        return _verify_in_sandbox(ctx, snapshot, receipt)
+    except FactoryError as exc:
+        if exc.code in {"RECEIPT_VERIFY_ERROR", "RECEIPT_STATE_INVALID"}:
+            raise
+        raise FactoryError(
+            "RECEIPT_VERIFY_ERROR",
+            "回执核验设施故障",
+            receipt=receipt.id,
+            cause={"reason": exc.code},
+        ) from exc
+    except Exception as exc:
+        raise FactoryError(
+            "RECEIPT_VERIFY_ERROR",
+            "回执核验设施故障",
+            receipt=receipt.id,
+            cause={"reason": type(exc).__name__},
+        ) from exc
+
+
+_MEMORY = re.compile(r"^([0-9]+)(Mi|M|MB|Gi|G|GB)$")
+_VERIFY_LIMIT_S = 300.0
+
+
+def _verify_in_sandbox(ctx: Any, snapshot: Any, receipt: Receipt) -> tuple[bool, str]:
+    from mao.jobs import load_job
+    from mao.sandbox import Mount, SandboxSpec
+    from mao.values import recipe_env
+
+    job = load_job(ctx.db, receipt.job_id)
+    station = snapshot.spec(job.station)
+    machine_key = snapshot.key("Machine", station["machine"])
+    machine = snapshot.spec(machine_key)
+    recipe_name = str(station.get("verify_receipt") or "")
+    recipe = (machine.get("recipes") or {}).get(recipe_name)
+    if not isinstance(recipe, dict) or not recipe.get("run"):
+        raise FactoryError(
+            "RECEIPT_VERIFY_ERROR",
+            "核验配方没有 run",
+            receipt=receipt.id,
+            cause={"reason": "recipe"},
+        )
+    number = _next_verify_n(ctx.root, job.id)
+    root = ctx.root / "jobs" / job.id / f"verify-{number}"
+    for name in ("in", "out", "ctl", "workspace"):
+        (root / name).mkdir(parents=True, exist_ok=True)
+    beans = _materialize_inputs(ctx, station, job.inputs, root / "in")
+    _write_verify_ctl(ctx, receipt, job, root / "ctl")
+    image = str((machine.get("runtime") or {}).get("image") or "")
+    cpus, memory_mb = _machine_resources((machine.get("runtime") or {}).get("resources"))
+    base_env = {"FACTORY_JOB_ID": job.id, "FACTORY_ATTEMPT": str(job.attempt)}
+    network, env = _verify_network(ctx, snapshot, job.station, base_env)
+    spec = SandboxSpec(
+        name=f"mao-{job.id}-verify-{number}",
+        image=image,
+        mounts=(
+            Mount(source=str((root / "in").resolve()), target="/factory/in", readonly=True),
+            Mount(source=str((root / "out").resolve()), target="/factory/out", readonly=False),
+            Mount(source=str((root / "ctl").resolve()), target="/factory/ctl", readonly=True),
+            Mount(
+                source=str((ctx.root / "tools" / "factory").resolve()),
+                target="/opt/factory",
+                readonly=True,
+            ),
+            Mount(source=str((root / "workspace").resolve()), target="/workspace", readonly=False),
+        ),
+        workdir="/workspace",
+        env=env,
+        network=network,
+        cpus=cpus,
+        memory_mb=memory_mb,
+    )
+    argv = _render_run(
+        snapshot, machine_key, recipe_name, recipe.get("run") or [], recipe_env(beans, job.params)
+    )
+    timeout_s = _verify_timeout(station)
+    logs = root / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    stdout = logs / "verify.stdout"
+    stderr = logs / "verify.stderr"
+    sandbox = None
+    try:
+        sandbox = ctx.provider.open(spec)
+        result = sandbox.exec(
+            argv,
+            timeout_s=timeout_s,
+            stdout=stdout,
+            stderr=stderr,
+            workdir="/workspace",
+        )
+    finally:
+        if sandbox is not None:
+            sandbox.close()
+    detail = _detail_text(stdout)
+    if result.timed_out or result.exit_code is None:
+        raise FactoryError(
+            "RECEIPT_VERIFY_ERROR",
+            "回执核验超时",
+            receipt=receipt.id,
+            cause={"timeout_s": timeout_s},
+        )
+    if result.exit_code == 0:
+        return True, detail
+    if result.exit_code == 1:
+        return False, detail
+    raise FactoryError(
+        "RECEIPT_VERIFY_ERROR",
+        "回执核验退出码异常",
+        receipt=receipt.id,
+        cause={"exit_code": result.exit_code},
+    )
+
+
+def _next_verify_n(root: Path, job_id: str) -> int:
+    base = Path(root) / "jobs" / job_id
+    highest = 0
+    if base.is_dir():
+        for child in base.iterdir():
+            if not child.is_dir() or not child.name.startswith("verify-"):
+                continue
+            suffix = child.name[len("verify-") :]
+            if suffix.isdigit():
+                highest = max(highest, int(suffix))
+    return highest + 1
+
+
+def _materialize_inputs(
+    ctx: Any, station: Mapping[str, Any], inputs: Mapping[str, Sequence[str]], in_dir: Path
+) -> dict[str, Any]:
+    declared = station.get("inputs") or {}
+    beans: dict[str, Any] = {}
+    for port, ids in inputs.items():
+        loaded = []
+        expr = declared.get(port)
+        type_expr = expr.get("type") if isinstance(expr, dict) else str(expr or "")
+        listed = str(type_expr).startswith("list<")
+        for index, bean_id in enumerate(ids):
+            dest = in_dir / port / str(index) if listed else in_dir / port
+            ctx.warehouse.materialize(bean_id, dest, layout="port")
+            loaded.append(ctx.warehouse.get(bean_id))
+        if loaded:
+            beans[port] = loaded if listed else loaded[0]
+    return beans
+
+
+def _write_verify_ctl(ctx: Any, receipt: Receipt, job: Any, ctl: Path) -> None:
+    rows = ctx.db.query("SELECT note FROM receipts WHERE id = ?", (receipt.id,))
+    note = ""
+    if rows and rows[0]["note"] is not None:
+        note = str(rows[0]["note"])
+    body = {
+        "target": receipt.target or "",
+        "locator": dict(receipt.locator),
+        "items": [dict(item) for item in receipt.items],
+        "note": note,
+    }
+    (ctl / "receipt.json").write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+    source = ctx.root / "jobs" / job.id / str(job.attempt) / "ctl" / "job.json"
+    if not source.is_file():
+        raise FactoryError(
+            "RECEIPT_VERIFY_ERROR",
+            "找不到 job.json",
+            receipt=receipt.id,
+            cause={"reason": "job.json"},
+        )
+    (ctl / "job.json").write_bytes(source.read_bytes())
+
+
+def _verify_network(
+    ctx: Any, snapshot: Any, station_key: str, base_env: Mapping[str, str]
+) -> tuple[str, dict[str, str]]:
+    from mao.egress import SecretStore, build_egress, proxy_env
+
+    station = snapshot.spec(station_key)
+    env = {str(key): str(value) for key, value in base_env.items()}
+    if not station.get("policy"):
+        return "none", env
+    plan = build_egress(snapshot, station_key, SecretStore(ctx.root))
+    if plan.network != "egress":
+        return "none", env
+    if getattr(ctx, "proxies", None) is None:
+        from mao.egress import start_owned_proxies
+
+        start_owned_proxies(ctx, model_port=0, timeout_s=60.0)
+    env.update(plan.env)
+    proxies = getattr(ctx, "proxies", None)
+    if proxies is not None:
+        docker = getattr(ctx.provider, "name", "") == "docker"
+        env.update(proxy_env(proxies, docker=docker))
+    return "egress", env
+
+
+def _render_run(
+    snapshot: Any, machine_key: str, recipe_name: str, run: Sequence[Any], env: Mapping[str, Any]
+) -> list[str]:
+    argv: list[str] = []
+    for index, item in enumerate(run):
+        text = item if isinstance(item, str) else str(item)
+        if "{{" not in text:
+            argv.append(text)
+            continue
+        subject = f"{machine_key}/recipes.{recipe_name}.run[{index}]"
+        rendered = snapshot.compiled(subject).render(dict(env))
+        if not isinstance(rendered, str):
+            raise FactoryError(
+                "RECEIPT_VERIFY_ERROR",
+                "核验配方渲染结果不是字符串",
+                cause={"reason": "render"},
+            )
+        argv.append(rendered)
+    return argv
+
+
+def _verify_timeout(station: Mapping[str, Any]) -> float:
+    limits = station.get("limits") or {}
+    if "timeout" not in limits:
+        return _VERIFY_LIMIT_S
+    return min(float(parse_duration(limits["timeout"])), _VERIFY_LIMIT_S)
+
+
+def _detail_text(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not text:
+        return ""
+    try:
+        body = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(body, dict) and "detail" in body:
+        detail = body["detail"]
+        if isinstance(detail, str):
+            return detail
+        return json.dumps(detail, ensure_ascii=False)
+    return text
+
+
+def _machine_resources(resources: Any) -> tuple[float | None, int | None]:
+    if not isinstance(resources, dict) or not resources:
+        return None, None
+    cpus = resources.get("cpus")
+    memory = resources.get("memory")
+    memory_mb = None
+    if memory is not None:
+        match = _MEMORY.fullmatch(str(memory))
+        if match is None:
+            raise FactoryError("SANDBOX_SPEC_INVALID", "memory 无法解析", memory=str(memory))
+        amount = int(match.group(1))
+        memory_mb = amount if match.group(2) in ("Mi", "M", "MB") else amount * 1024
+    return (None if cpus is None else float(cpus), memory_mb)
 
 
 def _payload_problems(payload: Mapping[str, Any]) -> list[str]:

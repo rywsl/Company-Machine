@@ -364,11 +364,10 @@ class ConsoleServer:
         return Snapshot.load(self.ctx.root / "registry")
 
     def _lines(self, epoch: str | None = None) -> Any:
-        from mao.runner import Runner
-        from mao.runs import LineRunner
+        from mao.runs import open_line_runner
 
         snapshot = self._snapshot(epoch)
-        return LineRunner(self.ctx, snapshot, Runner(self.ctx, snapshot))
+        return open_line_runner(self.ctx, snapshot)
 
     def _runs(self, state: str | None) -> list[dict[str, Any]]:
         return to_jsonable(self._lines().list(state=state))

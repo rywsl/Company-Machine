@@ -29,7 +29,7 @@ class LineShadowRunner:
     def _goldens(self, cs: Any, candidate: Any, active: Any) -> ShadowReport:
         del active
         from mao.contract import ContractRunner
-        from mao.runner import Runner
+        from mao.runner import open_runner
 
         stations = _impact_stations(cs, candidate)
         names = {key.split(":", 1)[1].split("@", 1)[0] for key in stations}
@@ -38,7 +38,7 @@ class LineShadowRunner:
             for key in candidate.keys("GoldenSet")
             if str((candidate.doc(key).get("spec") or {}).get("station", "")).split("@", 1)[0] in names
         ]
-        runner = ContractRunner(self.ctx, candidate, Runner(self.ctx, candidate))
+        runner = ContractRunner(self.ctx, candidate, open_runner(self.ctx, candidate))
         regressions = []
         spent = 0.0
         for key in keys:
@@ -50,8 +50,7 @@ class LineShadowRunner:
         return ShadowReport(True, len(keys), round(spent, 6), regressions)
 
     def _replay(self, cs: Any, candidate: Any, active: Any, rollout: Any) -> ShadowReport:
-        from mao.runner import Runner
-        from mao.runs import InlineExecutor, LineRunner
+        from mao.runs import InlineExecutor, open_line_runner
 
         limit = int(((rollout or {}).get("shadow") or {}).get("runs") or 0)
         rows = self.ctx.db.query(
@@ -75,7 +74,7 @@ class LineShadowRunner:
                     }
                 )
                 continue
-            lines = LineRunner(self.ctx, candidate, Runner(self.ctx, candidate), cache=None)
+            lines = open_line_runner(self.ctx, candidate, cache=False)
             started = lines.start_run(
                 line,
                 json.loads(row["inputs"]),

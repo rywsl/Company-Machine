@@ -6,7 +6,16 @@ import argparse
 import sys
 
 from mao.base import canonical_json
-from mao.commands.common import governance_registry, open_context, registry_path, split_pair
+from mao.cache import CACHEABLE_ROLES, JobCache
+from mao.commands.common import (
+    coerce_params,
+    finish,
+    governance_registry,
+    open_context,
+    open_snapshot,
+    registry_path,
+    split_pair,
+)
 from mao.errors import FactoryError
 from mao.jobs import dump_job, load_job
 from mao.runner import open_runner
@@ -31,13 +40,52 @@ def register(sub: argparse._SubParsersAction) -> None:
     single.add_argument("--cache", action="store_true")
     single.add_argument("--variant", default=None)
     single.add_argument("--input", action="append", default=[])
-    single.set_defaults(func=cmd_unused)
+    single.add_argument("--param", action="append", default=[])
+    single.set_defaults(func=cmd_station_run)
 
 
-def cmd_unused(args: argparse.Namespace) -> int:
-    del args
-    print("未知子命令", file=sys.stderr)
-    return 2
+def cmd_station_run(args: argparse.Namespace) -> int:
+    if not args.station:
+        print("缺少工位", file=sys.stderr)
+        return 2
+    inputs = dict(split_pair(item, "--input 必须是 PORT=BEAN") for item in args.input)
+    pairs = [split_pair(item, "--param 必须是 NAME=VALUE") for item in args.param]
+    with open_context(args) as ctx:
+        snapshot = open_snapshot(ctx, args)
+        station_key = snapshot.key("Station", args.station)
+        params = coerce_params(snapshot, station_key, pairs)
+        runner = open_runner(ctx, snapshot)
+        done, cache_hit = _run_station(
+            ctx, snapshot, runner, station_key, inputs, params, cache=args.cache, variant=args.variant
+        )
+    body = {"job": dump_job(done), "cache_hit": cache_hit}
+    return finish(args, body, code=0 if done.state.value == "SEALED" else 1)
+
+
+def _run_station(
+    ctx: object,
+    snapshot: object,
+    runner: object,
+    station_key: str,
+    inputs: dict[str, str],
+    params: dict,
+    *,
+    cache: bool,
+    variant: str | None,
+) -> tuple[object, bool]:
+    role = str(snapshot.spec(station_key).get("role") or "")
+    if role in CACHEABLE_ROLES:
+        store = JobCache(ctx)
+        material = store.material(snapshot, station_key, inputs, params, variant=variant)
+        if cache:
+            hit = store.lookup(material.key())
+            if hit is not None:
+                return hit, True
+        job = runner.submit(station_key, inputs, params)
+        store.bind(job.id, material)
+        return runner.run(job.id), False
+    job = runner.submit(station_key, inputs, params)
+    return runner.run(job.id), False
 
 
 def cmd_run(args: argparse.Namespace) -> int:

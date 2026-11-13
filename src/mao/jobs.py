@@ -31,7 +31,7 @@ EDGES: dict[JobState, frozenset[JobState]] = {
         {JobState.AWAITING_APPROVAL, JobState.GATING, JobState.FAILED, JobState.DEAD}
     ),
     JobState.AWAITING_APPROVAL: frozenset({JobState.RUNNING, JobState.FAILED}),
-    JobState.GATING: frozenset({JobState.SEALED, JobState.REJECTED, JobState.FAILED}),
+    JobState.GATING: frozenset({JobState.SEALED, JobState.REJECTED, JobState.FAILED, JobState.DEAD}),
     JobState.REJECTED: frozenset({JobState.PENDING, JobState.DEAD}),
     JobState.FAILED: frozenset({JobState.PENDING, JobState.DEAD}),
 }

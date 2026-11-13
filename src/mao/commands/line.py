@@ -8,7 +8,7 @@ from mao.base import canonical_json
 from mao.commands.common import finish, human_by, open_context, open_snapshot, split_pair
 from mao.runner import open_runner
 from mao.runplan import compile_run_plan
-from mao.runs import InlineExecutor, LineRunner
+from mao.runs import InlineExecutor, LineRunner, open_line_runner
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -59,7 +59,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     with open_context(args) as ctx:
         snapshot = open_snapshot(ctx, args, route_key=args.line + ":" + canonical_json(inputs))
         runner = open_runner(ctx, snapshot)
-        lines = LineRunner(ctx, snapshot, runner)
+        lines = open_line_runner(ctx, snapshot, runner)
         started = lines.start_run(
             args.line,
             inputs,
@@ -75,7 +75,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def _lines(ctx: object, args: argparse.Namespace, epoch: str | None = None) -> LineRunner:
     snapshot = open_snapshot(ctx, args, epoch=epoch)
-    return LineRunner(ctx, snapshot, open_runner(ctx, snapshot))
+    return open_line_runner(ctx, snapshot)
 
 
 def cmd_ls(args: argparse.Namespace) -> int:

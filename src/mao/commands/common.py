@@ -156,6 +156,43 @@ def split_pair(text: str, message: str) -> tuple[str, str]:
     return key, value
 
 
+def coerce_params(snapshot: Any, station_key: str, pairs: list[tuple[str, str]]) -> dict[str, Any]:
+    decls = snapshot.spec(station_key).get("params") or {}
+    values: dict[str, Any] = {}
+    for name, raw in pairs:
+        decl = decls.get(name)
+        kind = decl.get("type") if isinstance(decl, dict) else "string"
+        values[name] = _coerce_param(str(kind or "string"), name, raw)
+    return values
+
+
+def _coerce_param(kind: str, name: str, raw: str) -> Any:
+    if kind in {"string", ""}:
+        return raw
+    if kind not in {"int", "float", "num", "bool"}:
+        return raw
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise FactoryError("CLI_USAGE", f"参数 {name} 不是合法 JSON") from exc
+    if kind == "bool":
+        if not isinstance(value, bool):
+            raise FactoryError("CLI_USAGE", f"参数 {name} 不是 bool")
+        return value
+    if isinstance(value, bool):
+        raise FactoryError("CLI_USAGE", f"参数 {name} 类型不符")
+    if kind == "int" and not isinstance(value, int):
+        raise FactoryError("CLI_USAGE", f"参数 {name} 不是 int")
+    if kind == "float":
+        if isinstance(value, int):
+            return float(value)
+        if not isinstance(value, float):
+            raise FactoryError("CLI_USAGE", f"参数 {name} 不是 float")
+    if kind == "num" and not isinstance(value, (int, float)):
+        raise FactoryError("CLI_USAGE", f"参数 {name} 不是 num")
+    return value
+
+
 def actor_from_env() -> str:
     actor = os.environ.get("FACTORY_ACTOR")
     if not actor:

@@ -186,6 +186,7 @@ CODES: dict[str, str] = {
     "REVIEWERS_EXHAUSTED": "supervisor.md 登记的错误",
     "REVIEW_SAME_RUNTIME": "foreman.md 登记的错误",
     "RISK_UNSCORED": "governance.md 登记的错误",
+    "ROLE_MISMATCH": "wiring.md 登记的错误",
     "ROLE_UNSUPPORTED": "runner.md 登记的错误",
     "RUN_BUDGET_EXHAUSTED": "lines.md 登记的错误",
     "RUN_BUDGET_INVALID": "lines.md 登记的错误",

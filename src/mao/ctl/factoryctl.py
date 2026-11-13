@@ -231,6 +231,53 @@ def cmd_fail(args):
     raise SystemExit(1)
 
 
+def _split_eq(text):
+    if "=" not in text:
+        return None
+    key, value = text.split("=", 1)
+    return key, value
+
+
+def _parse_item(text):
+    pair = _split_eq(text)
+    if pair is None:
+        return None
+    bean, rest = pair
+    locator = rest
+    digest = None
+    if "@" in rest:
+        head, tail = rest.rsplit("@", 1)
+        if tail.startswith("sha256:"):
+            locator = head
+            digest = tail
+    item = {"bean": bean, "locator": locator}
+    if digest is not None:
+        item["digest"] = digest
+    return item
+
+
+def cmd_receipt(args):
+    locator = {}
+    for raw in args.locator or []:
+        pair = _split_eq(raw)
+        if pair is None:
+            _die(2, "locator 必须是 KEY=VALUE")
+        locator[pair[0]] = pair[1]
+    items = []
+    for raw in args.item or []:
+        item = _parse_item(raw)
+        if item is None:
+            _die(2, "item 必须是 BEAN=LOCATOR")
+        items.append(item)
+    body = {
+        "target": args.target,
+        "locator": locator,
+        "items": items,
+        "note": args.note or "",
+    }
+    _atomic(os.path.join(_ctl_dir(), "receipt.json"), _dump(body))
+
+
 def _timeout_s():
     path = os.path.join(_ctl_dir(), "contract.json")
     if not os.path.isfile(path):
@@ -421,6 +468,11 @@ def main(argv):
     log.add_argument("message")
     fail = sub.add_parser("fail")
     fail.add_argument("reason")
+    receipt = sub.add_parser("receipt")
+    receipt.add_argument("--target", required=True)
+    receipt.add_argument("--locator", action="append")
+    receipt.add_argument("--item", action="append")
+    receipt.add_argument("--note", default="")
     sub.add_parser("harvest")
     sub.add_parser("mcp")
     try:
@@ -439,6 +491,8 @@ def main(argv):
         cmd_log(args)
     elif args.cmd == "fail":
         cmd_fail(args)
+    elif args.cmd == "receipt":
+        cmd_receipt(args)
     elif args.cmd == "harvest":
         cmd_harvest(args)
     elif args.cmd == "check":

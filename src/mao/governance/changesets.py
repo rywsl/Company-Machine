@@ -73,9 +73,9 @@ class ChangePipeline:
 
             def contracts(snap: Any) -> Any:
                 from mao.contract import ContractRunner
-                from mao.runner import Runner
+                from mao.runner import open_runner
 
-                return ContractRunner(ctx, snap, Runner(ctx, snap))
+                return ContractRunner(ctx, snap, open_runner(ctx, snap))
 
         if shadow is None:
             from mao.governance.shadow import LineShadowRunner
@@ -84,10 +84,9 @@ class ChangePipeline:
         if rebuild is None:
 
             def rebuild(run_id: str, snap: Any) -> str:
-                from mao.runner import Runner
-                from mao.runs import LineRunner
+                from mao.runs import open_line_runner
 
-                return LineRunner(ctx, snap, Runner(ctx, snap)).rebuild(run_id, by="governance").id
+                return open_line_runner(ctx, snap).rebuild(run_id, by="governance").id
 
         self.contracts = contracts
         self.shadow = shadow

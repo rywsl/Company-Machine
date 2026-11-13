@@ -19,7 +19,7 @@ from mao.gate import Gate
 from mao.jobs import TERMINAL, Job, JobState, dump_job, ensure_edge, load_job
 from mao.operator import build_invocation, expand_control_vars, parse_transcript, render_brief
 from mao.sandbox import Mount, SandboxSpec
-from mao.values import approval_env, bean_value, params_value
+from mao.values import approval_env, bean_value, params_value, recipe_env
 from mrl.errors import EvalError
 
 __all__ = ["Job", "JobState", "Runner", "TERMINAL", "dump_job", "load_job"]
@@ -229,6 +229,10 @@ class Runner:
                     _LOG.exception("沙箱 close 失败")
 
     def _gate_recovery(self, job: Job) -> Job:
+        if self._receipt_sink_job(job):
+            receipt = self._job_receipt(job.id)
+            if receipt is not None and receipt.status.value in {"published", "verified"}:
+                return self._verify_sink(job, receipt)
         sandbox = None
         try:
             prepared = self._prepare(job, reset_out=False)
@@ -344,6 +348,23 @@ class Runner:
                     "detail": {"job": job.id, "cost_usd": cost, "budget_usd": budget},
                 },
             )
+        if self._receipt_sink(prepared):
+            cause = _sink_cause(
+                result,
+                invocation.timeout_s,
+                prepared.attempt_dir / "ctl" / "fail.json",
+                summary,
+            )
+            if cause is not None:
+                return self._dead(
+                    job,
+                    {
+                        "code": "SINK_OUTCOME_UNKNOWN",
+                        "message": "Sink 操作工启动后失败",
+                        "detail": {"job": job.id, "cause": cause},
+                    },
+                )
+            return self._settle_sink(job, prepared)
         if result.timed_out:
             return self._fail(job, "OPERATOR_TIMEOUT", "操作工超时", {"timeout_s": invocation.timeout_s})
         fail_path = prepared.attempt_dir / "ctl" / "fail.json"
@@ -444,9 +465,9 @@ class Runner:
         if problem:
             return self._reject_plan(job, problem)
         from mao.dynamic import compile_plan
-        from mao.runs import LineRunner
+        from mao.runs import open_line_runner
 
-        run = LineRunner(self.ctx, self.snapshot, self).get(str(rows[0]["run_id"]))
+        run = open_line_runner(self.ctx, self.snapshot, self, cache=False).get(str(rows[0]["run_id"]))
         check = compile_plan(self.snapshot, document or {}, planner_key=job.station, run=run)
         if not check.ok:
             return self._reject_plan(job, check.feedback or "PLAN_INVALID")
@@ -562,13 +583,16 @@ class Runner:
                     if _has_bean_event(conn, job.id, bean_id):
                         continue
                     bean = self.ctx.warehouse.get(bean_id)
-                    _insert_event(
-                        conn,
-                        self.ctx,
-                        "bean.sealed",
-                        job.id,
-                        {"bean": bean_id, "job": job.id, "type": bean.type, "station": job.station},
-                    )
+                    sealed = {
+                        "bean": bean_id,
+                        "job": job.id,
+                        "type": bean.type,
+                        "station": job.station,
+                    }
+                    if self.snapshot.spec(job.station).get("role") == "source":
+                        sealed["external"] = True
+                        sealed["params"] = job.params
+                    _insert_event(conn, self.ctx, "bean.sealed", job.id, sealed)
             conn.execute(
                 """UPDATE jobs SET state = ?, outputs = ?, error = NULL, updated_at = ? WHERE id = ?""",
                 (JobState.SEALED.value, canonical_json(dict(report.outputs)), now, job.id),
@@ -754,6 +778,140 @@ class Runner:
         except FactoryError as exc:
             return exc
         return claim.kind
+
+    def _receipt_sink(self, prepared: _Prepared) -> bool:
+        return prepared.station.get("role") == "sink" and "idempotency_key" in prepared.station
+
+    def _receipt_sink_job(self, job: Job) -> bool:
+        station = self.snapshot.spec(job.station)
+        return station.get("role") == "sink" and "idempotency_key" in station
+
+    def _job_receipt(self, job_id: str) -> Any:
+        from mao.connectors import ReceiptStore
+
+        rows = self.ctx.db.query(
+            "SELECT id FROM receipts WHERE job_id = ? AND status != 'void' ORDER BY created_at, id",
+            (job_id,),
+        )
+        if not rows:
+            return None
+        return ReceiptStore(self.ctx).get(rows[-1]["id"])
+
+    def _settle_sink(self, job: Job, prepared: _Prepared) -> Job:
+        try:
+            return self._settle_sink_body(job, prepared)
+        except FactoryError as exc:
+            current = load_job(self.ctx.db, job.id)
+            if current.state in TERMINAL:
+                return current
+            return self._dead(current, exc)
+
+    def _settle_sink_body(self, job: Job, prepared: _Prepared) -> Job:
+        from mao.connectors import ReceiptStore, _payload_problems
+
+        store = ReceiptStore(self.ctx)
+        receipt = self._job_receipt(job.id)
+        if receipt is None:
+            return self._dead(
+                job,
+                {"code": "RECEIPT_MISSING", "message": "没有回执", "detail": {"job": job.id}},
+            )
+        payload, problems = self._receipt_payload(job, prepared)
+        if problems:
+            store.note_format_error(receipt.id, problems)
+            return self._dead(
+                job,
+                {
+                    "code": "RECEIPT_INVALID",
+                    "message": "回执载荷不合法",
+                    "detail": {"job": job.id, "problems": problems},
+                },
+            )
+        if payload is None:
+            return self._dead(
+                job,
+                {"code": "RECEIPT_MISSING", "message": "没有回执", "detail": {"job": job.id}},
+            )
+        invalid = _payload_problems(payload)
+        if invalid:
+            store.note_format_error(receipt.id, invalid)
+            return self._dead(
+                job,
+                {
+                    "code": "RECEIPT_INVALID",
+                    "message": "回执载荷不合法",
+                    "detail": {"job": job.id, "problems": invalid},
+                },
+            )
+        published = store.publish(receipt.id, payload)
+        job = self._transition(job, JobState.GATING, "verify")
+        return self._verify_sink(job, published)
+
+    def _receipt_payload(
+        self, job: Job, prepared: _Prepared
+    ) -> tuple[dict[str, Any] | None, list[str] | None]:
+        path = prepared.attempt_dir / "ctl" / "receipt.json"
+        if path.is_file():
+            try:
+                body = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None, ["json"]
+            if not isinstance(body, dict):
+                return None, ["json"]
+            return body, None
+        template = prepared.recipe.get("receipt")
+        if not isinstance(template, dict) or "target" not in template:
+            return None, None
+        env = recipe_env(prepared.beans, job.params)
+        target = _render_receipt(
+            self.snapshot,
+            f"{prepared.machine_key}/recipes.{prepared.recipe_name}.receipt.target",
+            template.get("target"),
+            env,
+        )
+        locator: dict[str, str] = {}
+        raw = template.get("locator") or {}
+        if isinstance(raw, dict):
+            for name, value in raw.items():
+                locator[str(name)] = _render_receipt(
+                    self.snapshot,
+                    f"{prepared.machine_key}/recipes.{prepared.recipe_name}.receipt.locator.{name}",
+                    value,
+                    env,
+                )
+        return {"target": target, "locator": locator, "items": [], "note": ""}, None
+
+    def _verify_sink(self, job: Job, receipt: Any) -> Job:
+        from mao.connectors import ReceiptStatus, ReceiptStore, verify
+
+        if receipt.status == ReceiptStatus.VERIFIED:
+            return self._seal_sink(job)
+        try:
+            ok, detail = verify(self.ctx, self.snapshot, receipt)
+        except FactoryError as exc:
+            current = load_job(self.ctx.db, job.id)
+            if current.state in TERMINAL:
+                return current
+            return self._dead(current, exc)
+        store = ReceiptStore(self.ctx)
+        if not ok:
+            store.settle(receipt.id, ok=False, detail=detail)
+            return self._dead(
+                job,
+                {
+                    "code": "RECEIPT_UNVERIFIED",
+                    "message": "回执核验不通过",
+                    "detail": {"receipt": receipt.id, "detail": detail},
+                },
+            )
+        store.settle(receipt.id, ok=True, detail=detail)
+        return self._seal_sink(job)
+
+    def _seal_sink(self, job: Job) -> Job:
+        from mao.gate import GateReport
+
+        report = GateReport(job.id, job.station, job.attempt, "pass", {}, {}, (), "")
+        return self._seal(job, report)
 
     def _bind_control(self, job: Job, prepared: _Prepared) -> _Prepared:
         station = self.snapshot.spec(job.station)
@@ -1322,6 +1480,29 @@ def _clear_children(path: Path) -> None:
             shutil.rmtree(child)
         else:
             child.unlink()
+
+
+def _sink_cause(result: Any, timeout_s: float, fail_path: Path, summary: Any) -> dict[str, Any] | None:
+    if result.timed_out:
+        return {"timeout_s": timeout_s}
+    if fail_path.is_file():
+        return {"reason": _fail_reason(fail_path)}
+    if summary is not None and summary.is_error:
+        text = summary.result if isinstance(summary.result, str) else ""
+        return {"result": text}
+    if result.exit_code not in (0, None):
+        return {"exit_code": result.exit_code}
+    return None
+
+
+def _render_receipt(snapshot: Any, subject: str, value: Any, env: Mapping[str, Any]) -> str:
+    text = value if isinstance(value, str) else str(value)
+    if "{{" not in text:
+        return text
+    rendered = snapshot.compiled(subject).render(dict(env))
+    if not isinstance(rendered, str):
+        raise FactoryError("RECEIPT_INVALID", "回执模板渲染结果不是字符串", problems=["target"])
+    return rendered
 
 
 def _fail_reason(path: Path) -> str:

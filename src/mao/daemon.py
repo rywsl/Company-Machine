@@ -17,7 +17,7 @@ from mao.durable import LeaseKeeper, LeaseStore, Recovery
 from mao.errors import FactoryError
 from mao.jobs import load_job
 from mao.runner import Runner, open_runner
-from mao.runs import RUN_TERMINAL, LineRunner, TriggerEngine
+from mao.runs import RUN_TERMINAL, LineRunner, TriggerEngine, open_line_runner
 from mao.scheduler import Scheduler
 
 _SERVE_FIELDS = (
@@ -413,7 +413,7 @@ class Daemon:
         if key in self._cache and self.epochs is None:
             return self._cache[key]
         runner = open_runner(self.ctx, snapshot)
-        lines = LineRunner(self.ctx, snapshot, runner)
+        lines = open_line_runner(self.ctx, snapshot, runner)
         scheduler = Scheduler(self.ctx, snapshot, runner)
         triggers = TriggerEngine(self.ctx, snapshot, lines)
         bundle = _Bundle(snapshot, runner, lines, scheduler, triggers)

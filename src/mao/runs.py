@@ -95,6 +95,19 @@ class Run:
         }
 
 
+def open_line_runner(ctx: Any, snapshot: Any, runner: Any = None, *, cache: bool = True) -> LineRunner:
+    if runner is None:
+        from mao.runner import open_runner
+
+        runner = open_runner(ctx, snapshot)
+    job_cache = None
+    if cache:
+        from mao.cache import JobCache
+
+        job_cache = JobCache(ctx)
+    return LineRunner(ctx, snapshot, runner, cache=job_cache)
+
+
 class InlineExecutor:
     def __init__(self, runner: Any) -> None:
         self.runner = runner
