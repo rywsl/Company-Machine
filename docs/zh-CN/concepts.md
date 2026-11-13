@@ -1,4 +1,4 @@
-[English](../en/concepts.md) | **简体中文** | [日本語](../ja/concepts.md)
+[English](../en/concepts.md) | [日本語](../ja/concepts.md) | [한국어](../ko/concepts.md) | [Français](../fr/concepts.md) | [Deutsch](../de/concepts.md) | [Español](../es/concepts.md) | [Português (BR)](../pt-BR/concepts.md) | [Русский](../ru/concepts.md) | **简体中文**
 
 # 核心概念
 

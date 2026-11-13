@@ -1,4 +1,4 @@
-[English](../en/runtime.md) | [简体中文](../zh-CN/runtime.md) | **日本語**
+[English](../en/runtime.md) | **日本語** | [한국어](../ko/runtime.md) | [Français](../fr/runtime.md) | [Deutsch](../de/runtime.md) | [Español](../es/runtime.md) | [Português (BR)](../pt-BR/runtime.md) | [Русский](../ru/runtime.md) | [简体中文](../zh-CN/runtime.md)
 
 # ランタイム
 

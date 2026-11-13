@@ -1,4 +1,4 @@
-[English](../en/README.md) | **简体中文** | [日本語](../ja/README.md)
+[English](../en/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Português (BR)](../pt-BR/README.md) | [Русский](../ru/README.md) | **简体中文**
 
 # 文档
 
@@ -22,7 +22,4 @@
 
 ## 其他语言
 
-| English | 简体中文 | 日本語 |
-|---|---|---|
-| [README](../../README.md) | [README](../../README_zh-CN.md) | [README](../../README_ja.md) |
-| [docs/en](../en/README.md) | [docs/zh-CN](README.md) | [docs/ja](../ja/README.md) |
+English: [README](../../README.md) · [docs/en](../en/README.md) | 日本語: [README](../../README_ja.md) · [docs/ja](../ja/README.md) | 한국어: [README](../../README_ko.md) · [docs/ko](../ko/README.md) | Français: [README](../../README_fr.md) · [docs/fr](../fr/README.md) | Deutsch: [README](../../README_de.md) · [docs/de](../de/README.md) | Español: [README](../../README_es.md) · [docs/es](../es/README.md) | Português (BR): [README](../../README_pt-BR.md) · [docs/pt-BR](../pt-BR/README.md) | Русский: [README](../../README_ru.md) · [docs/ru](../ru/README.md) | 简体中文: [README](../../README_zh-CN.md) · [docs/zh-CN](../zh-CN/README.md)

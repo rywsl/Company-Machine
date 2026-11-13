@@ -1,4 +1,4 @@
-[English](README.md) | **简体中文** | [日本語](README_ja.md)
+[English](README.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Français](README_fr.md) | [Deutsch](README_de.md) | [Español](README_es.md) | [Português (BR)](README_pt-BR.md) | [Русский](README_ru.md) | **简体中文**
 
 <p align="center">
   <img src="docs/assets/banner.svg" alt="Machine Agent Org：让现成的 AI agent 操作现成的机器的确定性工厂" width="100%">
@@ -296,14 +296,16 @@ docs/             架构设计（中文）、多语言指南、图示
 
 ## 文档
 
-| | English | 简体中文 | 日本語 |
-|---|---|---|---|
-| 文档索引 | [en](docs/en/README.md) | [zh-CN](docs/zh-CN/README.md) | [ja](docs/ja/README.md) |
-| 快速上手 | [getting-started](docs/en/getting-started.md) | [快速上手](docs/zh-CN/getting-started.md) | [はじめに](docs/ja/getting-started.md) |
-| 核心概念 | [concepts](docs/en/concepts.md) | [核心概念](docs/zh-CN/concepts.md) | [コンセプト](docs/ja/concepts.md) |
-| 运行时 | [runtime](docs/en/runtime.md) | [运行时](docs/zh-CN/runtime.md) | [ランタイム](docs/ja/runtime.md) |
-| 命令行参考 | [cli](docs/en/cli.md) | [命令行](docs/zh-CN/cli.md) | [CLI](docs/ja/cli.md) |
-| 开发流程 | [development](docs/en/development.md) | [开发流程](docs/zh-CN/development.md) | [開発](docs/ja/development.md) |
+| | 简体中文 |
+|---|---|
+| 文档索引 | [docs/zh-CN/README.md](docs/zh-CN/README.md) |
+| 快速上手 | [docs/zh-CN/getting-started.md](docs/zh-CN/getting-started.md) |
+| 核心概念 | [docs/zh-CN/concepts.md](docs/zh-CN/concepts.md) |
+| 运行时 | [docs/zh-CN/runtime.md](docs/zh-CN/runtime.md) |
+| 命令行参考 | [docs/zh-CN/cli.md](docs/zh-CN/cli.md) |
+| 开发流程 | [docs/zh-CN/development.md](docs/zh-CN/development.md) |
+
+其他语言：[English](docs/en/README.md) · [日本語](docs/ja/README.md) · [한국어](docs/ko/README.md) · [Français](docs/fr/README.md) · [Deutsch](docs/de/README.md) · [Español](docs/es/README.md) · [Português (BR)](docs/pt-BR/README.md) · [Русский](docs/ru/README.md)
 
 完整的架构设计见 [docs/architecture.md](docs/architecture.md)，规范性文档在 [spec/system/](spec/system/README.md)。
 

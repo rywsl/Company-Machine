@@ -1,4 +1,4 @@
-**English** | [简体中文](../zh-CN/getting-started.md) | [日本語](../ja/getting-started.md)
+**English** | [日本語](../ja/getting-started.md) | [한국어](../ko/getting-started.md) | [Français](../fr/getting-started.md) | [Deutsch](../de/getting-started.md) | [Español](../es/getting-started.md) | [Português (BR)](../pt-BR/getting-started.md) | [Русский](../ru/getting-started.md) | [简体中文](../zh-CN/getting-started.md)
 
 # Getting Started
 

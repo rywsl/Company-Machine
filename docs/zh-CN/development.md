@@ -1,4 +1,4 @@
-[English](../en/development.md) | **简体中文** | [日本語](../ja/development.md)
+[English](../en/development.md) | [日本語](../ja/development.md) | [한국어](../ko/development.md) | [Français](../fr/development.md) | [Deutsch](../de/development.md) | [Español](../es/development.md) | [Português (BR)](../pt-BR/development.md) | [Русский](../ru/development.md) | **简体中文**
 
 # 开发流程
 

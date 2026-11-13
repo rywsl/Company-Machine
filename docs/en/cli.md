@@ -1,4 +1,4 @@
-**English** | [简体中文](../zh-CN/cli.md) | [日本語](../ja/cli.md)
+**English** | [日本語](../ja/cli.md) | [한국어](../ko/cli.md) | [Français](../fr/cli.md) | [Deutsch](../de/cli.md) | [Español](../es/cli.md) | [Português (BR)](../pt-BR/cli.md) | [Русский](../ru/cli.md) | [简体中文](../zh-CN/cli.md)
 
 # CLI Reference
 

@@ -1,4 +1,4 @@
-**English** | [简体中文](README_zh-CN.md) | [日本語](README_ja.md)
+**English** | [日本語](README_ja.md) | [한국어](README_ko.md) | [Français](README_fr.md) | [Deutsch](README_de.md) | [Español](README_es.md) | [Português (BR)](README_pt-BR.md) | [Русский](README_ru.md) | [简体中文](README_zh-CN.md)
 
 <p align="center">
   <img src="docs/assets/banner.svg" alt="Machine Agent Org — a deterministic factory for existing AI agents and machines" width="100%">
@@ -275,14 +275,16 @@ docs/             architecture design (zh-CN), per-language guides, diagrams
 
 ## Documentation
 
-| | English | 简体中文 | 日本語 |
-|---|---|---|---|
-| Documentation index | [en](docs/en/README.md) | [zh-CN](docs/zh-CN/README.md) | [ja](docs/ja/README.md) |
-| Getting started | [getting-started](docs/en/getting-started.md) | [快速上手](docs/zh-CN/getting-started.md) | [はじめに](docs/ja/getting-started.md) |
-| Concepts | [concepts](docs/en/concepts.md) | [核心概念](docs/zh-CN/concepts.md) | [コンセプト](docs/ja/concepts.md) |
-| Runtime | [runtime](docs/en/runtime.md) | [运行时](docs/zh-CN/runtime.md) | [ランタイム](docs/ja/runtime.md) |
-| CLI reference | [cli](docs/en/cli.md) | [命令行](docs/zh-CN/cli.md) | [CLI](docs/ja/cli.md) |
-| Development | [development](docs/en/development.md) | [开发流程](docs/zh-CN/development.md) | [開発](docs/ja/development.md) |
+| | English |
+|---|---|
+| Documentation index | [docs/en/README.md](docs/en/README.md) |
+| Getting started | [docs/en/getting-started.md](docs/en/getting-started.md) |
+| Concepts | [docs/en/concepts.md](docs/en/concepts.md) |
+| Runtime | [docs/en/runtime.md](docs/en/runtime.md) |
+| CLI reference | [docs/en/cli.md](docs/en/cli.md) |
+| Development | [docs/en/development.md](docs/en/development.md) |
+
+Other languages: [日本語](docs/ja/README.md) · [한국어](docs/ko/README.md) · [Français](docs/fr/README.md) · [Deutsch](docs/de/README.md) · [Español](docs/es/README.md) · [Português (BR)](docs/pt-BR/README.md) · [Русский](docs/ru/README.md) · [简体中文](docs/zh-CN/README.md)
 
 The full architecture design (in Chinese) is [docs/architecture.md](docs/architecture.md). The normative specs are in [spec/system/](spec/system/README.md).
 
