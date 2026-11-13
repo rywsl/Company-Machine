@@ -80,7 +80,9 @@ def open_context(args: argparse.Namespace) -> Context:
         provider: Any = LocalProvider(root, commands=commands)
     else:
         provider = DockerProvider(root)
-    ctx = Context.open(root, provider=provider)
+    from mao.backends import open_context as open_backend
+
+    ctx = open_backend(root, provider=provider, backend=root / "backend-active.json")
     from mao.egress import discover_proxies
 
     ctx.proxies = discover_proxies(ctx)

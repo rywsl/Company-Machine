@@ -113,6 +113,9 @@ class LineRunner:
         self.snapshot = snapshot
         self.runner = runner
         self.cache = cache
+        from mao.dynamic import bind_context
+
+        bind_context(snapshot, ctx)
 
     def start_run(
         self,
@@ -214,6 +217,14 @@ class LineRunner:
             rows = self.ctx.db.query("SELECT * FROM runs WHERE state = ? ORDER BY id", (state,))
         return [_run_from_row(row) for row in rows]
 
+    def _subline_children(self, run_id: str) -> list[Run]:
+        found = []
+        for run in self.list():
+            trig = run.trigger
+            if trig.get("on") == "subline" and trig.get("parent") == run_id and run.id != run_id:
+                found.append(run)
+        return found
+
     def plan(self, run_id: str) -> RunPlan:
         row = self.ctx.db.query("SELECT plan FROM runs WHERE id = ?", (run_id,))
         if not row:
@@ -250,6 +261,10 @@ class LineRunner:
                     )
                 elif job.state == JobState.DEAD:
                     self._finish_node(conn, run, stored, NodeState.FAILED, {}, job.error, job.cost_usd, False)
+            from mao.dynamic import DynamicRunner, node_spec, parallel_limit
+
+            self._attach_plans(conn, run)
+            DynamicRunner(self.ctx, self.snapshot, self.runner, self).expand(run_id)
             run = self.get(run_id)
             nodes = self.nodes(run_id)
             if run.state == RunState.RUNNING and any(node.state == NodeState.FAILED for node in nodes):
@@ -262,12 +277,24 @@ class LineRunner:
                     error={"code": "NODE_FAILED", "message": "节点失败", "node": failed.node_id},
                 )
             ready = {node.node_id: node.state for node in nodes}
+            opened: dict[str, int] = {}
             if run.state == RunState.RUNNING:
                 for stored in nodes:
                     if stored.state != NodeState.WAITING:
                         continue
-                    spec = by_id[stored.node_id]
-                    if any(ready.get(dep) != NodeState.DONE for dep in spec.deps):
+                    from mao.dynamic import attached_spec
+
+                    spec = (
+                        by_id.get(stored.node_id)
+                        or node_spec(self.snapshot, run.line, stored.node_id)
+                        or attached_spec(self.snapshot, run, stored.node_id, nodes)
+                    )
+                    if spec is None or spec.kind not in ("station", "converter"):
+                        continue
+                    if any(ready.get(dep) not in (NodeState.DONE, NodeState.SKIPPED) for dep in spec.deps):
+                        continue
+                    limit = parallel_limit(self.snapshot, run.line, spec.id)
+                    if limit is not None and opened.get(spec.step, 0) >= limit:
                         continue
                     if self.ctx.db.query(
                         "SELECT station FROM station_holds WHERE station = ?", (spec.station,)
@@ -283,6 +310,8 @@ class LineRunner:
                             break
                         continue
                     submitted.append(job_id)
+                    if limit is not None:
+                        opened[spec.step] = opened.get(spec.step, 0) + 1
             run = self.get(run_id)
             nodes = self.nodes(run_id)
             if run.state in (RunState.FAILING, RunState.CANCELLING) and not any(
@@ -300,11 +329,15 @@ class LineRunner:
             elif (
                 run.state == RunState.RUNNING
                 and nodes
-                and all(node.state == NodeState.DONE for node in nodes)
+                and not any(node.state in (NodeState.WAITING, NodeState.SUBMITTED) for node in nodes)
+                and not any(node.state == NodeState.FAILED for node in nodes)
             ):
                 outputs = _collect_outputs(plan, nodes)
                 self._set_run(conn, run, RunState.SUCCEEDED, "done", outputs=outputs)
-        return sorted(submitted)
+            for child in self._subline_children(run_id):
+                if child.state not in RUN_TERMINAL:
+                    submitted.extend(self.tick(child.id))
+        return sorted(set(submitted))
 
     def run_to_completion(
         self, run_id: str, executor: Any, *, max_ticks: int = 10_000, wait_s: float = 1.0
@@ -392,13 +425,84 @@ class LineRunner:
             rebuilt_from=run.id,
         )
 
+    def _attach_plans(self, conn: Any, run: Run) -> None:
+        from mao.dynamic import compile_plan, plan_document_from_job, prefix_nodes
+
+        compiled = {node.id: node for node in _compile_line(self.snapshot, run.line).nodes}
+        existing = {node.node_id for node in self.nodes(run.id)}
+        for stored in self.nodes(run.id):
+            if stored.state != NodeState.DONE or not stored.job_id or stored.node_id not in compiled:
+                continue
+            spec = compiled[stored.node_id]
+            if spec.kind != "station":
+                continue
+            station = self.snapshot.spec(spec.station)
+            if station.get("role") != "planner":
+                continue
+            prefix = stored.node_id + "/"
+            if any(name.startswith(prefix) for name in existing):
+                continue
+            job = load_job(self.ctx.db, stored.job_id)
+            document = plan_document_from_job(self.ctx, self.snapshot, job)
+            check = compile_plan(self.snapshot, document or {}, planner_key=job.station, run=self.get(run.id))
+            if not check.ok or check.plan is None:
+                now = utc_iso(self.ctx.clock.now())
+                conn.execute(
+                    """UPDATE run_nodes SET state = 'FAILED', error = ?, updated_at = ?
+                       WHERE run_id = ? AND node_id = ?""",
+                    (
+                        canonical_json(
+                            {
+                                "code": "RUN_PLAN_INVALID",
+                                "message": check.feedback or "Plan 不能挂接",
+                                "detail": {"reason": "plan"},
+                            }
+                        ),
+                        now,
+                        run.id,
+                        stored.node_id,
+                    ),
+                )
+                continue
+            ordinal = conn.execute(
+                "SELECT COALESCE(MAX(ord), -1) + 1 AS n FROM run_nodes WHERE run_id = ?",
+                (run.id,),
+            ).fetchone()
+            now = utc_iso(self.ctx.clock.now())
+            next_ord = int(ordinal["n"])
+            for node in prefix_nodes(check.plan.nodes, stored.node_id):
+                if node.id in existing:
+                    continue
+                conn.execute(
+                    """INSERT INTO run_nodes
+                       (run_id, node_id, ord, state, outputs, reserved_usd, updated_at)
+                       VALUES (?, ?, ?, 'WAITING', '{}', 0, ?)""",
+                    (run.id, node.id, next_ord, now),
+                )
+                next_ord += 1
+                existing.add(node.id)
+            outputs = job.outputs or {}
+            bean_ids = next(iter(outputs.values()), [])
+            steps = sorted((document or {}).get("spec", {}).get("steps", {}))
+            self._event(
+                conn,
+                run.id,
+                "run.plan",
+                {"plan": bean_ids[0] if bean_ids else "", "node": stored.node_id, "steps": steps},
+            )
+
     def _submit_node(
         self, conn: Any, run: Run, stored: RunNode, spec: PlanNode, nodes: list[RunNode]
     ) -> str | None:
         by_node = {node.node_id: node for node in nodes}
         submit_inputs: dict[str, Any] = {}
         for binding in spec.inputs:
-            if binding.source == "input":
+            if binding.source == "item":
+                from mao.dynamic import item_bean_id
+
+                bean_id = item_bean_id(self.snapshot, run, spec.id, nodes)
+                ids = [] if bean_id is None else [bean_id]
+            elif binding.source == "input":
                 ids = list(run.inputs.get(binding.out_port) or [])
             else:
                 ids = list((by_node[binding.node].outputs or {}).get(binding.out_port) or [])
@@ -412,10 +516,28 @@ class LineRunner:
         params = dict(spec.params)
         for name in spec.templated:
             subject = f"{run.line}/steps.{spec.step}.params.{name}"
-            params[name] = self.snapshot.compiled(subject).render(
-                {"run": run.value(), "inputs": inputs_value(self._input_beans(run))}
-            )
+            from mao.dynamic import template_extra
+
+            env = {"run": run.value(), "inputs": inputs_value(self._input_beans(run))}
+            env.update(template_extra(self.snapshot, self.ctx.warehouse, run, spec.id, nodes))
+            params[name] = self.snapshot.compiled(subject).render(env)
+        from mao.dynamic import until_upfront
+
+        upfront = until_upfront(self.snapshot, run.line, spec.id, nodes)
         need = spec.budget_usd
+        if upfront is not None and run.spent_usd + run.reserved_usd + upfront > run.budget_cap_usd:
+            self._set_run(
+                conn,
+                run,
+                RunState.FAILING,
+                "budget",
+                error={
+                    "code": "RUN_BUDGET_EXHAUSTED",
+                    "message": "迭代预留会超出 run 预算",
+                    "node": spec.id,
+                },
+            )
+            return None
         if run.spent_usd + run.reserved_usd + need > run.budget_cap_usd:
             self._set_run(
                 conn,
@@ -891,10 +1013,13 @@ def _check_variants(plan: RunPlan, variants: Mapping[str, str]) -> dict[str, str
 def _collect_outputs(plan: RunPlan, nodes: list[RunNode]) -> dict[str, list[str]]:
     by_id = {node.node_id: node for node in nodes}
     if plan.outputs:
-        return {
-            name: list((by_id[node_id].outputs or {}).get(port) or [])
-            for name, (node_id, port) in plan.outputs.items()
-        }
+        found: dict[str, list[str]] = {}
+        for name, (node_id, port) in plan.outputs.items():
+            source = by_id.get(node_id)
+            if source is None or source.state == NodeState.SKIPPED:
+                continue
+            found[name] = list((source.outputs or {}).get(port) or [])
+        return found
     found: dict[str, list[str]] = {}
     for node in nodes:
         for port, ids in node.outputs.items():

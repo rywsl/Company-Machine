@@ -250,9 +250,9 @@ class Reconciler:
         if self.contracts is not None:
             return self.contracts(snapshot)
         from mao.contract import ContractRunner
-        from mao.runner import Runner
+        from mao.runner import open_runner
 
-        return ContractRunner(self.ctx, snapshot, Runner(self.ctx, snapshot))
+        return ContractRunner(self.ctx, snapshot, open_runner(self.ctx, snapshot))
 
     def _registry_clean(self) -> None:
         epoch = self.epochs.current()

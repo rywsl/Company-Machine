@@ -150,8 +150,10 @@ def evaluate_safe_mode(ctx: Any) -> dict[str, Any]:
         if now - _parse(row["at"]) <= window:
             rollbacks += 1
     wakes = 0
-    if ctx.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_findings'"):
+    try:
         wakes = len(ctx.db.query("SELECT id FROM audit_findings WHERE state = 'wake'"))
+    except Exception:
+        wakes = 0
     triggered = rollbacks >= limits["safe_mode_rollbacks"] or wakes > 0
     current = safe_mode_row(ctx)
     level = int(current["level"])

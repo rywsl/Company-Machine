@@ -6,7 +6,7 @@ import argparse
 
 from mao.approvals import Approvals
 from mao.commands.common import finish, open_context, open_snapshot
-from mao.runner import Runner
+from mao.runner import open_runner
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -42,5 +42,5 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_decide(args: argparse.Namespace) -> int:
     with open_context(args) as ctx:
         snapshot = open_snapshot(ctx, args)
-        Runner(ctx, snapshot).decide(args.approval, args.decision, by=args.by, note=args.note)
+        open_runner(ctx, snapshot).decide(args.approval, args.decision, by=args.by, note=args.note)
     return finish(args, None)

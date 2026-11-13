@@ -37,7 +37,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_migrate(args: argparse.Namespace) -> int:
-    root = Path(os.environ.get("FACTORY_ROOT", args.source))
+    root = Path(args.root) if getattr(args, "root", None) else Path(os.environ.get("FACTORY_ROOT", "."))
     if args.dry_run:
         json.loads(Path(args.target).read_text(encoding="utf-8"))
         return finish(args, {"dry_run": True})

@@ -135,7 +135,8 @@ class SecretStore:
 def register_job_cap(db: Any, job_id: str, station_key: str, cap_usd: float | None) -> None:
     with db.tx() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO model_caps (job_id, station, cap_usd) VALUES (?, ?, ?)",
+            """INSERT INTO model_caps (job_id, station, cap_usd) VALUES (?, ?, ?)
+               ON CONFLICT(job_id) DO UPDATE SET station = excluded.station, cap_usd = excluded.cap_usd""",
             (job_id, station_key, cap_usd),
         )
 
@@ -151,7 +152,8 @@ def register_job_egress(db: Any, job_id: str, plan: EgressPlan) -> None:
     }
     with db.tx() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO egress_plans (job_id, plan, at) VALUES (?, ?, ?)",
+            """INSERT INTO egress_plans (job_id, plan, at) VALUES (?, ?, ?)
+               ON CONFLICT(job_id) DO UPDATE SET plan = excluded.plan, at = excluded.at""",
             (job_id, canonical_json(body), _plan_at(db, job_id)),
         )
 

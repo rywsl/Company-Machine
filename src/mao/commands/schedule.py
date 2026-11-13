@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from mao.commands.common import finish, human_by, open_context, open_snapshot
-from mao.runner import Runner
+from mao.runner import open_runner
 from mao.scheduler import Scheduler
 
 
@@ -29,7 +29,7 @@ def register(sub: argparse._SubParsersAction) -> None:
 
 def _scheduler(ctx: object, args: argparse.Namespace) -> Scheduler:
     snapshot = open_snapshot(ctx, args)
-    return Scheduler(ctx, snapshot, Runner(ctx, snapshot))
+    return Scheduler(ctx, snapshot, open_runner(ctx, snapshot))
 
 
 def cmd_tick(args: argparse.Namespace) -> int:

@@ -9,7 +9,7 @@ from mao.base import canonical_json
 from mao.commands.common import governance_registry, open_context, registry_path, split_pair
 from mao.errors import FactoryError
 from mao.jobs import dump_job, load_job
-from mao.runner import Runner
+from mao.runner import open_runner
 from mao.snapshot import Snapshot
 
 
@@ -44,7 +44,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     inputs = dict(split_pair(item, "--input 必须是 PORT=BEAN") for item in args.input)
     with open_context(args) as ctx:
         snapshot = Snapshot.load(registry_path(args))
-        runner = Runner(ctx, snapshot)
+        runner = open_runner(ctx, snapshot)
         job = runner.run(runner.submit(args.station, inputs, {}).id)
     if args.json:
         print(canonical_json(dump_job(job)))
@@ -74,7 +74,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
             snapshot = EpochStore(ctx).materialize(job.epoch)
         else:
             snapshot = Snapshot.load(registry_path(args))
-        runner = Runner(ctx, snapshot)
+        runner = open_runner(ctx, snapshot)
         try:
             done = runner.run(job.id)
         except FactoryError as exc:

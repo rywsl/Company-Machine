@@ -31,9 +31,10 @@ _KEEP = object()
 
 
 class Runner:
-    def __init__(self, ctx: Any, snapshot: Any) -> None:
+    def __init__(self, ctx: Any, snapshot: Any, *, gateway: Any = None) -> None:
         self.ctx = ctx
         self.snapshot = snapshot
+        self.gateway = gateway
         self.gate = Gate(
             snapshot,
             ctx.warehouse,
@@ -292,6 +293,8 @@ class Runner:
         )
 
     def _execute(self, job: Job, sandbox: Any, prepared: _Prepared) -> Job:
+        if prepared.machine.get("form") == "service" and self.gateway is not None:
+            return self._execute_service(job, sandbox, prepared)
         brief = prepared.brief
         invocation = build_invocation(
             self.snapshot, job.station, brief, inputs=prepared.beans, params=job.params
@@ -366,6 +369,24 @@ class Runner:
         job = self._transition(job, JobState.GATING, "inspect")
         return self._finish(job, sandbox, prepared)
 
+    def _execute_service(self, job: Job, sandbox: Any, prepared: _Prepared) -> Job:
+        timeout = (prepared.station.get("limits") or {}).get("timeout")
+        timeout_s = parse_duration(str(timeout)) if timeout else 0.0
+        try:
+            self.gateway.run_recipe(
+                station_key=job.station,
+                job_id=job.id,
+                attempt=job.attempt,
+                sandbox=sandbox,
+                inputs=prepared.beans,
+                params=job.params,
+                timeout_s=timeout_s,
+            )
+        except FactoryError as exc:
+            return self._fail(job, exc.code, exc.message, dict(exc.detail))
+        job = self._transition(job, JobState.GATING, "inspect")
+        return self._finish(job, sandbox, prepared)
+
     def _finish(self, job: Job, sandbox: Any, prepared: _Prepared) -> Job:
         harvested = self._harvest(job, sandbox, prepared)
         if harvested is not None:
@@ -391,6 +412,10 @@ class Runner:
                 job, JobState.REJECTED, "GATE_REJECTED", error=body, feedback=report.feedback
             )
             return self._retry_or_dead(job)
+        if report.verdict == "pass" and prepared.station.get("role") == "planner":
+            decided = self._check_planner(job, prepared)
+            if decided is not None:
+                return decided
         sealed = self._seal(job, report)
         if prepared.station.get("role") == "source":
             with self.ctx.db.tx() as conn:
@@ -402,6 +427,58 @@ class Runner:
                     {"job": sealed.id, "station": sealed.station, "outputs": sealed.outputs},
                 )
         return sealed
+
+    def _check_planner(self, job: Job, prepared: _Prepared) -> Job | None:
+        rows = self.ctx.db.query(
+            "SELECT run_id, node_id FROM run_nodes WHERE job_id = ?",
+            (job.id,),
+        )
+        if not rows:
+            return self._fail(
+                job,
+                "RUN_PLAN_INVALID",
+                "planner 工位不在 run 里",
+                {"reason": "planner-outside-run"},
+            )
+        document, problem = self._planner_document(job, prepared)
+        if problem:
+            return self._reject_plan(job, problem)
+        from mao.dynamic import compile_plan
+        from mao.runs import LineRunner
+
+        run = LineRunner(self.ctx, self.snapshot, self).get(str(rows[0]["run_id"]))
+        check = compile_plan(self.snapshot, document or {}, planner_key=job.station, run=run)
+        if not check.ok:
+            return self._reject_plan(job, check.feedback or "PLAN_INVALID")
+        return None
+
+    def _planner_document(self, job: Job, prepared: _Prepared) -> tuple[dict[str, Any] | None, str]:
+        station = self.snapshot.spec(job.station)
+        outputs = station.get("outputs") or {}
+        if len(outputs) != 1:
+            return None, "PLAN_INVALID"
+        port, decl = next(iter(outputs.items()))
+        type_expr = decl.get("type") if isinstance(decl, dict) else str(decl)
+        if str(type_expr).startswith("list<"):
+            return None, "PLAN_INVALID"
+        from mao.dynamic import _required_payload_paths
+
+        paths = _required_payload_paths(self.snapshot, str(type_expr))
+        if len(paths) != 1:
+            return None, "PLAN_INVALID"
+        file = prepared.attempt_dir / "out" / str(port) / paths[0]
+        try:
+            loaded = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None, "PLAN_INVALID"
+        if not isinstance(loaded, dict):
+            return None, "PLAN_INVALID"
+        return loaded, ""
+
+    def _reject_plan(self, job: Job, feedback: str) -> Job:
+        body = {"code": "GATE_REJECTED", "message": feedback, "detail": {"job": job.id}}
+        job = self._transition(job, JobState.REJECTED, "GATE_REJECTED", error=body, feedback=feedback)
+        return self._retry_or_dead(job)
 
     def _harvest(self, job: Job, sandbox: Any, prepared: _Prepared) -> Any:
         ports = self._harvest_ports(prepared)
@@ -797,7 +874,7 @@ class Runner:
     def _static_problem(self, job: Job) -> FactoryError | None:
         station = self.snapshot.spec(job.station)
         role = station.get("role")
-        if role not in ("transform", "converter", "source", "sink"):
+        if role not in ("transform", "converter", "source", "sink", "planner"):
             return FactoryError("ROLE_UNSUPPORTED", "这个角色还不能运行", station=job.station, role=role)
         if "phases" in station and station["phases"] != ["execute"]:
             return FactoryError(
@@ -806,7 +883,16 @@ class Runner:
         machine_key = self.snapshot.key("Machine", station["machine"])
         machine = self.snapshot.spec(machine_key)
         form = machine.get("form")
-        if form not in ("tool", "workspace"):
+        if form == "service":
+            if self.gateway is None:
+                return FactoryError(
+                    "FORM_UNSUPPORTED",
+                    "M1 不运行这种机器形态",
+                    station=job.station,
+                    machine=machine_key,
+                    form=form,
+                )
+        elif form not in ("tool", "workspace"):
             return FactoryError(
                 "FORM_UNSUPPORTED",
                 "M1 不运行这种机器形态",
@@ -1216,6 +1302,12 @@ def _insert_event(conn: Any, ctx: Any, kind: str, job_id: str | None, data: Mapp
         "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, ?, ?, ?)",
         (ctx.ids.new("ev"), utc_iso(ctx.clock.now()), kind, job_id, canonical_json(dict(data))),
     )
+
+
+def open_runner(ctx: Any, snapshot: Any) -> Runner:
+    from mao.gateway import ServiceGateway
+
+    return Runner(ctx, snapshot, gateway=ServiceGateway(ctx, snapshot))
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:

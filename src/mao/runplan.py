@@ -16,7 +16,7 @@ _UNSUPPORTED = ("subline", "switch", "map", "until")
 @dataclass(frozen=True)
 class Binding:
     port: str
-    source: Literal["input", "node"]
+    source: Literal["input", "node", "item"]
     node: str
     out_port: str
 
@@ -27,7 +27,7 @@ class Binding:
 @dataclass(frozen=True)
 class PlanNode:
     id: str
-    kind: Literal["station", "converter"]
+    kind: Literal["station", "converter", "map", "switch", "until", "subline", "aggregate"]
     step: str
     station: str
     role: str

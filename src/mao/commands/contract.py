@@ -6,7 +6,7 @@ import argparse
 
 from mao.commands.common import finish, open_context, open_snapshot, split_pair
 from mao.contract import ContractRunner
-from mao.runner import Runner
+from mao.runner import open_runner
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -43,7 +43,7 @@ def register(sub: argparse._SubParsersAction) -> None:
 
 def _runner(ctx: object, args: argparse.Namespace) -> ContractRunner:
     snapshot = open_snapshot(ctx, args)
-    return ContractRunner(ctx, snapshot, Runner(ctx, snapshot))
+    return ContractRunner(ctx, snapshot, open_runner(ctx, snapshot))
 
 
 def _code(result: object) -> int:

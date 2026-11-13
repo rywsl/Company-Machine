@@ -76,14 +76,38 @@ class Warehouse:
         self.db = db
         self.clock = clock
         self.ids = ids
+        self.store = None
 
     def blob_path(self, digest: str) -> Path:
+        if self.store is not None:
+            return self._cached_blob(digest)
         if _DIGEST.fullmatch(digest) is None:
             raise FactoryError("DIGEST_INVALID", "摘要格式不合法", digest=digest)
         hexpart = digest.split(":", 1)[1]
         return self.root / "cas" / "sha256" / hexpart[:2] / hexpart[2:]
 
+    def _cache_path(self, digest: str) -> Path:
+        hexpart = digest.split(":", 1)[1]
+        return self.root / "cas-cache" / "sha256" / hexpart[:2] / hexpart[2:]
+
+    def _cached_blob(self, digest: str) -> Path:
+        if _DIGEST.fullmatch(digest) is None:
+            raise FactoryError("DIGEST_INVALID", "摘要格式不合法", digest=digest)
+        cache = self._cache_path(digest)
+        if cache.is_file() and digest_file(cache) != digest:
+            cache.unlink()
+            raise FactoryError("CAS_MISSING", "缓存摘要不符", digest=digest)
+        if not cache.is_file():
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            self.store.get_file(digest, cache)
+            if digest_file(cache) != digest:
+                cache.unlink()
+                raise FactoryError("CAS_MISSING", "缓存摘要不符", digest=digest)
+        return cache
+
     def put_file(self, path: Path) -> str:
+        if self.store is not None:
+            return self.store.put_file(Path(path))
         digest = digest_file(Path(path))
         dest = self.blob_path(digest)
         if dest.exists():
@@ -214,6 +238,11 @@ class Warehouse:
         return self.get(bean_id)
 
     def delete_blob(self, digest: str) -> bool:
+        if self.store is not None:
+            cache = self._cache_path(digest)
+            if cache.is_file():
+                cache.unlink()
+            return bool(self.store.delete(digest))
         path = self.blob_path(digest)
         if not path.is_file():
             return False
