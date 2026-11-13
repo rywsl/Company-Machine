@@ -186,6 +186,30 @@
               "timeout": {"$ref": "common.schema.json#/$defs/duration"}
             }
           }
+        },
+        "ingress": {
+          "type": "object",
+          "propertyNames": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["auth", "deliver"],
+            "additionalProperties": false,
+            "properties": {
+              "auth": {
+                "type": "object",
+                "required": ["kind", "secret"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {"enum": ["bearer", "hmac-sha256"]},
+                  "secret": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+                  "header": {"type": "string", "minLength": 1}
+                }
+              },
+              "deliver": {"enum": ["bean", "instance"]},
+              "port": {"type": "string", "minLength": 1},
+              "file": {"type": "string", "minLength": 1}
+            }
+          }
         }
       }
     }

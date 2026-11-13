@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mao.local/schemas/agent.schema.json",
+  "title": "Agent（常驻 agent：职责、runtime、订阅、预算、上下文）",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "mao/v1"},
+    "kind": {"const": "Agent"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["runtime", "charter", "policy", "budget"],
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {"$ref": "common.schema.json#/$defs/ref"},
+        "model": {"type": "string", "minLength": 1},
+        "charter": {"type": "string"},
+        "policy": {"$ref": "common.schema.json#/$defs/ref"},
+        "lines": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ref"}, "uniqueItems": true},
+        "subscribe": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schedule": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["every"],
+                "additionalProperties": false,
+                "properties": {
+                  "every": {"type": "string"},
+                  "note": {"type": "string"}
+                }
+              }
+            },
+            "beans": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["type"],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {"type": "string", "minLength": 1},
+                  "label": {"type": "string"}
+                }
+              }
+            },
+            "ingress": {
+              "type": "object",
+              "propertyNames": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+              "additionalProperties": {
+                "type": "object",
+                "required": ["auth"],
+                "additionalProperties": false,
+                "properties": {
+                  "auth": {
+                    "type": "object",
+                    "required": ["kind", "secret"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {"enum": ["bearer", "hmac-sha256"]},
+                      "secret": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+                      "header": {"type": "string", "minLength": 1}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "daily_usd": {"type": "number"},
+            "turn_usd": {"type": "number"},
+            "turn_timeout": {"type": "string"}
+          }
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "batch": {"type": "integer"},
+            "rotate_turns": {"type": "integer"},
+            "rotate_tokens": {"type": "integer"},
+            "max_turns": {"type": "integer"}
+          }
+        }
+      }
+    }
+  }
+}

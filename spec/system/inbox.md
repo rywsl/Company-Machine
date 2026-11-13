@@ -9,6 +9,7 @@
 >
 > 收件箱是一个独立功能：有自己的存储、命令、控制台页面和通知钩子。其他模块只调用 `Inbox.open` 和 `Inbox.close`。
 > 本文件与 `console.md`、`egress.md`、`factoryctl.md`、`mcp.md`、`commands.md` 冲突时，以本文件为准。
+> **M12/M13 增补**：`agent:` 来源的事项结案后投回 Agent 邮箱（不开唤醒票）见 `agents.md` 5.2（M13）。冲突时以新规范为准。
 
 ---
 

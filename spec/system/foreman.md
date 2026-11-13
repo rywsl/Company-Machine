@@ -5,6 +5,7 @@
 > 跨组件约定见 `README.md`。指针与流水线见 `governance.md`。审计发现见 `reconciler.md`。
 > 控制面不调用任何 LLM API（D10）。厂长是仓库外的现成 CLI，通过本文件的命令或 stdio JSON-RPC 进来。
 > 唤醒信号新增 `approval`、`inbox`、`monitor`，见 `delegation.md`、`inbox.md`、`capabilities.md`（M11）。
+> **M12/M13 增补**：`instance` 唤醒票见 `instances.md` 5.5（M12）；`WakeQueue.next(signals=, exclude=)` 见 `agents.md` 5.8（M13）。冲突时以新规范为准。
 
 ---
 

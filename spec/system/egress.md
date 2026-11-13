@@ -5,6 +5,7 @@
 > 跨组件约定见 `README.md`。`SandboxSpec.network` 仍是 `"none" | "egress"`，签名不改。
 > `connectors.md` 第 5.6 节规定“给谁、不给谁”。本文件规定秘密放在哪、怎样注入、代理怎样放行。
 > 主体令牌与 407、通配域名、`on_unlisted: ask`、监控规则、核验沙箱的 `check` 主体见 `capabilities.md`（M11），冲突时以 `capabilities.md` 为准。
+> **M12/M13 增补**：常驻实例的出网主体 `inst-<id>` 见 `instances.md` 5.8（M12）；`build_egress(..., station=)` 与 Agent 的主体 `agent-<名>` 见 `agents.md` 4.3（M13）。冲突时以新规范为准。
 
 ---
 

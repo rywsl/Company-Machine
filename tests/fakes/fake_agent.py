@@ -4,7 +4,7 @@
 命令行模仿 Claude Code 无头模式（只解析需要的参数，其余忽略）：
 
     fake-agent -p TASK [--append-system-prompt TEXT] [--output-format stream-json]
-               [--max-turns N] [--model M] [--verbose]
+               [--max-turns N] [--model M] [--verbose] [--resume SESSION]
 
 行为由一个 JSON 脚本决定。查找顺序：环境变量 FAKE_AGENT_SCRIPT 指向的文件 →
 $FACTORY_IN/task/task.json（agent.task@1 输入 Bean 的 payload）。脚本格式：
@@ -32,6 +32,8 @@ $FACTORY_IN/task/task.json（agent.task@1 输入 Bean 的 payload）。脚本格
     {"do": "exit", "code": N}                      立即结束，退出码 N（N != 0 时 is_error 为 true）
     {"do": "run", "argv": [...], "cwd": P, "allow_exit": [0], "save": P}
                                                    运行一个命令（不经 shell）；argv 中的虚拟路径会被替换
+    {"do": "history", "path": P}                   把本会话此前各次运行的 -p 文本写成 JSON 数组到 P（M13）
+    {"do": "usage", "input_tokens": N}             结果事件增加 usage.input_tokens（M13）
     {"do": "mcp", "calls": [{"name": N, "arguments": {...}}], "save": P, "allow_error": false}
                                                    启动 `factoryctl mcp`，依次发送 initialize、
                                                    notifications/initialized 和每个 tools/call；
@@ -44,6 +46,11 @@ $FACTORY_IN/task/task.json（agent.task@1 输入 Bean 的 payload）。脚本格
 
 角色（M5-06）：脚本有 "roles" 且环境变量 FACTORY_ROLE 在其中时，动作取 roles[FACTORY_ROLE]，
 忽略 attempts 和 default。
+
+常驻 agent（M13，spec/system/agents.md 4.7）：
+- --resume S 时会话 id 为 S，否则为 fake-<FACTORY_JOB_ID>-<FACTORY_ATTEMPT>；
+- 每次运行把 {"task": -p 文本} 追加到 /workspace/.home/.fake-agent/<会话 id>.jsonl（会话存储在 /workspace 下，跨容器保留）；
+- roles 之后、attempts 之前：脚本有 "by_turn" 且 FACTORY_TURN 在其中时，动作取 by_turn[FACTORY_TURN]。
 
 路径：以 /factory/in、/factory/out、/factory/ctl、/workspace 开头的路径，按环境变量
 FACTORY_IN / FACTORY_OUT / FACTORY_CTL / FACTORY_WORKSPACE 换成真实路径（Docker 下不变，
@@ -85,7 +92,7 @@ def real_path(path):
 
 
 def parse_args(argv):
-    opts = {"task": "", "model": "", "max_turns": None, "system": ""}
+    opts = {"task": "", "model": "", "max_turns": None, "system": "", "resume": None}
     i = 1
     while i < len(argv):
         a = argv[i]
@@ -100,6 +107,9 @@ def parse_args(argv):
             i += 2
         elif a == "--append-system-prompt" and i + 1 < len(argv):
             opts["system"] = argv[i + 1]
+            i += 2
+        elif a == "--resume" and i + 1 < len(argv):
+            opts["resume"] = argv[i + 1]
             i += 2
         elif a in ("--output-format", "--permission-mode", "--mcp-config") and i + 1 < len(argv):
             i += 2
@@ -131,6 +141,8 @@ class Agent:
         self.session = session
         self.cost = float(script.get("cost_usd", 0.0))
         self.turns = int(script.get("turns", 1))
+        self.history = []
+        self.input_tokens = None
 
     def say(self, text):
         emit(
@@ -142,18 +154,19 @@ class Agent:
         )
 
     def finish(self, ok, text):
-        emit(
-            {
-                "type": "result",
-                "subtype": "success" if ok else "error_during_execution",
-                "is_error": not ok,
-                "duration_ms": 0,
-                "num_turns": self.turns,
-                "result": text,
-                "session_id": self.session,
-                "total_cost_usd": self.cost,
-            }
-        )
+        event = {
+            "type": "result",
+            "subtype": "success" if ok else "error_during_execution",
+            "is_error": not ok,
+            "duration_ms": 0,
+            "num_turns": self.turns,
+            "result": text,
+            "session_id": self.session,
+            "total_cost_usd": self.cost,
+        }
+        if self.input_tokens is not None:
+            event["usage"] = {"input_tokens": self.input_tokens}
+        emit(event)
 
     def run(self, actions):
         """执行动作；返回退出码（遇到 exit 动作时提前返回）。"""
@@ -194,6 +207,15 @@ class Agent:
             time.sleep(float(a["seconds"]))
         elif do == "cost":
             self.cost = float(a["usd"])
+        elif do == "history":
+            path = real_path(a["path"])
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.history, f, ensure_ascii=False)
+        elif do == "usage":
+            self.input_tokens = int(a["input_tokens"])
         elif do == "emit":
             emit(a["event"])
         elif do == "garbage":
@@ -334,10 +356,38 @@ def save_text(path, text):
         f.write(text)
 
 
+def _history_path(session):
+    home = real_path("/workspace/.home")
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in session)
+    return os.path.join(home, ".fake-agent", safe + ".jsonl")
+
+
+def load_history(session):
+    path = _history_path(session)
+    if not os.path.isfile(path):
+        return []
+    tasks = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                tasks.append(json.loads(line).get("task", ""))
+    return tasks
+
+
+def save_history(session, task):
+    path = _history_path(session)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"task": task}, ensure_ascii=False) + "\n")
+
+
 def main(argv):
     opts = parse_args(argv)
     attempt = os.environ.get("FACTORY_ATTEMPT", "1")
-    session = "fake-{}-{}".format(os.environ.get("FACTORY_JOB_ID", "job"), attempt)
+    session = opts["resume"] or "fake-{}-{}".format(os.environ.get("FACTORY_JOB_ID", "job"), attempt)
+    history = load_history(session)
+    save_history(session, opts["task"])
     emit({"type": "system", "subtype": "init", "session_id": session, "model": opts["model"], "tools": []})
     try:
         script = load_script()
@@ -345,10 +395,15 @@ def main(argv):
         Agent(opts, {}, session).finish(False, f"无法读取脚本：{e}")
         return 1
     agent = Agent(opts, script, session)
+    agent.history = history
     roles = script.get("roles") or {}
     role = os.environ.get("FACTORY_ROLE")
+    by_turn = script.get("by_turn") or {}
+    turn = os.environ.get("FACTORY_TURN")
     if role in roles:
         actions = roles[role]
+    elif turn is not None and turn in by_turn:
+        actions = by_turn[turn]
     else:
         attempts = script.get("attempts") or {}
         actions = attempts.get(attempt, script.get("default", []))

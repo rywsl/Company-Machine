@@ -3,6 +3,7 @@
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M6-01**。
 > M1–M5 的 agent 全是 `tests/fakes/fake_agent.py`。它不连模型代理，所以下面几处缺口从没暴露：真实 CLI 带不上 `X-Factory-Job`（`plan/drift.md` D-28）；模型代理按 M2 的规则数不对 Anthropic 与 OpenAI 的流式用量；代理只能活在发起 job 的那个进程里（D-27）；容器怎样连到宿主上的代理没有人规定（D-30）。本文件补齐这些，并给出 Claude Code 与 Codex 的参考 runtime 文档。
 > 本任务不需要 Docker，也不需要真实 CLI：用 `tests/fakes/fake_llm.py` 当模型上游。真实 CLI 在 Docker 里的验收在 M6-03（`live.md`）。
+> **M12/M13 增补**：`invoke.resume`、`TranscriptSummary.session_id` 与 `input_tokens` 见 `agents.md` 3.3（M13）。冲突时以新规范为准。
 
 ---
 

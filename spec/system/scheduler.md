@@ -4,6 +4,7 @@
 > 依据：架构文档 6.9、10.5 的机制名称。数字门槛以已有 Spec 与调用方配置为准，本文件不另定。
 > `lines.md` 第 3.2 节的 `Executor` 由本文件实现，不替换、不增删方法。
 > `cache.md` 调用 `mao.scheduler.is_quarantined(bean_id)`。`connectors.md` 的 cron 由本文件触发。
+> **M12/M13 增补**：`Scheduler(..., instances=None)` 与实例准入见 `instances.md` 5.4（M12）。冲突时以新规范为准。
 
 ---
 

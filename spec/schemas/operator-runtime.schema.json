@@ -29,6 +29,7 @@
           "additionalProperties": false,
           "properties": {
             "argv": {"$ref": "common.schema.json#/$defs/stringList"},
+            "resume": {"$ref": "common.schema.json#/$defs/stringList"},
             "mcp": {"type": "object"}
           }
         },

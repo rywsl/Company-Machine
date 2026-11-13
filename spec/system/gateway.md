@@ -5,6 +5,7 @@
 > `connectors.md` 规定：M2 运行 `form: service` 时报 `FORM_UNSUPPORTED`。本文件是该形态成为合法执行路径的地方。M2 函数在未安装网关时仍抛 `FORM_UNSUPPORTED`。
 > 控制面内不新增 agent 运行时，不调用 LLM（D10）。
 > `Runner` 接入网关、生产路径的装配、取回文件的放置见 `closure.md` 5.3（M9），冲突时以 `closure.md` 为准。
+> **M12/M13 增补**：`run_recipe(..., reset=False)` 见 `instances.md` 5.3（M12）。冲突时以新规范为准。
 
 ---
 

@@ -113,7 +113,7 @@ def recipe_env(inputs, params) -> dict;  def runtime_env(brief, limits, operator
 | `switch` | `Line:…/steps.<步骤>.switch.cases[<i>]` | 否 |
 | `until` | `Line:…/steps.<步骤>.until` | 否 |
 | `recipe-template` | `Machine:…/recipes.<配方>.<路径>` | 是 |
-| `runtime-template` | `OperatorRuntime:…/invoke.argv[<i>]`、`…/env.<名>` | 是 |
+| `runtime-template` | `OperatorRuntime:…/invoke.argv[<i>]`、`…/invoke.resume[<i>]`（M13）、`…/env.<名>` | 是 |
 
 笔记夹具（`m1_data_helpers.notes_registry_files`）至少包含：
 
