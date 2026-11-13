@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="Machine Agent Org banner">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b1220"/><stop offset="1" stop-color="#1e293b"/></linearGradient>
+<linearGradient id="belt" x1="0" x2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#14b8a6"/></linearGradient>
+<pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.045"/></pattern>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#94a3b8"/></marker>
+</defs><rect width="1280" height="320" rx="20" fill="url(#bg)"/><rect width="1280" height="320" rx="20" fill="url(#grid)"/>
+<line x1="56" y1="214" x2="500" y2="214" stroke="url(#belt)" stroke-width="6" stroke-linecap="round"/>
+<polygon points="13.9,-8 13.9,8 0,16 -13.9,8 -13.9,-8 0,-16" transform="translate(92 190) scale(1.0)" fill="#f59e0b" stroke="none" stroke-width="2"/>
+<polygon points="13.9,-8 13.9,8 0,16 -13.9,8 -13.9,-8 0,-16" transform="translate(146 190) scale(1.0)" fill="#f59e0b" stroke="none" stroke-width="2"/>
+<rect x="196" y="112" width="190" height="124" rx="16" fill="#0f172a" stroke="#14b8a6" stroke-width="3"/>
+<rect x="214" y="134" width="70" height="70" rx="10" fill="none" stroke="#6366f1" stroke-width="3"/>
+<circle cx="249" cy="169" r="16" fill="none" stroke="#6366f1" stroke-width="5" stroke-dasharray="7 5"/>
+<circle cx="249" cy="169" r="6" fill="#6366f1"/>
+<rect x="300" y="140" width="68" height="56" rx="14" fill="none" stroke="#14b8a6" stroke-width="3"/>
+<line x1="334" y1="140" x2="334" y2="126" stroke="#14b8a6" stroke-width="3"/><circle cx="334" cy="122" r="5" fill="#14b8a6"/>
+<circle cx="320" cy="165" r="6" fill="#14b8a6"/><circle cx="348" cy="165" r="6" fill="#14b8a6"/>
+<line x1="320" y1="182" x2="348" y2="182" stroke="#14b8a6" stroke-width="3" stroke-linecap="round"/>
+<text x="291" y="226" font-family="ui-monospace,SFMono-Regular,'Cascadia Mono',Consolas,'Liberation Mono',monospace" font-size="13" fill="#94a3b8" font-weight="normal" text-anchor="middle" >station</text>
+<line x1="410" y1="104" x2="410" y2="244" stroke="#f43f5e" stroke-width="4" stroke-dasharray="10 6"/>
+<text x="410" y="96" font-family="ui-monospace,SFMono-Regular,'Cascadia Mono',Consolas,'Liberation Mono',monospace" font-size="13" fill="#f43f5e" font-weight="normal" text-anchor="middle" >gate</text>
+<polygon points="13.9,-8 13.9,8 0,16 -13.9,8 -13.9,-8 0,-16" transform="translate(444 190) scale(1.0)" fill="#14b8a6" stroke="none" stroke-width="2"/>
+<path d="M438 190l4 5l8 -10" fill="none" stroke="#0f172a" stroke-width="3" stroke-linecap="round"/>
+<polygon points="13.9,-8 13.9,8 0,16 -13.9,8 -13.9,-8 0,-16" transform="translate(492 190) scale(1.0)" fill="#14b8a6" stroke="none" stroke-width="2"/>
+<path d="M486 190l4 5l8 -10" fill="none" stroke="#0f172a" stroke-width="3" stroke-linecap="round"/>
+<text x="560" y="140" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="56" fill="#ffffff" font-weight="700" text-anchor="start" >Machine Agent Org</text>
+<text x="562" y="184" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="21" fill="#cbd5e1" font-weight="normal" text-anchor="start" >A deterministic factory where existing AI agents operate existing machines,</text>
+<text x="562" y="212" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="21" fill="#cbd5e1" font-weight="normal" text-anchor="start" >and every product becomes typed, verified material for the next station.</text>
+<rect x="562" y="240" width="146" height="32" rx="16" fill="#6366f1" fill-opacity="0.16" stroke="#6366f1"/>
+<text x="635.0" y="261" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#f8fafc" font-weight="normal" text-anchor="middle" >structure as data</text>
+<rect x="720" y="240" width="101" height="32" rx="16" fill="#f59e0b" fill-opacity="0.16" stroke="#f59e0b"/>
+<text x="770.5" y="261" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#f8fafc" font-weight="normal" text-anchor="middle" >typed beans</text>
+<rect x="833" y="240" width="153" height="32" rx="16" fill="#14b8a6" fill-opacity="0.16" stroke="#14b8a6"/>
+<text x="909.5" y="261" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#f8fafc" font-weight="normal" text-anchor="middle" >V1–V6 verification</text>
+<rect x="998" y="240" width="153" height="32" rx="16" fill="#f43f5e" fill-opacity="0.16" stroke="#f43f5e"/>
+<text x="1074.5" y="261" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#f8fafc" font-weight="normal" text-anchor="middle" >foreman governance</text>
+</svg>
