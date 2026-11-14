@@ -79,6 +79,7 @@
             }
           }
         },
+        "admit": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/expr"}},
         "phases": {
           "oneOf": [
             {"const": ["execute"]},

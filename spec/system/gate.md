@@ -9,7 +9,7 @@
 
 本组件做两件事：
 
-- **来料**：`check_inputs`。Bean 必须存在、已封存、类型兼容，并且满足工位 `requires`。任何一项失败都是 `INTAKE_REJECTED`。
+- **来料**：`check_inputs`。Bean 必须存在、已封存、类型兼容，并且满足工位 `requires`。任何一项失败都是 `INTAKE_REJECTED`。M14 起，端口全部通过后还要满足工位的 `admit`（`admit.md`）。
 - **出厂 / 外部入库**：`inspect` 与 `admit_external`。对候选产物跑完 V5，登记为未封存的 Bean，返回 `GateReport`。封存是 Runner 的事。
 
 V5 在本里程碑的五个阶段，与里程碑文档里的“结构、validator、属性、accept、meta_schema”一一对应。`Check.stage` 只能是 README 4.7 写出的五个字符串。里程碑说的 meta_schema 落在 stage `consistency` 上，检查项的 `name` 是 `meta_schema`。不要自造 stage `meta_schema`。
@@ -70,7 +70,8 @@ class GateReport:
 class Gate:
     def __init__(self, snapshot: Snapshot, warehouse: Warehouse, provider: SandboxProvider,
                  clock: Clock, ids: IdSource, *, workdir: Path) -> None
-    def check_inputs(self, station_key: str, inputs: Mapping[str, str | Sequence[str]]
+    def check_inputs(self, station_key: str, inputs: Mapping[str, str | Sequence[str]],
+                     params: Mapping[str, Any] | None = None   # M14：admit.md 3.2
                      ) -> dict[str, "Bean | list[Bean]"]     # 不合格 → FactoryError("INTAKE_REJECTED", problems=[...])
     def inspect(self, station_key: str, *, job_id: str, attempt: int, out_dir: Path,
                 inputs: Mapping[str, "Bean | Sequence[Bean]"], params: Mapping[str, Any]) -> GateReport
@@ -250,6 +251,7 @@ FactoryError("INTAKE_REJECTED", "来料检验未通过", problems=problems)
 | `unsealed` | Bean 存在但 `sealed is False` |
 | `type` | 类型 id 不能 `is_subtype` 到端口要求的类型 id（`any` 除外） |
 | `requires` | 某个 `requires` 属性不成立，或求值抛了 `EvalError` |
+| `admit` | （M14，`admit.md` 5.3）端口全部通过后，工位的某条 `admit` 不成立或求值出错；`port` 为空串，`index` 是条目序号 |
 
 `requires` 的求值：
 
@@ -345,7 +347,7 @@ schema 通过且没有矛盾 → `ok=True`。没有 schema 也没有矛盾 → �
 
 | 错误码 | 触发条件 | detail |
 |---|---|---|
-| `INTAKE_REJECTED` | `check_inputs` 有任一问题（未封存、不存在、类型不符、requires 不成立、端口缺失或基数不对） | `problems`：5.3 的对象列表 |
+| `INTAKE_REJECTED` | `check_inputs` 有任一问题（未封存、不存在、类型不符、requires 不成立、端口缺失或基数不对；M14 起还有 admit 不成立） | `problems`：5.3 的对象列表 |
 | `GATE_UNSUPPORTED` | 端口类型是 `ref`、嵌套 list，或出厂端口是 `any` | `type` |
 | `PARAM_INVALID` | `inspect` 调用 `params_value` 失败（`snapshot.md` 抛出，原样传播） | `station`、`problems` |
 | `SPEC_NOT_FOUND` | 工位键不在快照里（原样传播） | `key` |

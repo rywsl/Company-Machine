@@ -1538,7 +1538,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_01_command.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_02_pooled.py --ignore=tests/acceptance/m12/test_m12_03_resident.py --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_02_pooled.py --ignore=tests/acceptance/m12/test_m12_03_resident.py --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13 --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1561,7 +1561,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_02_pooled.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_03_resident.py --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_03_resident.py --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13 --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1584,7 +1584,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_03_resident.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13 --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1607,7 +1607,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_04_emit.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13 --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1630,7 +1630,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_05_ingress.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13 --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1653,7 +1653,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_01_kind.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_02_mailbox.py --ignore=tests/acceptance/m13/test_m13_03_turns.py --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_02_mailbox.py --ignore=tests/acceptance/m13/test_m13_03_turns.py --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1676,7 +1676,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_02_mailbox.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_03_turns.py --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_03_turns.py --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1699,7 +1699,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_03_turns.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1722,7 +1722,7 @@ tasks:
         run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_04_context.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 3
       - id: regress
-        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_05_foreman.py
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_05_foreman.py --ignore=tests/acceptance/m14
         assert: out.failed == 0 && out.errors == 0
         timeout: 5400
       - *lint
@@ -1744,6 +1744,59 @@ tasks:
       - id: acceptance
         run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_05_foreman.py
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 3
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m14
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  # ------------------------------------------------------------------ M14 跨端口来料约束
+  - id: M14-01
+    milestone: M14
+    title: 工位 admit：schema、抽取、表达式位置与诊断
+    card: plan/tasks/M14-01.md
+    deps: [M13-05]
+    spec: [spec/system/admit.md, spec/mrl/factory-profile.md, plan/design-admit.md]
+    paths:
+      - src/mrl/**
+      - spec/mrl/kernel/*.mrl
+      - spec/mrl/conformance/factory/admit.yaml
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m14/test_m14_01_admit_static.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+      - id: conformance
+        run: uv run mrl conformance --json
+        assert: size(out.failures) == 0 && out.total >= 715
+      - id: coverage
+        run: uv run mrl coverage --json
+        assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 85
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m14/test_m14_02_admit_runtime.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M14-02
+    milestone: M14
+    title: 工位 admit：来料检验时求值
+    card: plan/tasks/M14-02.md
+    deps: [M14-01]
+    spec: [spec/system/admit.md, spec/system/gate.md, spec/system/runner.md, spec/system/lines.md]
+    paths:
+      - src/mao/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m14/test_m14_02_admit_runtime.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
       - id: regress
         run: uv run python tools/harness.py pytest tests
         assert: out.failed == 0 && out.errors == 0

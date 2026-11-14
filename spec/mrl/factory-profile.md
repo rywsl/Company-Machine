@@ -108,6 +108,7 @@ diag(code, subject, message)  ◀── 嵌入表达式的静态检查（第 4 �
 | `Station:K/converts`、`/equivalence`、`/equivalence[i]`、`/fixtures` | converter 字段 |
 | `Station:K/idempotency_key`、`/approval.propose`、`/approval.in_run`、`/gate.judge` | 对应字段 |
 | `Station:K/monitors.<name>`（M11） | `spec.monitors.<name>.when` |
+| `Station:K/admit`、`/admit[i]`（M14） | `spec.admit`、`spec.admit[i]` |
 | `Type:K/extends`、`/fields.F`、`/facts.F`、`/properties.P`、`/always`、`/validators.V` | 类型字段 |
 | `Machine:K/source`、`/recipes.R.<路径>` | 机器字段与配方模板 |
 | `OperatorRuntime:K/invoke.argv[i]`、`/env.NAME` | 运行时模板 |
@@ -210,6 +211,7 @@ texpr ::= "any" | name [ "@" major [ "." minor ] ] | "list<" texpr ">" | "ref<" 
 | `converts(K, from, to, lossless, preserves)`、`conv_preserve(K, p)` | `spec.converts`；preserves 默认 `[]` |
 | `conv_cost(K, usd, p50)` | `spec.cost.usd_est`、`spec.cost.p50_s`，默认 0、0（只在有 converts 时产出） |
 | `equivalence_count(K, n)` | `spec.equivalence` 的条数（总是产出）；每条是一个 `equivalence` 表达式位置 |
+| `station_admit(K, n)`（M14） | `spec.admit` 的条数（没有 admit 时不产出）；每条 `admit[i]` 是一个 `admit` 表达式位置（`spec/system/admit.md`） |
 | `station_fixture(K, polarity, path)` | `spec.fixtures.accept/reject` |
 | `sink_idempotency(K, template)` | `spec.idempotency_key`；同时是一个 `idempotency` 模板位置 |
 | `sink_verify(K, method)` | `spec.verify_receipt` |
@@ -297,6 +299,7 @@ Spec 中的每一处嵌入表达式或模板都在规定的类型环境下编译
 |---|---|---|
 | `property`（Type 的命名属性） | `bean`：该 Type 文档（具体到 minor）的 Bean 类型 | `bool` |
 | `accept`（输出端口的验收标准） | `out`：该端口的 Bean；`inputs`：工位输入端口组成的记录（可选端口为可选字段）；`params`：工位参数组成的记录 | `bool` |
+| `admit`（M14，工位的跨端口来料约束） | `inputs`、`params`：与 `accept` 相同；没有 `out` | `bool` |
 | `equivalence`（converter） | `src`：`converts.from` 的 Bean；`dst`：`converts.to` 的 Bean；`params` | `bool` |
 | `approval`，phase = propose | `proposal`：`{summary: string, cost_estimate_usd: num, time_estimate_s: num}`；`inputs`；`params` | `bool` |
 | `approval`，phase = in_run | `request`：`{kind: string, summary: string, cost_usd: num}`；`inputs`；`params` | `bool` |
@@ -313,6 +316,7 @@ Spec 中的每一处嵌入表达式或模板都在规定的类型环境下编译
 - **map 的 `as` 名字**：字面列表时，类型为各元素字面值类型的最小上界（如 `[en, ja]` 为 `string`）；动态来源时，为来源 `list<T>` 的元素 Bean `bean(T)`。`as` 名字与环境中已有的名字（如 `run`、`inputs`）冲突时报 `E-EXPR`。
 - 模板插值的类型必须是 `string`、数或 `bool`（MRL-T 规则）。
 - 命名属性引用了 `bean.meta`（生产者自报、未经实测）时，额外报 `W-PROPERTY-META`：属性应当建立在 validator 实测的 facts 上。
+- `admit` 编译后的路径中有一条以 `inputs.<端口>.meta` 开头时，额外报 `W-ADMIT-META`（M14）：准入同样应当建立在实测的 facts 上。
 
 ### 4.3 正确与错误示范
 
@@ -509,6 +513,7 @@ missing   ['non_empty']
 | `E-EXPR` | error | 嵌入表达式或模板的静态错误 | 看消息中的 MRL 码与行列号；对照第 4.2 节的类型环境 |
 | `W-EXPR` | warning | 嵌入表达式的警告（主要是可选字段没有用 `has()` 保护） | 加 `has()` 判断 |
 | `W-PROPERTY-META` | warning | 命名属性引用了自报的 `bean.meta` | 改用 validator 实测的 facts |
+| `W-ADMIT-META` | warning | 工位 `admit` 引用了输入 Bean 自报的 meta（M14） | 改用 validator 实测的 facts |
 | `E-CONSTITUTION` | error | 宪法缺失、无法编译、求值出错，或使用了未登记的诊断码 | 交给人处理：宪法只由人修改 |
 
 ### 7.2 引用与类型（`kernel/refs.mrl`、`kernel/types.mrl`）
@@ -528,7 +533,7 @@ missing   ['non_empty']
 
 | 码 | 严重度 | 含义 | 常见原因 → 修法 |
 |---|---|---|---|
-| `E-PORT` | error | 角色要求的端口缺失（source 没有输出、sink 没有输入等）；工位端口与配方不一致；产线绑定、map、switch、keep、接口输出引用了不存在的端口 | 按消息修正端口名或类型 |
+| `E-PORT` | error | 角色要求的端口缺失（source 没有输出、sink 没有输入等）；工位端口与配方不一致；产线绑定、map、switch、keep、接口输出引用了不存在的端口；没有输入端口的工位写了 `admit`（M14） | 按消息修正端口名或类型 |
 | `E-PARAM` | error | 参数没有在配方 / 工位中声明；类型不一致；必填参数没有提供；值的类型不被参数类型接受；给子产线传参数 | 对齐参数声明 |
 | `E-CONVERTER` | error | converter 结构不合要求：没有 converts、端口不是唯一的 `in`/`out`、converts 与端口类型不一致、没有 equivalence、没有正样例、输出可选；非 converter 声明了 converts | 按 9.2 节的 converter 定义修正 |
 | `E-PERMISSION` | error | 策略不适用于工位角色；模型不在 `models_allowed` 中；agent-cli 工位没有指定 model；（宪法）出网或凭据越级 | 换策略或模型；越级的问题交给人 |

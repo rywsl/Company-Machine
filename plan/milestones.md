@@ -301,6 +301,18 @@ M1-01 基础设施 ──┬─▶ M1-02 快照与求值环境 ──┐
 
 ---
 
+## M14 跨端口来料约束
+
+**目标**：让工位声明“几个输入之间要相互匹配”，例如固件的目标车型、平台必须与这台车一致。不匹配的物料在建 job 之前被拒收，而不是工位跑完后才在出厂 `accept` 里发现（`plan/design-admit.md` 第 1 章）。
+
+**范围**：工位 `admit` 段；抽取与表达式位置；`W-ADMIT-META` 与无输入工位的 `E-PORT`；一致性用例；`Gate.check_inputs` 求值 admit，`Runner.submit` 传参。
+
+**规范**：`spec/system/admit.md`；设计 `plan/design-admit.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M14-01、M14-02 和 `plan/gates.yaml` 中的阶段门 M14（继承 M13 的全部检查）。
+
+---
+
 ## 里程碑之间的交接规则
 
 1. **退出前提**：阶段门通过，才能开始下一个里程碑的任务。harness 用 `requires_gates` 和任务依赖强制这一点。
