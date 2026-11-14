@@ -600,6 +600,7 @@ class Program:
         self, facts: dict[str, Iterable[Sequence[Any]]] | None = None, budget: int = DEFAULT_BUDGET
     ) -> Model:
         rels = {name: Relation(info) for name, info in self.relations.items()}
+        total = 0
         for name, rows in (facts or {}).items():
             info = self.relations.get(name)
             if info is None:
@@ -622,8 +623,9 @@ class Program:
                 except EvalError as e:
                     raise EvalError("MRL-FACT", f"关系 {name} 的事实 {row!r} 不符合声明：{e.message}") from e
                 if rels[name].add(tup):
-                    _check_tuple_budget(sum(len(r) for r in rels.values()))
-        ev = _RuleEvaluator(self, rels, budget)
+                    total += 1
+                    _check_tuple_budget(total)
+        ev = _RuleEvaluator(self, rels, budget, total)
         for stratum in self.strata:
             ev.run_stratum(set(stratum))
         return Model(self, rels, ev.fired)
@@ -716,12 +718,12 @@ def _tarjan(nodes: list[str], edges: dict[str, set[str]]) -> list[list[str]]:
 
 
 class _RuleEvaluator:
-    def __init__(self, program: Program, rels: dict[str, Relation], budget: int):
+    def __init__(self, program: Program, rels: dict[str, Relation], budget: int, total: int | None = None):
         self.p = program
         self.rels = rels
         self.ev = Evaluator(program.functions, budget)
         self.budget = budget
-        self.total = sum(len(r) for r in rels.values())
+        self.total = sum(len(r) for r in rels.values()) if total is None else total
         self.fired: dict[tuple[str, int], int] = {}
 
     def eval_expr(self, node: A.Node, binding: dict[str, Any], cr: CRule) -> Any:

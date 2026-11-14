@@ -28,7 +28,7 @@ _SLUG = re.compile(r"[^a-z0-9.-]")
 @dataclass(frozen=True)
 class ImageConfig:
     repo: str = "mao-local"
-    network: str = "none"
+    network: str = "default"
     timeout_s: float = 1800
     max_context_mb: int = 200
     max_builds_per_day: int = 20

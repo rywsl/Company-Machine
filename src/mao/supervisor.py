@@ -183,6 +183,8 @@ class ForemanSupervisor:
         role = "reviewer" if wake.signal == "review" else "foreman"
         epoch = self.epochs.current()
         snapshot = self.epochs.materialize(epoch)
+        if wake.signal == "approval" and not _approval_actionable(self.ctx, snapshot, wake):
+            return None
         if role == "reviewer":
             actor = self._reviewer(wake)
             if actor is None:
@@ -505,6 +507,9 @@ class ForemanSupervisor:
         raw.unlink(missing_ok=True)
         err.unlink(missing_ok=True)
         state, error, exit_code = _judge(wake, role, result, summary, server.outcome)
+        if wake.signal == "approval" and state == "ok" and _approval_still_foreman(self.ctx, snapshot, wake):
+            state = "failed"
+            error = {"code": "APPROVAL_UNDECIDED", "detail": {"approval": wake.subject}}
         cost = summary.cost_usd if summary is not None else 0.0
         turns = summary.turns if summary is not None else None
         ended = utc_iso(self.ctx.clock.now())
@@ -669,8 +674,41 @@ def _validate(config: SupervisorConfig) -> SupervisorConfig:
     return config
 
 
+def _approval_actionable(ctx: Any, snapshot: Any, wake: Any) -> bool:
+    from mao.approvals import Approvals
+    from mao.foreman import WakeQueue
+
+    try:
+        approval = Approvals(ctx, snapshot).get(wake.subject)
+    except FactoryError:
+        approval = None
+    if approval is None or approval.status.value != "pending" or approval.route != "foreman":
+        WakeQueue(ctx).done(wake.id, by="supervisor")
+        return False
+    return True
+
+
+def _approval_still_foreman(ctx: Any, snapshot: Any, wake: Any) -> bool:
+    from mao.approvals import Approvals
+
+    try:
+        approval = Approvals(ctx, snapshot).get(wake.subject)
+    except FactoryError:
+        return False
+    return approval.status.value == "pending" and approval.route == "foreman"
+
+
 def _brief(role: str, wake: Any, epoch: str) -> str:
-    if role == "reviewer":
+    if wake.signal == "approval":
+        task = (
+            f"你是这座工厂的厂长。本次会话处理审批 {wake.subject}（唤醒票 {wake.id}）。"
+            f"载荷：{canonical_json(wake.payload)}。\n"
+            "用 MCP 服务器 factory 的工具 approval_get 查看请求，再调用 approval_decide，"
+            "decision 为 approve 或 deny，note 写理由。\n"
+            "你无法判断时调用 approval_escalate，把它交给人。\n"
+            "处理完就退出。"
+        )
+    elif role == "reviewer":
         task = (
             f"你是复核者。ChangeSet {wake.subject} 等待复核。\n"
             "用 changeset_status、registry_diff 查看它，然后调用 review_submit，verdict 为 approve 或 deny，note 写理由。\n"

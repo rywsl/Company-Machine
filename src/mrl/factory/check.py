@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -158,9 +159,29 @@ def _functions() -> dict:
     return make_table(PROFILE_FUNCTIONS)
 
 
+# 同一份源码编译出的 Program 可重复求值（evaluate 不改程序）。一致性用例与快照加载会反复编译同一内核。
+_PROGRAMS: dict[tuple[tuple[str, str], ...], Program] = {}
+_PROGRAM_LOCK = threading.Lock()
+
+
+def _compiled(sources: list[tuple[str, str]]) -> Program:
+    key = tuple(sources)
+    with _PROGRAM_LOCK:
+        found = _PROGRAMS.get(key)
+    if found is not None:
+        return found
+    program = Program.from_sources(sources, _functions())
+    with _PROGRAM_LOCK:
+        found = _PROGRAMS.get(key)
+        if found is not None:
+            return found
+        _PROGRAMS[key] = program
+        return program
+
+
 def kernel_program() -> Program:
     try:
-        return Program.from_sources(kernel_sources(), _functions())
+        return _compiled(kernel_sources())
     except StaticError as e:
         raise InternalError(
             "内核规则无法通过静态检查：\n" + "\n".join(d.format() for d in e.diagnostics)
@@ -174,7 +195,7 @@ def build_program(constitution: list[tuple[str, str]]) -> tuple[Program, list[Ho
             HostDiag("E-CONSTITUTION", "Registry", "缺少宪法：constitution/ 目录下没有 .mrl 文件")
         ]
     try:
-        return Program.from_sources(kernel_sources() + constitution, _functions()), []
+        return _compiled(kernel_sources() + list(constitution)), []
     except StaticError as e:
         kernel_errors = [d for d in e.diagnostics if not d.source.startswith("constitution/")]
         program = kernel_program()  # 内核自身有问题时这里会抛出 InternalError

@@ -168,6 +168,47 @@ class ChangePipeline:
             raise FactoryError("CHANGESET_NOT_FOUND", f"找不到变更 {cs_id}", id=cs_id)
         return _changeset(rows[0])
 
+    def signoff(self, cs_id: str, decision: str, *, by: str, note: str = "") -> ChangeSet:
+        current = self.get(cs_id)
+        if current.state != "verified":
+            raise FactoryError("CHANGESET_STATE_INVALID", "当前状态不能签核", id=cs_id, state=current.state)
+        if re.fullmatch(r"human:\S+", by) is None:
+            raise FactoryError("SIGNOFF_INVALID", "签核身份不合法", reason="by")
+        if decision not in ("approve", "deny"):
+            raise FactoryError("SIGNOFF_INVALID", "签核决定不合法", reason="decision")
+        if len(note) > 2000:
+            raise FactoryError("SIGNOFF_INVALID", "签核备注过长", reason="note")
+        if self.signoff_of(cs_id) is not None:
+            raise FactoryError("CHANGESET_STATE_INVALID", "已经签核", id=cs_id, state=current.state)
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "INSERT INTO changeset_signoffs (changeset_id, decision, by, note, at) VALUES (?, ?, ?, ?, ?)",
+                (cs_id, decision, by, note, now),
+            )
+            conn.execute(
+                "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'changeset.signoff', NULL, ?)",
+                (
+                    self.ctx.ids.new("ev"),
+                    now,
+                    canonical_json({"id": cs_id, "decision": decision, "by": by}),
+                ),
+            )
+        from mao.inbox import Inbox
+
+        inbox = Inbox(self.ctx)
+        item = inbox.find("signoff", cs_id)
+        if item is not None:
+            inbox.close(item.id, status="answered", answer={"decision": decision, "note": note}, by=by)
+        return self.get(cs_id)
+
+    def signoff_of(self, cs_id: str) -> dict[str, Any] | None:
+        rows = self.ctx.db.query("SELECT * FROM changeset_signoffs WHERE changeset_id = ?", (cs_id,))
+        if not rows:
+            return None
+        row = rows[0]
+        return {"decision": row["decision"], "by": row["by"], "note": row["note"], "at": row["at"]}
+
     def list(self, *, state: str | None = None) -> list[ChangeSet]:
         rows = self.ctx.db.query("SELECT * FROM changesets ORDER BY id")
         found = [_changeset(row) for row in rows]

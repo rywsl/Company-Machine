@@ -36,7 +36,10 @@ class Context:
         ids: Any = None,
         proxies: Any = None,
     ) -> Context:
+        from mao.egress import SecretStore
+
         root = Path(root).resolve()
+        SecretStore(root).install_log_filter()
         for path in (root, root / "cas", root / "jobs", root / "tmp", root / "tools" / "factory" / "bin"):
             path.mkdir(parents=True, exist_ok=True)
         db = Database(root / "factory.db")

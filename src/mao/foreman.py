@@ -257,15 +257,34 @@ class ForemanQuery:
         return [dict(row) for row in self.ctx.db.query("SELECT id, job_id, status FROM approvals")]
 
     def _redact(self, value: Any) -> Any:
+        from mao.egress import SecretStore, scrub_obj
+
+        store = SecretStore(self.ctx.root)
+        hidden = self._mask_names(scrub_obj(store.redact_obj(value)), store.names())
+        return self._redact_pattern(hidden)
+
+    def _mask_names(self, value: Any, names: Sequence[str]) -> Any:
+        if isinstance(value, str):
+            text = value
+            for name in names:
+                text = re.sub(rf"(?i)({re.escape(name)}\s*[:=]\s*)\S+", r"\1***", text)
+            return text
+        if isinstance(value, list):
+            return [self._mask_names(item, names) for item in value]
+        if isinstance(value, dict):
+            return {str(key): self._mask_names(item, names) for key, item in value.items()}
+        return value
+
+    def _redact_pattern(self, value: Any) -> Any:
         if isinstance(value, str):
             cleaned = _SECRET.sub("[REDACTED]", value)
             if _SECRET.search(cleaned):
                 raise FactoryError("SECRET_LEAK", "打码后仍像密钥", channel="query")
             return cleaned
         if isinstance(value, list):
-            return [self._redact(item) for item in value]
+            return [self._redact_pattern(item) for item in value]
         if isinstance(value, dict):
-            return {str(key): self._redact(item) for key, item in value.items()}
+            return {str(key): self._redact_pattern(item) for key, item in value.items()}
         return value
 
 

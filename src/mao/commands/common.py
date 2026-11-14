@@ -108,7 +108,12 @@ def install_stop_signals(stop: threading.Event) -> None:
 
 
 def open_snapshot(
-    ctx: Context, args: argparse.Namespace, *, route_key: str | None = None, epoch: str | None = None
+    ctx: Context,
+    args: argparse.Namespace,
+    *,
+    route_key: str | None = None,
+    epoch: str | None = None,
+    line: str | None = None,
 ) -> Any:
     from mao.governance.epochs import EpochStore
     from mao.governance.rollout import EpochRouter
@@ -125,7 +130,7 @@ def open_snapshot(
         if epoch is not None:
             return store.materialize(epoch)
         if route_key is not None:
-            return store.materialize(EpochRouter(ctx, store).choose(route_key))
+            return store.materialize(EpochRouter(ctx, store).choose(route_key, line=line))
         return store.materialize(store.current())
     return Snapshot.load(registry_path(args))
 

@@ -26,7 +26,7 @@ DEFAULT_PORT = 8090
 _LOG = logging.getLogger("mao.console")
 _HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
+        "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; "
         "frame-ancestors 'none'; base-uri 'none'"
     ),
     "X-Content-Type-Options": "nosniff",
@@ -43,7 +43,8 @@ _NAV = (
     '<a href="/sessions">sessions</a> '
     '<a href="/approvals">approvals</a> '
     '<a href="/events">events</a> '
-    '<a href="/metrics">metrics</a>'
+    '<a href="/metrics">metrics</a> '
+    '<a href="/inbox">inbox</a>'
     "</nav>"
 )
 _JSON = "application/json; charset=utf-8"
@@ -186,7 +187,13 @@ class ConsoleServer:
             else:
                 self._send(handler, 303, b"", _TEXT, {"Location": "/login"})
             return
-        allowed = ("GET", "HEAD", "POST") if path == "/login" else ("GET", "HEAD")
+        shot_id = _inbox_shot(path)
+        if shot_id is not None and handler.command in ("GET", "HEAD"):
+            self._screenshot(handler, shot_id)
+            return
+        inbox_id = _inbox_id(path)
+        post_inbox = handler.command == "POST" and inbox_id is not None
+        allowed = ("GET", "HEAD", "POST") if path == "/login" or post_inbox else ("GET", "HEAD")
         if handler.command not in allowed:
             allow = "GET, POST" if path == "/login" else "GET"
             self._send(handler, 405, b"", _TEXT, {"Allow": allow})
@@ -197,6 +204,9 @@ class ConsoleServer:
         if path == "/login":
             self._login(handler)
             return
+        if post_inbox and inbox_id is not None:
+            self._inbox_post(handler, inbox_id)
+            return
         if path == "/metrics":
             self._send(handler, 200, self._metrics().encode("utf-8"), _METRICS)
             return
@@ -204,6 +214,71 @@ class ConsoleServer:
             self._api(handler, path[len("/api") :], query)
             return
         self._page(handler, path, query)
+
+    def _screenshot(self, handler: BaseHTTPRequestHandler, request_id: str) -> None:
+        path = self.ctx.root / "inbox" / request_id / "screenshot.png"
+        if not path.is_file():
+            self._missing(handler)
+            return
+        self._send(handler, 200, path.read_bytes(), "image/png")
+
+    def _inbox_post(self, handler: BaseHTTPRequestHandler, request_id: str) -> None:
+        from mao.inbox import Inbox, answer, console_user
+
+        raw = _body(handler, 70000)
+        if raw is None:
+            self._send(handler, 413, b"too large", _TEXT)
+            return
+        parsed = urllib.parse.parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
+        form = {key: values[0] if values else "" for key, values in parsed.items()}
+        expected = hmac.new(self.token.encode(), ("inbox:" + request_id).encode(), "sha256").hexdigest()
+        given = form.get("csrf", "")
+        if len(given) != len(expected) or not hmac.compare_digest(given, expected):
+            self._send(handler, 403, _html("CONSOLE_CSRF_INVALID", "<p>CONSOLE_CSRF_INVALID</p>"), _HTML)
+            return
+        try:
+            by = "human:" + console_user(self.ctx.root)
+            if form.get("action") == "cancel":
+                Inbox(self.ctx).cancel(request_id, by=by, note=form.get("note", ""))
+            else:
+                answer(self.ctx, request_id, _inbox_reply(form), by=by)
+        except FactoryError as exc:
+            self._send(handler, 400, _html(exc.code, "<p>" + _esc(exc.code) + "</p>"), _HTML)
+            return
+        self._send(handler, 303, b"", _HTML, {"Location": f"/inbox/{request_id}"})
+
+    def _inbox_open(self) -> list[dict[str, Any]]:
+        from mao.inbox import Inbox
+
+        return [item.to_json() for item in Inbox(self.ctx).list(status="open")]
+
+    def _inbox_one(self, request_id: str) -> dict[str, Any]:
+        from mao.inbox import Inbox
+
+        return Inbox(self.ctx).get(request_id).to_json()
+
+    def _inbox_form(self, request_id: str) -> str:
+        item = self._inbox_one(request_id)
+        token = hmac.new(self.token.encode(), ("inbox:" + request_id).encode(), "sha256").hexdigest()
+        action = _esc("/inbox/" + request_id)
+        fields = f'<input type="hidden" name="csrf" value="{token}">'
+        if item["kind"] == "handoff" and (item.get("payload") or {}).get("answer_type") == "point":
+            fields += (
+                f'<input type="image" name="point" src="{_esc("/inbox/" + request_id + "/screenshot")}"'
+                ' alt="截图">'
+            )
+        elif item["kind"] == "question":
+            options = item["payload"].get("options") or []
+            if options:
+                fields += "".join(
+                    f'<label><input type="radio" name="choice" value="{_esc(option)}">{_esc(option)}</label>'
+                    for option in options
+                )
+            else:
+                fields += '<input type="text" name="text">'
+        if item["kind"] != "handoff" or (item.get("payload") or {}).get("answer_type") != "point":
+            fields += '<button type="submit">提交</button>'
+        return f'<form method="post" action="{action}">{fields}</form>' + _dl(item)
 
     def _login(self, handler: BaseHTTPRequestHandler) -> None:
         if handler.command == "POST":
@@ -276,6 +351,12 @@ class ConsoleServer:
         if parts == ["events"]:
             self._json(handler, 200, self._events(query))
             return
+        if parts == ["inbox"]:
+            self._json(handler, 200, self._inbox_open())
+            return
+        if len(parts) == 2 and parts[0] == "inbox":
+            self._json(handler, 200, self._inbox_one(parts[1]))
+            return
         self._missing(handler)
 
     def _page(self, handler: BaseHTTPRequestHandler, path: str, query: dict[str, list[str]]) -> None:
@@ -319,6 +400,10 @@ class ConsoleServer:
             body = _html("approvals", _dl(self._approvals(status)))
         elif parts == ["events"]:
             body = _html("events", _dl(self._events(query)))
+        elif parts == ["inbox"]:
+            body = _html("inbox", _dl(self._inbox_open()))
+        elif len(parts) == 2 and parts[0] == "inbox":
+            body = _html(parts[1], self._inbox_form(parts[1]))
         else:
             self._missing(handler)
             return
@@ -499,6 +584,45 @@ class _Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         _LOG.info("%s", fmt % args)
+
+
+def _inbox_shot(path: str) -> str | None:
+    parts = [item for item in path.split("/") if item]
+    if len(parts) == 3 and parts[0] == "inbox" and parts[2] == "screenshot":
+        return parts[1]
+    return None
+
+
+def _inbox_id(path: str) -> str | None:
+    parts = [item for item in path.split("/") if item]
+    if len(parts) == 2 and parts[0] == "inbox":
+        return parts[1]
+    return None
+
+
+def _body(handler: BaseHTTPRequestHandler, limit: int) -> bytes | None:
+    raw_length = handler.headers.get("Content-Length", "0")
+    try:
+        length = int(raw_length)
+    except ValueError as exc:
+        raise _BadRequest("body") from exc
+    if length < 0 or length > limit:
+        return None
+    return handler.rfile.read(length)
+
+
+def _inbox_reply(form: dict[str, str]) -> dict[str, Any]:
+    reply: dict[str, Any] = {}
+    for key in ("choice", "text", "secret", "note"):
+        if form.get(key):
+            reply[key] = form[key]
+    if form.get("decision"):
+        reply["decision"] = form["decision"]
+    if form.get("point.x") or form.get("point.y"):
+        reply["point"] = [int(form.get("point.x") or "0"), int(form.get("point.y") or "0")]
+    if form.get("done") == "1":
+        reply["done"] = True
+    return reply
 
 
 def _form(handler: BaseHTTPRequestHandler) -> dict[str, str]:

@@ -59,14 +59,17 @@ class EpochStore:
         registry.mkdir(parents=True)
         try:
             self._extract(commit, registry)
-            snapshot = Snapshot.load(registry, epoch=commit)
         except FactoryError:
             shutil.rmtree(part, ignore_errors=True)
             raise
         if dest.exists():
             shutil.rmtree(dest)
         os.replace(part, dest)
-        snapshot = Snapshot.load(dest / "registry", epoch=commit)
+        try:
+            snapshot = Snapshot.load(dest / "registry", epoch=commit)
+        except FactoryError:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise
         frozen = dest / "resolutions.json"
         if not frozen.is_file():
             payload = [{**dict(item), "origin": "precomputed"} for item in snapshot.result.resolutions]

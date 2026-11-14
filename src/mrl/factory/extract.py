@@ -341,6 +341,16 @@ def _station(x: Extraction, doc: SpecDoc, key: str, meta: dict, spec: dict) -> N
             x.loc(s, doc, f"spec.approval.{phase}.auto_if")
             x.sites.append(Site("approval", s, rule["auto_if"], False, {"phase": phase, "station": key}))
 
+    monitors = spec.get("monitors") or {}
+    if isinstance(monitors, dict):
+        for name in sorted(monitors):
+            rule = monitors[name]
+            if not isinstance(rule, dict) or "when" not in rule:
+                continue
+            subject = f"{key}/monitors.{name}"
+            x.loc(subject, doc, f"spec.monitors.{name}.when")
+            x.sites.append(Site("monitor", subject, rule["when"], False, {"station": key}))
+
     judge = (spec.get("gate") or {}).get("judge")
     if judge:
         x.station_judges.add(key)

@@ -32,8 +32,20 @@ def reference_constitution_dir() -> Path:
     return spec_root() / "mrl" / "constitution"
 
 
+_KERNEL_STAMP: tuple[str, tuple[tuple[str, int, int], ...]] | None = None
+_KERNEL_TEXTS: list[tuple[str, str]] = []
+
+
 def kernel_sources() -> list[tuple[str, str]]:
-    out = []
-    for p in sorted(kernel_dir().glob("*.mrl")):
-        out.append((f"kernel/{p.name}", p.read_text(encoding="utf-8")))
-    return out
+    """内核源码。文件没变时复用已读文本；返回新列表，调用方可以再拼接宪法。"""
+    global _KERNEL_STAMP, _KERNEL_TEXTS
+    directory = kernel_dir()
+    files = sorted(directory.glob("*.mrl"))
+    stamp = (
+        str(directory.resolve()),
+        tuple((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in files),
+    )
+    if stamp != _KERNEL_STAMP:
+        _KERNEL_TEXTS = [(f"kernel/{p.name}", p.read_text(encoding="utf-8")) for p in files]
+        _KERNEL_STAMP = stamp
+    return list(_KERNEL_TEXTS)

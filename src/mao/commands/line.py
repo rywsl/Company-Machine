@@ -57,7 +57,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     variants = dict(split_pair(item, "--variant 必须是 STEP=V") for item in args.variant)
     budget = None if args.budget is None else float(args.budget)
     with open_context(args) as ctx:
-        snapshot = open_snapshot(ctx, args, route_key=args.line + ":" + canonical_json(inputs))
+        snapshot = open_snapshot(
+            ctx, args, route_key=args.line + ":" + canonical_json(inputs), line=args.line
+        )
         runner = open_runner(ctx, snapshot)
         lines = open_line_runner(ctx, snapshot, runner)
         started = lines.start_run(

@@ -32,6 +32,12 @@ def register(sub: argparse._SubParsersAction) -> None:
     advance = commands.add_parser("advance")
     advance.add_argument("changeset")
     advance.set_defaults(func=cmd_advance)
+    signed = commands.add_parser("signoff")
+    signed.add_argument("changeset")
+    signed.add_argument("decision")
+    signed.add_argument("--by", required=True)
+    signed.add_argument("--note", default="")
+    signed.set_defaults(func=cmd_signoff)
 
 
 def _pipeline(ctx: object) -> ChangePipeline:
@@ -61,6 +67,12 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_withdraw(args: argparse.Namespace) -> int:
     with open_context(args) as ctx:
         found = _pipeline(ctx).withdraw(args.changeset, by=args.by)
+    return finish(args, found)
+
+
+def cmd_signoff(args: argparse.Namespace) -> int:
+    with open_context(args) as ctx:
+        found = _pipeline(ctx).signoff(args.changeset, args.decision, by=args.by, note=args.note or "")
     return finish(args, found)
 
 

@@ -70,18 +70,21 @@ class EpochRouter:
         self.ctx = ctx
         self.epochs = epochs
 
-    def choose(self, key: str) -> str:
+    def choose(self, key: str, *, line: str | None = None) -> str:
         rows = self.ctx.db.query(
             "SELECT \"commit\", document FROM changesets WHERE state = 'canary' ORDER BY id"
         )
         active = self.epochs.current()
         if not rows:
             return active
+        candidate = str(rows[0]["commit"])
+        if line and _line_only_in_candidate(self.epochs, active, candidate, line):
+            return candidate
         body = json.loads(rows[0]["document"])
         percent = int(((body.get("spec") or {}).get("rollout") or {}).get("canary", {}).get("percent", 0))
         bucket = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16) % 100
         if bucket < percent:
-            return str(rows[0]["commit"])
+            return candidate
         return active
 
 
@@ -228,11 +231,21 @@ def advance_open(pipeline: Any, current: Any) -> Any:
 
 
 def _from_verified(pipeline: Any, current: Any) -> Any:
+    from mao.delegation import AutonomyConfig
+
     tier = current.risk_tier or "T1"
     if evaluate_safe_mode(pipeline.ctx)["on"] and tier >= "T2":
         return _stay(pipeline, current, "safe-mode")
-    if len(pipeline.approvals(current.id)) < int(current.reviews_required or 0):
-        return _stay(pipeline, current, "reviews")
+    mode = AutonomyConfig.load(pipeline.ctx.root).signoff(tier)
+    if mode == "review" and len(pipeline.approvals(current.id)) < int(current.reviews_required or 0):
+        return _stay(pipeline, current, "reviews", signoff=mode)
+    if mode == "human":
+        record = pipeline.signoff_of(current.id)
+        if record is None:
+            _open_signoff(pipeline, current, tier)
+            return _stay(pipeline, current, "signoff", signoff=mode)
+        if record["decision"] == "deny":
+            return pipeline.reject_changeset(current, "SIGNOFF_DENIED", {"by": record["by"]})
     if _queued(pipeline):
         return _stay(pipeline, current, "queued")
     if pipeline.epochs.current() != current.base_epoch:
@@ -424,10 +437,46 @@ def _move(pipeline: Any, current: Any, state: str, detail: dict[str, Any], stamp
     return pipeline.get(current.id)
 
 
-def _stay(pipeline: Any, current: Any, reason: str) -> Any:
+def _line_only_in_candidate(epochs: Any, active: str, candidate: str, line: str) -> bool:
+    active_snap = epochs.materialize(active)
+    candidate_snap = epochs.materialize(candidate)
+    return not _has_line(active_snap, line) and _has_line(candidate_snap, line)
+
+
+def _has_line(snapshot: Any, line: str) -> bool:
+    try:
+        snapshot.doc(snapshot.key("Line", line))
+    except FactoryError as exc:
+        if exc.code == "SPEC_NOT_FOUND":
+            return False
+        raise
+    return True
+
+
+def _open_signoff(pipeline: Any, current: Any, tier: str) -> None:
+    from mao.inbox import Inbox
+
+    report = current.report or {}
+    Inbox(pipeline.ctx).open(
+        "signoff",
+        subject=current.id,
+        origin="governance",
+        summary=f"{tier} {current.id}",
+        payload={
+            "changeset": current.id,
+            "tier": tier,
+            "changes": (current.document or {}).get("changes") or [],
+            "impact": report.get("impact"),
+        },
+    )
+
+
+def _stay(pipeline: Any, current: Any, reason: str, signoff: str | None = None) -> Any:
     now = utc_iso(pipeline.ctx.clock.now())
     report = dict(current.report or {})
     report["reason"] = reason
+    if signoff is not None:
+        report["signoff"] = signoff
     report["stage"] = current.state
     with pipeline.ctx.db.tx() as conn:
         conn.execute(

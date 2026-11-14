@@ -283,6 +283,12 @@ def _timeout_s():
     if not os.path.isfile(path):
         return 605.0
     data = _read_json(path)
+    handoff = data.get("handoff") or {}
+    if "timeout_s" in handoff:
+        try:
+            return float(handoff.get("timeout_s")) + 5.0
+        except (TypeError, ValueError):
+            return 605.0
     approval = data.get("approval") or {}
     try:
         return float(approval.get("timeout_s", 600)) + 5.0
@@ -312,8 +318,53 @@ def _request(op, args):
     _wait(rid)
 
 
+def cmd_handoff(args):
+    import re
+
+    kind = args.kind or ""
+    if not args.summary or not args.answer:
+        _die(2, "缺少参数")
+    if re.match(r"^[a-z][a-z0-9-]{0,31}$", kind) is None:
+        _die(2, "kind 不合格")
+    if args.answer not in ("text", "point", "points", "offset", "done"):
+        _die(2, "answer 不合格")
+    _request(
+        "handoff",
+        {
+            "kind": kind,
+            "summary": args.summary,
+            "answer": args.answer,
+            "screenshot": args.screenshot or "",
+            "hint": args.hint or "",
+        },
+    )
+
+
 def cmd_check(args):
     _request("check", {"port": args.port, "path": args.path})
+
+
+def cmd_ask(args):
+    kind = args.kind or "help"
+    if not args.summary:
+        _die(2, "缺少 --summary")
+    import re
+
+    if re.match(r"^[a-z][a-z0-9-]{0,31}$", kind) is None:
+        _die(2, "kind 不合格")
+    detail = ""
+    if args.detail_file:
+        path = _real(args.detail_file)
+        if not os.path.isfile(path):
+            _die(2, "详情文件不存在")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                detail = handle.read()
+        except (OSError, UnicodeError):
+            _die(2, "详情文件无法读取")
+        if len(detail) > 8000:
+            _die(2, "详情过长")
+    _request("ask", {"kind": kind, "summary": args.summary, "detail": detail})
 
 
 def cmd_approval(args):
@@ -457,6 +508,16 @@ def main(argv):
     submit.add_argument("path")
     submit.add_argument("--meta", action="append")
     submit.add_argument("--json", action="store_true")
+    handoff = sub.add_parser("handoff")
+    handoff.add_argument("--kind", default="")
+    handoff.add_argument("--summary", default="")
+    handoff.add_argument("--answer", default="")
+    handoff.add_argument("--screenshot", default="")
+    handoff.add_argument("--hint", default="")
+    ask = sub.add_parser("ask")
+    ask.add_argument("--summary", default="")
+    ask.add_argument("--kind", default="help")
+    ask.add_argument("--detail-file", default="")
     approval = sub.add_parser("approval")
     approval.add_argument("approval_cmd")
     approval.add_argument("--kind", required=True)
@@ -499,6 +560,10 @@ def main(argv):
         cmd_check(args)
     elif args.cmd == "approval":
         cmd_approval(args)
+    elif args.cmd == "ask":
+        cmd_ask(args)
+    elif args.cmd == "handoff":
+        cmd_handoff(args)
     elif args.cmd == "mcp":
         cmd_mcp()
     else:

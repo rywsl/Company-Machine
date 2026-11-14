@@ -12,6 +12,7 @@ from mao.errors import FactoryError
 
 DEFAULT_MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 _NAME = re.compile(r"^([0-9]{3})_[a-z0-9_]+\.sql$")
+_MIGRATION_CACHE: dict[str, tuple[tuple[tuple[str, int, int], ...], list[tuple[int, Path, str]]]] = {}
 
 
 class _Tx:
@@ -136,9 +137,14 @@ class Database:
     def _migration_files(self, directory: Path) -> list[tuple[int, Path, str]]:
         if not directory.is_dir():
             return []
+        files = sorted(directory.glob("*.sql"))
+        stamp = tuple((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in files)
+        cached = _MIGRATION_CACHE.get(str(directory))
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
         found: list[tuple[int, Path, str]] = []
         seen: set[int] = set()
-        for path in sorted(directory.glob("*.sql")):
+        for path in files:
             match = _NAME.fullmatch(path.name)
             if match is None or int(match.group(1)) == 0:
                 raise FactoryError("DB_MIGRATION_INVALID", "迁移文件名不合法", file=path.name)
@@ -148,4 +154,5 @@ class Database:
             seen.add(number)
             found.append((number, path, path.read_text(encoding="utf-8")))
         found.sort(key=lambda item: item[0])
+        _MIGRATION_CACHE[str(directory)] = (stamp, found)
         return found

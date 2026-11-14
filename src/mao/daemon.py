@@ -369,7 +369,8 @@ class Daemon:
             return self._bundle(self._single_epoch()).lines
         from mao.governance.rollout import EpochRouter
 
-        commit = EpochRouter(self.ctx, self.epochs).choose(key)
+        line = key.split(":", 1)[1].split(":{", 1)[0] if key.startswith("Line:") else None
+        commit = EpochRouter(self.ctx, self.epochs).choose(key, line=line)
         return self._bundle(commit).lines
 
     def _runner_for_epoch(self, epoch: str) -> Runner:
@@ -481,7 +482,12 @@ class Daemon:
                     since=job.updated_at,
                 )
         if self.pipeline is not None:
+            from mao.delegation import AutonomyConfig
+
+            autonomy = AutonomyConfig.load(self.ctx.root)
             for changeset in self.pipeline.list(state="verified"):
+                if autonomy.signoff(changeset.risk_tier or "T1") != "review":
+                    continue
                 have = len(self.pipeline.approvals(changeset.id))
                 if have >= changeset.reviews_required:
                     continue

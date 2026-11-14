@@ -355,15 +355,19 @@ def _verify_in_sandbox(ctx: Any, snapshot: Any, receipt: Receipt) -> tuple[bool,
             cause={"reason": "recipe"},
         )
     number = _next_verify_n(ctx.root, job.id)
+    principal = f"{job.id}-verify-{number}"
     root = ctx.root / "jobs" / job.id / f"verify-{number}"
     for name in ("in", "out", "ctl", "workspace"):
         (root / name).mkdir(parents=True, exist_ok=True)
     beans = _materialize_inputs(ctx, station, job.inputs, root / "in")
     _write_verify_ctl(ctx, receipt, job, root / "ctl")
     image = str((machine.get("runtime") or {}).get("image") or "")
-    cpus, memory_mb = _machine_resources((machine.get("runtime") or {}).get("resources"))
+    from mao.sandbox import sandbox_resources
+
+    resources = sandbox_resources(machine)
+    cpus, memory_mb = resources["cpus"], resources["memory_mb"]
     base_env = {"FACTORY_JOB_ID": job.id, "FACTORY_ATTEMPT": str(job.attempt)}
-    network, env = _verify_network(ctx, snapshot, job.station, base_env)
+    network, env = _verify_network(ctx, snapshot, job.station, base_env, principal)
     spec = SandboxSpec(
         name=f"mao-{job.id}-verify-{number}",
         image=image,
@@ -383,6 +387,10 @@ def _verify_in_sandbox(ctx: Any, snapshot: Any, receipt: Receipt) -> tuple[bool,
         network=network,
         cpus=cpus,
         memory_mb=memory_mb,
+        shm_mb=resources["shm_mb"],
+        tmp_mb=resources["tmp_mb"],
+        pids=resources["pids"],
+        writable=tuple(resources["writable"]),
     )
     argv = _render_run(
         snapshot, machine_key, recipe_name, recipe.get("run") or [], recipe_env(beans, job.params)
@@ -403,6 +411,10 @@ def _verify_in_sandbox(ctx: Any, snapshot: Any, receipt: Receipt) -> tuple[bool,
             workdir="/workspace",
         )
     finally:
+        if network == "egress":
+            from mao.egress import close_egress
+
+            close_egress(ctx.db, principal)
         if sandbox is not None:
             sandbox.close()
     detail = _detail_text(stdout)
@@ -481,15 +493,24 @@ def _write_verify_ctl(ctx: Any, receipt: Receipt, job: Any, ctl: Path) -> None:
 
 
 def _verify_network(
-    ctx: Any, snapshot: Any, station_key: str, base_env: Mapping[str, str]
+    ctx: Any, snapshot: Any, station_key: str, base_env: Mapping[str, str], principal: str
 ) -> tuple[str, dict[str, str]]:
-    from mao.egress import SecretStore, build_egress, proxy_env
+    from secrets import token_hex
+
+    from mao.egress import (
+        SecretStore,
+        build_egress,
+        credentialed_env,
+        proxy_env,
+        register_check_egress,
+    )
 
     station = snapshot.spec(station_key)
     env = {str(key): str(value) for key, value in base_env.items()}
     if not station.get("policy"):
         return "none", env
-    plan = build_egress(snapshot, station_key, SecretStore(ctx.root))
+    store = SecretStore(ctx.root)
+    plan = build_egress(snapshot, station_key, store)
     if plan.network != "egress":
         return "none", env
     if getattr(ctx, "proxies", None) is None:
@@ -497,10 +518,13 @@ def _verify_network(
 
         start_owned_proxies(ctx, model_port=0, timeout_s=60.0)
     env.update(plan.env)
+    env.update(store.inject(plan.secret_names))
+    token = token_hex(16)
+    register_check_egress(ctx.db, principal, plan, token=token)
     proxies = getattr(ctx, "proxies", None)
     if proxies is not None:
         docker = getattr(ctx.provider, "name", "") == "docker"
-        env.update(proxy_env(proxies, docker=docker))
+        env.update(credentialed_env(proxy_env(proxies, docker=docker), principal, token))
     return "egress", env
 
 

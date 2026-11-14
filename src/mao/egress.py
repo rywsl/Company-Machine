@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import http.client
 import json
 import logging
+import os
+import re
+import secrets
 import socket
 import sqlite3
 import subprocess
@@ -16,13 +21,86 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 from mao.base import canonical_json, utc_iso
 from mao.errors import FactoryError
 
 LIVE_EGRESS = 0
+_ENV_FLAG = re.compile(r"(--env|-e)([ \t]+)([A-Za-z_][A-Za-z0-9_]*)=([^\s%]+)")
+_TOKEN_ASSIGN = re.compile(r"(FACTORY_EGRESS_TOKEN)([ \t]*[:=][ \t]*)([^\s%]+)")
+_URL_USERINFO = re.compile(r"(://[^/\s@]*:)([^/\s@]+)@")
+_ISSUED_TOKENS: set[str] = set()
+_TOKEN_LOCK = threading.Lock()
+_LOG_STORES: list[Any] = []
+_LOG_FILTER_INSTALLED = False
+
+
+def remember_egress_token(token: str) -> None:
+    """记住本进程签发的出网令牌，供日志打码。不写盘，不写入 job 行。"""
+    if not token or len(token) < 8:
+        return
+    quoted = quote(token, safe="")
+    with _TOKEN_LOCK:
+        _ISSUED_TOKENS.add(token)
+        if quoted != token:
+            _ISSUED_TOKENS.add(quoted)
+
+
+def scrub_credentials(text: str) -> str:
+    """去掉启动记录和日志里的出网令牌。SecretStore.redact 只认识已保存的秘密值。"""
+    text = _ENV_FLAG.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}=***", text)
+    text = _TOKEN_ASSIGN.sub(lambda m: f"{m.group(1)}{m.group(2)}***", text)
+    text = _URL_USERINFO.sub(r"\1***@", text)
+    with _TOKEN_LOCK:
+        tokens = tuple(sorted(_ISSUED_TOKENS, key=len, reverse=True))
+    for token in tokens:
+        if token in text:
+            text = text.replace(token, "***")
+    return text
+
+
+def mask_env_argv(argv: Sequence[str]) -> tuple[list[str], list[str]]:
+    """把 `--env`/`-e` 的值换成 `***`，并返回被换掉的值，供 stderr 再替换一次。"""
+    out: list[str] = []
+    values: list[str] = []
+    items = list(argv)
+    index = 0
+    while index < len(items):
+        item = items[index]
+        if item in ("--env", "-e") and index + 1 < len(items) and "=" in items[index + 1]:
+            name, _, value = items[index + 1].partition("=")
+            if value:
+                values.append(value)
+            out.append(item)
+            out.append(f"{name}=***")
+            index += 2
+            continue
+        out.append(scrub_credentials(item))
+        index += 1
+    return out, values
+
+
+def scrub_launch_text(text: str, values: Sequence[str]) -> str:
+    redacted = text
+    for value in sorted({item for item in values if item}, key=len, reverse=True):
+        redacted = redacted.replace(value, "***")
+    return scrub_credentials(redacted)
+
+
+def scrub_obj(obj: Any) -> Any:
+    if isinstance(obj, str):
+        return scrub_credentials(obj)
+    if isinstance(obj, list):
+        return [scrub_obj(item) for item in obj]
+    if isinstance(obj, tuple):
+        return tuple(scrub_obj(item) for item in obj)
+    if isinstance(obj, dict):
+        return {str(key): scrub_obj(value) for key, value in obj.items()}
+    return obj
+
+
 _LIVE_LOCK = threading.Lock()
 _DEFAULT_METHODS = {
     "providers": frozenset({"*"}),
@@ -31,6 +109,8 @@ _DEFAULT_METHODS = {
     "ingress": frozenset({"GET", "HEAD"}),
 }
 _ALLOWED_JOB = {"PROVISIONING", "RUNNING", "AWAITING_APPROVAL"}
+_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_IPV4 = re.compile(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$")
 
 
 @dataclass(frozen=True)
@@ -47,6 +127,16 @@ class EgressPlan:
     secret_names: tuple[str, ...]
     withheld: tuple[str, ...]
     env: dict[str, str]
+    on_unlisted: str = "deny"
+    monitored: bool = False
+
+
+@dataclass(frozen=True)
+class _Reject:
+    status: int
+    code: str
+    principal: str
+    authenticate: bool
 
 
 @dataclass(frozen=True)
@@ -79,11 +169,8 @@ class SecretStore:
         return out
 
     def redact(self, text: str) -> str:
-        values = sorted(
-            (self._read(name) for name in self.names() if self._read(name)), key=len, reverse=True
-        )
         redacted = text
-        for value in values:
+        for value in self._current_values():
             redacted = redacted.replace(value, "***")
         return redacted
 
@@ -97,16 +184,13 @@ class SecretStore:
         return obj
 
     def install_log_filter(self) -> None:
-        import logging
-
-        class _Filter(logging.Filter):
-            def filter(self, record: logging.LogRecord) -> bool:
-                if isinstance(record.msg, str):
-                    record.msg = self_store.redact(record.msg)
-                return True
-
-        self_store = self
-        logging.getLogger("mao").addFilter(_Filter())
+        for index, store in enumerate(_LOG_STORES):
+            if getattr(store, "root", None) == self.root:
+                _LOG_STORES[index] = self
+                break
+        else:
+            _LOG_STORES.append(self)
+        _install_mao_log_filter()
 
     def _load(self) -> dict[str, str]:
         path = self.root / "secrets" / "manifest.json"
@@ -125,6 +209,19 @@ class SecretStore:
             out[str(name)] = str(klass)
         return out
 
+    def _current_values(self) -> list[str]:
+        """每次打码都重读清单和值。Context.open 时装上的过滤器不能停在空缓存上。"""
+        values: list[str] = []
+        for name in sorted(self._load()):
+            path = self.root / "secrets" / "values" / name
+            if not path.is_file():
+                continue
+            value = path.read_text(encoding="utf-8").strip("\n")
+            if value:
+                values.append(value)
+        values.sort(key=len, reverse=True)
+        return values
+
     def _read(self, name: str) -> str:
         path = self.root / "secrets" / "values" / name
         if not path.is_file():
@@ -141,21 +238,145 @@ def register_job_cap(db: Any, job_id: str, station_key: str, cap_usd: float | No
         )
 
 
-def register_job_egress(db: Any, job_id: str, plan: EgressPlan) -> None:
-    body = {
-        "network": plan.network,
-        "allow": [
-            {"tier": rule.tier, "host": rule.host, "methods": sorted(rule.methods)} for rule in plan.allow
-        ],
-        "secret_names": list(plan.secret_names),
-        "withheld": list(plan.withheld),
-    }
+def _hide_logged(value: Any) -> Any:
+    if isinstance(value, str):
+        text = scrub_credentials(value)
+        for store in list(_LOG_STORES):
+            try:
+                text = store.redact(text)
+            except Exception:
+                continue
+        return text
+    if isinstance(value, dict):
+        return {str(key): _hide_logged(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_hide_logged(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_hide_logged(item) for item in value)
+    return value
+
+
+def _install_mao_log_filter() -> None:
+    global _LOG_FILTER_INSTALLED
+    if _LOG_FILTER_INSTALLED:
+        return
+    _LOG_FILTER_INSTALLED = True
+
+    class _Filter(logging.Filter):
+        mao_secret_filter = True
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            if isinstance(record.msg, str):
+                record.msg = _hide_logged(record.msg)
+            args = record.args
+            if isinstance(args, tuple):
+                record.args = tuple(_hide_logged(item) for item in args)
+            elif isinstance(args, dict):
+                record.args = {str(key): _hide_logged(item) for key, item in args.items()}
+            try:
+                rendered = record.getMessage()
+            except Exception:
+                return True
+            if isinstance(rendered, str):
+                cleaned = _hide_logged(rendered)
+                if cleaned != rendered:
+                    record.msg = cleaned
+                    record.args = ()
+            return True
+
+    filt = _Filter()
+
+    def covers(name: str) -> bool:
+        return name == "mao" or name.startswith("mao.")
+
+    def attach(logger: logging.Logger) -> None:
+        if not any(getattr(item, "mao_secret_filter", False) for item in logger.filters):
+            logger.addFilter(filt)
+
+    for name, found in list(logging.Logger.manager.loggerDict.items()):
+        if covers(name) and isinstance(found, logging.Logger):
+            attach(found)
+    attach(logging.getLogger("mao"))
+    previous = logging.getLoggerClass()
+
+    class _Hook(previous):  # type: ignore[misc, valid-type]
+        def __init__(self, name: str, level: int = logging.NOTSET) -> None:
+            super().__init__(name, level)
+            if covers(name):
+                attach(self)
+
+    logging.setLoggerClass(_Hook)
+
+
+def register_job_egress(db: Any, job_id: str, plan: EgressPlan, *, token: str | None = None) -> None:
+    if token:
+        remember_egress_token(token)
+    digest = None if token is None else hashlib.sha256(token.encode("utf-8")).hexdigest()
     with db.tx() as conn:
         conn.execute(
-            """INSERT INTO egress_plans (job_id, plan, at) VALUES (?, ?, ?)
-               ON CONFLICT(job_id) DO UPDATE SET plan = excluded.plan, at = excluded.at""",
-            (job_id, canonical_json(body), _plan_at(db, job_id)),
+            """INSERT INTO egress_plans (job_id, plan, at, token_sha256, kind)
+               VALUES (?, ?, ?, ?, 'job')
+               ON CONFLICT(job_id) DO UPDATE SET
+                 plan = excluded.plan,
+                 at = excluded.at,
+                 token_sha256 = COALESCE(excluded.token_sha256, egress_plans.token_sha256),
+                 kind = 'job'""",
+            (job_id, canonical_json(_plan_body(plan)), _plan_at(db, job_id), digest),
         )
+
+
+def register_check_egress(db: Any, principal: str, plan: EgressPlan, *, token: str) -> None:
+    remember_egress_token(token)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with db.tx() as conn:
+        conn.execute(
+            """INSERT INTO egress_plans (job_id, plan, at, token_sha256, kind, closed_at)
+               VALUES (?, ?, ?, ?, 'check', NULL)
+               ON CONFLICT(job_id) DO UPDATE SET
+                 plan = excluded.plan,
+                 at = excluded.at,
+                 token_sha256 = excluded.token_sha256,
+                 kind = 'check',
+                 closed_at = NULL""",
+            (principal, canonical_json(_plan_body(plan)), _plan_at(db, principal), digest),
+        )
+
+
+def close_egress(db: Any, principal: str) -> None:
+    with db.tx() as conn:
+        conn.execute(
+            "UPDATE egress_plans SET closed_at = ? WHERE job_id = ?",
+            (_plan_at(db, principal), principal),
+        )
+
+
+def host_matches(pattern: str, host: str) -> bool:
+    pattern = pattern.lower()
+    host = host.lower()
+    if not pattern.startswith("*."):
+        return pattern == host
+    suffix = pattern[2:]
+    return host != suffix and host.endswith("." + suffix)
+
+
+def credentialed_env(env: Mapping[str, str], principal: str, token: str) -> dict[str, str]:
+    remember_egress_token(token)
+    user = quote(principal, safe="")
+    secret = quote(token, safe="")
+    out = {str(key): str(value) for key, value in env.items()}
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "EGRESS_PROXY"):
+        raw = out.get(key)
+        if not raw:
+            continue
+        parsed = urlsplit(raw)
+        host = parsed.hostname or ""
+        if parsed.port is None:
+            out[key] = f"http://{user}:{secret}@{host}"
+        else:
+            out[key] = f"http://{user}:{secret}@{host}:{parsed.port}"
+    out["FACTORY_EGRESS_USER"] = principal
+    out["FACTORY_EGRESS_TOKEN"] = token
+    return out
 
 
 def plans_from_db(db: Any) -> Callable[[str], EgressPlan | None]:
@@ -219,6 +440,11 @@ def build_egress(snapshot: Any, station_key: str, store: SecretStore) -> EgressP
         raise FactoryError(
             "EGRESS_CONFIG_INVALID", "none 不能与其他出网等级并存", station=station_key, reason="none"
         )
+    on_unlisted = egress.get("on_unlisted", "deny")
+    if on_unlisted not in ("deny", "ask"):
+        raise FactoryError(
+            "EGRESS_CONFIG_INVALID", "on_unlisted 不合法", station=station_key, reason="on_unlisted"
+        )
     rules: list[AllowRule] = []
     if not (egress.get("none") is True or not any(key != "none" for key in egress)):
         for tier in ("providers", "web_read", "publish", "ingress"):
@@ -237,12 +463,18 @@ def build_egress(snapshot: Any, station_key: str, store: SecretStore) -> EgressP
     secret_names = tuple(sorted(name for name in named if name not in withheld_t))
     network = "egress" if rules or _agent_uses_model_proxy(snapshot, station) else "none"
     env = {} if network == "none" else {"NO_PROXY": "model-proxy,egress"}
+    monitors = station.get("monitors") or {}
+    monitored = isinstance(monitors, Mapping) and any(
+        isinstance(item, Mapping) and item.get("on") == "egress" for item in monitors.values()
+    )
     return EgressPlan(
         network,
         tuple(sorted(rules, key=lambda item: (item.tier, item.host, ",".join(sorted(item.methods))))),
         secret_names,
         withheld_t,
         env,
+        str(on_unlisted),
+        monitored,
     )
 
 
@@ -476,7 +708,7 @@ def start_owned_proxies(ctx: Any, *, model_port: int, timeout_s: float) -> tuple
     else:
         host = "127.0.0.1"
     store = SecretStore(ctx.root)
-    egress = EgressProxy(plans_from_db(ctx.db), store, ctx.clock, db=ctx.db)
+    egress = EgressProxy(plans_from_db(ctx.db), store, ctx.clock, db=ctx.db, root=Path(ctx.root), ids=ctx.ids)
     model: ModelProxy | None = None
     try:
         egress_port = egress.start(host, 0)
@@ -517,11 +749,15 @@ class EgressProxy:
         clock: Any,
         *,
         db: Any | None = None,
+        root: Path | None = None,
+        ids: Any | None = None,
     ) -> None:
         self.plan_for = plan_for
         self.store = store
         self.clock = clock
         self.db = db
+        self.root = None if root is None else Path(root)
+        self.ids = ids
         self._server: ThreadingHTTPServer | None = None
         self._event_seq = 0
         self._event_lock = threading.Lock()
@@ -566,16 +802,8 @@ class EgressProxy:
             _send_status(handler, 400, b"")
             return
         host, port, path = parsed
-        job_id = handler.headers.get("X-Factory-Job") or ""
-        plan = self._plan(job_id)
-        if plan is None:
-            self._deny(handler, job_id, handler.command, host, "EGRESS_JOB_INVALID")
+        if not self._admit(handler, handler.command, host):
             return
-        rules = [rule for rule in plan.allow if rule.host.lower() == host]
-        if not rules or not _method_allowed(rules, handler.command):
-            self._deny(handler, job_id, handler.command, host, "EGRESS_DENIED")
-            return
-        self._event(job_id, "egress.allowed", {"job_id": job_id, "method": handler.command, "host": host})
         body = _read_body(handler)
         try:
             _relay_http(handler, host, port, path, body)
@@ -589,20 +817,8 @@ class EgressProxy:
             _send_status(handler, 400, b"")
             return
         host, port = parsed
-        job_id = handler.headers.get("X-Factory-Job") or ""
-        plan = self._plan(job_id)
-        if plan is None:
-            self._deny(handler, job_id, "CONNECT", host, "EGRESS_JOB_INVALID")
+        if not self._admit(handler, "CONNECT", host):
             return
-        rules = [rule for rule in plan.allow if rule.host.lower() == host]
-        if not rules:
-            self._deny(handler, job_id, "CONNECT", host, "EGRESS_DENIED")
-            return
-        if not any("*" in rule.methods for rule in rules):
-            # TLS 终结不在本任务范围。方法受限时不开隧道，避免未检查的 CONNECT。
-            self._deny(handler, job_id, "CONNECT", host, "EGRESS_METHOD_OPAQUE")
-            return
-        self._event(job_id, "egress.allowed", {"job_id": job_id, "method": "CONNECT", "host": host})
         try:
             upstream = socket.create_connection((host, port), timeout=30)
         except OSError:
@@ -612,36 +828,165 @@ class EgressProxy:
         handler.end_headers()
         _tunnel(handler.connection, upstream)
 
-    def _plan(self, job_id: str) -> EgressPlan | None:
-        if not job_id:
-            return None
-        plan = self.plan_for(job_id)
-        if plan is None:
-            return None
-        if self.db is not None and not _job_open(self.db, job_id):
-            return None
-        return plan
+    def _admit(self, handler: BaseHTTPRequestHandler, method: str, host: str) -> bool:
+        ident = self._identify(handler)
+        if isinstance(ident, _Reject):
+            self._reject(handler, ident, method, host)
+            return False
+        principal, plan, kind, has_token = ident
+        outcome = self._gate(principal, plan, kind, has_token, method, host)
+        if isinstance(outcome, _Reject):
+            self._reject(handler, outcome, method, host)
+            return False
+        self._event(principal, "egress.allowed", {"job_id": principal, "method": method, "host": host})
+        return True
 
-    def _deny(self, handler: BaseHTTPRequestHandler, job_id: str, method: str, host: str, code: str) -> None:
-        self._event(
-            job_id,
-            "egress.denied",
-            {"job_id": job_id, "method": method, "host": host, "code": code},
+    def _identify(self, handler: BaseHTTPRequestHandler) -> tuple[str, EgressPlan, str, bool] | _Reject:
+        auth = handler.headers.get("Proxy-Authorization")
+        header_job = handler.headers.get("X-Factory-Job") or ""
+        if auth:
+            parsed = _basic(auth)
+            if parsed is None:
+                return _Reject(407, "EGRESS_AUTH_REQUIRED", "", True)
+            user, password = parsed
+            row = self._stored(user)
+            if row is None or not _token_ok(password, row.get("token_sha256")):
+                return _Reject(403, "EGRESS_AUTH_INVALID", user, False)
+            if not self._row_open(row):
+                return _Reject(403, "EGRESS_JOB_INVALID", user, False)
+            return (user, _plan_from_json(str(row["plan"])), str(row.get("kind") or "job"), True)
+        if header_job:
+            row = self._stored(header_job)
+            if row is not None and row.get("token_sha256"):
+                return _Reject(407, "EGRESS_AUTH_REQUIRED", header_job, True)
+            if row is not None:
+                if not self._row_open(row):
+                    return _Reject(403, "EGRESS_JOB_INVALID", header_job, False)
+                return (
+                    header_job,
+                    _plan_from_json(str(row["plan"])),
+                    str(row.get("kind") or "job"),
+                    False,
+                )
+            if self.db is not None and not _job_open(self.db, header_job):
+                return _Reject(403, "EGRESS_JOB_INVALID", header_job, False)
+            plan = self.plan_for(header_job)
+            if plan is None:
+                return _Reject(403, "EGRESS_JOB_INVALID", header_job, False)
+            return (header_job, plan, "job", False)
+        return _Reject(407, "EGRESS_AUTH_REQUIRED", "", True)
+
+    def _gate(
+        self,
+        principal: str,
+        plan: EgressPlan,
+        kind: str,
+        has_token: bool,
+        method: str,
+        host: str,
+    ) -> str | _Reject:
+        rules = [rule for rule in plan.allow if host_matches(rule.host, host)]
+        if rules and method == "CONNECT" and not any("*" in rule.methods for rule in rules):
+            return _Reject(403, "EGRESS_METHOD_OPAQUE", principal, False)
+        if rules and not _method_allowed(rules, method):
+            return _Reject(403, "EGRESS_DENIED", principal, False)
+        listed = bool(rules)
+        ask = has_token and kind != "check" and (plan.monitored or (not listed and plan.on_unlisted == "ask"))
+        if listed and not ask:
+            return "allow"
+        if not ask or self.root is None:
+            return _Reject(403, "EGRESS_DENIED", principal, False)
+        return self._ask(principal, method, host, listed)
+
+    def _ask(self, principal: str, method: str, host: str, listed: bool) -> str | _Reject:
+        if self.db is None or self.root is None:
+            return _Reject(403, "EGRESS_DENIED", principal, False)
+        rows = self.db.query("SELECT attempt FROM jobs WHERE id = ?", (principal,))
+        if not rows:
+            return _Reject(403, "EGRESS_JOB_INVALID", principal, False)
+        attempt = int(rows[0]["attempt"])
+        request_id = "r-" + secrets.token_hex(4)
+        folder = self.root / "jobs" / principal / str(attempt) / "ctl"
+        _atomic_json(
+            folder / "requests" / f"{request_id}.json",
+            {
+                "id": request_id,
+                "op": "egress",
+                "args": {"method": method, "host": host, "listed": listed},
+            },
         )
-        _send_status(handler, 403, json.dumps({"code": code}).encode("utf-8"))
+        response = folder / "responses" / f"{request_id}.json"
+        waiter = threading.Event()
+        polls = 0
+        while not response.is_file():
+            polls += 1
+            if polls % 20 == 0 and not self._principal_open(principal):
+                return _Reject(403, "EGRESS_JOB_INVALID", principal, False)
+            waiter.wait(0.05)
+        try:
+            found = json.loads(response.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return _Reject(403, "EGRESS_DENIED", principal, False)
+        result = found.get("result") if isinstance(found, dict) else None
+        if not isinstance(result, dict) or result.get("decision") != "approve":
+            code = "EGRESS_DENIED"
+            if isinstance(result, dict) and result.get("code"):
+                code = str(result["code"])
+            return _Reject(403, code, principal, False)
+        return "allow"
+
+    def _stored(self, principal: str) -> dict[str, Any] | None:
+        if self.db is None or not principal:
+            return None
+        rows = self.db.query(
+            "SELECT job_id, plan, token_sha256, kind, closed_at FROM egress_plans WHERE job_id = ?",
+            (principal,),
+        )
+        return dict(rows[0]) if rows else None
+
+    def _row_open(self, row: Mapping[str, Any]) -> bool:
+        if str(row.get("kind") or "job") == "check":
+            return row.get("closed_at") is None
+        if self.db is None:
+            return True
+        return _job_open(self.db, str(row["job_id"]))
+
+    def _principal_open(self, principal: str) -> bool:
+        row = self._stored(principal)
+        if row is None:
+            return False
+        return self._row_open(row)
+
+    def _reject(self, handler: BaseHTTPRequestHandler, reject: _Reject, method: str, host: str) -> None:
+        self._event(
+            reject.principal,
+            "egress.denied",
+            {"job_id": reject.principal, "method": method, "host": host, "code": reject.code},
+        )
+        _send_status(
+            handler,
+            reject.status,
+            json.dumps({"code": reject.code}).encode("utf-8"),
+            authenticate=reject.authenticate,
+        )
 
     def _event(self, job_id: str, kind: str, data: dict[str, Any]) -> None:
         if self.db is None:
             return
-        with self._event_lock:
-            self._event_seq += 1
-            event_id = f"ev-px{self._event_seq:06d}"
+        event_id = self._event_id()
         at = _plan_at(self.db, job_id)
         with self.db.tx() as conn:
             conn.execute(
                 "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, ?, NULL, ?)",
                 (event_id, at, kind, canonical_json(data)),
             )
+
+    def _event_id(self) -> str:
+        if self.ids is not None:
+            return str(self.ids.new("ev"))
+        with self._event_lock:
+            self._event_seq += 1
+            return f"ev-px{self._event_seq:06d}"
 
 
 class ModelProxy:
@@ -873,6 +1218,49 @@ def _plan_at(db: Any, job_id: str) -> str:
     return "1970-01-01T00:00:00.000Z"
 
 
+def _plan_body(plan: EgressPlan) -> dict[str, Any]:
+    return {
+        "network": plan.network,
+        "allow": [
+            {"tier": rule.tier, "host": rule.host, "methods": sorted(rule.methods)} for rule in plan.allow
+        ],
+        "secret_names": list(plan.secret_names),
+        "withheld": list(plan.withheld),
+        "on_unlisted": plan.on_unlisted,
+        "monitored": plan.monitored,
+    }
+
+
+def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".part")
+    tmp.write_text(json.dumps(dict(payload), ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _basic(value: str) -> tuple[str, str] | None:
+    if not value.startswith("Basic "):
+        return None
+    try:
+        raw = base64.b64decode(value[6:], validate=True)
+        text = raw.decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if ":" not in text:
+        return None
+    user, password = text.split(":", 1)
+    if user == "":
+        return None
+    return user, password
+
+
+def _token_ok(password: str, stored: Any) -> bool:
+    if not isinstance(stored, str) or len(stored) != 64:
+        return False
+    digest = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(digest, stored)
+
+
 def _plan_from_json(text: str) -> EgressPlan:
     body = json.loads(text)
     rules = []
@@ -890,6 +1278,8 @@ def _plan_from_json(text: str) -> EgressPlan:
         tuple(str(name) for name in body.get("secret_names") or []),
         tuple(str(name) for name in body.get("withheld") or []),
         {},
+        str(body.get("on_unlisted") or "deny"),
+        bool(body.get("monitored")),
     )
 
 
@@ -979,8 +1369,12 @@ def _relay_http(handler: BaseHTTPRequestHandler, host: str, port: int, path: str
         upstream.close()
 
 
-def _send_status(handler: BaseHTTPRequestHandler, status: int, payload: bytes) -> None:
+def _send_status(
+    handler: BaseHTTPRequestHandler, status: int, payload: bytes, *, authenticate: bool = False
+) -> None:
     handler.send_response(status)
+    if authenticate:
+        handler.send_header("Proxy-Authenticate", 'Basic realm="mao-egress"')
     if payload:
         handler.send_header("Content-Type", "application/json")
     handler.send_header("Content-Length", str(len(payload)))
@@ -1016,6 +1410,8 @@ def _rules(
     snapshot: Any, station: Mapping[str, Any], tier: str, value: Any, station_key: str
 ) -> list[AllowRule]:
     methods = _DEFAULT_METHODS[tier]
+    if isinstance(value, Mapping) and value.get("methods"):
+        methods = frozenset(str(item).upper() for item in value["methods"])
     hosts = _hosts(snapshot, station, tier, value, station_key)
     return [AllowRule(tier, host, methods) for host in hosts]
 
@@ -1034,9 +1430,21 @@ def _hosts(snapshot: Any, station: Mapping[str, Any], tier: str, value: Any, sta
 
 def _host(value: Any, station_key: str) -> str:
     text = str(value).split("://", 1)[-1].split("/", 1)[0].rstrip(".").lower()
-    if " " in text or text == "":
+    if " " in text or text == "" or not _host_ok(text):
         raise FactoryError("EGRESS_CONFIG_INVALID", "host 不合法", station=station_key, reason=text)
     return text
+
+
+def _host_ok(text: str) -> bool:
+    if "*" not in text:
+        return True
+    parts = text.split(".")
+    if parts[0] != "*" or len(parts) < 3 or any("*" in part for part in parts[1:]):
+        return False
+    suffix = ".".join(parts[1:])
+    if _IPV4.fullmatch(suffix):
+        return False
+    return all(_LABEL.fullmatch(part) for part in parts[1:])
 
 
 _METER_SUFFIXES = ("/messages", "/responses", "/chat/completions")

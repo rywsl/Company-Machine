@@ -244,6 +244,9 @@ def site_env(site: Site, env: TypeEnv) -> tuple[dict[str, T.Type], T.Type | None
     if site.kind == "equivalence":
         s = c["station"]
         return {"src": env.bean(c["from"]), "dst": env.bean(c["to"]), "params": env.params(s)}, T.BOOL, None
+    if site.kind == "monitor":
+        s = c["station"]
+        return {"request": REQUEST, "inputs": env.ports(s, "inputs"), "params": env.params(s)}, T.BOOL, None
     if site.kind == "approval":
         s = c["station"]
         root = {"propose": ("proposal", PROPOSAL), "in_run": ("request", REQUEST)}[c["phase"]]

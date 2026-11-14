@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from mao.base import SystemClock
 from mao.errors import FactoryError
@@ -47,6 +48,65 @@ class SandboxSpec:
     cpus: float | None = None
     memory_mb: int | None = None
     workspace_volume: str | None = None
+    shm_mb: int | None = None
+    tmp_mb: int | None = None
+    pids: int | None = None
+    writable: tuple[str, ...] = ()
+
+
+def sandbox_resources(machine: Mapping[str, Any]) -> dict[str, Any]:
+    resources = (machine.get("runtime") or {}).get("resources") or {}
+    if not isinstance(resources, Mapping):
+        raise FactoryError("RESOURCES_INVALID", "资源声明不合法", field="resources")
+    return {
+        "cpus": None if resources.get("cpus") is None else float(resources.get("cpus")),
+        "memory_mb": _memory_mb(resources.get("memory")),
+        "shm_mb": _positive(resources, "shm_mb"),
+        "tmp_mb": _positive(resources, "tmp_mb"),
+        "pids": _positive(resources, "pids"),
+        "writable": _writable(resources.get("writable", ())),
+    }
+
+
+def _positive(resources: Mapping[str, Any], name: str) -> int | None:
+    if name not in resources or resources.get(name) is None:
+        return None
+    value = resources.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise FactoryError("RESOURCES_INVALID", "资源声明不合法", field=name)
+    return value
+
+
+def _writable(value: Any) -> tuple[str, ...]:
+    if not value:
+        return ()
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise FactoryError("RESOURCES_INVALID", "资源声明不合法", field="writable")
+    if len(set(value)) != len(value):
+        raise FactoryError("RESOURCES_INVALID", "资源声明不合法", field="writable")
+    banned = ("/factory", "/workspace", "/opt/factory", "/tmp")
+    for item in value:
+        parts = item.split("/")
+        if (
+            not item.startswith("/")
+            or item == "/"
+            or ".." in parts
+            or ":" in item
+            or "," in item
+            or any(item == root or item.startswith(root + "/") for root in banned)
+        ):
+            raise FactoryError("RESOURCES_INVALID", "资源声明不合法", field="writable")
+    return tuple(str(item) for item in value)
+
+
+def _memory_mb(memory: Any) -> int | None:
+    if memory is None:
+        return None
+    match = re.fullmatch(r"([0-9]+)(Mi|M|MB|Gi|G|GB)", str(memory))
+    if match is None:
+        raise FactoryError("SANDBOX_SPEC_INVALID", "memory 无法解析", memory=str(memory))
+    amount = int(match.group(1))
+    return amount if match.group(2) in ("Mi", "M", "MB") else amount * 1024
 
 
 @dataclass(frozen=True)
@@ -90,11 +150,16 @@ class DockerProvider:
             "no-new-privileges",
             "--read-only",
             "--pids-limit",
-            "256",
+            str(spec.pids or 256),
             *network_argv,
             "--tmpfs",
-            "/tmp:rw,nosuid,size=256m",
+            f"/tmp:rw,nosuid,size={spec.tmp_mb or 256}m",
         ]
+        tmp_mb = spec.tmp_mb or 256
+        for path in spec.writable:
+            argv.extend(["--tmpfs", f"{path}:rw,nosuid,size={tmp_mb}m,mode=1777"])
+        if spec.shm_mb is not None:
+            argv.extend(["--shm-size", f"{spec.shm_mb}m"])
         if spec.cpus is not None:
             argv.extend(["--cpus", str(spec.cpus if spec.cpus != 1 else "1")])
         if spec.memory_mb is not None:
@@ -234,25 +299,20 @@ class DockerProvider:
         if spec.workspace_volume:
             self._volume_create(spec.workspace_volume)
         subprocess.run([self.docker, "rm", "-f", spec.name], capture_output=True, timeout=60, check=False)
-        running = SandboxSpec(
-            name=spec.name,
-            image=resolved,
-            mounts=spec.mounts,
-            workdir=spec.workdir,
-            env=spec.env,
-            network=spec.network,
-            cpus=spec.cpus,
-            memory_mb=spec.memory_mb,
-            workspace_volume=spec.workspace_volume,
-        )
+        running = replace(spec, image=resolved)
         argv = self.build_run_argv(running)
         proc = subprocess.run(argv, capture_output=True, timeout=120, check=False)
         if proc.returncode != 0:
+            from mao.egress import SecretStore, mask_env_argv, scrub_launch_text
+
+            safe_argv, values = mask_env_argv(argv)
+            stderr = scrub_launch_text(proc.stderr.decode("utf-8", errors="replace"), values)
+            store = SecretStore(self.root)
             raise FactoryError(
                 "DOCKER_FAILED",
                 "docker run 失败",
-                argv=argv,
-                stderr=proc.stderr.decode("utf-8", errors="replace"),
+                argv=store.redact_obj(safe_argv),
+                stderr=store.redact(stderr),
                 exit_code=proc.returncode,
             )
         return _DockerSandbox(self, running)

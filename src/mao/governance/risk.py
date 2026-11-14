@@ -89,9 +89,20 @@ def governance_limits() -> dict[str, int]:
     return {str(row[0]): int(row[1]) for row in model.rows("limit")}
 
 
+_RISK: Program | None = None
+_RISK_TEXT: str | None = None
+
+
 def _risk_program() -> Program:
+    global _RISK, _RISK_TEXT
     path = spec_root() / "mrl" / "governance" / "risk.mrl"
-    return Program.from_sources([(str(path), path.read_text(encoding="utf-8"))])
+    text = path.read_text(encoding="utf-8")
+    if _RISK is not None and _RISK_TEXT == text:
+        return _RISK
+    program = Program.from_sources([(str(path), text)])
+    _RISK = program
+    _RISK_TEXT = text
+    return program
 
 
 def _changes(base: Any, candidate: Any) -> list[dict[str, Any]]:

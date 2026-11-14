@@ -34,7 +34,20 @@ _SHARED = (
     "conversion_list",
     "changeset_status",
 )
-_FOREMAN = ("changeset_propose", "changeset_withdraw", "registry_check", "image_build")
+_FOREMAN = (
+    "changeset_propose",
+    "changeset_withdraw",
+    "registry_check",
+    "image_build",
+    "escalate",
+    "inbox_get",
+    "inbox_list",
+    "approval_get",
+    "approval_decide",
+    "approval_escalate",
+    "secret_request",
+    "secret_verify",
+)
 _REVIEWER = ("review_submit",)
 
 
@@ -226,6 +239,32 @@ class McpServer:
                 tail = "\n".join(log_path.read_text(encoding="utf-8").splitlines()[-100:])
             body["log_tail"] = tail
             return body
+        if name == "approval_get":
+            return self._approvals().view(str(arguments["approval_id"]))
+        if name == "approval_decide":
+            return self._approval_decide(arguments)
+        if name == "approval_escalate":
+            found = self._approvals().escalate(
+                str(arguments["approval_id"]),
+                by="foreman:" + self.session.actor,
+                note=str(arguments.get("note") or ""),
+            )
+            return self._approvals().view(found.id)
+        if name == "escalate":
+            return self._escalate(arguments)
+        if name == "inbox_get":
+            from mao.inbox import Inbox
+
+            return Inbox(self.ctx).get(str(arguments["request_id"]))
+        if name == "inbox_list":
+            from mao.inbox import Inbox
+
+            status = arguments.get("status")
+            return Inbox(self.ctx).list(status=None if status is None else str(status))
+        if name == "secret_request":
+            return self._secret_request(arguments)
+        if name == "secret_verify":
+            return self._secret_verify(arguments)
         if name == "review_submit":
             found = submit.review(
                 str(arguments["changeset_id"]),
@@ -239,6 +278,93 @@ class McpServer:
             self._outcome["reviewed"].append(str(arguments["changeset_id"]))
             return found
         raise _Proto(-32602, "unknown tool")
+
+    def _approvals(self) -> Any:
+        from mao.approvals import Approvals
+        from mao.governance.epochs import EpochStore
+
+        snapshot = EpochStore(self.ctx).materialize(EpochStore(self.ctx).current())
+        return Approvals(self.ctx, snapshot)
+
+    def _approval_decide(self, arguments: dict[str, Any]) -> Any:
+        approvals = self._approvals()
+        current = approvals.get(str(arguments["approval_id"]))
+        if current.route != "foreman":
+            raise FactoryError(
+                "FOREMAN_FORBIDDEN",
+                "厂长不能决定这条审批",
+                op="approval_decide",
+            )
+        approvals.apply_decision(
+            current.id,
+            str(arguments["decision"]),
+            by="foreman:" + self.session.actor,
+            note=str(arguments.get("note") or ""),
+        )
+        return approvals.view(current.id)
+
+    def _secret_request(self, arguments: dict[str, Any]) -> Any:
+        from mao.secrets import request_secret, station_snapshot
+
+        station = str(arguments["station"])
+        snapshot = station_snapshot(self.ctx, station) or self.epochs.materialize(self.epochs.current())
+        return request_secret(
+            self.ctx,
+            snapshot,
+            name=str(arguments["name"]),
+            secret_class=str(arguments["secret_class"]),
+            station=station,
+            reason=str(arguments["reason"]),
+            origin="foreman:" + self.session.actor,
+        )
+
+    def _secret_verify(self, arguments: dict[str, Any]) -> Any:
+        from mao.egress import SecretStore
+        from mao.secrets import direct_label, station_snapshot, verify_secret
+
+        name = str(arguments["name"])
+        station = str(arguments["station"])
+        store = SecretStore(self.ctx.root)
+        injected = store.inject([name])
+        if name not in injected:
+            raise FactoryError("SECRET_NOT_FOUND", "找不到秘密", name=name)
+        snapshot = station_snapshot(self.ctx, station) or self.epochs.materialize(self.epochs.current())
+        result = verify_secret(
+            self.ctx,
+            snapshot,
+            station=station,
+            name=name,
+            value=injected[name],
+            label=direct_label(self.ctx, name),
+        )
+        return {
+            "name": name,
+            "ok": result.ok,
+            "code": result.code,
+            "exit_code": result.exit_code,
+        }
+
+    def _escalate(self, arguments: dict[str, Any]) -> Any:
+        from mao.inbox import Inbox
+
+        options = arguments.get("options", [])
+        if "options" in arguments and (
+            not isinstance(options, list)
+            or not 1 <= len(options) <= 10
+            or any(not isinstance(item, str) for item in options)
+        ):
+            raise FactoryError("INBOX_REQUEST_INVALID", "选项不合法", reason="options")
+        detail = arguments.get("detail", "")
+        if not isinstance(detail, str):
+            raise FactoryError("INBOX_REQUEST_INVALID", "说明不合法", reason="detail")
+        request_id = self.ctx.ids.new("hr")
+        return Inbox(self.ctx).open(
+            "question",
+            subject=request_id,
+            origin="foreman:" + self.session.actor,
+            summary=str(arguments["summary"]),
+            payload={"detail": detail, "options": list(options)},
+        )
 
     def _fetch_session(self) -> None:
         if self.session.source_repo is None or self.session.session_id is None:
@@ -406,4 +532,40 @@ _SCHEMAS: dict[str, tuple[dict[str, Any], list[str]]] = {
         ["changeset_id", "verdict", "note"],
     ),
     "image_build": ({"path": {"type": "string"}, "commit": {"type": "string"}}, ["path", "commit"]),
+    "escalate": (
+        {
+            "summary": {"type": "string"},
+            "detail": {"type": "string"},
+            "options": {"type": "array"},
+        },
+        ["summary"],
+    ),
+    "inbox_get": ({"request_id": {"type": "string"}}, ["request_id"]),
+    "inbox_list": ({"status": {"type": "string"}}, []),
+    "approval_get": ({"approval_id": {"type": "string"}}, ["approval_id"]),
+    "approval_decide": (
+        {
+            "approval_id": {"type": "string"},
+            "decision": {"type": "string", "enum": ["approve", "deny"]},
+            "note": {"type": "string"},
+        },
+        ["approval_id", "decision"],
+    ),
+    "approval_escalate": (
+        {"approval_id": {"type": "string"}, "note": {"type": "string"}},
+        ["approval_id"],
+    ),
+    "secret_request": (
+        {
+            "name": {"type": "string"},
+            "secret_class": {"type": "string"},
+            "station": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        ["name", "secret_class", "station", "reason"],
+    ),
+    "secret_verify": (
+        {"name": {"type": "string"}, "station": {"type": "string"}},
+        ["name", "station"],
+    ),
 }

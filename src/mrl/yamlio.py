@@ -10,6 +10,7 @@ PyYAML 默认按 YAML 1.1 解析，会把 on/off/yes/no 当作布尔值、把 20
 
 from __future__ import annotations
 
+import copy
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -101,8 +102,29 @@ def _positions(node: yaml.Node, path: str, out: dict[str, tuple[int, int]]) -> N
             _positions(item, f"{path}[{i}]", out)
 
 
+# 一致性用例对同一份基准文本打补丁后反复解析。缓存原始文档，返回时复制 data，调用方可以改自己的那份。
+_DOC_CACHE: dict[str, list[Document]] = {}
+_DOC_CACHE_MAX = 4096
+
+
+def _copy_document(doc: Document) -> Document:
+    return Document(doc.index, doc.line, copy.deepcopy(doc.data), dict(doc.positions))
+
+
 def load_documents(text: str) -> list[Document]:
     """读取多文档 YAML。空文档会被跳过（但序号仍按出现顺序计数）。"""
+    cached = _DOC_CACHE.get(text)
+    if cached is not None:
+        return [_copy_document(doc) for doc in cached]
+    docs = _parse_documents(text)
+    if len(text) <= 1_000_000:
+        if len(_DOC_CACHE) >= _DOC_CACHE_MAX:
+            _DOC_CACHE.clear()
+        _DOC_CACHE[text] = docs
+    return [_copy_document(doc) for doc in docs]
+
+
+def _parse_documents(text: str) -> list[Document]:
     docs: list[Document] = []
     try:
         loader = _Loader(text)

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from mrl.errors import EvalError
 __all__ = ["Job", "JobState", "Runner", "TERMINAL", "dump_job", "load_job"]
 
 _IMAGE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+_KIND = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _MEMORY = re.compile(r"^([0-9]+)(Mi|M|MB|Gi|G|GB)$")
 _LOG = logging.getLogger("mao.runner")
 _KEEP = object()
@@ -154,6 +156,8 @@ class Runner:
             store.release(resource, owner=self.ctx.owner)
 
     def decide(self, approval_id: str, decision: str, *, by: str, note: str = "") -> None:
+        from mao.approvals import Approvals
+
         rows = self.ctx.db.query("SELECT * FROM approvals WHERE id = ?", (approval_id,))
         if not rows:
             raise FactoryError("APPROVAL_NOT_FOUND", f"找不到审批 {approval_id}", approval_id=approval_id)
@@ -165,13 +169,7 @@ class Runner:
                 approval_id=approval_id,
                 status=row["status"],
             )
-        status = "approved" if decision == "approve" else "denied"
-        now = utc_iso(self.ctx.clock.now())
-        with self.ctx.db.tx() as conn:
-            conn.execute(
-                "UPDATE approvals SET status = ?, by = ?, note = ?, decided_at = ? WHERE id = ?",
-                (status, by, note, now, approval_id),
-            )
+        Approvals(self.ctx, self.snapshot).apply_decision(approval_id, decision, by=by, note=note)
 
     def _step(self, job: Job) -> Job:
         if job.state == JobState.PENDING:
@@ -204,7 +202,7 @@ class Runner:
         sandbox = None
         try:
             prepared = self._bind_control(job, self._prepare(job, reset_out=True))
-            self._register_cap(job)
+            self._register_cap(job, token=getattr(prepared, "egress_token", None))
             sandbox = self.ctx.provider.open(prepared.spec)
             if not already_running:
                 job = self._transition(job, JobState.RUNNING, "ready")
@@ -668,6 +666,9 @@ class Runner:
                 op_volume = "mao-op-" + hexpart[:12]
                 self.ctx.provider.prepare_inject_volume(volume_ref, op_volume)
                 mounts.append(Mount(source="volume:" + op_volume, target=inject["mount"], readonly=True))
+        from mao.sandbox import sandbox_resources
+
+        resources = sandbox_resources(machine)
         return SandboxSpec(
             name=f"mao-{job.id}-{job.attempt}",
             image=image,
@@ -675,9 +676,13 @@ class Runner:
             workdir=str((machine.get("runtime") or {}).get("workdir") or "/workspace"),
             env={"FACTORY_JOB_ID": job.id, "FACTORY_ATTEMPT": str(job.attempt)},
             network="none",
-            cpus=cpus,
-            memory_mb=memory_mb,
+            cpus=resources["cpus"] if resources["cpus"] is not None else cpus,
+            memory_mb=resources["memory_mb"] if resources["memory_mb"] is not None else memory_mb,
             workspace_volume=workspace_volume,
+            shm_mb=resources["shm_mb"],
+            tmp_mb=resources["tmp_mb"],
+            pids=resources["pids"],
+            writable=tuple(resources["writable"]),
         )
 
     def _workspace(self, job: Job, attempt_dir: Path, machine: Mapping[str, Any]) -> None:
@@ -744,7 +749,13 @@ class Runner:
             limits_out["budget_usd"] = float(limits["budget_usd"])
         if "retries" in limits:
             limits_out["retries"] = limits["retries"]
-        return {"station": station_key, "outputs": outputs, "approval": approval_out, "limits": limits_out}
+        body = {"station": station_key, "outputs": outputs, "approval": approval_out, "limits": limits_out}
+        policy_ref = station.get("policy")
+        if policy_ref:
+            handoff = self.snapshot.spec(self.snapshot.key("Policy", policy_ref)).get("handoff") or {}
+            if isinstance(handoff, dict) and handoff.get("timeout"):
+                body["handoff"] = {"timeout_s": parse_duration(str(handoff["timeout"]))}
+        return body
 
     def _payload_paths(self, type_expr: str) -> list[str]:
         expr = type_expr[5:-1] if type_expr.startswith("list<") and type_expr.endswith(">") else type_expr
@@ -917,26 +928,27 @@ class Runner:
         station = self.snapshot.spec(job.station)
         if not station.get("policy"):
             return prepared
-        from mao.egress import SecretStore, build_egress, proxy_env
+        from secrets import token_hex
 
-        plan = build_egress(self.snapshot, job.station, SecretStore(self.ctx.root))
+        from mao.egress import SecretStore, build_egress, credentialed_env, proxy_env
+
+        store = SecretStore(self.ctx.root)
+        plan = build_egress(self.snapshot, job.station, store)
+        prepared.egress_token = None
         if plan.network != "egress":
             return prepared
         self._ensure_proxies()
+        token = token_hex(16)
+        prepared.egress_token = token
         docker = getattr(self.ctx.provider, "name", "") == "docker"
         env = dict(prepared.spec.env)
         env.update(plan.env)
-        env.update(proxy_env(self.ctx.proxies, docker=docker))
-        prepared.spec = SandboxSpec(
-            name=prepared.spec.name,
-            image=prepared.spec.image,
-            mounts=prepared.spec.mounts,
-            workdir=prepared.spec.workdir,
+        env.update(store.inject(plan.secret_names))
+        env.update(credentialed_env(proxy_env(self.ctx.proxies, docker=docker), job.id, token))
+        prepared.spec = replace(
+            prepared.spec,
             env=env,
             network="egress",
-            cpus=prepared.spec.cpus,
-            memory_mb=prepared.spec.memory_mb,
-            workspace_volume=prepared.spec.workspace_volume,
         )
         return prepared
 
@@ -975,7 +987,7 @@ class Runner:
         body = {"code": code, "message": "模型预算停止", "detail": {"job": job.id}}
         return self._transition(job, JobState.FAILED, code, error=body)
 
-    def _register_cap(self, job: Job) -> None:
+    def _register_cap(self, job: Job, *, token: str | None = None) -> None:
         from mao.egress import EgressPlan, SecretStore, build_egress, register_job_cap, register_job_egress
 
         limits = self.snapshot.spec(job.station).get("limits") or {}
@@ -986,7 +998,7 @@ class Runner:
             plan = build_egress(self.snapshot, job.station, SecretStore(self.ctx.root))
         else:
             plan = EgressPlan("none", (), (), (), {})
-        register_job_egress(self.ctx.db, job.id, plan)
+        register_job_egress(self.ctx.db, job.id, plan, token=token)
 
     def _policy_defense(
         self, station_key: str, station: Mapping[str, Any], run: Mapping[str, Any] | None
@@ -1063,22 +1075,28 @@ class Runner:
             return FactoryError(
                 "COMPOSE_UNSUPPORTED", "M1 不运行 compose 机器", station=job.station, machine=machine_key
             )
-        policy = self.snapshot.spec(self.snapshot.key("Policy", station["policy"]))
-        egress = policy.get("egress") or {}
-        if set(egress) != {"none"}:
-            return FactoryError(
-                "EGRESS_UNSUPPORTED", "M1 只允许 egress none", station=job.station, egress=sorted(egress)
-            )
-        secrets = _secret_names(policy, machine)
-        if secrets:
-            return FactoryError("SECRETS_UNSUPPORTED", "M1 不注入秘密", station=job.station, secrets=secrets)
         return None
 
     def _fail(self, job: Job, code: str, message: str, detail: dict[str, Any]) -> Job:
         job = load_job(self.ctx.db, job.id)
         if job.state in TERMINAL:
             return job
-        body = {"code": code, "message": message, "detail": detail}
+        from mao.egress import SecretStore, mask_env_argv, scrub_credentials, scrub_launch_text, scrub_obj
+
+        store = SecretStore(self.ctx.root)
+        cleaned = dict(detail)
+        argv = cleaned.get("argv")
+        if isinstance(argv, list):
+            safe_argv, values = mask_env_argv([str(item) for item in argv])
+            cleaned["argv"] = safe_argv
+            stderr = cleaned.get("stderr")
+            if isinstance(stderr, str):
+                cleaned["stderr"] = scrub_launch_text(stderr, values)
+        body = {
+            "code": code,
+            "message": store.redact(scrub_credentials(message)),
+            "detail": store.redact_obj(scrub_obj(cleaned)),
+        }
         job = self._transition(job, JobState.FAILED, code, error=body)
         return self._retry_or_dead(job)
 
@@ -1119,12 +1137,17 @@ class Runner:
 
     def _approval_timed_out(self, job: Job) -> str | None:
         rows = self.ctx.db.query(
-            "SELECT id FROM approvals WHERE job_id = ? AND attempt = ? AND status = 'timed_out'",
+            "SELECT id, payload, decided_by FROM approvals WHERE job_id = ? AND attempt = ?",
             (job.id, job.attempt),
         )
-        if not rows:
-            return None
-        return str(rows[0]["id"])
+        for row in rows:
+            if row["decided_by"] != "timeout":
+                continue
+            kind = str((json.loads(row["payload"] or "{}")).get("kind") or "")
+            if kind.startswith("ask:") or kind.startswith("monitor:") or kind == "egress":
+                continue
+            return str(row["id"])
+        return None
 
     def _set_cost(self, job: Job, cost: float) -> Job:
         rounded = round(float(cost), 6)
@@ -1210,6 +1233,10 @@ class _CtlHandler:
         self.job_id = job.id
         self.attempt = job.attempt
         self.prepared = prepared
+        self._egress_done: dict[str, dict[str, str]] = {}
+        self._egress_wait: dict[str, str] = {}
+        self._monitor_done: dict[tuple[str, str], dict[str, str] | None] = {}
+        self._monitor_wait: dict[tuple[str, str], str] = {}
 
     def handle(self, body: Mapping[str, Any]) -> dict[str, Any] | None:
         op = body.get("op")
@@ -1217,6 +1244,12 @@ class _CtlHandler:
             return self._check(body)
         if op == "approval":
             return self._approval(body)
+        if op == "ask":
+            return self._ask(body)
+        if op == "egress":
+            return self._egress(body)
+        if op == "handoff":
+            return self._handoff(body)
         return _ctl_error(str(body.get("id", "")), "CTL_REQUEST_INVALID", "不支持的控制请求")
 
     def _check(self, body: Mapping[str, Any]) -> dict[str, Any]:
@@ -1253,6 +1286,8 @@ class _CtlHandler:
         }
 
     def _approval(self, body: Mapping[str, Any]) -> dict[str, Any] | None:
+        from mao.approvals import Approvals
+
         rid = str(body["id"])
         args = body.get("args") or {}
         try:
@@ -1263,18 +1298,296 @@ class _CtlHandler:
             }
         except (KeyError, TypeError, ValueError):
             return _ctl_error(rid, "CTL_REQUEST_INVALID", "审批参数不合法")
-        row = self._lookup(rid)
-        if row is None:
-            self._insert_pending(rid, payload)
-            row = self._lookup(rid)
-        if row is None:
+        approvals = Approvals(self.runner.ctx, self.runner.snapshot)
+        found = approvals.by_request(rid)
+        if found is None:
+            job = load_job(self.runner.ctx.db, self.job_id)
+            try:
+                approvals.open_request(
+                    job_id=self.job_id,
+                    attempt=self.attempt,
+                    station_key=job.station,
+                    payload=payload,
+                    inputs=self.prepared.beans,
+                    params=job.params,
+                    request_id=rid,
+                )
+            except FactoryError as exc:
+                if exc.code in ("APPROVAL_RULE_MISSING", "REVIEW_QUORUM_UNSET"):
+                    return {
+                        "id": rid,
+                        "ok": True,
+                        "result": {"decision": "deny", "note": "", "code": exc.code},
+                        "error": None,
+                    }
+                return _ctl_error(rid, exc.code, exc.message)
+            found = approvals.by_request(rid)
+        if found is None:
             return _ctl_error(rid, "APPROVAL_NOT_FOUND", "审批没有写入")
-        if row["status"] == "pending":
-            decided = self._auto_or_timeout(row, payload)
-            if decided is None:
-                return None
-            row = decided
-        return self._respond(row)
+        approvals.expire_due()
+        found = approvals.by_request(rid) or found
+        if found.status.value == "pending":
+            return None
+        self._resume_running()
+        return {
+            "id": rid,
+            "ok": True,
+            "result": approvals.ctl_result(found),
+            "error": None,
+        }
+
+    def _ask(self, body: Mapping[str, Any]) -> dict[str, Any] | None:
+        from mao.approvals import Approvals
+
+        rid = str(body["id"])
+        args = body.get("args") or {}
+        kind = str(args.get("kind") or "")
+        summary = args.get("summary")
+        detail = args.get("detail", "")
+        if (
+            _KIND.fullmatch(kind) is None
+            or not isinstance(summary, str)
+            or summary == ""
+            or len(summary) > 2000
+            or not isinstance(detail, str)
+            or len(detail) > 8000
+        ):
+            return _ctl_error(rid, "CTL_REQUEST_INVALID", "申请参数不合法")
+        approvals = Approvals(self.runner.ctx, self.runner.snapshot)
+        found = approvals.by_request(rid)
+        if found is None:
+            job = load_job(self.runner.ctx.db, self.job_id)
+            timeout = (self.prepared.station.get("approval") or {}).get("timeout")
+            approvals.open_directed(
+                job_id=self.job_id,
+                attempt=self.attempt,
+                station_key=job.station,
+                payload={"kind": "ask:" + kind, "summary": summary, "cost_usd": 0.0},
+                detail=detail,
+                timeout=None if timeout is None else str(timeout),
+                request_id=rid,
+            )
+            found = approvals.by_request(rid)
+        if found is None:
+            return _ctl_error(rid, "APPROVAL_NOT_FOUND", "审批没有写入")
+        approvals.expire_due()
+        found = approvals.by_request(rid) or found
+        if found.status.value == "pending":
+            return None
+        self._resume_running()
+        return {"id": rid, "ok": True, "result": approvals.ctl_result(found), "error": None}
+
+    def _egress(self, body: Mapping[str, Any]) -> dict[str, Any] | None:
+        from mao.approvals import Approvals
+
+        rid = str(body.get("id") or "")
+        args = body.get("args") or {}
+        if not isinstance(args, Mapping):
+            return _ctl_error(rid, "CTL_REQUEST_INVALID", "出网参数不合法")
+        method = str(args.get("method") or "")
+        host = str(args.get("host") or "").lower()
+        held = self._monitors(method, host)
+        if held is _PENDING:
+            return None
+        self._resume_running()
+        if isinstance(held, dict):
+            return _ctl_ok(rid, held)
+        if bool(args.get("listed")):
+            return _ctl_ok(rid, {"decision": "approve", "note": "", "code": ""})
+        if host in self._egress_done:
+            return _ctl_ok(rid, self._egress_done[host])
+        approvals = Approvals(self.runner.ctx, self.runner.snapshot)
+        request_id = self._egress_wait.get(host, rid)
+        found = approvals.by_request(request_id)
+        if found is None:
+            job = load_job(self.runner.ctx.db, self.job_id)
+            try:
+                found = approvals.open_request(
+                    job_id=self.job_id,
+                    attempt=self.attempt,
+                    station_key=job.station,
+                    payload={"kind": "egress", "summary": f"{method} {host}", "cost_usd": 0.0},
+                    inputs=self.prepared.beans,
+                    params=job.params,
+                    request_id=rid,
+                )
+            except FactoryError as exc:
+                if exc.code in ("APPROVAL_RULE_MISSING", "REVIEW_QUORUM_UNSET"):
+                    result = {"decision": "deny", "note": "", "code": exc.code}
+                    self._egress_done[host] = result
+                    return _ctl_ok(rid, result)
+                return _ctl_error(rid, exc.code, exc.message)
+            self._egress_wait[host] = rid
+            self._asked(method, host, found.id)
+        approvals.expire_due()
+        found = approvals.by_request(request_id) or found
+        if found.status.value == "pending":
+            return None
+        self._resume_running()
+        result = approvals.ctl_result(found)
+        self._egress_done[host] = result
+        return _ctl_ok(rid, result)
+
+    def _handoff(self, body: Mapping[str, Any]) -> dict[str, Any] | None:
+        from mao.handoff import latest, open_handoff, poll_handoff
+
+        rid = str(body.get("id") or "")
+        args = body.get("args") if isinstance(body.get("args"), Mapping) else {}
+        subject = f"{self.job_id}:{rid}"
+        current = latest(self.runner.ctx, subject)
+        if current is None:
+            virtual = str(args.get("screenshot") or "")
+            host = None
+            if virtual:
+                mapped = _map_virtual(self.prepared.spec.mounts, virtual)
+                if mapped != Path(virtual) and not str(mapped).startswith("volume:"):
+                    host = mapped
+            opened = open_handoff(
+                self.runner.ctx,
+                self.runner.snapshot,
+                job_id=self.job_id,
+                attempt=self.attempt,
+                station_key=load_job(self.runner.ctx.db, self.job_id).station,
+                request_id=rid,
+                args=dict(args),
+                screenshot=host,
+            )
+            if isinstance(opened, dict):
+                return opened
+            self._park()
+            return None
+        result = poll_handoff(self.runner.ctx, current)
+        if result is None:
+            return None
+        self._resume_running()
+        return {"id": rid, "ok": True, "result": result, "error": None}
+
+    def _park(self) -> None:
+        job = load_job(self.runner.ctx.db, self.job_id)
+        if job.state == JobState.RUNNING:
+            self.runner._transition(job, JobState.AWAITING_APPROVAL, "handoff")
+
+    def _monitors(self, method: str, host: str) -> dict[str, str] | None | object:
+        summary = f"{method} {host}"
+        monitors = self.prepared.station.get("monitors") or {}
+        if not isinstance(monitors, dict):
+            return None
+        job = load_job(self.runner.ctx.db, self.job_id)
+        request = {"kind": "egress", "summary": summary, "cost_usd": 0.0}
+        for name in sorted(monitors):
+            rule = monitors[name]
+            if not isinstance(rule, dict) or rule.get("on") != "egress":
+                continue
+            key = (str(name), summary)
+            if key in self._monitor_done:
+                cached = self._monitor_done[key]
+                if cached is not None:
+                    return cached
+                continue
+            if key in self._monitor_wait:
+                held = self._monitor_hold(str(name), rule, summary, key)
+                if held is not None:
+                    return held
+                continue
+            hit, error = self._monitor_hit(str(name), request, job)
+            if not hit:
+                self._monitor_done[key] = None
+                continue
+            action = str(rule.get("action") or "")
+            self._monitor_event(str(name), action, summary, error)
+            if action == "deny":
+                result = {"decision": "deny", "note": "", "code": "MONITOR_DENIED"}
+                self._monitor_done[key] = result
+                return result
+            if action == "wake":
+                from mao.foreman import WakeQueue
+
+                WakeQueue(self.runner.ctx).file(
+                    "monitor",
+                    f"{self.job_id}:{name}",
+                    {"job": self.job_id, "monitor": str(name), "summary": summary},
+                )
+                self._monitor_done[key] = None
+                continue
+            if action == "hold":
+                held = self._monitor_hold(str(name), rule, summary, key)
+                if held is not None:
+                    return held
+        return None
+
+    def _monitor_hit(self, name: str, request: Mapping[str, Any], job: Job) -> tuple[bool, str | None]:
+        from mao.values import approval_env
+
+        subject = f"{job.station}/monitors.{name}"
+        try:
+            ok = (
+                self.runner.snapshot.compiled(subject).evaluate(
+                    approval_env("in_run", request, self.prepared.beans, job.params)
+                )
+                is True
+            )
+        except Exception:
+            return True, "MONITOR_EVAL_ERROR"
+        return ok, None
+
+    def _monitor_hold(
+        self, name: str, rule: Mapping[str, Any], summary: str, key: tuple[str, str]
+    ) -> dict[str, str] | None | object:
+        from mao.approvals import Approvals
+
+        approvals = Approvals(self.runner.ctx, self.runner.snapshot)
+        request_id = self._monitor_wait.get(key)
+        found = None if request_id is None else approvals.by_request(request_id)
+        if found is None:
+            job = load_job(self.runner.ctx.db, self.job_id)
+            timeout = rule.get("timeout") or (self.prepared.station.get("approval") or {}).get("timeout")
+            request_id = self.runner.ctx.ids.new("r")
+            found = approvals.open_directed(
+                job_id=self.job_id,
+                attempt=self.attempt,
+                station_key=job.station,
+                payload={"kind": "monitor:" + name, "summary": summary, "cost_usd": 0.0},
+                timeout=None if timeout is None else str(timeout),
+                request_id=request_id,
+            )
+            self._monitor_wait[key] = request_id
+        approvals.expire_due()
+        found = approvals.by_request(request_id or "") or found
+        if found.status.value == "pending":
+            return _PENDING
+        if found.decided_by == "timeout" or found.status.value != "approved":
+            result = {"decision": "deny", "note": "", "code": "MONITOR_DENIED"}
+            self._monitor_done[key] = result
+            return result
+        self._monitor_done[key] = None
+        return None
+
+    def _monitor_event(self, name: str, action: str, summary: str, error: str | None) -> None:
+        data: dict[str, Any] = {
+            "job_id": self.job_id,
+            "monitor": name,
+            "action": action,
+            "summary": summary,
+        }
+        if error:
+            data["error"] = error
+        with self.runner.ctx.db.tx() as conn:
+            _insert_event(conn, self.runner.ctx, "monitor.hit", self.job_id, data)
+
+    def _asked(self, method: str, host: str, approval_id: str) -> None:
+        with self.runner.ctx.db.tx() as conn:
+            _insert_event(
+                conn,
+                self.runner.ctx,
+                "egress.asked",
+                self.job_id,
+                {"job_id": self.job_id, "method": method, "host": host, "approval": approval_id},
+            )
+
+    def _resume_running(self) -> None:
+        job = load_job(self.runner.ctx.db, self.job_id)
+        if job.state == JobState.AWAITING_APPROVAL:
+            self.runner._transition(job, JobState.RUNNING, "approval")
 
     def _lookup(self, request_id: str) -> Any:
         rows = self.runner.ctx.db.query("SELECT * FROM approvals WHERE request_id = ?", (request_id,))
@@ -1432,15 +1745,11 @@ def _resources(resources: Any) -> tuple[float | None, int | None]:
     return (None if cpus is None else float(cpus), memory_mb)
 
 
-def _secret_names(policy: Mapping[str, Any], machine: Mapping[str, Any]) -> list[str]:
-    secrets = policy.get("secrets")
-    if isinstance(secrets, list) and secrets:
-        return [str(item) for item in secrets]
-    if secrets == "from-machine":
-        declared = (machine.get("needs") or {}).get("secrets") or []
-        if declared:
-            return [str(item) for item in declared]
-    return []
+_PENDING = object()
+
+
+def _ctl_ok(rid: str, result: Mapping[str, str]) -> dict[str, Any]:
+    return {"id": rid, "ok": True, "result": dict(result), "error": None}
 
 
 def _error_body(error: Any) -> dict[str, Any]:
