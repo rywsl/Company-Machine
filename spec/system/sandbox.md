@@ -4,6 +4,7 @@
 > 模块：`mao.sandbox`。依据：README D5、D11、D12、第 4.5 节、第 5 节；`plan/risks.md` 的 R5、R7、S3、S4。
 > 架构文档 5.3、6.4 只作背景。与 README 冲突时以 README 为准。
 > `SandboxSpec` 的 `shm_mb`、`tmp_mb`、`pids`、`writable` 与对应的 argv 见 `capabilities.md` 5.6（M11），冲突时以它为准。
+> **M12/M13 增补**：`SandboxSpec.command`、`Sandbox.alive()`、`provider.attach` 见 `instances.md` 3.1（M12）；Agent 的常驻沙箱见 `agents.md` 4.3（M13）。冲突时以新规范为准。
 
 ---
 

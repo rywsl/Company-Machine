@@ -44,6 +44,9 @@
 | `inbox.md` | 人工收件箱、通知钩子、控制台写入、秘密申请与核验、人工协助（验证码） | `mao.inbox`、`mao.secrets`、`mao.handoff` | M11 | M11-01、M11-05、M11-06 |
 | `delegation.md` | 授权模式（`bypass`）、审批委托与改道、定向申请、ChangeSet 签核（对应 `plan/design-delegation.md`） | `mao.delegation`、`mao.approvals` 等 | M11 | M11-02、M11-03 |
 | `capabilities.md` | 出网令牌、通配域名、按需放行、监控规则、沙箱资源、镜像构建网络 | `mao.egress`、`mao.monitors`、`mao.sandbox` | M11 | M11-04、M11-07、M11-08 |
+| `instances.md` | 机器的实例模式（`once`、`pooled`、`resident`）、主进程、租借与 `reset`、调和与恢复、主动产出 `emit`（对应 `plan/design-resident.md`） | `mao.instances`、`mao.sandbox`、`mao.runner` | M12 | M12-01 至 M12-04 |
+| `ingress.md` | 入站网关：路由、认证、投递到 Bean 或常驻实例（M13 起也投给 Agent） | `mao.ingress` | M12 | M12-05 |
+| `agents.md` | 常驻 Agent：`Agent` kind、邮箱与订阅、续接对话的轮次、预算、上下文轮换、厂长常驻模式 | `mao.agents` | M13 | M13-01 至 M13-05 |
 
 每份组件规范都必须按第 7 节的模板组织。
 

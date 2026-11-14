@@ -32,7 +32,12 @@
             "compose": {"type": "string"},
             "workdir": {"type": "string"},
             "service": {"type": "object"},
-            "instance": {"enum": ["per_job", "pooled"]},
+            "instance": {"enum": ["once", "per_job", "pooled", "resident"]},
+            "command": {"$ref": "common.schema.json#/$defs/stringList"},
+            "health": {"type": "object"},
+            "restart": {"type": "object"},
+            "emit_per_min": {"type": "integer"},
+            "pool_size": {"type": "integer"},
             "reset": {"oneOf": [{"type": "string"}, {"$ref": "common.schema.json#/$defs/stringList"}]},
             "resources": {"type": "object"},
             "caches": {"type": "array"}

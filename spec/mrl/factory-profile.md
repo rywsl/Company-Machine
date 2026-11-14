@@ -192,7 +192,7 @@ texpr ::= "any" | name [ "@" major [ "." minor ] ] | "list<" texpr ">" | "ref<" 
 | `runtime_model(K, M)` | `spec.models_allowed` 的每一项 |
 | `runtime_volume(K, image)` | `spec.inject.volume` |
 
-表达式位置（`runtime-template`）：`spec.invoke.argv[i]`、`spec.env.NAME` 中含 `{{` 的字符串。
+表达式位置（`runtime-template`）：`spec.invoke.argv[i]`、`spec.invoke.resume[i]`（M13）、`spec.env.NAME` 中含 `{{` 的字符串。
 
 ### 3.6 Station
 
@@ -306,7 +306,7 @@ Spec 中的每一处嵌入表达式或模板都在规定的类型环境下编译
 | `switch`（`cases[i].when`） | `bean`：被观察来源的 Bean | `bool` |
 | `until`（`until.cond`） | `gate`：`{attempt: int, judge_score: float}`，工位没有配置 judge 时 `judge_score` 是可选字段；`out`：工位输出端口组成的记录 | `bool` |
 | `recipe-template` | `inputs`：配方输入组成的记录；`params`：配方参数组成的记录 | 模板 |
-| `runtime-template` | `brief: {task: string, factory_contract: string}`；`limits: {max_turns: int, timeout_s: int, budget_usd: float}`；`operator: {model: string, runtime: string}` | 模板 |
+| `runtime-template` | `brief: {task: string, factory_contract: string}`；`limits: {max_turns: int, timeout_s: int, budget_usd: float}`；`operator: {model: string, runtime: string}`；`session: {id: string}`（M13，`invoke.resume` 用） | 模板 |
 
 - `run` 的类型：`{id: string, epoch: string, line: string, budget: {cap_usd: float, spent_usd: float, remaining_usd: float}}`。
 - 参数类型：`string/int/float/num/bool` 分别对应同名的 MRL 类型。

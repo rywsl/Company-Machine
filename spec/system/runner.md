@@ -5,6 +5,7 @@
 > 依据：README D4、D9、D10、D12、D14、第 4.7–4.9 节、第 5 节。架构文档 6.5 的状态名已经定了。
 > 状态表 `GATING` 行增加 `DEAD`，只用于 Sink 的回执核验，见 `wiring.md` 5.1（M10）。
 > 审批接线见 `delegation.md` 5.9；出网与秘密的静态拒绝作废、每个 attempt 的出网令牌与沙箱资源见 `capabilities.md`；ctl op `ask`、`handoff`、`egress` 见 `delegation.md`、`inbox.md`、`capabilities.md`（M11），冲突时以它们为准。
+> **M12/M13 增补**：`open_runner` 构造 `Instances`（`runner.instances`）、`pooled` 与 `resident` 工位经租借执行、实例的静态检查、`Runner.adopt` 见 `instances.md` 3.3、5.3（M12）。冲突时以新规范为准。
 
 ---
 

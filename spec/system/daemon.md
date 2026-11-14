@@ -7,6 +7,7 @@
 >
 > 本文件定义一个确定性的主循环。它不是 agent，不调用模型（D10）。
 > 信号泵只在签核方式为 `review` 时开复核唤醒票，见 `delegation.md` 5.7（M11）。
+> **M12/M13 增补**：`daemon.instances`、调度前的 `reconcile`、`TickReport.instances` 见 `instances.md` 5.9，`daemon.ingress` 见 `ingress.md` 3.2（M12）；`run_serve` 的 `mao-agents` 线程见 `agents.md` 5.7（M13）。冲突时以新规范为准。
 
 ---
 

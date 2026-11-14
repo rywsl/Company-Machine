@@ -1523,3 +1523,233 @@ tasks:
       - *doccheck
       - id: lock
         run: uv run python tools/harness.py lock --verify
+  - id: M12-01
+    milestone: M12
+    title: 常驻机器与入站：常驻机器：主进程、alive 与 attach、实例配置与静态检查
+    card: plan/tasks/M12-01.md
+    deps: [M11-09]
+    spec: [spec/system/instances.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_01_command.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_02_pooled.py --ignore=tests/acceptance/m12/test_m12_03_resident.py --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M12-02
+    milestone: M12
+    title: 常驻机器与入站：池化实例：租借、reset、拷入拷出、准入
+    card: plan/tasks/M12-02.md
+    deps: [M12-01]
+    spec: [spec/system/instances.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_02_pooled.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_03_resident.py --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M12-03
+    milestone: M12
+    title: 常驻机器与入站：常驻实例：调和、恢复、命令行、Daemon 接线
+    card: plan/tasks/M12-03.md
+    deps: [M12-02]
+    spec: [spec/system/instances.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_03_resident.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M12-04
+    milestone: M12
+    title: 常驻机器与入站：主动产出：Runner.adopt、emit、factoryctl emit
+    card: plan/tasks/M12-04.md
+    deps: [M12-03]
+    spec: [spec/system/instances.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_04_emit.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M12-05
+    milestone: M12
+    title: 常驻机器与入站：入站网关：路由表、IngressServer、serve 装配
+    card: plan/tasks/M12-05.md
+    deps: [M12-04]
+    spec: [spec/system/ingress.md, spec/system/instances.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_05_ingress.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M13-01
+    milestone: M13
+    title: 常驻 Agent：Agent kind、agent_config、续接调用、transcript 增补
+    card: plan/tasks/M13-01.md
+    deps: [M12-05]
+    spec: [spec/system/agents.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_01_kind.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_02_mailbox.py --ignore=tests/acceptance/m13/test_m13_03_turns.py --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M13-02
+    milestone: M13
+    title: 常驻 Agent：邮箱与订阅、入站投递、收件箱回流、agent send
+    card: plan/tasks/M13-02.md
+    deps: [M13-01]
+    spec: [spec/system/agents.md, spec/system/ingress.md, spec/system/inbox.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_02_mailbox.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_03_turns.py --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M13-03
+    milestone: M13
+    title: 常驻 Agent：轮次、沙箱、预算、失败与恢复、命令行、serve 装配
+    card: plan/tasks/M13-03.md
+    deps: [M13-02]
+    spec: [spec/system/agents.md, spec/system/supervisor.md, spec/system/mcp.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_03_turns.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M13-04
+    milestone: M13
+    title: 常驻 Agent：上下文轮换与 agent 角色的 MCP 工具
+    card: plan/tasks/M13-04.md
+    deps: [M13-03]
+    spec: [spec/system/agents.md, spec/system/mcp.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_04_context.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 3
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_05_foreman.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M13-05
+    milestone: M13
+    title: 常驻 Agent：厂长常驻模式
+    card: plan/tasks/M13-05.md
+    deps: [M13-04]
+    spec: [spec/system/agents.md, spec/system/supervisor.md, spec/system/foreman.md, plan/design-resident.md]
+    paths:
+      - src/mao/**
+      - src/mrl/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_05_foreman.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 3
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify

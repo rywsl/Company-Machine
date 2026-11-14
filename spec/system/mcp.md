@@ -4,6 +4,7 @@
 > `foreman.md` 3.6 要求 `factory mcp`，实现没有做（`plan/drift.md` D-20）。
 > 原文的方法名（`foreman.get` 等）也不是 MCP 协议，Claude Code、Codex 这类客户端连不上，这是设计错误。本文件取代 `foreman.md` 3.6 中关于 `factory mcp` 的那一段，其余命令行不变。
 > 厂长新增 `approval_get`、`approval_decide`、`approval_escalate`（`delegation.md` 3.3）与 `escalate`、`inbox_get`、`inbox_list`、`secret_request`、`secret_verify`（`inbox.md` 3.5），M11。
+> **M12/M13 增补**：`instance_list` 见 `instances.md` 3.5（M12）；`Session.agent`、`agent` 角色与它的工具见 `agents.md` 3.4（M13）。冲突时以新规范为准。
 
 ---
 

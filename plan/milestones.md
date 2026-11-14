@@ -277,6 +277,30 @@ M1-01 基础设施 ──┬─▶ M1-02 快照与求值环境 ──┐
 
 ---
 
+## M12 常驻机器与入站
+
+**目标**：补齐机器的实例模式。M1 起 `instance` 只有 `per_job` 能用：每个 job 新建再销毁容器，浏览器登录态、长连接、本地缓存都留不住，需要长期运行的服务也无处安放。M12 让机器以 `pooled`（复用容器，每个 job 之后 `reset`）或 `resident`（长期运行的主进程，崩溃后退避重启）运行；常驻机器能主动产出 Bean（`factoryctl emit`）；外部推送经入站网关进入工厂，投成 Bean 或写进常驻实例的收件目录（`plan/design-resident.md` 第 1 章）。
+
+**范围**：`SandboxSpec.command`、`alive`、`attach`；实例配置与静态检查；租借、`reset`、拷入拷出、准入；调和、恢复、命令行、`Daemon` 接线；`Runner.adopt`、`emit`、`factoryctl emit`；入站网关与 `serve` 装配。
+
+**规范**：`spec/system/instances.md`、`spec/system/ingress.md`；设计 `plan/design-resident.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M12-01 至 M12-05 和 `plan/gates.yaml` 中的阶段门 M12（继承 M11 的全部检查）。
+
+---
+
+## M13 常驻 Agent
+
+**目标**：长期收集信息、接收不定期消息这类工作不再被打散成许多次一次性会话。常驻 Agent 的容器长期存活，对话由 CLI 自己保存并在每批消息到来时续接（`invoke.resume`），上下文在 Agent 身上，而不是每次从数据库拼出来。消息来自定时、新 Bean、入站、收件箱回答、人和别的 Agent；轮次有预算、超时、失败重试与丢弃、恢复和上下文轮换。厂长可以切到常驻模式，复核仍是一次性会话。
+
+**范围**：`Agent` kind 与 `agent_config`；邮箱与订阅；轮次、沙箱、预算、恢复、命令行与 `serve` 装配；上下文轮换与 `agent` 角色的 MCP 工具；厂长常驻模式。
+
+**规范**：`spec/system/agents.md`；设计 `plan/design-resident.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M13-01 至 M13-05 和 `plan/gates.yaml` 中的阶段门 M13（继承 M12 的全部检查）。
+
+---
+
 ## 里程碑之间的交接规则
 
 1. **退出前提**：阶段门通过，才能开始下一个里程碑的任务。harness 用 `requires_gates` 和任务依赖强制这一点。
