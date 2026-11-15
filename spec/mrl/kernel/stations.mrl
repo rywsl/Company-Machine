@@ -34,6 +34,7 @@ diag("E-PORT", S + "/inputs", R + " 工位至少要有一个输入端口") :-
     station(S, R), R != "source", R != "sink", !has_in(S).
 diag("E-PORT", S + "/outputs", R + " 工位至少要有一个输出端口") :-
     station(S, R), R != "source", R != "sink", !has_out(S).
+diag("E-PORT", S + "/admit", "没有输入端口的工位不能写 admit") :- station_admit(S, _), !has_in(S).
 
 // ---------- 与配方一致 ----------
 rel st_recipe(s: string, machine: string, recipe: string).

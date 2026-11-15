@@ -54,6 +54,7 @@ module kernel.schema.
 
 // ---------- Station ----------
 @input rel station(key: string, role: string).
+@input rel station_admit(key: string, n: int).
 @input rel station_machine(key: string, machine: string, recipe: string).
 @input rel station_operator(key: string, runtime: string, model: string).
 @input rel station_policy(key: string, policy: string).

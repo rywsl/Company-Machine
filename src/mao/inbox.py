@@ -180,6 +180,19 @@ class Inbox:
                 ),
             )
             _event(conn, self.ctx, "inbox.closed", {"id": request_id, "status": status, "by": by})
+        if current.origin.startswith("agent:") and status in ("answered", "cancelled", "expired"):
+            from mao.agents import Mailbox
+
+            reply = {}
+            if isinstance(stored, dict):
+                allowed = ("choice", "text") if current.kind == "question" else ("choice", "text", "note")
+                reply = {key: stored[key] for key in allowed if key in stored}
+            Mailbox(self.ctx).post(
+                current.origin.split(":", 1)[1],
+                "inbox",
+                "inbox:" + request_id,
+                {"id": request_id, "kind": current.kind, "status": status, "reply": reply},
+            )
         if current.origin.startswith("foreman:") and status in ("answered", "cancelled"):
             from mao.foreman import WakeQueue
 
@@ -214,10 +227,12 @@ def answer(ctx: Any, request_id: str, reply: Mapping[str, Any], *, by: str) -> H
         )
     keys = set(reply)
     if current.kind == RequestKind.QUESTION.value:
-        if keys not in _QUESTION_REPLIES:
+        core = keys - {"note"}
+        if core not in _QUESTION_REPLIES:
             raise FactoryError("INBOX_ANSWER_INVALID", "回答与事项种类不符", reason="kind")
         _check_question(current, reply)
-        return inbox.close(request_id, status="answered", answer=dict(reply), by=by)
+        stored = {key: reply[key] for key in core}
+        return inbox.close(request_id, status="answered", answer=stored, by=by)
     if current.kind == RequestKind.APPROVAL.value:
         decision = reply.get("decision")
         note = str(reply.get("note") or "")

@@ -99,6 +99,7 @@ class ServiceGateway:
         inputs: Mapping[str, Any],
         params: Mapping[str, Any],
         timeout_s: float,
+        reset: bool = True,
     ) -> dict[str, Any]:
         station = self.snapshot.spec(station_key)
         machine_key = self.snapshot.key("Machine", station["machine"])
@@ -133,13 +134,13 @@ class ServiceGateway:
         runtime = machine.get("runtime") or {}
         service = runtime.get("service") or {}
         service_name = str(service.get("name") or "")
-        reset = runtime.get("reset")
-        if isinstance(reset, list):
-            self._exec(sandbox, job_id, [str(item) for item in reset], timeout_s)
-        elif isinstance(reset, str) and reset:
-            if '"' in reset or "'" in reset:
+        reset_cmd = runtime.get("reset") if reset else None
+        if isinstance(reset_cmd, list):
+            self._exec(sandbox, job_id, [str(item) for item in reset_cmd], timeout_s)
+        elif isinstance(reset_cmd, str) and reset_cmd:
+            if '"' in reset_cmd or "'" in reset_cmd:
                 raise FactoryError("LONG_TASK_INVALID", "reset 字符串含引号", machine=machine_key)
-            self._exec(sandbox, job_id, reset.split(), timeout_s)
+            self._exec(sandbox, job_id, reset_cmd.split(), timeout_s)
         self._health(sandbox, job_id, machine, timeout_s)
         env = recipe_env(self._input_beans(inputs), params)
         body = _render_value(self.snapshot, machine_key, recipe_name, recipe.get("call") or {}, "call", env)

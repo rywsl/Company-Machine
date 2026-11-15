@@ -353,7 +353,16 @@ def cmd_explain(a: argparse.Namespace) -> int:
         if getattr(first, "value", None) == code:
             rules.append(f"{cr.source}:{cr.rule.span.line}")
     if code.startswith(
-        ("E-YAML", "E-SCHEMA", "E-LAYOUT", "E-EXPR", "W-EXPR", "W-PROPERTY-META", "E-CONSTITUTION")
+        (
+            "E-YAML",
+            "E-SCHEMA",
+            "E-LAYOUT",
+            "E-EXPR",
+            "W-EXPR",
+            "W-PROPERTY-META",
+            "W-ADMIT-META",
+            "E-CONSTITUTION",
+        )
     ):
         rules.append("宿主阶段（src/mrl/factory/check.py、sites.py），经 kernel/host.mrl 输出")
     print("产生位置：" + ("；".join(rules) if rules else "宪法模块（constitution/*.mrl）"))

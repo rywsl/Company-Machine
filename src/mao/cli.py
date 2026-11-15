@@ -8,6 +8,7 @@ from typing import Any
 
 import mao
 from mao.commands import (
+    agent,
     approval,
     audit,
     autonomy,
@@ -28,6 +29,7 @@ from mao.commands import (
     governance,
     image,
     inbox,
+    instance,
     job,
     line,
     maintain,
@@ -51,6 +53,7 @@ _REGISTRARS = (
     receipt.register,
     trigger.register,
     cache.register,
+    agent.register,
     approval.register,
     autonomy.register,
     secret.register,
@@ -64,6 +67,7 @@ _REGISTRARS = (
     governance.register,
     image.register,
     inbox.register,
+    instance.register,
     audit.register,
     drift.register,
     foreman.register,

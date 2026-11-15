@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from mao.base import canonical_bytes, digest_bytes
 from mao.errors import FactoryError
 from mao.sandbox import Mount, SandboxSpec
-from mao.values import accept_env, params_value, property_env
+from mao.values import accept_env, inputs_value, params_value, property_env
 from mao.warehouse import Bean, BeanDraft
 from mrl.errors import EvalError
 from mrl.factory.sites import TypeEnv
@@ -82,7 +82,12 @@ class Gate:
         self.workdir = Path(workdir)
         self.workdir.mkdir(parents=True, exist_ok=True)
 
-    def check_inputs(self, station_key: str, inputs: Mapping[str, Any]) -> dict[str, Any]:
+    def check_inputs(
+        self,
+        station_key: str,
+        inputs: Mapping[str, Any],
+        params: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         station = self.snapshot.key("Station", station_key)
         declared = self.snapshot.spec(station).get("inputs") or {}
         problems: list[dict[str, Any]] = []
@@ -126,6 +131,23 @@ class Gate:
                 problems.append(_problem(port, 0, "extra", "工位没有这个输入端口"))
         if problems:
             raise FactoryError("INTAKE_REJECTED", "来料检验未通过", problems=problems)
+        admit = self.snapshot.spec(station).get("admit") or []
+        if admit:
+            env = {
+                "inputs": inputs_value(result),
+                "params": params_value(self.snapshot, station, params or {}),
+            }
+            admit_problems: list[dict[str, Any]] = []
+            for index, _expr in enumerate(admit):
+                try:
+                    value = self.snapshot.compiled(f"{station}/admit[{index}]").evaluate(env)
+                except EvalError as exc:
+                    admit_problems.append(_problem("", index, "admit", f"admit[{index}]: {exc.code}"))
+                    continue
+                if value is not True:
+                    admit_problems.append(_problem("", index, "admit", f"admit[{index}]"))
+            if admit_problems:
+                raise FactoryError("INTAKE_REJECTED", "来料检验未通过", problems=admit_problems)
         return result
 
     def inspect(

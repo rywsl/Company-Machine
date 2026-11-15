@@ -42,6 +42,7 @@ _FOREMAN = (
     "escalate",
     "inbox_get",
     "inbox_list",
+    "instance_list",
     "approval_get",
     "approval_decide",
     "approval_escalate",
@@ -49,6 +50,7 @@ _FOREMAN = (
     "secret_verify",
 )
 _REVIEWER = ("review_submit",)
+_AGENT = ("run_start", "ask_human", "remind", "agent_send")
 
 
 @dataclass(frozen=True)
@@ -58,11 +60,14 @@ class Session:
     wake_id: str | None = None
     session_id: str | None = None
     source_repo: Path | None = None
+    agent: str | None = None
 
 
 class McpServer:
     def __init__(self, ctx: Any, epochs: Any, session: Session, *, pipeline: Any | None = None) -> None:
-        if session.role not in ("foreman", "reviewer"):
+        if (session.role == "agent") != bool(session.agent):
+            raise FactoryError("MCP_ACTOR_INVALID", "角色不合法", role=session.role, actor=session.actor)
+        if session.role not in ("foreman", "reviewer", "agent"):
             raise FactoryError("MCP_ACTOR_INVALID", "角色不合法", role=session.role, actor=session.actor)
         snapshot = epochs.materialize(epochs.current())
         try:
@@ -75,7 +80,7 @@ class McpServer:
         self.epochs = epochs
         self.session = session
         self.pipeline = pipeline if pipeline is not None else ChangePipeline(ctx, epochs)
-        if (session.session_id is None) != (session.source_repo is None):
+        if session.role != "agent" and (session.session_id is None) != (session.source_repo is None):
             raise FactoryError("MCP_ACTOR_INVALID", "会话克隆不完整", role=session.role, actor=session.actor)
         self.initialized = False
         self._secrets = SecretStore(ctx.root)
@@ -89,8 +94,10 @@ class McpServer:
         names = list(_SHARED)
         if self.session.role == "foreman":
             names.extend(_FOREMAN)
-        else:
+        elif self.session.role == "reviewer":
             names.extend(_REVIEWER)
+        else:
+            names.extend(_AGENT)
         return [_tool(name) for name in sorted(names)]
 
     def handle(self, message: Any) -> dict[str, Any] | None:
@@ -209,6 +216,10 @@ class McpServer:
             return ConversionStore(self.ctx).list(status=arguments.get("status"))
         if name == "changeset_status":
             return submit.status(str(arguments["changeset_id"]))
+        if name in _AGENT:
+            from mao.agents import agent_tool
+
+            return agent_tool(self.ctx, self.epochs, str(self.session.agent or ""), name, arguments)
         if name == "changeset_propose":
             self._fetch_session()
             found = submit.propose(
@@ -261,6 +272,18 @@ class McpServer:
 
             status = arguments.get("status")
             return Inbox(self.ctx).list(status=None if status is None else str(status))
+        if name == "instance_list":
+            from mao.commands.common import to_jsonable
+            from mao.instances import Instances
+
+            snapshot = self.epochs.materialize(self.epochs.current())
+            station = arguments.get("station")
+            state = arguments.get("state")
+            rows = Instances(self.ctx, snapshot).list(
+                station=None if station in (None, "") else str(station),
+                state=None if state in (None, "") else str(state),
+            )
+            return [to_jsonable(row) for row in rows]
         if name == "secret_request":
             return self._secret_request(arguments)
         if name == "secret_verify":
@@ -542,6 +565,7 @@ _SCHEMAS: dict[str, tuple[dict[str, Any], list[str]]] = {
     ),
     "inbox_get": ({"request_id": {"type": "string"}}, ["request_id"]),
     "inbox_list": ({"status": {"type": "string"}}, []),
+    "instance_list": ({"station": {"type": "string"}, "state": {"type": "string"}}, []),
     "approval_get": ({"approval_id": {"type": "string"}}, ["approval_id"]),
     "approval_decide": (
         {
@@ -567,5 +591,25 @@ _SCHEMAS: dict[str, tuple[dict[str, Any], list[str]]] = {
     "secret_verify": (
         {"name": {"type": "string"}, "station": {"type": "string"}},
         ["name", "station"],
+    ),
+    "run_start": (
+        {"line": {"type": "string"}, "inputs": {"type": "object"}},
+        ["line", "inputs"],
+    ),
+    "ask_human": (
+        {
+            "summary": {"type": "string"},
+            "detail": {"type": "string"},
+            "options": {"type": "array"},
+        },
+        ["summary"],
+    ),
+    "remind": (
+        {"after": {"type": "string"}, "note": {"type": "string"}},
+        ["after", "note"],
+    ),
+    "agent_send": (
+        {"to": {"type": "string"}, "text": {"type": "string"}},
+        ["to", "text"],
     ),
 }

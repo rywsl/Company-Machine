@@ -431,9 +431,18 @@ def stop_owned_forwarder(ctx: Any) -> None:
     provider.egress_forwarder = None
 
 
-def build_egress(snapshot: Any, station_key: str, store: SecretStore) -> EgressPlan:
-    station_key = snapshot.key("Station", station_key)
-    station = snapshot.spec(station_key)
+def build_egress(
+    snapshot: Any,
+    station_key: str,
+    store: SecretStore,
+    *,
+    station: Mapping[str, Any] | None = None,
+) -> EgressPlan:
+    if station is None:
+        station_key = snapshot.key("Station", station_key)
+        station = snapshot.spec(station_key)
+    else:
+        station = dict(station)
     policy = snapshot.spec(snapshot.key("Policy", station["policy"]))
     egress = policy.get("egress") or {}
     if egress.get("none") is True and any(key != "none" for key in egress):
@@ -1122,6 +1131,12 @@ class ModelProxy:
                     session = None
                 if session is not None and str(session[0]) == "running":
                     return "RUNNING", "foreman", ""
+                try:
+                    turn = conn.execute("SELECT state FROM agent_turns WHERE id = ?", (job_id,)).fetchone()
+                except sqlite3.OperationalError:
+                    turn = None
+                if turn is not None and str(turn[0]) == "running":
+                    return "RUNNING", "agent", ""
                 return "", "", ""
         finally:
             conn.close()

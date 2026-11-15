@@ -608,6 +608,678 @@
       "status": "passed",
       "updated_at": "2026-11-13T23:26:42Z"
     },
+    "M12": {
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "b276ed5bed929e13fc05216f665a71466cc8077d632fa822f975b316275406c3",
+          "tail": "241 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.5,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.6,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "conformance",
+          "ok": true,
+          "run": "uv run mrl conformance --json",
+          "seconds": 12.1,
+          "stdout_sha256": "f4d774a7817d140dcee0b2b9ac63e77110a807ba511ed1531288fb58f5cb377b",
+          "tail": "{\n  \"total\": 708,\n  \"passed\": 708,\n  \"failures\": []\n}"
+        },
+        {
+          "exit": 0,
+          "id": "coverage",
+          "ok": true,
+          "run": "uv run mrl coverage --json",
+          "seconds": 11.7,
+          "stdout_sha256": "b8cc873e4741d96b9e40ab1532accaf6463af14814634f78980db98d306215c4",
+          "tail": "    \"W-NO-BUDGET\": [\n      \"factory.lines/line-without-budget-warns\",\n      \"factory.stations/agent-without-budget-warns\"\n    ],\n    \"W-PROPERTY-META\": [\n      \"factory.host/expr-property-on-meta-warns\"\n    ]\n  },\n  \"unexercised_codes\": [],\n  \"kernel_diag_rules\": 84,\n  \"unfired_rules\": []\n}"
+        },
+        {
+          "exit": 0,
+          "id": "example",
+          "ok": true,
+          "run": "uv run mrl registry check spec/examples/registry --strict --json",
+          "seconds": 0.4,
+          "stdout_sha256": "6d8bae26a6de1671d784765af2663d46fe380327f208f5bde93329d18bcfd5c9",
+          "tail": "      \"lossless\": true,\n      \"missing\": [],\n      \"props\": [\n        \"has_audio\",\n        \"hd\",\n        \"not_silent\"\n      ],\n      \"status\": \"direct\",\n      \"type\": \"video.mp4@1\"\n    }\n  ]\n}"
+        },
+        {
+          "exit": 0,
+          "id": "scenarios",
+          "ok": true,
+          "run": "uv run python tools/harness.py scenario run --all",
+          "seconds": 1.3,
+          "stdout_sha256": "dcfa9faa29233f0b618f833531380eb0d485125efa1e45fbc08a54d8965cd89d",
+          "tail": "  ✔ 第 1 步 起点：示例 Registry 完全通过\n  ✔ 第 2 步 升级草稿：explainer 的字幕改为 VTT，转换库里还没有 VTT → SRT\n  ✔ 第 3 步 厂长编写 subs-convert@1（新增转换，不改变现有边的解析 → T1）\n  ✔ 第 4 步 产线源文件不需要任何修改；其余的边仍然直接连接\n场景 foreman-mistakes-13-4\n  ✔ 第 1 步 删掉 vertical 的 has_audio、not_silent 两个保证 → E-CONTRACT（publish-shorts 依赖它们）\n  ✔ 第 2 步 让 explainer 直接上传成品（绑定带 publish 出网的策略）→ I6 拒绝\n  ✔ 第 3 步 删掉 validator 的反样例来“放水” → I8 拒绝（删除反样例属于宪法级操作）\n  ✔ 第 4 步 把单个工位的预算提到宪法上限之上 → E-INVARIANT\n  ✔ 第 5 步 试图在宪法目录里写一个放松检查的模块 → 归属规则拒绝（E-CONSTITUTION），内核的错误照样报告\n  ✔ 第 6 步 删除宪法本身 → E-CONSTITUTION（删掉宪法不是绕过检查的办法）\n✔ 场景全部通过"
+        },
+        {
+          "exit": 0,
+          "id": "pytest",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests",
+          "seconds": 859.5,
+          "stdout_sha256": "eae1787093d93ab151fe12f9643d40871407445f91f6434149f3502bf462e3b3",
+          "tail": "........................................................................ [ 54%]\n........................................................................ [ 59%]\n........................................................................ [ 63%]\n........................................................................ [ 68%]\n........................................................................ [ 73%]\n........................................................................ [ 77%]\n........................................................................ [ 82%]\n........................................................................ [ 86%]\n........................................................................ [ 91%]\n........................................................................ [ 95%]\n................................................................         [100%]\n1576 passed in 858.49s (0:14:18)"
+        },
+        {
+          "exit": 0,
+          "id": "unit-m1",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/system",
+          "seconds": 10.7,
+          "stdout_sha256": "0555420e82f313c8075212e10c820ba81a392883878605e6a57a0dd33a940719",
+          "tail": "{\"exit\": 0, \"total\": 78, \"passed\": 78, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 92%]\n......                                                                   [100%]\n78 passed in 9.88s"
+        },
+        {
+          "exit": 0,
+          "id": "policy",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/test_codebase_policy.py",
+          "seconds": 1.9,
+          "stdout_sha256": "9a432b3fc2b3fb34a4cf0acb8f6f2c17852a9e46e6f3df707206f14663c15a81",
+          "tail": "{\"exit\": 0, \"total\": 95, \"passed\": 95, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 75%]\n.......................                                                  [100%]\n95 passed in 1.39s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m1",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m1",
+          "seconds": 25.2,
+          "stdout_sha256": "e820b3139a1ef9fea295f97b4868bb158695db6c99e9facc3c5749a91f9ccf76",
+          "tail": "{\"exit\": 0, \"total\": 98, \"passed\": 98, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 73%]\n..........................                                               [100%]\n98 passed in 24.59s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m2",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m2",
+          "seconds": 151.2,
+          "stdout_sha256": "3ea3bddae386c6a1d95328c6fda94657de924c3c21fbd9f19be198eea0e46727",
+          "tail": "{\"exit\": 0, \"total\": 111, \"passed\": 111, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 64%]\n.......................................                                  [100%]\n111 passed in 150.03s (0:02:30)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m3",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m3",
+          "seconds": 227.5,
+          "stdout_sha256": "83bea7449382c9034f49b423848cd7b7944b38c8e9c9c31646a7d7da11cea151",
+          "tail": "{\"exit\": 0, \"total\": 58, \"passed\": 58, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..........................................................               [100%]\n58 passed in 226.48s (0:03:46)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m4",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m4",
+          "seconds": 18.2,
+          "stdout_sha256": "0832f8af154a622558cd966f1c265b4dfe847819688f521bfd086e8b2244bae2",
+          "tail": "{\"exit\": 0, \"total\": 40, \"passed\": 40, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................                                 [100%]\n40 passed in 17.13s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m5",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m5",
+          "seconds": 197.4,
+          "stdout_sha256": "4d7753385510be56fed25d9e6ca1f46bd5e2435a2619079262e45227bbae817f",
+          "tail": "{\"exit\": 0, \"total\": 130, \"passed\": 130, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 55%]\n..........................................................               [100%]\n130 passed in 196.47s (0:03:16)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m6",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m6",
+          "seconds": 150.5,
+          "stdout_sha256": "eedbd6290aaf3cb9296fea60636ede39f33514716c1a347d3edaa2a8caa594fb",
+          "tail": "{\"exit\": 0, \"total\": 25, \"passed\": 25, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................                                                [100%]\n25 passed in 149.58s (0:02:29)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m7",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m7",
+          "seconds": 72.4,
+          "stdout_sha256": "ddfb688480d3a0fd27b6dba109c863e3ad59e3b66be09da5cd9b3a06ae0c4c73",
+          "tail": "{\"exit\": 0, \"total\": 29, \"passed\": 29, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.............................                                            [100%]\n29 passed in 71.37s (0:01:11)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m8",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m8",
+          "seconds": 32.7,
+          "stdout_sha256": "4addc3c821f4535e4f62da1a34ee43a86e21a08d673a3c57c0185412f270735f",
+          "tail": "{\"exit\": 0, \"total\": 8, \"passed\": 8, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........                                                                 [100%]\n8 passed in 31.81s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m9",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m9",
+          "seconds": 36.2,
+          "stdout_sha256": "325e4644ccb195a137aaa2f60683732b7e3d7111f006103042071f37e17cc00c",
+          "tail": "{\"exit\": 0, \"total\": 23, \"passed\": 23, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......................                                                  [100%]\n23 passed in 35.30s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m10",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m10",
+          "seconds": 40.9,
+          "stdout_sha256": "8d289b973ec8b19283f28330f2f956f6baec4377acfda7e97d78c26f2ab3dbdb",
+          "tail": "{\"exit\": 0, \"total\": 23, \"passed\": 23, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......................                                                  [100%]\n23 passed in 40.08s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m11",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m11",
+          "seconds": 203.0,
+          "stdout_sha256": "757fc061cb4056ba0a622d395e3deb3c8ce78ecb98d0b8e2f71fbba15a849f60",
+          "tail": "{\"exit\": 0, \"total\": 41, \"passed\": 41, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................................                                [100%]\n41 passed in 202.21s (0:03:22)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m12",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12",
+          "seconds": 82.6,
+          "stdout_sha256": "da264bce280ffa4f37fb2206818fba0cf5d7049d4a93adb06de4f53288e16811",
+          "tail": "{\"exit\": 0, \"total\": 29, \"passed\": 29, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.............................                                            [100%]\n29 passed in 81.77s (0:01:21)"
+        }
+      ],
+      "status": "passed",
+      "updated_at": "2026-11-14T12:19:40Z"
+    },
+    "M13": {
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "b276ed5bed929e13fc05216f665a71466cc8077d632fa822f975b316275406c3",
+          "tail": "241 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.5,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.6,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "conformance",
+          "ok": true,
+          "run": "uv run mrl conformance --json",
+          "seconds": 11.7,
+          "stdout_sha256": "f4d774a7817d140dcee0b2b9ac63e77110a807ba511ed1531288fb58f5cb377b",
+          "tail": "{\n  \"total\": 708,\n  \"passed\": 708,\n  \"failures\": []\n}"
+        },
+        {
+          "exit": 0,
+          "id": "coverage",
+          "ok": true,
+          "run": "uv run mrl coverage --json",
+          "seconds": 11.5,
+          "stdout_sha256": "b8cc873e4741d96b9e40ab1532accaf6463af14814634f78980db98d306215c4",
+          "tail": "    \"W-NO-BUDGET\": [\n      \"factory.lines/line-without-budget-warns\",\n      \"factory.stations/agent-without-budget-warns\"\n    ],\n    \"W-PROPERTY-META\": [\n      \"factory.host/expr-property-on-meta-warns\"\n    ]\n  },\n  \"unexercised_codes\": [],\n  \"kernel_diag_rules\": 84,\n  \"unfired_rules\": []\n}"
+        },
+        {
+          "exit": 0,
+          "id": "example",
+          "ok": true,
+          "run": "uv run mrl registry check spec/examples/registry --strict --json",
+          "seconds": 0.4,
+          "stdout_sha256": "6d8bae26a6de1671d784765af2663d46fe380327f208f5bde93329d18bcfd5c9",
+          "tail": "      \"lossless\": true,\n      \"missing\": [],\n      \"props\": [\n        \"has_audio\",\n        \"hd\",\n        \"not_silent\"\n      ],\n      \"status\": \"direct\",\n      \"type\": \"video.mp4@1\"\n    }\n  ]\n}"
+        },
+        {
+          "exit": 0,
+          "id": "scenarios",
+          "ok": true,
+          "run": "uv run python tools/harness.py scenario run --all",
+          "seconds": 1.3,
+          "stdout_sha256": "dcfa9faa29233f0b618f833531380eb0d485125efa1e45fbc08a54d8965cd89d",
+          "tail": "  ✔ 第 1 步 起点：示例 Registry 完全通过\n  ✔ 第 2 步 升级草稿：explainer 的字幕改为 VTT，转换库里还没有 VTT → SRT\n  ✔ 第 3 步 厂长编写 subs-convert@1（新增转换，不改变现有边的解析 → T1）\n  ✔ 第 4 步 产线源文件不需要任何修改；其余的边仍然直接连接\n场景 foreman-mistakes-13-4\n  ✔ 第 1 步 删掉 vertical 的 has_audio、not_silent 两个保证 → E-CONTRACT（publish-shorts 依赖它们）\n  ✔ 第 2 步 让 explainer 直接上传成品（绑定带 publish 出网的策略）→ I6 拒绝\n  ✔ 第 3 步 删掉 validator 的反样例来“放水” → I8 拒绝（删除反样例属于宪法级操作）\n  ✔ 第 4 步 把单个工位的预算提到宪法上限之上 → E-INVARIANT\n  ✔ 第 5 步 试图在宪法目录里写一个放松检查的模块 → 归属规则拒绝（E-CONSTITUTION），内核的错误照样报告\n  ✔ 第 6 步 删除宪法本身 → E-CONSTITUTION（删掉宪法不是绕过检查的办法）\n✔ 场景全部通过"
+        },
+        {
+          "exit": 0,
+          "id": "pytest",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests",
+          "seconds": 868.6,
+          "stdout_sha256": "38461ccae3c7e51b439747162765bce13b08586e6927ef76abc753f620fad34e",
+          "tail": "........................................................................ [ 54%]\n........................................................................ [ 59%]\n........................................................................ [ 63%]\n........................................................................ [ 68%]\n........................................................................ [ 73%]\n........................................................................ [ 77%]\n........................................................................ [ 82%]\n........................................................................ [ 86%]\n........................................................................ [ 91%]\n........................................................................ [ 95%]\n................................................................         [100%]\n1576 passed in 867.65s (0:14:27)"
+        },
+        {
+          "exit": 0,
+          "id": "unit-m1",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/system",
+          "seconds": 9.8,
+          "stdout_sha256": "937302e2055fcafb241ab9b737eef05f9d7920a1f52016c80d122ce3f7a65cd3",
+          "tail": "{\"exit\": 0, \"total\": 78, \"passed\": 78, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 92%]\n......                                                                   [100%]\n78 passed in 9.27s"
+        },
+        {
+          "exit": 0,
+          "id": "policy",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/test_codebase_policy.py",
+          "seconds": 1.7,
+          "stdout_sha256": "0954592193c825bd8b4f62be4d2b5a0998215ba4ef6d415cfa28dc0928f608c5",
+          "tail": "{\"exit\": 0, \"total\": 95, \"passed\": 95, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 75%]\n.......................                                                  [100%]\n95 passed in 1.26s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m1",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m1",
+          "seconds": 21.3,
+          "stdout_sha256": "7496cdc53ddd3966d836505075f0d49c4862e0d34340fd945ed5505f9aa6ba12",
+          "tail": "{\"exit\": 0, \"total\": 98, \"passed\": 98, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 73%]\n..........................                                               [100%]\n98 passed in 20.72s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m2",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m2",
+          "seconds": 117.8,
+          "stdout_sha256": "be799000a29beec82175c2ef11cfd49694b84ff63dec38119c9fb890cecd9825",
+          "tail": "{\"exit\": 0, \"total\": 111, \"passed\": 111, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 64%]\n.......................................                                  [100%]\n111 passed in 116.97s (0:01:56)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m3",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m3",
+          "seconds": 144.0,
+          "stdout_sha256": "bbce8281f1af75e8f1f911534653fcb2ccd6c61ba92db7f47d524f9e1cbe1006",
+          "tail": "{\"exit\": 0, \"total\": 58, \"passed\": 58, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..........................................................               [100%]\n58 passed in 143.47s (0:02:23)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m4",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m4",
+          "seconds": 11.6,
+          "stdout_sha256": "c22a7b224cd1c32f9934b1c7ced8e6bc593fb1a9855ba7f8e01210b7727f6f8a",
+          "tail": "{\"exit\": 0, \"total\": 40, \"passed\": 40, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................                                 [100%]\n40 passed in 11.03s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m5",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m5",
+          "seconds": 122.9,
+          "stdout_sha256": "10ff15af8aaa6bcec5b8227bfef72d07b9395bfc54f5c3ca09670ef359303690",
+          "tail": "{\"exit\": 0, \"total\": 130, \"passed\": 130, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 55%]\n..........................................................               [100%]\n130 passed in 122.38s (0:02:02)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m6",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m6",
+          "seconds": 95.2,
+          "stdout_sha256": "9e50434b30c6e00a79dc31f8538b7930814f21bcd9783ea57739286430ef6d54",
+          "tail": "{\"exit\": 0, \"total\": 25, \"passed\": 25, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................                                                [100%]\n25 passed in 94.69s (0:01:34)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m7",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m7",
+          "seconds": 46.5,
+          "stdout_sha256": "0f5769c75c95bf66ac6d53317b618567992cbc29d154eaffa46aba024ee3a008",
+          "tail": "{\"exit\": 0, \"total\": 29, \"passed\": 29, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.............................                                            [100%]\n29 passed in 46.01s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m8",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m8",
+          "seconds": 21.6,
+          "stdout_sha256": "6e6b50248ce2b88d4814a43a4b23adbc165705a489c00a88bd5de5e6ed3c8375",
+          "tail": "{\"exit\": 0, \"total\": 8, \"passed\": 8, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........                                                                 [100%]\n8 passed in 21.10s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m9",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m9",
+          "seconds": 23.2,
+          "stdout_sha256": "35c896fa78564993e50a71a540d2f6c2f2457d92947d7abf5767e3972d58e124",
+          "tail": "{\"exit\": 0, \"total\": 23, \"passed\": 23, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......................                                                  [100%]\n23 passed in 22.74s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m10",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m10",
+          "seconds": 24.0,
+          "stdout_sha256": "5af107a78b79f2de3b015b440c17b9a06fe8a9b3bd7b677cd256911f015c8983",
+          "tail": "{\"exit\": 0, \"total\": 23, \"passed\": 23, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......................                                                  [100%]\n23 passed in 23.47s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m11",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m11",
+          "seconds": 140.1,
+          "stdout_sha256": "4ca6fccf632bb233ed382a3b646c38c4c25dcd9c87e664ab76291965b0f8bb47",
+          "tail": "{\"exit\": 0, \"total\": 41, \"passed\": 41, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................................                                [100%]\n41 passed in 139.58s (0:02:19)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m12",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12",
+          "seconds": 56.0,
+          "stdout_sha256": "d9c0c008ebde63ea47822192ec2d35b6a17cc3ca6548670aebaa566f3795b0cb",
+          "tail": "{\"exit\": 0, \"total\": 29, \"passed\": 29, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.............................                                            [100%]\n29 passed in 55.50s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m13",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m13",
+          "seconds": 50.9,
+          "stdout_sha256": "1e02c96781a289351087a7063722c3f27b0f6d1579acdd4025eb05e868f2ee04",
+          "tail": "{\"exit\": 0, \"total\": 22, \"passed\": 22, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n......................                                                   [100%]\n22 passed in 50.40s"
+        }
+      ],
+      "status": "passed",
+      "updated_at": "2026-11-14T15:07:24Z"
+    },
+    "M14": {
+      "commit": "ce372ff",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "be82c960d6afafce522e2ea76d6b934e854b05577f7c339b37f0ac1bcc113074",
+          "tail": "245 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.5,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "conformance",
+          "ok": true,
+          "run": "uv run mrl conformance --json",
+          "seconds": 11.3,
+          "stdout_sha256": "bd99beeec7b50c51955740eeabe2574c1489acf3e3e188e90f60a7509102a547",
+          "tail": "{\n  \"total\": 715,\n  \"passed\": 715,\n  \"failures\": []\n}"
+        },
+        {
+          "exit": 0,
+          "id": "coverage",
+          "ok": true,
+          "run": "uv run mrl coverage --json",
+          "seconds": 11.5,
+          "stdout_sha256": "2a56f9ffebab105243863b391fd47e5f919f5b379e8e523d3c0ac01a7e48eeb7",
+          "tail": "    \"W-NO-BUDGET\": [\n      \"factory.lines/line-without-budget-warns\",\n      \"factory.stations/agent-without-budget-warns\"\n    ],\n    \"W-PROPERTY-META\": [\n      \"factory.host/expr-property-on-meta-warns\"\n    ]\n  },\n  \"unexercised_codes\": [],\n  \"kernel_diag_rules\": 85,\n  \"unfired_rules\": []\n}"
+        },
+        {
+          "exit": 0,
+          "id": "example",
+          "ok": true,
+          "run": "uv run mrl registry check spec/examples/registry --strict --json",
+          "seconds": 0.4,
+          "stdout_sha256": "6d8bae26a6de1671d784765af2663d46fe380327f208f5bde93329d18bcfd5c9",
+          "tail": "      \"lossless\": true,\n      \"missing\": [],\n      \"props\": [\n        \"has_audio\",\n        \"hd\",\n        \"not_silent\"\n      ],\n      \"status\": \"direct\",\n      \"type\": \"video.mp4@1\"\n    }\n  ]\n}"
+        },
+        {
+          "exit": 0,
+          "id": "scenarios",
+          "ok": true,
+          "run": "uv run python tools/harness.py scenario run --all",
+          "seconds": 1.2,
+          "stdout_sha256": "dcfa9faa29233f0b618f833531380eb0d485125efa1e45fbc08a54d8965cd89d",
+          "tail": "  ✔ 第 1 步 起点：示例 Registry 完全通过\n  ✔ 第 2 步 升级草稿：explainer 的字幕改为 VTT，转换库里还没有 VTT → SRT\n  ✔ 第 3 步 厂长编写 subs-convert@1（新增转换，不改变现有边的解析 → T1）\n  ✔ 第 4 步 产线源文件不需要任何修改；其余的边仍然直接连接\n场景 foreman-mistakes-13-4\n  ✔ 第 1 步 删掉 vertical 的 has_audio、not_silent 两个保证 → E-CONTRACT（publish-shorts 依赖它们）\n  ✔ 第 2 步 让 explainer 直接上传成品（绑定带 publish 出网的策略）→ I6 拒绝\n  ✔ 第 3 步 删掉 validator 的反样例来“放水” → I8 拒绝（删除反样例属于宪法级操作）\n  ✔ 第 4 步 把单个工位的预算提到宪法上限之上 → E-INVARIANT\n  ✔ 第 5 步 试图在宪法目录里写一个放松检查的模块 → 归属规则拒绝（E-CONSTITUTION），内核的错误照样报告\n  ✔ 第 6 步 删除宪法本身 → E-CONSTITUTION（删掉宪法不是绕过检查的办法）\n✔ 场景全部通过"
+        },
+        {
+          "exit": 0,
+          "id": "pytest",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests",
+          "seconds": 848.7,
+          "stdout_sha256": "92cc79f8ef9a75e03dd29988e3905da37836427ed190b65138c4d2ce3e67bfe5",
+          "tail": "........................................................................ [ 58%]\n........................................................................ [ 62%]\n........................................................................ [ 67%]\n........................................................................ [ 71%]\n........................................................................ [ 76%]\n........................................................................ [ 80%]\n........................................................................ [ 85%]\n........................................................................ [ 89%]\n........................................................................ [ 94%]\n........................................................................ [ 98%]\n.................                                                        [100%]\n1601 passed in 847.86s (0:14:07)"
+        },
+        {
+          "exit": 0,
+          "id": "unit-m1",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/system",
+          "seconds": 5.4,
+          "stdout_sha256": "c3c1e3c9157ab1025810f41553c9c30206aa8b2b84fe77a57e7e2e7993795f14",
+          "tail": "{\"exit\": 0, \"total\": 79, \"passed\": 79, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 91%]\n.......                                                                  [100%]\n79 passed in 4.85s"
+        },
+        {
+          "exit": 0,
+          "id": "policy",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/test_codebase_policy.py",
+          "seconds": 1.7,
+          "stdout_sha256": "63eeb1ee926a61739b3fd60697254582e9cbf8517512e7b884cc0e8ef4c0c8fa",
+          "tail": "{\"exit\": 0, \"total\": 95, \"passed\": 95, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 75%]\n.......................                                                  [100%]\n95 passed in 1.23s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m1",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m1",
+          "seconds": 18.9,
+          "stdout_sha256": "1b2fcb15a3128352419d5e23bd53dcfe28368ce62e522a8b085e020152e872e0",
+          "tail": "{\"exit\": 0, \"total\": 98, \"passed\": 98, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 73%]\n..........................                                               [100%]\n98 passed in 18.36s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m2",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m2",
+          "seconds": 115.4,
+          "stdout_sha256": "4771784d4cda28976d0095af30ee3e9734acd3704fd838b2bf3ad7667d3533b7",
+          "tail": "{\"exit\": 0, \"total\": 111, \"passed\": 111, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 64%]\n.......................................                                  [100%]\n111 passed in 114.72s (0:01:54)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m3",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m3",
+          "seconds": 135.5,
+          "stdout_sha256": "1b13e3d4f895f22a6e9432214bc9da3a9c8790ed6a2068cfcbbaa00073fb1f2d",
+          "tail": "{\"exit\": 0, \"total\": 58, \"passed\": 58, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..........................................................               [100%]\n58 passed in 134.95s (0:02:14)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m4",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m4",
+          "seconds": 11.0,
+          "stdout_sha256": "7d9c6fbb10cfd00b4f35ba4ed3e430d49d5fc9ddefcf40b223bdabfb6d1ddb15",
+          "tail": "{\"exit\": 0, \"total\": 40, \"passed\": 40, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................                                 [100%]\n40 passed in 10.49s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m5",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m5",
+          "seconds": 117.0,
+          "stdout_sha256": "0ebc315bdd97ffe8ea56c76618717fbcb8b9756009d6f59f0d7d91aebda06040",
+          "tail": "{\"exit\": 0, \"total\": 130, \"passed\": 130, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 55%]\n..........................................................               [100%]\n130 passed in 116.48s (0:01:56)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m6",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m6",
+          "seconds": 93.0,
+          "stdout_sha256": "3dbb7f9ce0b422fad79b29c3c6e6d92332290d946deeab59f5c18429ee589942",
+          "tail": "{\"exit\": 0, \"total\": 25, \"passed\": 25, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................                                                [100%]\n25 passed in 92.46s (0:01:32)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m7",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m7",
+          "seconds": 44.1,
+          "stdout_sha256": "4a7e485fc69848ed04f3d927406bc3536c9ab0835c7d47558d15226bbef4852f",
+          "tail": "{\"exit\": 0, \"total\": 29, \"passed\": 29, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.............................                                            [100%]\n29 passed in 43.66s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m8",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m8",
+          "seconds": 20.5,
+          "stdout_sha256": "f8d6f4f0039a19b76ba52294dded31a38629d3e94d38a33b737c8656dc9993a8",
+          "tail": "{\"exit\": 0, \"total\": 8, \"passed\": 8, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........                                                                 [100%]\n8 passed in 20.00s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m9",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m9",
+          "seconds": 22.5,
+          "stdout_sha256": "0830ecfff7171a50c9c5e1750706eba24c24b081334aae96133ecc81d9d59c3a",
+          "tail": "{\"exit\": 0, \"total\": 23, \"passed\": 23, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......................                                                  [100%]\n23 passed in 22.00s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m10",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m10",
+          "seconds": 23.9,
+          "stdout_sha256": "521008ae4142f64e673963ca6514bd58d741217714bb5018110576ed721bfeb1",
+          "tail": "{\"exit\": 0, \"total\": 23, \"passed\": 23, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......................                                                  [100%]\n23 passed in 23.42s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m11",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m11",
+          "seconds": 123.7,
+          "stdout_sha256": "7f2a7a103be0c64464b3e26606e692d7bce53bd7cbf857e4d39d339ed9f7e617",
+          "tail": "{\"exit\": 0, \"total\": 41, \"passed\": 41, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................................                                [100%]\n41 passed in 123.14s (0:02:03)"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m12",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12",
+          "seconds": 52.5,
+          "stdout_sha256": "445f113259463be6e361334303050e48e39edf050aead9f3341cc8ceebdfc0ed",
+          "tail": "{\"exit\": 0, \"total\": 29, \"passed\": 29, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.............................                                            [100%]\n29 passed in 52.01s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m13",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m13",
+          "seconds": 47.9,
+          "stdout_sha256": "76d72f6c00a25ae8b69c88f0bdcbddc04350c3e63565502bea6dd4f805922c52",
+          "tail": "{\"exit\": 0, \"total\": 22, \"passed\": 22, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n......................                                                   [100%]\n22 passed in 47.38s"
+        },
+        {
+          "exit": 0,
+          "id": "acceptance-m14",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m14",
+          "seconds": 20.0,
+          "stdout_sha256": "023fb4f24fadfc9471090dd8ae417433d020da9acacbb586763686f3d2c2a7e9",
+          "tail": "{\"exit\": 0, \"total\": 17, \"passed\": 17, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.................                                                        [100%]\n17 passed in 19.50s"
+        }
+      ],
+      "status": "passed",
+      "updated_at": "2026-11-14T17:07:40Z"
+    },
     "M2": {
       "commit": "84bdd0e",
       "dirty": true,
@@ -5306,6 +5978,1055 @@
       "outside_paths": [],
       "status": "done",
       "updated_at": "2026-11-13T17:50:49Z"
+    },
+    "M12-01": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_01_command.py",
+          "seconds": 2.4,
+          "stdout_sha256": "8fb628f00711653dfedc9169d0a851e80b192c37588fde90715eae30624b415a",
+          "tail": "{\"exit\": 0, \"total\": 4, \"passed\": 4, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n....                                                                     [100%]\n4 passed in 1.96s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_02_pooled.py --ignore=tests/acceptance/m12/test_m12_03_resident.py --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13",
+          "seconds": 717.5,
+          "stdout_sha256": "c75533b1101fe5b1753a196c38a2a1a17ad32fcfb8d05093cd8ce619a21cd3e3",
+          "tail": "........................................................................ [ 56%]\n........................................................................ [ 61%]\n........................................................................ [ 66%]\n........................................................................ [ 70%]\n........................................................................ [ 75%]\n........................................................................ [ 80%]\n........................................................................ [ 84%]\n........................................................................ [ 89%]\n........................................................................ [ 94%]\n........................................................................ [ 99%]\n.............                                                            [100%]\n1525 passed in 716.67s (0:11:56)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "fc283c63aac21f6580f02538d71021ce3979c52c1747722d676b84d86c93f33e",
+          "tail": "237 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.5,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [
+        "lan/state.json"
+      ],
+      "status": "done",
+      "updated_at": "2026-11-14T03:43:02Z"
+    },
+    "M12-02": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/errors.py": "3b6538d112fd414c0c5b78ead5e6ac07f1d0e76c4daf3e5e77aa472cf199edb6",
+        "src/mao/instances.py": "08870aa27526379d252705b30f7c4d0c3442e12c10e5759bca51b72011ca4761",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/runner.py": "d0bfe83b6fd51a5c0c7f15582589c89292db3a347d570b34b878f91754780b91",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_02_pooled.py",
+          "seconds": 14.9,
+          "stdout_sha256": "4f08d1a515bebf7241c1e8a3c9ac84c40c1546ba937125fda1a0e99d64cd6ffc",
+          "tail": "{\"exit\": 0, \"total\": 6, \"passed\": 6, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n......                                                                   [100%]\n6 passed in 14.41s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_03_resident.py --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13",
+          "seconds": 727.4,
+          "stdout_sha256": "c2103aa0c504740e9ac7122ddc0d8dcc9dcbfa4a0a8195997e0d3c7ac58c9acf",
+          "tail": "........................................................................ [ 56%]\n........................................................................ [ 61%]\n........................................................................ [ 65%]\n........................................................................ [ 70%]\n........................................................................ [ 75%]\n........................................................................ [ 79%]\n........................................................................ [ 84%]\n........................................................................ [ 89%]\n........................................................................ [ 94%]\n........................................................................ [ 98%]\n...................                                                      [100%]\n1531 passed in 726.56s (0:12:06)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "fc283c63aac21f6580f02538d71021ce3979c52c1747722d676b84d86c93f33e",
+          "tail": "237 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T04:04:00Z"
+    },
+    "M12-03": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/errors.py": "3b6538d112fd414c0c5b78ead5e6ac07f1d0e76c4daf3e5e77aa472cf199edb6",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/instances.py": "82ce49a0ab67a027de0d75949966e06504e24e784643e66ec766390167726e01",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/runner.py": "bb6dc5fdb5b6a80dbe13040e980066bc165d0fe9c6cb5bbc356100fe0a999599",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_03_resident.py",
+          "seconds": 17.7,
+          "stdout_sha256": "71063a96fdf06ba2c37aaf8c42ad8f5b19f793d55ab79dec6f3489bf069ab23f",
+          "tail": "{\"exit\": 0, \"total\": 8, \"passed\": 8, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........                                                                 [100%]\n8 passed in 17.26s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_04_emit.py --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13",
+          "seconds": 746.2,
+          "stdout_sha256": "ff3d5111ad800cace58b588519ad5e1017443338dab8a0b5e99ac761942cf13b",
+          "tail": "........................................................................ [ 56%]\n........................................................................ [ 60%]\n........................................................................ [ 65%]\n........................................................................ [ 70%]\n........................................................................ [ 74%]\n........................................................................ [ 79%]\n........................................................................ [ 84%]\n........................................................................ [ 88%]\n........................................................................ [ 93%]\n........................................................................ [ 98%]\n............................                                             [100%]\n1540 passed in 745.36s (0:12:25)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "f996212e7c06f8543d4212df37fbcbdd1355ae8e02ca1fbab1c9037817ec908c",
+          "tail": "238 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T04:30:13Z"
+    },
+    "M12-04": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/cli.py": "17fa7b066b3e56de6bb1c1105206506c59abb9264d922ce4493a1b1282c06c08",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/daemon.py": "d35cc7737229cbdc597ab3730cb910e7059bf98ed8ae7a24880074803306ffe7",
+        "src/mao/errors.py": "3b6538d112fd414c0c5b78ead5e6ac07f1d0e76c4daf3e5e77aa472cf199edb6",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/instances.py": "0d624cfbe1c1ba52b041f255d2ecb1ce2f107aae511c72cad19047e5d0a60d3b",
+        "src/mao/mcp.py": "58cf3a3e518ad6c98092e31e5175fb42b086843ab0a99974d764c1ac945f0e70",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/runner.py": "bb6dc5fdb5b6a80dbe13040e980066bc165d0fe9c6cb5bbc356100fe0a999599",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_04_emit.py",
+          "seconds": 9.7,
+          "stdout_sha256": "cb14462d31733638482cb3890d5046afb50a42c36b88eee8ba5633a838ac9918",
+          "tail": "{\"exit\": 0, \"total\": 4, \"passed\": 4, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n....                                                                     [100%]\n4 passed in 9.21s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m12/test_m12_05_ingress.py --ignore=tests/acceptance/m13",
+          "seconds": 753.9,
+          "stdout_sha256": "895685ab5ceeefaa2fce87340f80d3e7373a2d797595e786ab92d2974bcfaaa7",
+          "tail": "........................................................................ [ 55%]\n........................................................................ [ 60%]\n........................................................................ [ 65%]\n........................................................................ [ 69%]\n........................................................................ [ 74%]\n........................................................................ [ 79%]\n........................................................................ [ 83%]\n........................................................................ [ 88%]\n........................................................................ [ 93%]\n........................................................................ [ 97%]\n................................                                         [100%]\n1544 passed in 753.02s (0:12:33)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "f996212e7c06f8543d4212df37fbcbdd1355ae8e02ca1fbab1c9037817ec908c",
+          "tail": "238 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.5,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T04:48:35Z"
+    },
+    "M12-05": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/cli.py": "17fa7b066b3e56de6bb1c1105206506c59abb9264d922ce4493a1b1282c06c08",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/ctl/factoryctl.py": "b0145b770eef77093b22915c2cdb9a1b7b8a0a1a9511edd0c22be2c701dba852",
+        "src/mao/daemon.py": "d35cc7737229cbdc597ab3730cb910e7059bf98ed8ae7a24880074803306ffe7",
+        "src/mao/errors.py": "3b6538d112fd414c0c5b78ead5e6ac07f1d0e76c4daf3e5e77aa472cf199edb6",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/instances.py": "1fcf9dc80224c7cfa0d8f261b8733a68fc09443bcc1afa0d2125a23a72e22c44",
+        "src/mao/mcp.py": "58cf3a3e518ad6c98092e31e5175fb42b086843ab0a99974d764c1ac945f0e70",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/runner.py": "9b4a005bf93b0f7d3e41e0ec4e6c2f5883441b8273b296086dc7894afc20e918",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12/test_m12_05_ingress.py",
+          "seconds": 14.1,
+          "stdout_sha256": "0d8542d731baededce20bb1e346d6d6c174aba99a1340a189b6d62a62a845c59",
+          "tail": "{\"exit\": 0, \"total\": 7, \"passed\": 7, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......                                                                  [100%]\n7 passed in 13.62s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13",
+          "seconds": 821.3,
+          "stdout_sha256": "b08c155bc17c322d0b89d3d4208138405921c3cf89e595f05e5228933bd20dd4",
+          "tail": "........................................................................ [ 55%]\n........................................................................ [ 60%]\n........................................................................ [ 64%]\n........................................................................ [ 69%]\n........................................................................ [ 74%]\n........................................................................ [ 78%]\n........................................................................ [ 83%]\n........................................................................ [ 88%]\n........................................................................ [ 92%]\n........................................................................ [ 97%]\n........................................                                 [100%]\n1552 passed in 820.40s (0:13:40)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.2,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "68d1dc72195af503d4d0bc80908b4d51f60bb7bf57ca76a05d13667bb2905509",
+          "tail": "239 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T05:08:45Z"
+    },
+    "M13-01": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/agents.py": "621743ed6fd56a315aae8c6d882f7ac52601dca658941abd728de6a71abfb0b9",
+        "src/mao/cli.py": "b9876ff9de4ad8a07370292306e6b3ce7d7600a0e3e92d4a9a04bb7324986058",
+        "src/mao/commands/agent.py": "05fdc0c39c0a7a9e37f4e4fd234f9f35b26fb0d51d76082c736c6b93207f9d06",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/ctl/factoryctl.py": "b0145b770eef77093b22915c2cdb9a1b7b8a0a1a9511edd0c22be2c701dba852",
+        "src/mao/daemon.py": "b1b6ac9a817b303bac8b5a6c7e83645f94e3fd53938ea4e81670843fe0ac3483",
+        "src/mao/egress.py": "07d7fdebded7d5def387617fc3406c3dc4014b83d5bc39bf2ee7898cc7b8ce16",
+        "src/mao/errors.py": "697052f0106f45e82742696361bd3f627e994befd63e405ad65dc26a8a628e73",
+        "src/mao/foreman.py": "a7bec005f8b0e648fe863bb8ad79bb3c4ad5e673cbae6eab3de54449eabf2ca2",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/inbox.py": "90dff1d3fbb23516fd91ea69c66a5ce2c07abf1063007d9c5ae6b23fd8bde2c5",
+        "src/mao/ingress.py": "a0ebde887d11e1a122eab61e1aa9727f5115c72dc1b0f92bded5aa63070dcb60",
+        "src/mao/instances.py": "1fcf9dc80224c7cfa0d8f261b8733a68fc09443bcc1afa0d2125a23a72e22c44",
+        "src/mao/mcp.py": "290da628483d4403042d39f8f58437d219fa90c1d67bda0881e876cc1b74cdb4",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/migrations/040_agents.sql": "0439afe394aeed15cac3afd8e5661b5959b9305bec9a3e7d47fe424611a2d04d",
+        "src/mao/operator.py": "a23ef347038b736d6736edbaf40b2092f21e24fc6a3f22cbb76ddb2717ae934a",
+        "src/mao/runner.py": "340a4491b363b5dd9d7ca9068de921514e6388ff0fef964f3c4d7e7d0bbce253",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2",
+        "src/mao/supervisor.py": "0a56e0edd554bf4ef0a9d147e2e4fa808eee42bcf454d5923db5aa3b4e2fd7a1",
+        "src/mrl/factory/extract.py": "84cfa2627991c1648d7ff90295ba432026c1fdb3f94f8a0798f2f3a505488041",
+        "src/mrl/factory/registry.py": "4f4bb914e4d5af42a3fc9e52a688264132c728838d58aae4d20637f4d9ea75b7",
+        "src/mrl/factory/schema.py": "0bd5870361fb80b2744bc70d1aa4031e293681452a65a30c8f73bd401e870be8",
+        "src/mrl/factory/sites.py": "183fb4256543bcec10a02f9c1e5e38e52c4ec41be00d2b252c78ff08a535243b"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_01_kind.py",
+          "seconds": 7.8,
+          "stdout_sha256": "49e4c5e7b77763fedee7274b1f13de18d8f6ce2940b3bfc8bf6992b6c3357dda",
+          "tail": "{\"exit\": 0, \"total\": 4, \"passed\": 4, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n....                                                                     [100%]\n4 passed in 7.32s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_02_mailbox.py --ignore=tests/acceptance/m13/test_m13_03_turns.py --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py",
+          "seconds": 781.1,
+          "stdout_sha256": "153347c42e056fa89c8ef603c5408b16366b79779335f32ecd801cc283d13e9e",
+          "tail": "........................................................................ [ 55%]\n........................................................................ [ 60%]\n........................................................................ [ 64%]\n........................................................................ [ 69%]\n........................................................................ [ 73%]\n........................................................................ [ 78%]\n........................................................................ [ 83%]\n........................................................................ [ 87%]\n........................................................................ [ 92%]\n........................................................................ [ 97%]\n..............................................                           [100%]\n1558 passed in 780.21s (0:13:00)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "b276ed5bed929e13fc05216f665a71466cc8077d632fa822f975b316275406c3",
+          "tail": "241 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T09:16:11Z"
+    },
+    "M13-02": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/agents.py": "621743ed6fd56a315aae8c6d882f7ac52601dca658941abd728de6a71abfb0b9",
+        "src/mao/cli.py": "b9876ff9de4ad8a07370292306e6b3ce7d7600a0e3e92d4a9a04bb7324986058",
+        "src/mao/commands/agent.py": "05fdc0c39c0a7a9e37f4e4fd234f9f35b26fb0d51d76082c736c6b93207f9d06",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/ctl/factoryctl.py": "b0145b770eef77093b22915c2cdb9a1b7b8a0a1a9511edd0c22be2c701dba852",
+        "src/mao/daemon.py": "b1b6ac9a817b303bac8b5a6c7e83645f94e3fd53938ea4e81670843fe0ac3483",
+        "src/mao/egress.py": "07d7fdebded7d5def387617fc3406c3dc4014b83d5bc39bf2ee7898cc7b8ce16",
+        "src/mao/errors.py": "697052f0106f45e82742696361bd3f627e994befd63e405ad65dc26a8a628e73",
+        "src/mao/foreman.py": "a7bec005f8b0e648fe863bb8ad79bb3c4ad5e673cbae6eab3de54449eabf2ca2",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/inbox.py": "90dff1d3fbb23516fd91ea69c66a5ce2c07abf1063007d9c5ae6b23fd8bde2c5",
+        "src/mao/ingress.py": "a0ebde887d11e1a122eab61e1aa9727f5115c72dc1b0f92bded5aa63070dcb60",
+        "src/mao/instances.py": "1fcf9dc80224c7cfa0d8f261b8733a68fc09443bcc1afa0d2125a23a72e22c44",
+        "src/mao/mcp.py": "290da628483d4403042d39f8f58437d219fa90c1d67bda0881e876cc1b74cdb4",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/migrations/040_agents.sql": "0439afe394aeed15cac3afd8e5661b5959b9305bec9a3e7d47fe424611a2d04d",
+        "src/mao/operator.py": "a23ef347038b736d6736edbaf40b2092f21e24fc6a3f22cbb76ddb2717ae934a",
+        "src/mao/runner.py": "340a4491b363b5dd9d7ca9068de921514e6388ff0fef964f3c4d7e7d0bbce253",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2",
+        "src/mao/supervisor.py": "0a56e0edd554bf4ef0a9d147e2e4fa808eee42bcf454d5923db5aa3b4e2fd7a1",
+        "src/mrl/factory/extract.py": "84cfa2627991c1648d7ff90295ba432026c1fdb3f94f8a0798f2f3a505488041",
+        "src/mrl/factory/registry.py": "4f4bb914e4d5af42a3fc9e52a688264132c728838d58aae4d20637f4d9ea75b7",
+        "src/mrl/factory/schema.py": "0bd5870361fb80b2744bc70d1aa4031e293681452a65a30c8f73bd401e870be8",
+        "src/mrl/factory/sites.py": "183fb4256543bcec10a02f9c1e5e38e52c4ec41be00d2b252c78ff08a535243b"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_02_mailbox.py",
+          "seconds": 12.4,
+          "stdout_sha256": "3007dc26f66b5668f0a042fb7340997bc9880e2e55e91636f9b5d2c9abf27624",
+          "tail": "{\"exit\": 0, \"total\": 5, \"passed\": 5, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.....                                                                    [100%]\n5 passed in 11.85s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_03_turns.py --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py",
+          "seconds": 786.6,
+          "stdout_sha256": "89a1f7e2c97d9ef0598b4d73ac3c417bd3ef0f8ff0fa9e4d9f70f3cfcc362280",
+          "tail": "........................................................................ [ 55%]\n........................................................................ [ 59%]\n........................................................................ [ 64%]\n........................................................................ [ 69%]\n........................................................................ [ 73%]\n........................................................................ [ 78%]\n........................................................................ [ 82%]\n........................................................................ [ 87%]\n........................................................................ [ 92%]\n........................................................................ [ 96%]\n...................................................                      [100%]\n1563 passed in 785.71s (0:13:05)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "b276ed5bed929e13fc05216f665a71466cc8077d632fa822f975b316275406c3",
+          "tail": "241 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.5,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T09:29:33Z"
+    },
+    "M13-03": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/agents.py": "621743ed6fd56a315aae8c6d882f7ac52601dca658941abd728de6a71abfb0b9",
+        "src/mao/cli.py": "b9876ff9de4ad8a07370292306e6b3ce7d7600a0e3e92d4a9a04bb7324986058",
+        "src/mao/commands/agent.py": "05fdc0c39c0a7a9e37f4e4fd234f9f35b26fb0d51d76082c736c6b93207f9d06",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/ctl/factoryctl.py": "b0145b770eef77093b22915c2cdb9a1b7b8a0a1a9511edd0c22be2c701dba852",
+        "src/mao/daemon.py": "b1b6ac9a817b303bac8b5a6c7e83645f94e3fd53938ea4e81670843fe0ac3483",
+        "src/mao/egress.py": "07d7fdebded7d5def387617fc3406c3dc4014b83d5bc39bf2ee7898cc7b8ce16",
+        "src/mao/errors.py": "697052f0106f45e82742696361bd3f627e994befd63e405ad65dc26a8a628e73",
+        "src/mao/foreman.py": "a7bec005f8b0e648fe863bb8ad79bb3c4ad5e673cbae6eab3de54449eabf2ca2",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/inbox.py": "90dff1d3fbb23516fd91ea69c66a5ce2c07abf1063007d9c5ae6b23fd8bde2c5",
+        "src/mao/ingress.py": "a0ebde887d11e1a122eab61e1aa9727f5115c72dc1b0f92bded5aa63070dcb60",
+        "src/mao/instances.py": "1fcf9dc80224c7cfa0d8f261b8733a68fc09443bcc1afa0d2125a23a72e22c44",
+        "src/mao/mcp.py": "290da628483d4403042d39f8f58437d219fa90c1d67bda0881e876cc1b74cdb4",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/migrations/040_agents.sql": "0439afe394aeed15cac3afd8e5661b5959b9305bec9a3e7d47fe424611a2d04d",
+        "src/mao/operator.py": "a23ef347038b736d6736edbaf40b2092f21e24fc6a3f22cbb76ddb2717ae934a",
+        "src/mao/runner.py": "340a4491b363b5dd9d7ca9068de921514e6388ff0fef964f3c4d7e7d0bbce253",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2",
+        "src/mao/supervisor.py": "0a56e0edd554bf4ef0a9d147e2e4fa808eee42bcf454d5923db5aa3b4e2fd7a1",
+        "src/mrl/factory/extract.py": "84cfa2627991c1648d7ff90295ba432026c1fdb3f94f8a0798f2f3a505488041",
+        "src/mrl/factory/registry.py": "4f4bb914e4d5af42a3fc9e52a688264132c728838d58aae4d20637f4d9ea75b7",
+        "src/mrl/factory/schema.py": "0bd5870361fb80b2744bc70d1aa4031e293681452a65a30c8f73bd401e870be8",
+        "src/mrl/factory/sites.py": "183fb4256543bcec10a02f9c1e5e38e52c4ec41be00d2b252c78ff08a535243b"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_03_turns.py",
+          "seconds": 49.9,
+          "stdout_sha256": "8b85594aeb2bbe2b64fa3299c070487befc7f08e938bf9e6428564084c059152",
+          "tail": "{\"exit\": 0, \"total\": 7, \"passed\": 7, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......                                                                  [100%]\n7 passed in 49.39s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_04_context.py --ignore=tests/acceptance/m13/test_m13_05_foreman.py",
+          "seconds": 832.5,
+          "stdout_sha256": "c61b39a338b6867adb783732bd0574247ee6ea595b2db205926142c44b692be2",
+          "tail": "........................................................................ [ 55%]\n........................................................................ [ 59%]\n........................................................................ [ 64%]\n........................................................................ [ 68%]\n........................................................................ [ 73%]\n........................................................................ [ 77%]\n........................................................................ [ 82%]\n........................................................................ [ 87%]\n........................................................................ [ 91%]\n........................................................................ [ 96%]\n..........................................................               [100%]\n1570 passed in 831.63s (0:13:51)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "b276ed5bed929e13fc05216f665a71466cc8077d632fa822f975b316275406c3",
+          "tail": "241 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.7,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T09:44:20Z"
+    },
+    "M13-04": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/agents.py": "621743ed6fd56a315aae8c6d882f7ac52601dca658941abd728de6a71abfb0b9",
+        "src/mao/cli.py": "b9876ff9de4ad8a07370292306e6b3ce7d7600a0e3e92d4a9a04bb7324986058",
+        "src/mao/commands/agent.py": "05fdc0c39c0a7a9e37f4e4fd234f9f35b26fb0d51d76082c736c6b93207f9d06",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/ctl/factoryctl.py": "b0145b770eef77093b22915c2cdb9a1b7b8a0a1a9511edd0c22be2c701dba852",
+        "src/mao/daemon.py": "b1b6ac9a817b303bac8b5a6c7e83645f94e3fd53938ea4e81670843fe0ac3483",
+        "src/mao/egress.py": "07d7fdebded7d5def387617fc3406c3dc4014b83d5bc39bf2ee7898cc7b8ce16",
+        "src/mao/errors.py": "697052f0106f45e82742696361bd3f627e994befd63e405ad65dc26a8a628e73",
+        "src/mao/foreman.py": "a7bec005f8b0e648fe863bb8ad79bb3c4ad5e673cbae6eab3de54449eabf2ca2",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/inbox.py": "90dff1d3fbb23516fd91ea69c66a5ce2c07abf1063007d9c5ae6b23fd8bde2c5",
+        "src/mao/ingress.py": "a0ebde887d11e1a122eab61e1aa9727f5115c72dc1b0f92bded5aa63070dcb60",
+        "src/mao/instances.py": "1fcf9dc80224c7cfa0d8f261b8733a68fc09443bcc1afa0d2125a23a72e22c44",
+        "src/mao/mcp.py": "290da628483d4403042d39f8f58437d219fa90c1d67bda0881e876cc1b74cdb4",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/migrations/040_agents.sql": "0439afe394aeed15cac3afd8e5661b5959b9305bec9a3e7d47fe424611a2d04d",
+        "src/mao/operator.py": "a23ef347038b736d6736edbaf40b2092f21e24fc6a3f22cbb76ddb2717ae934a",
+        "src/mao/runner.py": "340a4491b363b5dd9d7ca9068de921514e6388ff0fef964f3c4d7e7d0bbce253",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2",
+        "src/mao/supervisor.py": "0a56e0edd554bf4ef0a9d147e2e4fa808eee42bcf454d5923db5aa3b4e2fd7a1",
+        "src/mrl/factory/extract.py": "84cfa2627991c1648d7ff90295ba432026c1fdb3f94f8a0798f2f3a505488041",
+        "src/mrl/factory/registry.py": "4f4bb914e4d5af42a3fc9e52a688264132c728838d58aae4d20637f4d9ea75b7",
+        "src/mrl/factory/schema.py": "0bd5870361fb80b2744bc70d1aa4031e293681452a65a30c8f73bd401e870be8",
+        "src/mrl/factory/sites.py": "183fb4256543bcec10a02f9c1e5e38e52c4ec41be00d2b252c78ff08a535243b"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_04_context.py",
+          "seconds": 55.7,
+          "stdout_sha256": "d3ffedda00b1f60a950e9c54cc51ba1cede0f01610764bbdd35601fa7eb00db7",
+          "tail": "{\"exit\": 0, \"total\": 3, \"passed\": 3, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n...                                                                      [100%]\n3 passed in 55.20s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m13/test_m13_05_foreman.py",
+          "seconds": 854.8,
+          "stdout_sha256": "4844d5edd1a731c9ad827bb20e21d8980b91431a90a31973e29f5d760efd6ec8",
+          "tail": "........................................................................ [ 54%]\n........................................................................ [ 59%]\n........................................................................ [ 64%]\n........................................................................ [ 68%]\n........................................................................ [ 73%]\n........................................................................ [ 77%]\n........................................................................ [ 82%]\n........................................................................ [ 86%]\n........................................................................ [ 91%]\n........................................................................ [ 96%]\n.............................................................            [100%]\n1573 passed in 853.88s (0:14:13)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.2,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "b276ed5bed929e13fc05216f665a71466cc8077d632fa822f975b316275406c3",
+          "tail": "241 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T09:59:35Z"
+    },
+    "M13-05": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/state.json": "(deleted)",
+        "src/mao/agents.py": "621743ed6fd56a315aae8c6d882f7ac52601dca658941abd728de6a71abfb0b9",
+        "src/mao/cli.py": "b9876ff9de4ad8a07370292306e6b3ce7d7600a0e3e92d4a9a04bb7324986058",
+        "src/mao/commands/agent.py": "05fdc0c39c0a7a9e37f4e4fd234f9f35b26fb0d51d76082c736c6b93207f9d06",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/ctl/factoryctl.py": "b0145b770eef77093b22915c2cdb9a1b7b8a0a1a9511edd0c22be2c701dba852",
+        "src/mao/daemon.py": "b1b6ac9a817b303bac8b5a6c7e83645f94e3fd53938ea4e81670843fe0ac3483",
+        "src/mao/egress.py": "07d7fdebded7d5def387617fc3406c3dc4014b83d5bc39bf2ee7898cc7b8ce16",
+        "src/mao/errors.py": "697052f0106f45e82742696361bd3f627e994befd63e405ad65dc26a8a628e73",
+        "src/mao/foreman.py": "a7bec005f8b0e648fe863bb8ad79bb3c4ad5e673cbae6eab3de54449eabf2ca2",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/inbox.py": "90dff1d3fbb23516fd91ea69c66a5ce2c07abf1063007d9c5ae6b23fd8bde2c5",
+        "src/mao/ingress.py": "a0ebde887d11e1a122eab61e1aa9727f5115c72dc1b0f92bded5aa63070dcb60",
+        "src/mao/instances.py": "1fcf9dc80224c7cfa0d8f261b8733a68fc09443bcc1afa0d2125a23a72e22c44",
+        "src/mao/mcp.py": "290da628483d4403042d39f8f58437d219fa90c1d67bda0881e876cc1b74cdb4",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/migrations/040_agents.sql": "0439afe394aeed15cac3afd8e5661b5959b9305bec9a3e7d47fe424611a2d04d",
+        "src/mao/operator.py": "a23ef347038b736d6736edbaf40b2092f21e24fc6a3f22cbb76ddb2717ae934a",
+        "src/mao/runner.py": "340a4491b363b5dd9d7ca9068de921514e6388ff0fef964f3c4d7e7d0bbce253",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2",
+        "src/mao/supervisor.py": "0a56e0edd554bf4ef0a9d147e2e4fa808eee42bcf454d5923db5aa3b4e2fd7a1",
+        "src/mrl/factory/extract.py": "84cfa2627991c1648d7ff90295ba432026c1fdb3f94f8a0798f2f3a505488041",
+        "src/mrl/factory/registry.py": "4f4bb914e4d5af42a3fc9e52a688264132c728838d58aae4d20637f4d9ea75b7",
+        "src/mrl/factory/schema.py": "0bd5870361fb80b2744bc70d1aa4031e293681452a65a30c8f73bd401e870be8",
+        "src/mrl/factory/sites.py": "183fb4256543bcec10a02f9c1e5e38e52c4ec41be00d2b252c78ff08a535243b"
+      },
+      "commit": "0ac2eb7",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m13/test_m13_05_foreman.py",
+          "seconds": 42.8,
+          "stdout_sha256": "2668345dd3c292946e63fae3b48a5ff2c29f632ea26fb6e0e223b244cc9908c3",
+          "tail": "{\"exit\": 0, \"total\": 3, \"passed\": 3, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n...                                                                      [100%]\n3 passed in 42.29s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests",
+          "seconds": 834.0,
+          "stdout_sha256": "8e403ae47e9aab1b8840940778a7621cd5984785ecba18f29deacde1571ff782",
+          "tail": "........................................................................ [ 54%]\n........................................................................ [ 59%]\n........................................................................ [ 63%]\n........................................................................ [ 68%]\n........................................................................ [ 73%]\n........................................................................ [ 77%]\n........................................................................ [ 82%]\n........................................................................ [ 86%]\n........................................................................ [ 91%]\n........................................................................ [ 95%]\n................................................................         [100%]\n1576 passed in 833.09s (0:13:53)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "b276ed5bed929e13fc05216f665a71466cc8077d632fa822f975b316275406c3",
+          "tail": "241 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.7,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.5,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T10:14:15Z"
+    },
+    "M14-01": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/protected.lock": "(deleted)",
+        "plan/state.json": "3716735b4d079c5ed8c3c2268339c77b099364ee18ff238b58c15ac54a6fda80",
+        "src/mao/agents.py": "330fabc440343775af83a9d9cd9af711b15cd38c28b6cc9112190115abb7e271",
+        "src/mao/cli.py": "b9876ff9de4ad8a07370292306e6b3ce7d7600a0e3e92d4a9a04bb7324986058",
+        "src/mao/commands/agent.py": "05fdc0c39c0a7a9e37f4e4fd234f9f35b26fb0d51d76082c736c6b93207f9d06",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/ctl/factoryctl.py": "b0145b770eef77093b22915c2cdb9a1b7b8a0a1a9511edd0c22be2c701dba852",
+        "src/mao/daemon.py": "b1b6ac9a817b303bac8b5a6c7e83645f94e3fd53938ea4e81670843fe0ac3483",
+        "src/mao/egress.py": "9ab6629fdd8341d93324268c251683c182d5ad2c407616333305d32dea1ad80d",
+        "src/mao/errors.py": "697052f0106f45e82742696361bd3f627e994befd63e405ad65dc26a8a628e73",
+        "src/mao/foreman.py": "a7bec005f8b0e648fe863bb8ad79bb3c4ad5e673cbae6eab3de54449eabf2ca2",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/inbox.py": "90dff1d3fbb23516fd91ea69c66a5ce2c07abf1063007d9c5ae6b23fd8bde2c5",
+        "src/mao/ingress.py": "a0ebde887d11e1a122eab61e1aa9727f5115c72dc1b0f92bded5aa63070dcb60",
+        "src/mao/instances.py": "1fcf9dc80224c7cfa0d8f261b8733a68fc09443bcc1afa0d2125a23a72e22c44",
+        "src/mao/mcp.py": "290da628483d4403042d39f8f58437d219fa90c1d67bda0881e876cc1b74cdb4",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/migrations/040_agents.sql": "0439afe394aeed15cac3afd8e5661b5959b9305bec9a3e7d47fe424611a2d04d",
+        "src/mao/operator.py": "a23ef347038b736d6736edbaf40b2092f21e24fc6a3f22cbb76ddb2717ae934a",
+        "src/mao/runner.py": "340a4491b363b5dd9d7ca9068de921514e6388ff0fef964f3c4d7e7d0bbce253",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2",
+        "src/mao/supervisor.py": "0a56e0edd554bf4ef0a9d147e2e4fa808eee42bcf454d5923db5aa3b4e2fd7a1",
+        "src/mrl/factory/extract.py": "84cfa2627991c1648d7ff90295ba432026c1fdb3f94f8a0798f2f3a505488041",
+        "src/mrl/factory/registry.py": "4f4bb914e4d5af42a3fc9e52a688264132c728838d58aae4d20637f4d9ea75b7",
+        "src/mrl/factory/schema.py": "0bd5870361fb80b2744bc70d1aa4031e293681452a65a30c8f73bd401e870be8",
+        "src/mrl/factory/sites.py": "183fb4256543bcec10a02f9c1e5e38e52c4ec41be00d2b252c78ff08a535243b"
+      },
+      "commit": "ce372ff",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m14/test_m14_01_admit_static.py",
+          "seconds": 2.6,
+          "stdout_sha256": "9013fbe7469822815fe3fa7c13d73eb462f29f780f3fb48cd5ee4c5dad97134d",
+          "tail": "{\"exit\": 0, \"total\": 8, \"passed\": 8, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........                                                                 [100%]\n8 passed in 2.13s"
+        },
+        {
+          "exit": 0,
+          "id": "conformance",
+          "ok": true,
+          "run": "uv run mrl conformance --json",
+          "seconds": 11.5,
+          "stdout_sha256": "bd99beeec7b50c51955740eeabe2574c1489acf3e3e188e90f60a7509102a547",
+          "tail": "{\n  \"total\": 715,\n  \"passed\": 715,\n  \"failures\": []\n}"
+        },
+        {
+          "exit": 0,
+          "id": "coverage",
+          "ok": true,
+          "run": "uv run mrl coverage --json",
+          "seconds": 11.4,
+          "stdout_sha256": "2a56f9ffebab105243863b391fd47e5f919f5b379e8e523d3c0ac01a7e48eeb7",
+          "tail": "    \"W-NO-BUDGET\": [\n      \"factory.lines/line-without-budget-warns\",\n      \"factory.stations/agent-without-budget-warns\"\n    ],\n    \"W-PROPERTY-META\": [\n      \"factory.host/expr-property-on-meta-warns\"\n    ]\n  },\n  \"unexercised_codes\": [],\n  \"kernel_diag_rules\": 85,\n  \"unfired_rules\": []\n}"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m14/test_m14_02_admit_runtime.py",
+          "seconds": 814.9,
+          "stdout_sha256": "48519443b5685fde69ad0eaefcd69f732b18aa451d6e0091896fb1aaebe67050",
+          "tail": "........................................................................ [ 58%]\n........................................................................ [ 63%]\n........................................................................ [ 67%]\n........................................................................ [ 72%]\n........................................................................ [ 76%]\n........................................................................ [ 81%]\n........................................................................ [ 85%]\n........................................................................ [ 90%]\n........................................................................ [ 95%]\n........................................................................ [ 99%]\n.......                                                                  [100%]\n1591 passed in 814.05s (0:13:34)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "19dbcc6b41d5ff37d5fbccc79424256390bd6a5e680fa27e70cad9e57b1c6e58",
+          "tail": "244 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.9,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T16:03:46Z"
+    },
+    "M14-02": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "lan/protected.lock": "(deleted)",
+        "plan/state.json": "a6b7f8dcc02c9412465887da2965b2104512c3a39d74951e37e1d31b4d0f97de",
+        "spec/mrl/conformance/factory/admit.yaml": "a277bfbf88cd8a7766c6478378af7e794efe454dc1bd08444f382cecfedf3b95",
+        "spec/mrl/kernel/codes.mrl": "e1430ad663dc99ef9dd1f16ffe634ca77ea6625a017d1fcdd4ea740d08e91613",
+        "spec/mrl/kernel/schema.mrl": "55849a95d5651619e4867a916518ba57f3397411e88b393f6c003c590dac7711",
+        "spec/mrl/kernel/stations.mrl": "067f631a6edf9a158b07ea435c1460cbb8a1ca8dbe7da1aa21bfd4ebfe136d9e",
+        "src/mao/agents.py": "330fabc440343775af83a9d9cd9af711b15cd38c28b6cc9112190115abb7e271",
+        "src/mao/cli.py": "b9876ff9de4ad8a07370292306e6b3ce7d7600a0e3e92d4a9a04bb7324986058",
+        "src/mao/commands/agent.py": "05fdc0c39c0a7a9e37f4e4fd234f9f35b26fb0d51d76082c736c6b93207f9d06",
+        "src/mao/commands/instance.py": "0098f670a03f4ddb741287ec1c17b3688683bb73ef6dcb8deec0bdd1a12b86f3",
+        "src/mao/console.py": "f1e7db7f7474068629a9e75ebd668692fdbc0068367e75565ce32301fca8295d",
+        "src/mao/ctl/factoryctl.py": "b0145b770eef77093b22915c2cdb9a1b7b8a0a1a9511edd0c22be2c701dba852",
+        "src/mao/daemon.py": "b1b6ac9a817b303bac8b5a6c7e83645f94e3fd53938ea4e81670843fe0ac3483",
+        "src/mao/egress.py": "9ab6629fdd8341d93324268c251683c182d5ad2c407616333305d32dea1ad80d",
+        "src/mao/errors.py": "697052f0106f45e82742696361bd3f627e994befd63e405ad65dc26a8a628e73",
+        "src/mao/foreman.py": "a7bec005f8b0e648fe863bb8ad79bb3c4ad5e673cbae6eab3de54449eabf2ca2",
+        "src/mao/gateway.py": "0db26b81a2a314bc8e834374eb2b6855815fc767e654581181a86bca6e6221f2",
+        "src/mao/inbox.py": "90dff1d3fbb23516fd91ea69c66a5ce2c07abf1063007d9c5ae6b23fd8bde2c5",
+        "src/mao/ingress.py": "a0ebde887d11e1a122eab61e1aa9727f5115c72dc1b0f92bded5aa63070dcb60",
+        "src/mao/instances.py": "1fcf9dc80224c7cfa0d8f261b8733a68fc09443bcc1afa0d2125a23a72e22c44",
+        "src/mao/mcp.py": "290da628483d4403042d39f8f58437d219fa90c1d67bda0881e876cc1b74cdb4",
+        "src/mao/migrations/039_instances.sql": "0eae43f28d338ef6801c0885c9553008b62ce07ccc6ca31372a4483a16d89f35",
+        "src/mao/migrations/040_agents.sql": "0439afe394aeed15cac3afd8e5661b5959b9305bec9a3e7d47fe424611a2d04d",
+        "src/mao/operator.py": "a23ef347038b736d6736edbaf40b2092f21e24fc6a3f22cbb76ddb2717ae934a",
+        "src/mao/runner.py": "340a4491b363b5dd9d7ca9068de921514e6388ff0fef964f3c4d7e7d0bbce253",
+        "src/mao/sandbox.py": "2330748e85e410e875e86a0e3218fce1663dbc44f6bfec868d1fac99f2fc611e",
+        "src/mao/scheduler.py": "150201374070b18d2dbb6d0f3af7211e159d7b45374e15d12a7a12da81437ab2",
+        "src/mao/supervisor.py": "0a56e0edd554bf4ef0a9d147e2e4fa808eee42bcf454d5923db5aa3b4e2fd7a1",
+        "src/mrl/cli.py": "c1a4659d5fa57eff3f702b447b5aba71ac124ae1e95fe6b2795204efd2e000e0",
+        "src/mrl/factory/extract.py": "cfb8f7ca9ea21050497d029287bb1f8e7b6bc036f5b8875e17bdefa409daa935",
+        "src/mrl/factory/registry.py": "4f4bb914e4d5af42a3fc9e52a688264132c728838d58aae4d20637f4d9ea75b7",
+        "src/mrl/factory/schema.py": "0bd5870361fb80b2744bc70d1aa4031e293681452a65a30c8f73bd401e870be8",
+        "src/mrl/factory/sites.py": "e2fbcce7a2e99fef2e951248c3b99010497f1c85e911b2eafaf35a93625a2645"
+      },
+      "commit": "ce372ff",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m14/test_m14_02_admit_runtime.py",
+          "seconds": 11.2,
+          "stdout_sha256": "c981e35ea58d77983a1f3e065502a12ed8acd49e623de5e88fcb4f2924d9be73",
+          "tail": "{\"exit\": 0, \"total\": 9, \"passed\": 9, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........                                                                [100%]\n9 passed in 10.72s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests",
+          "seconds": 896.5,
+          "stdout_sha256": "60d6562ccd39e9c1ff9c2be1b8535714299053e87a4b950f4fd9d640f9995ef2",
+          "tail": "........................................................................ [ 58%]\n........................................................................ [ 62%]\n........................................................................ [ 67%]\n........................................................................ [ 71%]\n........................................................................ [ 76%]\n........................................................................ [ 80%]\n........................................................................ [ 85%]\n........................................................................ [ 89%]\n........................................................................ [ 94%]\n........................................................................ [ 98%]\n.................                                                        [100%]\n1601 passed in 895.55s (0:14:55)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.2,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "be82c960d6afafce522e2ea76d6b934e854b05577f7c339b37f0ac1bcc113074",
+          "tail": "245 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 1.8,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.5,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-14T16:37:02Z"
     },
     "M2-01": {
       "baseline": {

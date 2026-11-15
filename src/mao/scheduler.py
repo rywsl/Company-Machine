@@ -34,11 +34,15 @@ class DeadLetter:
     at: str
 
 
+_OCCUPIED = ("PROVISIONING", "RUNNING", "AWAITING_APPROVAL", "GATING")
+
+
 class Scheduler:
-    def __init__(self, ctx: Any, snapshot: Any, runner: Any) -> None:
+    def __init__(self, ctx: Any, snapshot: Any, runner: Any, *, instances: Any = None) -> None:
         self.ctx = ctx
         self.snapshot = snapshot
         self.runner = runner
+        self.instances = instances
         self.config: dict[str, Any] | None = None
         self._used: dict[str, dict[str, float]] = {}
 
@@ -90,6 +94,7 @@ class Scheduler:
         self._require()
         rows = self.ctx.db.query("SELECT job_id FROM schedule_queue ORDER BY job_id")
         chosen: list[str] = []
+        picked: dict[str, int] = {}
         pools = (self.config or {}).get("pools") or {}
         cpu_left = pools.get("cpu")
         for row in rows:
@@ -100,6 +105,8 @@ class Scheduler:
                 continue
             if self._breaker_blocks(job):
                 continue
+            if self._instance_blocked(job, picked):
+                continue
             try:
                 need = self.demand(job.station)
             except FactoryError:
@@ -109,6 +116,7 @@ class Scheduler:
             if isinstance(cpu_left, int):
                 cpu_left -= int(need.cpu or 0)
             chosen.append(job.id)
+            picked[job.station] = picked.get(job.station, 0) + 1
         pumped = []
         for job_id in chosen:
             self.runner.run(job_id)
@@ -125,7 +133,14 @@ class Scheduler:
             "SELECT id FROM jobs WHERE state = 'PENDING' AND epoch = ? ORDER BY id",
             (epoch,),
         )
-        chosen = [str(row["id"]) for row in rows]
+        chosen: list[str] = []
+        picked: dict[str, int] = {}
+        for row in rows:
+            job = load_job(self.ctx.db, str(row["id"]))
+            if self._instance_blocked(job, picked):
+                continue
+            chosen.append(job.id)
+            picked[job.station] = picked.get(job.station, 0) + 1
         now = utc_iso(self.ctx.clock.now())
         with self.ctx.db.tx() as conn:
             for job_id in chosen:
@@ -188,6 +203,34 @@ class Scheduler:
         return [
             (row["id"], row["state"]) for row in self.ctx.db.query("SELECT id, state FROM jobs ORDER BY id")
         ]
+
+    def _instance_blocked(self, job: Any, picked: Mapping[str, int]) -> bool:
+        if self.instances is None:
+            return False
+        try:
+            station = self.snapshot.spec(job.station)
+            machine = self.snapshot.spec(self.snapshot.key("Machine", station["machine"]))
+            from mao.instances import instance_config
+
+            cfg = instance_config(machine)
+        except FactoryError:
+            return False
+        if cfg.mode == "once":
+            return False
+        occupied = self._occupied(job.station) + int(picked.get(job.station, 0))
+        if cfg.mode == "pooled":
+            return occupied >= cfg.pool_size
+        if cfg.mode == "resident":
+            return occupied >= 1 or not self.instances.ready(job.station)
+        return False
+
+    def _occupied(self, station: str) -> int:
+        marks = ", ".join("?" for _ in _OCCUPIED)
+        rows = self.ctx.db.query(
+            f"SELECT COUNT(*) AS n FROM jobs WHERE station = ? AND state IN ({marks})",
+            (station, *_OCCUPIED),
+        )
+        return int(rows[0]["n"])
 
     def _wip_blocked(self, job: Any) -> bool:
         for item in (self.config or {}).get("wip") or []:

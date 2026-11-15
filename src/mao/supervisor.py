@@ -56,6 +56,7 @@ class SupervisorConfig:
     max_attempts: int
     backoff_s: float
     env: Mapping[str, str]
+    mode: str = "session"
 
     @classmethod
     def load(cls, root: Path) -> SupervisorConfig:
@@ -78,6 +79,9 @@ class SupervisorConfig:
                 raise FactoryError("SUPERVISOR_CONFIG_INVALID", "环境变量不允许覆盖", field="env")
         if str(section.get("network")) not in {"none", "egress"}:
             raise FactoryError("SUPERVISOR_CONFIG_INVALID", "network 不合法", field="network")
+        mode = section.get("mode", "session")
+        if not isinstance(mode, str) or mode not in {"session", "resident"}:
+            raise FactoryError("SUPERVISOR_CONFIG_INVALID", "mode 不合法", field="mode")
         models = {str(key): str(value) for key, value in dict(section["models"]).items()}
         reviewers = tuple(str(item) for item in section["reviewers"])
         for ref in reviewers:
@@ -97,6 +101,7 @@ class SupervisorConfig:
             max_attempts=int(section["max_attempts"]),
             backoff_s=float(section["backoff_s"]),
             env=env,
+            mode=mode,
         )
 
 
@@ -177,7 +182,8 @@ class ForemanSupervisor:
             raise FactoryError("SUPERVISOR_NOT_STARTED", "值守尚未 start")
         if self._over_budget():
             return None
-        wake = WakeQueue(self.ctx).next(by="supervisor")
+        signals = ("review",) if self.config.mode == "resident" else None
+        wake = WakeQueue(self.ctx).next(by="supervisor", signals=signals)
         if wake is None:
             return None
         role = "reviewer" if wake.signal == "review" else "foreman"
@@ -252,8 +258,8 @@ class ForemanSupervisor:
             str(row["wake_id"])
             for row in self.ctx.db.query("SELECT wake_id FROM foreman_sessions WHERE state = 'running'")
         }
-        for row in self.ctx.db.query("SELECT id FROM wakes WHERE status = 'taken' ORDER BY id"):
-            if str(row["id"]) in running:
+        for row in self.ctx.db.query("SELECT id, by FROM wakes WHERE status = 'taken' ORDER BY id"):
+            if str(row["id"]) in running or str(row["by"] or "") == "agents":
                 continue
             wake = WakeQueue(self.ctx).get(str(row["id"]))
             delay = self.config.backoff_s * (2**wake.attempts)
@@ -640,8 +646,10 @@ class ForemanSupervisor:
             wake = WakeQueue(self.ctx).get(str(row["wake_id"]))
             if wake.status == "taken":
                 self._close_wake(wake, str(row["role"]), "failed", error, {"proposed": [], "reviewed": []})
-        taken = self.ctx.db.query("SELECT id FROM wakes WHERE status = 'taken' ORDER BY id")
+        taken = self.ctx.db.query("SELECT id, by FROM wakes WHERE status = 'taken' ORDER BY id")
         for row in taken:
+            if str(row["by"] or "") == "agents":
+                continue
             WakeQueue(self.ctx).reopen(str(row["id"]), not_before=None, failed=False, by="supervisor")
         return found
 
@@ -662,6 +670,8 @@ def _session_network(config_network: str, runtime: Mapping[str, Any]) -> str:
 
 
 def _validate(config: SupervisorConfig) -> SupervisorConfig:
+    if config.mode not in {"session", "resident"}:
+        raise FactoryError("SUPERVISOR_CONFIG_INVALID", "mode 不合法", field="mode")
     if config.network not in {"none", "egress"}:
         raise FactoryError("SUPERVISOR_CONFIG_INVALID", "network 不合法", field="network")
     for name, value in config.env.items():

@@ -492,8 +492,40 @@ def cmd_harvest(_args):
         _die(1, "无法写入 harvest-result.json")
 
 
+def cmd_emit(args):
+    ctl = os.environ.get("FACTORY_INSTANCE_CTL") or ""
+    if not ctl:
+        _die(4, "请设置 FACTORY_INSTANCE_CTL")
+    labels = {}
+    for item in args.label or []:
+        if "=" not in item:
+            _die(2, "label 必须是 K=V")
+        key, value = item.split("=", 1)
+        labels[key] = value
+    rid = "r-" + uuid.uuid4().hex[:8]
+    body = {"id": rid, "op": "emit", "port": args.port, "dir": args.dir, "labels": labels}
+    os.makedirs(os.path.join(ctl, "requests"), exist_ok=True)
+    os.makedirs(os.path.join(ctl, "responses"), exist_ok=True)
+    _atomic(os.path.join(ctl, "requests", rid + ".json"), _dump(body))
+    response = os.path.join(ctl, "responses", rid + ".json")
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        if os.path.isfile(response):
+            found = _read_json(response)
+            if found.get("ok"):
+                result = found.get("result") or {}
+                sys.stdout.write(_dump({"bean": result.get("bean"), "job": result.get("job")}) + "\n")
+                return
+            error = found.get("error") or {}
+            code = str(error.get("code") or found.get("code") or "EMIT_INVALID")
+            detail = error.get("detail") if isinstance(error.get("detail"), dict) else found.get("detail")
+            reason = detail.get("reason") if isinstance(detail, dict) else None
+            _die(1, code if not reason else f"{code} {reason}")
+        time.sleep(0.05)
+    _die(1, "等待宿主响应超时")
+
+
 def main(argv):
-    _ctl_dir()
     parser = argparse.ArgumentParser(prog="factoryctl")
     sub = parser.add_subparsers(dest="cmd")
     inputs = sub.add_parser("inputs")
@@ -536,10 +568,18 @@ def main(argv):
     receipt.add_argument("--note", default="")
     sub.add_parser("harvest")
     sub.add_parser("mcp")
+    emit = sub.add_parser("emit")
+    emit.add_argument("--port", required=True)
+    emit.add_argument("--dir", required=True)
+    emit.add_argument("--label", action="append")
     try:
         args = parser.parse_args(argv)
     except SystemExit:
         raise
+    if args.cmd == "emit":
+        cmd_emit(args)
+        return
+    _ctl_dir()
     if args.cmd == "inputs":
         cmd_inputs(args)
     elif args.cmd == "contract":

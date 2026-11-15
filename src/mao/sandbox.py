@@ -52,6 +52,7 @@ class SandboxSpec:
     tmp_mb: int | None = None
     pids: int | None = None
     writable: tuple[str, ...] = ()
+    command: tuple[str, ...] = ()
 
 
 def sandbox_resources(machine: Mapping[str, Any]) -> dict[str, Any]:
@@ -180,16 +181,12 @@ class DockerProvider:
             if key in {item[0] for item in _FIXED_ENV}:
                 continue
             argv.extend(["--env", f"{key}={spec.env[key]}"])
-        argv.extend(
-            [
-                "--workdir",
-                spec.workdir,
-                spec.image,
-                "/bin/sh",
-                "-c",
-                "mkdir -p /tmp/home && exec sleep 2147483647",
-            ]
+        tail = (
+            ["/bin/sh", "-c", "mkdir -p /tmp/home && exec sleep 2147483647"]
+            if not spec.command
+            else ["/bin/sh", "-c", 'mkdir -p /tmp/home && exec "$@"', "sh", *spec.command]
         )
+        argv.extend(["--workdir", spec.workdir, spec.image, *tail])
         return argv
 
     def resolve_image(self, image: str) -> str:
@@ -291,6 +288,23 @@ class DockerProvider:
             if proc.returncode == 0:
                 removed += 1
         return removed
+
+    def attach(self, spec: SandboxSpec) -> _DockerSandbox:
+        if not self._container_running(spec.name):
+            raise FactoryError("INSTANCE_LOST", "沙箱不存在或没有运行", sandbox=spec.name)
+        return _DockerSandbox(self, spec)
+
+    def _container_running(self, name: str) -> bool:
+        try:
+            proc = subprocess.run(
+                [self.docker, "inspect", "--format", "{{.State.Running}}", name],
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return proc.returncode == 0 and proc.stdout.decode("utf-8", errors="replace").strip() == "true"
 
     def open(self, spec: SandboxSpec) -> _DockerSandbox:
         if spec.network == "egress" and not self.allow_unproxied_egress and not self._proxy_ready(spec):
@@ -415,6 +429,11 @@ class _DockerSandbox:
         Path(stderr).write_bytes(proc.stderr)
         return ExecResult(proc.returncode, False, self.provider.clock.monotonic() - start)
 
+    def alive(self) -> bool:
+        if self._closed:
+            return False
+        return self.provider._container_running(self.name)
+
     def close(self) -> None:
         subprocess.run([self.provider.docker, "rm", "-f", self.name], capture_output=True, check=False)
         self._closed = True
@@ -431,7 +450,12 @@ class LocalProvider:
         self.clock = clock if clock is not None else SystemClock()
 
     def open(self, spec: SandboxSpec) -> _LocalSandbox:
-        return _LocalSandbox(self, spec)
+        sandbox = _LocalSandbox(self, spec, attached=False)
+        sandbox.start_command()
+        return sandbox
+
+    def attach(self, spec: SandboxSpec) -> _LocalSandbox:
+        return _LocalSandbox(self, spec, attached=True)
 
     def remove_volume(self, name: str) -> bool:
         del name
@@ -446,16 +470,39 @@ class LocalProvider:
 
 
 class _LocalSandbox:
-    def __init__(self, provider: LocalProvider, spec: SandboxSpec) -> None:
+    def __init__(self, provider: LocalProvider, spec: SandboxSpec, *, attached: bool = False) -> None:
         self.provider = provider
         self.spec = spec
         self.name = spec.name
         self._closed = False
+        self._attached = attached
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._log: Any = None
         tmp = provider.root / "tmp" / "sandboxes" / spec.name / "tmp"
         (tmp / "home").mkdir(parents=True, exist_ok=True)
         mounts = {mount.target: mount.source for mount in spec.mounts}
         mounts["/tmp"] = str(tmp)
         self._mounts = tuple(sorted(mounts.items(), key=lambda item: len(item[0]), reverse=True))
+
+    def start_command(self) -> None:
+        if self._attached or not self.spec.command:
+            return
+        command = [self._rewrite(arg) for arg in self._map_argv(self.spec.command)]
+        folder = self.provider.root / "tmp" / "sandboxes" / self.spec.name
+        folder.mkdir(parents=True, exist_ok=True)
+        self._log = (folder / "main.log").open("ab")
+        self._proc = subprocess.Popen(
+            command,
+            cwd=self._cwd(None),
+            env=self._child_env(None),
+            stdout=self._log,
+            stderr=self._log,
+        )
+
+    def alive(self) -> bool:
+        if self._attached or not self.spec.command:
+            return True
+        return self._proc is not None and self._proc.poll() is None
 
     def exec(
         self,
@@ -492,6 +539,17 @@ class _LocalSandbox:
 
     def close(self) -> None:
         self._closed = True
+        proc = self._proc
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        if self._log is not None:
+            self._log.close()
+            self._log = None
 
     def _map_argv(self, argv: Sequence[str]) -> list[str]:
         if not argv:

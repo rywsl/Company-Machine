@@ -7,6 +7,7 @@ spec/mrl/factory-profile.md 第 4 章；这里是它的参考实现。
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -18,6 +19,7 @@ from ..stdlib import make_table
 from .extract import Extraction, Site
 from .registry import HostDiag
 
+_ADMIT_META = re.compile(r"^inputs\.[A-Za-z_][A-Za-z0-9_]*\.meta(?:\.|$)")
 PAYLOAD = T.ListT(T.record({"path": T.STRING, "digest": T.STRING, "size": T.INT, "media_type": T.STRING}))
 ANY_BEAN = T.record(
     {"id": T.STRING, "type": T.STRING, "facts": T.MapT(T.DYN), "meta": T.MapT(T.DYN), "payload": PAYLOAD}
@@ -38,6 +40,7 @@ RUNTIME_ENV = {
     "brief": T.record({"task": T.STRING, "factory_contract": T.STRING}),
     "limits": T.record({"max_turns": T.INT, "timeout_s": T.INT, "budget_usd": T.FLOAT}),
     "operator": T.record({"model": T.STRING, "runtime": T.STRING}),
+    "session": T.record({"id": T.STRING}),
 }
 
 
@@ -241,6 +244,9 @@ def site_env(site: Site, env: TypeEnv) -> tuple[dict[str, T.Type], T.Type | None
             T.BOOL,
             None,
         )
+    if site.kind == "admit":
+        s = c["station"]
+        return {"inputs": env.ports(s, "inputs"), "params": env.params(s)}, T.BOOL, None
     if site.kind == "equivalence":
         s = c["station"]
         return {"src": env.bean(c["from"]), "dst": env.bean(c["to"]), "params": env.params(s)}, T.BOOL, None
@@ -340,5 +346,11 @@ def check_sites(x: Extraction, model: Model) -> list[HostDiag]:
                 "W-PROPERTY-META",
                 site.subject,
                 "命名属性引用了生产者自报的 bean.meta；属性应当建立在 validator 实测的 facts 上",
+            )
+        if site.kind == "admit" and any(_ADMIT_META.match(p) for p in paths):
+            emit(
+                "W-ADMIT-META",
+                site.subject,
+                "admit 引用了输入 Bean 自报的 meta；准入应当建立在 validator 实测的 facts 上",
             )
     return out

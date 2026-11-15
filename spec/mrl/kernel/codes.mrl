@@ -13,6 +13,7 @@ code("E-EXPR", "error", "MRL 表达式或模板有静态错误").
 code("E-CONSTITUTION", "error", "宪法缺失，或宪法模块无法通过 MRL 静态检查").
 code("W-EXPR", "warning", "MRL 表达式的警告，例如可选字段没有用 has() 保护").
 code("W-PROPERTY-META", "warning", "命名属性引用了自报的 meta，而不是实测的 facts").
+code("W-ADMIT-META", "warning", "工位 admit 引用了输入 Bean 自报的 meta，而不是实测的 facts").
 
 // 引用与版本
 code("E-DUPLICATE", "error", "同一个 Spec（kind + 名字 + 版本）定义了多次").

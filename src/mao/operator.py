@@ -47,6 +47,8 @@ class TranscriptSummary:
     result: str | None
     events: int
     malformed: int
+    session_id: str | None = None
+    input_tokens: int = 0
 
 
 def build_invocation(
@@ -85,9 +87,12 @@ def build_runtime_invocation(
     max_turns: int,
     budget_usd: float,
     timeout_s: float,
+    session: str | None = None,
 ) -> Invocation:
     runtime_key = snapshot.key("OperatorRuntime", runtime)
     spec = snapshot.spec(runtime_key)
+    if session is not None and not (spec.get("invoke") or {}).get("resume"):
+        raise FactoryError("INVOCATION_INVALID", "runtime 没有 invoke.resume", reason="resume")
     if spec.get("kind") != "agent-cli":
         raise FactoryError(
             "INVOCATION_INVALID",
@@ -114,6 +119,7 @@ def build_runtime_invocation(
             timeout,
             runtime_ref,
             station=runtime_key,
+            session=session,
         )
     )
 
@@ -152,6 +158,8 @@ def parse_transcript(path: Path, fmt: str) -> TranscriptSummary:
     events = 0
     malformed = 0
     result_event: dict[str, Any] | None = None
+    session_id: str | None = None
+    input_tokens = 0
     for line in text.splitlines():
         if line == "":
             continue
@@ -164,10 +172,16 @@ def parse_transcript(path: Path, fmt: str) -> TranscriptSummary:
             malformed += 1
             continue
         events += 1
+        if isinstance(obj.get("session_id"), str):
+            session_id = str(obj["session_id"])
         if obj.get("type") == "result":
             result_event = obj
+            usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
+            tokens = usage.get("input_tokens")
+            if isinstance(tokens, int) and not isinstance(tokens, bool):
+                input_tokens = tokens
     if result_event is None:
-        return TranscriptSummary(0.0, None, events + malformed > 0, None, events, malformed)
+        return TranscriptSummary(0.0, None, events + malformed > 0, None, events, malformed, session_id, 0)
     return TranscriptSummary(
         _cost(result_event),
         _turns(result_event),
@@ -175,6 +189,8 @@ def parse_transcript(path: Path, fmt: str) -> TranscriptSummary:
         result_event.get("result") if isinstance(result_event.get("result"), str) else None,
         events,
         malformed,
+        session_id,
+        input_tokens,
     )
 
 
@@ -253,8 +269,10 @@ def _render_agent(
     runtime_ref: str,
     *,
     station: str,
+    session: str | None = None,
 ) -> Invocation:
-    argv_spec = (runtime.get("invoke") or {}).get("argv")
+    invoke = runtime.get("invoke") or {}
+    argv_spec = invoke.get("resume") if session is not None else invoke.get("argv")
     if not argv_spec:
         raise FactoryError(
             "INVOCATION_INVALID",
@@ -275,8 +293,11 @@ def _render_agent(
         {"max_turns": max_turns, "timeout_s": int(timeout_s), "budget_usd": budget},
         {"model": model, "runtime": runtime_ref},
     )
+    if session is not None:
+        values["session"] = {"id": session}
+    prefix = "invoke.resume" if session is not None else "invoke.argv"
     argv = tuple(
-        _render_item(snapshot, item, f"{runtime_key}/invoke.argv[{index}]", values)
+        _render_item(snapshot, item, f"{runtime_key}/{prefix}[{index}]", values)
         for index, item in enumerate(argv_spec)
     )
     env: dict[str, str] = {}

@@ -67,13 +67,26 @@ class WakeQueue:
             else _wake(self.ctx.db.query("SELECT * FROM wakes WHERE id = ?", (wake_id,))[0])
         )
 
-    def next(self, *, by: str) -> Wake | None:
+    def next(
+        self,
+        *,
+        by: str,
+        signals: tuple[str, ...] | None = None,
+        exclude: tuple[str, ...] = (),
+    ) -> Wake | None:
+        if signals is not None and len(signals) == 0:
+            return None
         now = utc_iso(self.ctx.clock.now())
-        rows = self.ctx.db.query(
-            "SELECT * FROM wakes WHERE status = 'open' AND (not_before IS NULL OR not_before <= ?) "
-            "ORDER BY at, id LIMIT 1",
-            (now,),
-        )
+        sql = "SELECT * FROM wakes WHERE status = 'open' AND (not_before IS NULL OR not_before <= ?)"
+        args: list[Any] = [now]
+        if signals is not None:
+            sql += " AND signal IN (" + ",".join("?" * len(signals)) + ")"
+            args.extend(signals)
+        if exclude:
+            sql += " AND signal NOT IN (" + ",".join("?" * len(exclude)) + ")"
+            args.extend(exclude)
+        sql += " ORDER BY at, id LIMIT 1"
+        rows = self.ctx.db.query(sql, tuple(args))
         if not rows:
             return None
         now = utc_iso(self.ctx.clock.now())

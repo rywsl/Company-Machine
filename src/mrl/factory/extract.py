@@ -19,7 +19,9 @@ from .texpr import TExpr, parse_texpr
 class Site:
     """一处嵌入的 MRL 表达式或模板。"""
 
-    kind: str  # property | accept | equivalence | approval | idempotency | step-param | switch | until
+    kind: (
+        str  # property | accept | admit | equivalence | approval | idempotency | step-param | switch | until
+    )
     #          | recipe-template | runtime-template
     subject: str
     text: str
@@ -211,7 +213,10 @@ def _runtime(x: Extraction, doc: SpecDoc, key: str, meta: dict, spec: dict) -> N
     vol = (spec.get("inject") or {}).get("volume")
     if vol:
         x.add("runtime_volume", key, vol)
-    for path, text in _templates((spec.get("invoke") or {}).get("argv"), "invoke.argv"):
+    invoke = spec.get("invoke") or {}
+    for path, text in _templates(invoke.get("argv"), "invoke.argv"):
+        _template_site(x, doc, "runtime-template", key, path, text, {"runtime": key})
+    for path, text in _templates(invoke.get("resume"), "invoke.resume"):
         _template_site(x, doc, "runtime-template", key, path, text, {"runtime": key})
     for path, text in _templates(spec.get("env"), "env"):
         _template_site(x, doc, "runtime-template", key, path, text, {"runtime": key})
@@ -291,6 +296,16 @@ def _station(x: Extraction, doc: SpecDoc, key: str, meta: dict, spec: dict) -> N
             x.loc(s, doc, f"spec.outputs.{port}.accept[{i}]")
             x.sites.append(Site("accept", s, expr, False, {"station": key, "port": port}))
     x.station_ports[key] = ports
+    admit = spec.get("admit")
+    if isinstance(admit, list):
+        x.add("station_admit", key, len(admit))
+        x.loc(f"{key}/admit", doc, "spec.admit")
+        for i, expr in enumerate(admit):
+            if not isinstance(expr, str):
+                continue
+            subject = f"{key}/admit[{i}]"
+            x.loc(subject, doc, f"spec.admit[{i}]")
+            x.sites.append(Site("admit", subject, expr, False, {"station": key}))
     for t in ports["outputs"].values():
         x.register(parse_texpr(f"list<{t}>"))  # 带 map 的步骤把输出聚合为 list<t>（见 kernel/lines.mrl）
 
@@ -517,6 +532,24 @@ def _station_ref_only(x: Extraction, doc: SpecDoc, key: str, meta: dict, spec: d
     x.ref(f"{key}/station", "Station", spec["station"], doc, "spec.station")
 
 
+def _agent(x: Extraction, doc: SpecDoc, key: str, meta: dict, spec: dict) -> None:
+    del meta
+    x.ref(f"{key}/runtime", "OperatorRuntime", spec["runtime"], doc, "spec.runtime")
+    x.ref(f"{key}/policy", "Policy", spec["policy"], doc, "spec.policy")
+    for index, line in enumerate(spec.get("lines") or []):
+        x.ref(f"{key}/lines[{index}]", "Line", line, doc, f"spec.lines[{index}]")
+    beans = ((spec.get("subscribe") or {}).get("beans")) or []
+    for index, bean in enumerate(beans):
+        if isinstance(bean, dict) and bean.get("type"):
+            x.ref(
+                f"{key}/beans[{index}]",
+                "Type",
+                str(bean["type"]),
+                doc,
+                f"spec.subscribe.beans[{index}].type",
+            )
+
+
 HANDLERS = {
     "Type": _type,
     "Machine": _machine,
@@ -526,4 +559,5 @@ HANDLERS = {
     "Policy": _policy,
     "GoldenSet": _station_ref_only,
     "Baseline": _station_ref_only,
+    "Agent": _agent,
 }

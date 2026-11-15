@@ -33,10 +33,11 @@ _KEEP = object()
 
 
 class Runner:
-    def __init__(self, ctx: Any, snapshot: Any, *, gateway: Any = None) -> None:
+    def __init__(self, ctx: Any, snapshot: Any, *, gateway: Any = None, instances: Any = None) -> None:
         self.ctx = ctx
         self.snapshot = snapshot
         self.gateway = gateway
+        self.instances = instances
         self.gate = Gate(
             snapshot,
             ctx.warehouse,
@@ -75,7 +76,7 @@ class Runner:
 
         reject_expired(self.ctx.warehouse, stored)
         if inputs or ":" not in str(station_ref):
-            self.gate.check_inputs(station_key, checked)
+            self.gate.check_inputs(station_key, checked, params)
         normalized = params_value(self.snapshot, station_key, params)
         now = utc_iso(self.ctx.clock.now())
         job_id = self.ctx.ids.new("j")
@@ -111,6 +112,76 @@ class Runner:
 
     def get(self, job_id: str) -> Job:
         return load_job(self.ctx.db, job_id)
+
+    def adopt(
+        self,
+        station: str,
+        out_dir: Path,
+        *,
+        labels: Mapping[str, str] | None = None,
+        by: str,
+    ) -> Job:
+        station_key = self.snapshot.key("Station", station)
+        now = utc_iso(self.ctx.clock.now())
+        job_id = self.ctx.ids.new("j")
+        from mao.durable import LeaseStore
+
+        store = LeaseStore(self.ctx)
+        store.acquire(f"job:{job_id}", owner=self.ctx.owner)
+        attempt_dir = self.ctx.root / "jobs" / job_id / "1"
+        (attempt_dir / "out").mkdir(parents=True, exist_ok=True)
+        try:
+            return self._adopt_locked(station_key, out_dir, labels, by, job_id, now, attempt_dir)
+        finally:
+            store.release(f"job:{job_id}", owner=self.ctx.owner)
+
+    def _adopt_locked(
+        self,
+        station_key: str,
+        out_dir: Path,
+        labels: Mapping[str, str] | None,
+        by: str,
+        job_id: str,
+        now: str,
+        attempt_dir: Path,
+    ) -> Job:
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                """INSERT INTO jobs
+                   (id, station, epoch, state, attempt, inputs, params, outputs, cost_usd, error,
+                    feedback, created_at, updated_at)
+                   VALUES (?, ?, ?, 'GATING', 1, '{}', '{}', '{}', 0, NULL, NULL, ?, ?)""",
+                (job_id, station_key, self.snapshot.epoch, now, now),
+            )
+            _insert_event(
+                conn, self.ctx, "job.adopted", job_id, {"job": job_id, "station": station_key, "by": by}
+            )
+        _copy_into(Path(out_dir), attempt_dir / "out")
+        report = self.gate.inspect(
+            station_key,
+            job_id=job_id,
+            attempt=1,
+            out_dir=attempt_dir / "out",
+            inputs={},
+            params={},
+        )
+        job = load_job(self.ctx.db, job_id)
+        if report.verdict != "pass":
+            code = "GATE_ERROR" if report.verdict == "error" else "GATE_REJECTED"
+            return self._dead(
+                job,
+                {
+                    "code": code,
+                    "message": report.feedback or "出厂检验未通过",
+                    "detail": {"job": job.id, "feedback": report.feedback},
+                },
+            )
+        sealed = self._seal(job, report)
+        for bean_ids in report.outputs.values():
+            for bean_id in bean_ids:
+                for key, value in (labels or {}).items():
+                    self.ctx.warehouse.label(bean_id, str(key), str(value), by=by)
+        return sealed
 
     def run(self, job_id: str) -> Job:
         job = load_job(self.ctx.db, job_id)
@@ -200,13 +271,21 @@ class Runner:
 
     def _provision_execute(self, job: Job, *, already_running: bool) -> Job:
         sandbox = None
+        lease = None
+        prepared = None
         try:
             prepared = self._bind_control(job, self._prepare(job, reset_out=True))
+            prepared.exec_timed_out = False
             self._register_cap(job, token=getattr(prepared, "egress_token", None))
-            sandbox = self.ctx.provider.open(prepared.spec)
+            if self._reuses_instance(prepared.machine):
+                lease = self.instances.acquire(job, prepared.spec)
+                lease.stage_in(prepared.attempt_dir)
+                sandbox = lease.sandbox
+            else:
+                sandbox = self.ctx.provider.open(prepared.spec)
             if not already_running:
                 job = self._transition(job, JobState.RUNNING, "ready")
-            return self._execute(job, sandbox, prepared)
+            return self._execute(job, sandbox, prepared, lease=lease)
         except FactoryError as exc:
             job = load_job(self.ctx.db, job.id)
             if job.state in TERMINAL or job.state in (JobState.FAILED, JobState.REJECTED):
@@ -220,7 +299,13 @@ class Runner:
                 return self._fail(job, exc.code, exc.message, dict(exc.detail))
             raise
         finally:
-            if sandbox is not None:
+            timed_out = bool(getattr(prepared, "exec_timed_out", False))
+            if lease is not None:
+                try:
+                    self.instances.release(lease, destroy=timed_out)
+                except Exception:
+                    _LOG.exception("释放实例失败")
+            elif sandbox is not None:
                 try:
                     sandbox.close()
                 except Exception:
@@ -234,6 +319,8 @@ class Runner:
         sandbox = None
         try:
             prepared = self._prepare(job, reset_out=False)
+            if self._reuses_instance(prepared.machine):
+                prepared.spec = replace(prepared.spec, command=())
             sandbox = self.ctx.provider.open(prepared.spec)
             return self._finish(job, sandbox, prepared)
         finally:
@@ -242,6 +329,13 @@ class Runner:
                     sandbox.close()
                 except Exception:
                     _LOG.exception("沙箱 close 失败")
+
+    def _reuses_instance(self, machine: Mapping[str, Any]) -> bool:
+        if self.instances is None:
+            return False
+        from mao.instances import instance_config
+
+        return instance_config(machine).mode != "once"
 
     def _prepare(self, job: Job, *, reset_out: bool) -> _Prepared:
         station = self.snapshot.spec(job.station)
@@ -294,9 +388,9 @@ class Runner:
             station, machine_key, machine, recipe_name, recipe, runtime, beans, attempt_dir, brief, spec
         )
 
-    def _execute(self, job: Job, sandbox: Any, prepared: _Prepared) -> Job:
+    def _execute(self, job: Job, sandbox: Any, prepared: _Prepared, *, lease: Any = None) -> Job:
         if prepared.machine.get("form") == "service" and self.gateway is not None:
-            return self._execute_service(job, sandbox, prepared)
+            return self._execute_service(job, sandbox, prepared, lease=lease)
         brief = prepared.brief
         invocation = build_invocation(
             self.snapshot, job.station, brief, inputs=prepared.beans, params=job.params
@@ -309,7 +403,8 @@ class Runner:
         stdout = logs / "operator.stdout"
         stderr = logs / "operator.stderr"
         handler = _CtlHandler(self, job, prepared)
-        server = CtlServer(prepared.attempt_dir / "ctl", handler, self.ctx.clock)
+        ctl_dir = lease.ctl_dir() if lease is not None else prepared.attempt_dir / "ctl"
+        server = CtlServer(ctl_dir, handler, self.ctx.clock)
         server.start(0.2)
         try:
             result = sandbox.exec(
@@ -322,6 +417,9 @@ class Runner:
             )
         finally:
             server.stop()
+        prepared.exec_timed_out = bool(result.timed_out)
+        if lease is not None:
+            lease.stage_out(prepared.attempt_dir)
         stop = self._budget_code(job.id)
         counted, spent = self._usage_spent(job.id)
         if stop:
@@ -388,7 +486,7 @@ class Runner:
         job = self._transition(job, JobState.GATING, "inspect")
         return self._finish(job, sandbox, prepared)
 
-    def _execute_service(self, job: Job, sandbox: Any, prepared: _Prepared) -> Job:
+    def _execute_service(self, job: Job, sandbox: Any, prepared: _Prepared, *, lease: Any = None) -> Job:
         timeout = (prepared.station.get("limits") or {}).get("timeout")
         timeout_s = parse_duration(str(timeout)) if timeout else 0.0
         try:
@@ -400,9 +498,12 @@ class Runner:
                 inputs=prepared.beans,
                 params=job.params,
                 timeout_s=timeout_s,
+                reset=lease is None,
             )
         except FactoryError as exc:
             return self._fail(job, exc.code, exc.message, dict(exc.detail))
+        if lease is not None:
+            lease.stage_out(prepared.attempt_dir)
         job = self._transition(job, JobState.GATING, "inspect")
         return self._finish(job, sandbox, prepared)
 
@@ -666,9 +767,11 @@ class Runner:
                 op_volume = "mao-op-" + hexpart[:12]
                 self.ctx.provider.prepare_inject_volume(volume_ref, op_volume)
                 mounts.append(Mount(source="volume:" + op_volume, target=inject["mount"], readonly=True))
+        from mao.instances import instance_config
         from mao.sandbox import sandbox_resources
 
         resources = sandbox_resources(machine)
+        command = instance_config(machine).command
         return SandboxSpec(
             name=f"mao-{job.id}-{job.attempt}",
             image=image,
@@ -683,6 +786,7 @@ class Runner:
             tmp_mb=resources["tmp_mb"],
             pids=resources["pids"],
             writable=tuple(resources["writable"]),
+            command=command,
         )
 
     def _workspace(self, job: Job, attempt_dir: Path, machine: Mapping[str, Any]) -> None:
@@ -1075,6 +1179,16 @@ class Runner:
             return FactoryError(
                 "COMPOSE_UNSUPPORTED", "M1 不运行 compose 机器", station=job.station, machine=machine_key
             )
+        from mao.instances import instance_config
+
+        try:
+            cfg = instance_config(machine)
+        except FactoryError as exc:
+            if exc.code == "INSTANCE_INVALID":
+                return exc
+            raise
+        if cfg.mode != "once" and self.instances is None:
+            return FactoryError("INSTANCE_UNSUPPORTED", "没有实例管理器", station=job.station)
         return None
 
     def _fail(self, job: Job, code: str, message: str, detail: dict[str, Any]) -> Job:
@@ -1773,12 +1887,31 @@ def _insert_event(conn: Any, ctx: Any, kind: str, job_id: str | None, data: Mapp
 
 def open_runner(ctx: Any, snapshot: Any) -> Runner:
     from mao.gateway import ServiceGateway
+    from mao.instances import Instances
 
-    return Runner(ctx, snapshot, gateway=ServiceGateway(ctx, snapshot))
+    holder: dict[str, Runner] = {}
+    instances = Instances(ctx, snapshot, runner_for=lambda: holder["runner"])
+    runner = Runner(ctx, snapshot, gateway=ServiceGateway(ctx, snapshot), instances=instances)
+    holder["runner"] = runner
+    return runner
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.write_bytes(canonical_json(dict(payload)).encode("utf-8"))
+
+
+def _copy_into(src: Path, dest: Path) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    if not src.exists():
+        return
+    for item in src.rglob("*"):
+        rel = item.relative_to(src)
+        target = dest / rel
+        if item.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(item, target)
 
 
 def _clear_children(path: Path) -> None:

@@ -27,9 +27,20 @@ KIND_SCHEMA = {
     "ConversionRequest": "records.schema.json#/$defs/conversionRequest",
     "GoldenSet": "records.schema.json#/$defs/goldenSet",
     "Baseline": "records.schema.json#/$defs/baseline",
+    "Agent": "agent.schema.json",
 }
 
-REGISTRY_KINDS = ("Type", "Machine", "OperatorRuntime", "Station", "Line", "Policy", "GoldenSet", "Baseline")
+REGISTRY_KINDS = (
+    "Type",
+    "Machine",
+    "OperatorRuntime",
+    "Station",
+    "Line",
+    "Policy",
+    "GoldenSet",
+    "Baseline",
+    "Agent",
+)
 MAX_ERRORS_PER_DOC = 20
 
 

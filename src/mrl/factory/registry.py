@@ -21,6 +21,7 @@ LAYOUT: list[tuple[str, str]] = [
     ("stations/*/station.yaml", "Station"),
     ("converters/*/station.yaml", "Station"),
     ("machines/*/machine.yaml", "Machine"),
+    ("agents/*.yaml", "Agent"),
 ]
 
 

@@ -44,7 +44,8 @@ _NAV = (
     '<a href="/approvals">approvals</a> '
     '<a href="/events">events</a> '
     '<a href="/metrics">metrics</a> '
-    '<a href="/inbox">inbox</a>'
+    '<a href="/inbox">inbox</a> '
+    '<a href="/instances">instances</a>'
     "</nav>"
 )
 _JSON = "application/json; charset=utf-8"
@@ -247,6 +248,20 @@ class ConsoleServer:
             return
         self._send(handler, 303, b"", _HTML, {"Location": f"/inbox/{request_id}"})
 
+    def _instances(self, query: dict[str, list[str]]) -> list[dict[str, Any]]:
+        from mao.commands.common import to_jsonable
+        from mao.instances import Instances
+
+        snapshot = self.snapshot
+        if snapshot is None and self.epochs is not None:
+            snapshot = self.epochs.materialize(self.epochs.current())
+        if snapshot is None:
+            return []
+        station = _one(query, "station")
+        state = _one(query, "state")
+        rows = Instances(self.ctx, snapshot).list(station=station, state=state)
+        return [to_jsonable(row) for row in rows]
+
     def _inbox_open(self) -> list[dict[str, Any]]:
         from mao.inbox import Inbox
 
@@ -354,6 +369,9 @@ class ConsoleServer:
         if parts == ["inbox"]:
             self._json(handler, 200, self._inbox_open())
             return
+        if parts == ["instances"]:
+            self._json(handler, 200, self._instances(query))
+            return
         if len(parts) == 2 and parts[0] == "inbox":
             self._json(handler, 200, self._inbox_one(parts[1]))
             return
@@ -402,6 +420,8 @@ class ConsoleServer:
             body = _html("events", _dl(self._events(query)))
         elif parts == ["inbox"]:
             body = _html("inbox", _dl(self._inbox_open()))
+        elif parts == ["instances"]:
+            body = _html("instances", _dl(self._instances(query)))
         elif len(parts) == 2 and parts[0] == "inbox":
             body = _html(parts[1], self._inbox_form(parts[1]))
         else:

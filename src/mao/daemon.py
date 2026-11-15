@@ -8,7 +8,7 @@ import os
 import subprocess
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +90,9 @@ class TickReport:
     audited: bool
     canaries: tuple[str, ...]
     wakes: tuple[str, ...]
+    instances: dict[str, list[str]] = field(
+        default_factory=lambda: {"started": [], "stopped": [], "failed": [], "crashed": []}
+    )
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -105,6 +108,7 @@ class TickReport:
             "audited": self.audited,
             "canaries": list(self.canaries),
             "wakes": list(self.wakes),
+            "instances": {key: list(value) for key, value in self.instances.items()},
         }
 
 
@@ -226,6 +230,8 @@ class Daemon:
         self._started_at = ""
         self._egress: Any = None
         self._model: Any = None
+        self.instances = self._make_instances()
+        self.ingress = None
 
     def start(self) -> Any:
         store = LeaseStore(self.ctx)
@@ -245,6 +251,8 @@ class Daemon:
         self._egress, self._model = start_owned_proxies(
             self.ctx, model_port=self.config.model_port, timeout_s=self.config.docker_timeout_s
         )
+        self.instances.recover()
+        self._start_ingress()
         self._heartbeat(())
         report = Recovery(self.ctx, self._runner_for_epoch).run_once()
         _event(self.ctx, "serve.started", {"owner": self.ctx.owner})
@@ -262,8 +270,10 @@ class Daemon:
         recovered = tuple(recovered_report.retried + recovered_report.dead + recovered_report.sealed)
         commits = self._active_epochs()
         triggered: list[str] = []
+        instance_report = {"started": [], "stopped": [], "failed": [], "crashed": []}
         if commits:
             active = self._bundle(commits[0])
+            instance_report = self.instances.reconcile(active.snapshot)
             active.scheduler.tick(pump=False, route=self.route)
             triggered = list(active.triggers.process(route=self.route))
         advanced: list[str] = []
@@ -317,6 +327,7 @@ class Daemon:
             audited,
             tuple(canaries),
             tuple(wakes),
+            {key: list(value) for key, value in instance_report.items()},
         )
         _event(
             self.ctx,
@@ -348,6 +359,9 @@ class Daemon:
 
     def shutdown(self, timeout_s: float) -> None:
         self.executor.stop(timeout_s)
+        if self.ingress is not None:
+            self.ingress.stop()
+            self.ingress = None
         for proxy in (self._model, self._egress):
             if proxy is not None:
                 proxy.close()
@@ -359,6 +373,7 @@ class Daemon:
         if self._keeper is not None:
             self._keeper.stop()
             self._keeper = None
+        self.instances.close()
         LeaseStore(self.ctx).release("serve", owner=self.ctx.owner)
         if self._started:
             _event(self.ctx, "serve.stopped", {"owner": self.ctx.owner, "reason": "shutdown"})
@@ -375,6 +390,41 @@ class Daemon:
 
     def _runner_for_epoch(self, epoch: str) -> Runner:
         return self._bundle(epoch).runner
+
+    def _active_runner(self) -> Runner:
+        commits = self._active_epochs()
+        return self._bundle(commits[0]).runner
+
+    def _start_ingress(self) -> None:
+        if self.epochs is None:
+            return
+        from mao.ingress import IngressServer, load_ingress_config
+
+        config = load_ingress_config(self.ctx.root)
+        if config is None:
+            return
+        self.ingress = IngressServer(
+            self.ctx,
+            self.epochs,
+            config,
+            instances=self.instances,
+            runner_for=self._runner_for_snapshot,
+        )
+        self.ingress.start()
+
+    def _runner_for_snapshot(self, snapshot: Any) -> Runner:
+        return self._bundle(snapshot.epoch).runner
+
+    def _make_instances(self) -> Any:
+        from mao.instances import Instances
+
+        if self.epochs is not None:
+            snapshot = self.epochs.materialize(self.epochs.current())
+        else:
+            from mao.snapshot import Snapshot
+
+            snapshot = Snapshot.load(self.registry)
+        return Instances(self.ctx, snapshot, runner_for=self._active_runner)
 
     def _single_epoch(self) -> str:
         return self._bundle("__single__").snapshot.epoch
@@ -415,7 +465,7 @@ class Daemon:
             return self._cache[key]
         runner = open_runner(self.ctx, snapshot)
         lines = open_line_runner(self.ctx, snapshot, runner)
-        scheduler = Scheduler(self.ctx, snapshot, runner)
+        scheduler = Scheduler(self.ctx, snapshot, runner, instances=self.instances)
         triggers = TriggerEngine(self.ctx, snapshot, lines)
         bundle = _Bundle(snapshot, runner, lines, scheduler, triggers)
         self._cache[key] = bundle
@@ -535,6 +585,7 @@ class Daemon:
             "last_tick_at": utc_iso(self.ctx.clock.now()),
             "epochs": list(commits),
             "running": list(self.executor.running()),
+            "ingress_port": None if self.ingress is None else self.ingress.port,
         }
         proxies = getattr(self.ctx, "proxies", None)
         if proxies is not None:
@@ -635,6 +686,21 @@ def run_serve(
 ) -> None:
     daemon = Daemon(ctx, config, executor=executor, registry=registry, epochs=epochs, pipeline=pipeline)
     thread: threading.Thread | None = None
+    agent_thread: threading.Thread | None = None
+    agent_timeout = 60.0
+    if epochs is not None:
+        from mao.agents import AgentHost, AgentsConfig
+
+        try:
+            host = AgentHost(ctx, epochs, AgentsConfig.load(ctx.root), pipeline=pipeline)
+        except FactoryError as exc:
+            if exc.code != "AGENTS_CONFIG_MISSING":
+                raise
+            host = None
+        if host is not None:
+            agent_timeout = host.max_turn_timeout_s() + 60
+            agent_thread = threading.Thread(target=host.serve, args=(stop,), name="mao-agents", daemon=True)
+            agent_thread.start()
     if config.supervise:
         from mao.supervisor import ForemanSupervisor, SupervisorConfig
 
@@ -655,6 +721,8 @@ def run_serve(
 
             timeout = float(SupervisorConfig.load(ctx.root).session_timeout_s) + 60
             thread.join(timeout)
+        if agent_thread is not None:
+            agent_thread.join(agent_timeout)
 
 
 def _default_executor(ctx: Any, config: ServeConfig) -> ProcessExecutor:
