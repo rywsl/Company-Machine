@@ -13,6 +13,38 @@ from mao.talk import answer  # noqa: E402
 from tests.acceptance.m15.talk_world import cards, hold_serve, open_world  # noqa: E402
 
 
+def _foreman_raw(world, name: str, arguments: dict) -> dict:
+    """厂长会话的原始 JSON-RPC 回复。未知工具是协议错误，没有 result。"""
+    from mao.mcp import McpServer, Session
+
+    server = McpServer(
+        world.ctx,
+        world.epochs,
+        Session(role="foreman", actor="fake-agent@1"),
+        pipeline=world.pipeline(),
+    )
+    server.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "t", "version": "0"},
+            },
+        }
+    )
+    return server.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+    )
+
+
 def _propose(world, bean: str) -> str:
     world.script(
         {
@@ -50,7 +82,7 @@ def test_propose_run_records_card_only(tmp_path: Path) -> None:
     bean = world.sealed_note("hello factory\n")
     card_id = _propose(world, bean)
     assert world.rows("SELECT id FROM runs") == []
-    reply = world.mcp("run_start", {"line": "note-trigger@1", "inputs": {"note": bean}})
+    reply = _foreman_raw(world, "run_start", {"line": "note-trigger@1", "inputs": {"note": bean}})
     assert reply.get("error", {}).get("message") == "unknown tool"
     assert cards(world, "run")[0].id == card_id
     from mao.inbox import Inbox
@@ -133,7 +165,13 @@ def test_confirm_follows_epoch_router(tmp_path: Path) -> None:
     from mao.base import canonical_json
     from mao.governance.rollout import EpochRouter
     from mao.talk import answer
-    from tests.acceptance.m3.gov_world import ROLLOUT, changeset_doc, commit_change, toolbox_v2_image, upsert
+    from tests.acceptance.m3.gov_world import (
+        ROLLOUT,
+        changeset_doc,
+        commit_change,
+        toolbox_v2_image,
+        upsert,
+    )
 
     world = open_world(tmp_path)
     hold_serve(world.ctx)

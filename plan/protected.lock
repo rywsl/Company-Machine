@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-15T07:25:26Z",
+  "updated_at": "2026-11-15T13:34:39Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -48,7 +48,7 @@
     "plan/design-resident.md": "82406c73db4e453378dfd53543d6c72396e1437bbdae0fcb0be1c09a191cf945",
     "plan/design-talk.md": "5b1bcaa2c06476ac171a3b5722cdabc9d268fb263415e376d4e6c42820c90cf5",
     "plan/drift.md": "801fb5c4ea8ed148e948ac686d8def01b1849a5aff95f276c4bad61ac855dde6",
-    "plan/gates.yaml": "8847a3eb57b7b76f9d14e38ced18566d5dcb03cbcc97b92209d76d4cf57ada36",
+    "plan/gates.yaml": "b4c939f8196ac33658acafb5a0d9f33171267b5bd7ff9a207388fe736b4cb31a",
     "plan/milestones.md": "9fbd8fcef1d34de48b8b51e8287d000d7a2caa4130429dbdf45176c6a3396cab",
     "plan/review-closure.md": "9f009828e43961142dda014cf8370d189ef7bec74048d65757e1d8d755159d6b",
     "plan/review-m5-m7.md": "8c84f7eedd77dec795a24458ebc3ca2c8436a13329098b6277b1816943139632",
@@ -280,7 +280,7 @@
     "tests/acceptance/m15/talk_world.py": "a9c8e1f4ff177840992aca0d795ea04bb0ce5b9b2fae12dd03f7bb5635e37b1a",
     "tests/acceptance/m15/test_m15_01_thread.py": "4cdef2f96e95d15f8d6021eca77d41973e19e5acdfb9d4d36a2e59e7e9fd20c1",
     "tests/acceptance/m15/test_m15_02_cards.py": "4e17ad519a2fec92142bd188fe334ec2c5edb8c367985fa1afc0c2cfd6ad3562",
-    "tests/acceptance/m15/test_m15_03_confirm.py": "3e09441983e770c2dd4c94f4c6a80ec05cc2f8c40e8dd38e7b3f7440d9b3053d",
+    "tests/acceptance/m15/test_m15_03_confirm.py": "e4702283d41f13ab376372e8ec1925ffb17098dd080a90b5c2879668218f9981",
     "tests/acceptance/m2/test_m2_01_runplan.py": "49b33ae4e7380ec77c2a331a21ded648efcda212a082c1ec6aec8bb2a0013087",
     "tests/acceptance/m2/test_m2_02_runs_store.py": "a9fa6581e7baa38fb63969530dd9a069201dbae3907c287005556b27c0e2ff04",
     "tests/acceptance/m2/test_m2_03_line_runner.py": "57f96f3adecd809d0a351d87a9b57f46b2a068590013ebe37569a28f8da44fa2",

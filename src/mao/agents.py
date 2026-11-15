@@ -16,12 +16,13 @@ from mao.errors import FactoryError
 _LABEL = re.compile(r"^[^=\s]+=[^=\s]+$")
 _LOG = __import__("logging").getLogger("mao.agents")
 _RESIDENT_NAME = "foreman"
+_TALK_OBLIGATION = "本轮有 human talk 消息时必须 talk_reply。"
 _FOREMAN_CHARTER = (
     "你是这座工厂的厂长。\n"
     "/workspace/registry 是 active epoch 的 Registry 克隆。\n"
     "用 MCP 服务器 factory 的工具查询工厂。需要改结构时：在 /workspace/registry 提交 git commit，"
     "然后调用 changeset_propose，commit 填你的提交。\n"
-    "处理完就退出。"
+    "处理完就退出。\n" + _TALK_OBLIGATION
 )
 _REMIND_MIN_S = 60.0
 _REMIND_MAX_S = 30 * 24 * 3600.0
@@ -766,6 +767,11 @@ class AgentHost:
             },
         )
         self._settle_wakes(pending, state, error, server)
+        if self.foreman is not None and name == _RESIDENT_NAME:
+            from mao.talk import settle_foreman_turn
+
+            replied = False if server is None else bool(server.outcome.get("talk_replied"))
+            settle_foreman_turn(self.ctx, pending, state, replied)
         return self._turn(turn_id)
 
     def rotate(self, name: str) -> None:
@@ -949,7 +955,7 @@ class AgentHost:
             docker = getattr(self.ctx.provider, "name", "") == "docker"
             env.update(proxy_env(self.ctx.proxies, docker=docker))
         session = (
-            Session("foreman", runtime_ref, None, turn_id, source)
+            Session("foreman", runtime_ref, turn_id, turn_id, source)
             if builtin
             else Session("agent", runtime_ref, None, turn_id, None, name)
         )
@@ -1634,6 +1640,8 @@ def _task_text(cfg: AgentConfig, messages: list[Message], session: str | None, w
         lines.append(f"[{index}] {message.kind} {message.source} {message.created_at} {message.id}")
         lines.append(canonical_json(message.body))
     parts.append("\n".join(lines))
+    if cfg.name == _RESIDENT_NAME and any(message.kind == "talk" for message in messages):
+        parts.append(_TALK_OBLIGATION)
     return "\n\n".join(parts)
 
 

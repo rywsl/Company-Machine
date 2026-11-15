@@ -400,6 +400,7 @@ class ChangePipeline:
                     canonical_json({"id": cs_id, "from": "verifying", "to": "verified", "code": None}),
                 ),
             )
+            _note_talk(self.ctx, cs_id, "verified")
         return self.get(cs_id)
 
     def tick(self) -> list[ChangeSet]:
@@ -531,6 +532,7 @@ class ChangePipeline:
                     canonical_json({"id": current.id, "from": current.state, "to": "rejected", "code": code}),
                 ),
             )
+            _note_talk(self.ctx, current.id, "rejected")
         return self.get(current.id)
 
     def _write_state(
@@ -551,6 +553,7 @@ class ChangePipeline:
                     canonical_json({"id": current.id, "from": current.state, "to": state, "code": code}),
                 ),
             )
+            _note_talk(self.ctx, current.id, state)
 
     def _validate(self, doc: Mapping[str, Any]) -> None:
         spec = doc.get("spec") or {}
@@ -664,3 +667,9 @@ def _split_kind(key: str) -> str:
 
 def _parse(text: str) -> datetime:
     return datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+
+
+def _note_talk(ctx: Any, changeset_id: str, state: str) -> None:
+    from mao.talk import note_status
+
+    note_status(ctx, "changeset", changeset_id, state)

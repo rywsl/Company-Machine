@@ -40,6 +40,7 @@ from mao.commands import (
     serve,
     source,
     status,
+    talk,
     trigger,
 )
 from mao.commands.common import GLOBAL, GLOBAL_DEFAULTS, report_error
@@ -79,6 +80,7 @@ _REGISTRARS = (
     mcp.register,
     serve.register,
     status.register,
+    talk.register,
 )
 
 

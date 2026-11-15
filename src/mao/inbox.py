@@ -180,6 +180,9 @@ class Inbox:
                 ),
             )
             _event(conn, self.ctx, "inbox.closed", {"id": request_id, "status": status, "by": by})
+            from mao.talk import note_status
+
+            note_status(self.ctx, "inbox", request_id, status)
         if current.origin.startswith("agent:") and status in ("answered", "cancelled", "expired"):
             from mao.agents import Mailbox
 

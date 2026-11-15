@@ -1157,6 +1157,9 @@ class DynamicRunner:
         )
         previous = run.state.value if hasattr(run.state, "value") else str(run.state)
         self._event(conn, run.id, "run.state", {"from": previous, "to": "FAILING", "reason": "budget"})
+        from mao.talk import note_status
+
+        note_status(self.ctx, "run", run.id, "FAILING")
 
     def _event(self, conn: Any, run_id: str, kind: str, data: Mapping[str, Any]) -> None:
         conn.execute(

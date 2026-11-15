@@ -796,6 +796,9 @@ class LineRunner:
             ),
         )
         self._event(conn, run.id, "run.state", {"from": run.state.value, "to": state.value, "reason": reason})
+        from mao.talk import note_status
+
+        note_status(self.ctx, "run", run.id, state.value)
         return self.get(run.id)
 
     def _event(self, conn: Any, run_id: str, kind: str, data: Mapping[str, Any]) -> None:

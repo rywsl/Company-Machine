@@ -357,6 +357,7 @@ def _promote(pipeline: Any, current: Any) -> Any:
                 json.dumps({"id": current.id, "from": current.state, "to": "active", "code": None}),
             ),
         )
+        _note_talk(pipeline.ctx, current.id, "active")
     _rebuild(pipeline, current)
     return pipeline.get(current.id)
 
@@ -398,6 +399,7 @@ def _rollback(pipeline: Any, current: Any, violation: dict[str, Any]) -> Any:
                 ),
             ),
         )
+        _note_talk(pipeline.ctx, current.id, "rolled-back")
     if pipeline.epochs.current() != current.base_epoch:
         pipeline.epochs.rollback(current.base_epoch, by="governance")
     else:
@@ -434,6 +436,7 @@ def _move(pipeline: Any, current: Any, state: str, detail: dict[str, Any], stamp
                 json.dumps({"id": current.id, "from": current.state, "to": state, "code": None}),
             ),
         )
+        _note_talk(pipeline.ctx, current.id, state)
     return pipeline.get(current.id)
 
 
@@ -509,3 +512,9 @@ def _queued(pipeline: Any) -> bool:
 
 def canonical_report(stage: str, ok: bool, code: str | None, detail: dict[str, Any]) -> str:
     return json.dumps({"stage": stage, "ok": ok, "code": code, "detail": detail})
+
+
+def _note_talk(ctx: Any, changeset_id: str, state: str) -> None:
+    from mao.talk import note_status
+
+    note_status(ctx, "changeset", changeset_id, state)

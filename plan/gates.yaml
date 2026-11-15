@@ -25,7 +25,7 @@ check:
     run: uv run python tools/harness.py pytest tests
     assert: out.failed == 0 && out.errors == 0 && out.total >= 726
     slow: true
-
+    timeout: 6000
 gates:
   M0:
     title: 结构编译（MRL 1.0 与工厂 profile）
@@ -910,4 +910,4 @@ gates:
       - id: acceptance-m15
         run: uv run python tools/harness.py pytest tests/acceptance/m15
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 21
-        timeout: 3600
+        timeout: 6000

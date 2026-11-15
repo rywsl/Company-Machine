@@ -48,6 +48,8 @@ _FOREMAN = (
     "approval_escalate",
     "secret_request",
     "secret_verify",
+    "talk_propose_run",
+    "talk_reply",
 )
 _REVIEWER = ("review_submit",)
 _AGENT = ("run_start", "ask_human", "remind", "agent_send")
@@ -85,10 +87,15 @@ class McpServer:
         self.initialized = False
         self._secrets = SecretStore(ctx.root)
         self._outcome: dict[str, list[str]] = {"proposed": [], "reviewed": []}
+        self._talk_replied = False
 
     @property
-    def outcome(self) -> dict[str, list[str]]:
-        return {"proposed": list(self._outcome["proposed"]), "reviewed": list(self._outcome["reviewed"])}
+    def outcome(self) -> dict[str, Any]:
+        return {
+            "proposed": list(self._outcome["proposed"]),
+            "reviewed": list(self._outcome["reviewed"]),
+            "talk_replied": self._talk_replied,
+        }
 
     def tools(self) -> list[dict[str, Any]]:
         names = list(_SHARED)
@@ -229,6 +236,7 @@ class McpServer:
                 timeout_s=self.epochs.timeout_s,
             )
             self._outcome["proposed"].append(found.id)
+            self._talk_card("changeset", found)
             return found
         if name == "changeset_withdraw":
             return submit.withdraw(str(arguments["changeset_id"]), by=self.session.actor)
@@ -262,7 +270,9 @@ class McpServer:
             )
             return self._approvals().view(found.id)
         if name == "escalate":
-            return self._escalate(arguments)
+            found = self._escalate(arguments)
+            self._talk_card("escalate", found)
+            return found
         if name == "inbox_get":
             from mao.inbox import Inbox
 
@@ -284,8 +294,33 @@ class McpServer:
                 state=None if state in (None, "") else str(state),
             )
             return [to_jsonable(row) for row in rows]
+        if name == "talk_propose_run":
+            from mao.talk import propose_run
+
+            return propose_run(
+                self.ctx,
+                str(arguments["line"]),
+                arguments["inputs"],
+                by=self.session.actor,
+                turn_id=self.session.wake_id or "",
+                sink_mode=str(arguments.get("sink_mode") or "execute"),
+            )
+        if name == "talk_reply":
+            from mao.talk import talk_reply
+
+            found = talk_reply(
+                self.ctx,
+                arguments["text"],
+                by=self.session.actor,
+                turn_id=self.session.wake_id or "",
+                in_reply_to=arguments.get("in_reply_to"),
+            )
+            self._talk_replied = True
+            return found
         if name == "secret_request":
-            return self._secret_request(arguments)
+            found = self._secret_request(arguments)
+            self._talk_card("secret", found)
+            return found
         if name == "secret_verify":
             return self._secret_verify(arguments)
         if name == "review_submit":
@@ -388,6 +423,31 @@ class McpServer:
             summary=str(arguments["summary"]),
             payload={"detail": detail, "options": list(options)},
         )
+
+    def _talk_card(self, kind: str, result: Any) -> None:
+        if self.session.role != "foreman" or not self.session.wake_id:
+            return
+        try:
+            from mao.supervisor import SupervisorConfig
+
+            if SupervisorConfig.load(self.ctx.root).mode != "resident":
+                return
+        except FactoryError:
+            return
+        rows = self.ctx.db.query(
+            "SELECT id FROM agent_turns WHERE id = ? AND agent = 'foreman' AND state = 'running'",
+            (self.session.wake_id,),
+        )
+        if not rows:
+            return
+        from mao.talk import append_changeset_card, append_escalate_card, append_secret_card
+
+        if kind == "changeset":
+            append_changeset_card(self.ctx, result)
+        elif kind == "escalate":
+            append_escalate_card(self.ctx, result)
+        elif kind == "secret":
+            append_secret_card(self.ctx, result)
 
     def _fetch_session(self) -> None:
         if self.session.source_repo is None or self.session.session_id is None:
@@ -591,6 +651,18 @@ _SCHEMAS: dict[str, tuple[dict[str, Any], list[str]]] = {
     "secret_verify": (
         {"name": {"type": "string"}, "station": {"type": "string"}},
         ["name", "station"],
+    ),
+    "talk_reply": (
+        {"text": {"type": "string"}, "in_reply_to": {"type": "string"}},
+        ["text"],
+    ),
+    "talk_propose_run": (
+        {
+            "line": {"type": "string"},
+            "inputs": {"type": "object"},
+            "sink_mode": {"type": "string"},
+        },
+        ["line", "inputs"],
     ),
     "run_start": (
         {"line": {"type": "string"}, "inputs": {"type": "object"}},
