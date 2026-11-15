@@ -11,6 +11,8 @@
 > 本文件与 `console.md`、`egress.md`、`factoryctl.md`、`mcp.md`、`commands.md` 冲突时，以本文件为准。
 > **M12/M13 增补**：`agent:` 来源的事项结案后投回 Agent 邮箱（不开唤醒票）见 `agents.md` 5.2（M13）。冲突时以新规范为准。
 
+> **M15 增补**：见文末。冲突时以 `talk.md` 为准。
+
 ---
 
 ## 1. 目的与范围
@@ -586,3 +588,11 @@ handler 每次轮询同一个请求 id 时，调用 `poll_handoff(ctx, Inbox.fin
 - **人工协助的耗时**：等人的时间算在 job 的 `limits.timeout` 里。工位的超时要留出余量。
 - **截图内容**：截图可能含有账号信息。它只存在工厂目录里，钩子不发送截图。
 - **实时画面**：以后的实时远程浏览器复用 `handoff` 事项，`view.kind` 用 `live`，回答格式不变。
+
+## M15 增补
+
+未回复或被丢弃的 human talk，以及运行提议，由控制面 `Inbox.open("question", ...)`，`origin` 为 `talk:` 加对应的线程消息 id（`talk.md` 5.3、5.6）。秘密、审批、签核的写入仍只走 `Inbox.answer`。线程只渲染卡片。关掉通知不启动 run，也不把线程标成已回复。
+
+`Inbox.close` 在更新状态之后调用 `mao.talk.note_status(ctx, "inbox", request_id, status)`，不传入 `answer`。秘密值不进线程正文。
+
+冲突时以 `talk.md` 为准。

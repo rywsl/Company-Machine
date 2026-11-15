@@ -5,6 +5,8 @@
 > 每条命令的参数与语义**以所在组件规范为准**。本文件只规定：命令清单、全局选项、快照的选择、JSON 输出的形状、退出码的映射和代码组织。
 > M10 增加 `factory receipt`、`factory source run`、`factory run` 三组命令，见 `wiring.md` 5.2。
 
+> **M15 增补**：见文末。冲突时以 `talk.md` 为准。
+
 ---
 
 ## 1. 目的与范围
@@ -273,3 +275,16 @@ snapshot = epochs.materialize(EpochRouter(ctx, epochs).choose(key))
 - **长命令**：`line run` 同步执行，可能运行很久。它不是守护进程；长期运行用 `factory serve`（`daemon.md`）。
 - **并发打开**：命令行与守护进程可以同时打开同一个 `factory.db`（WAL）。写操作都经组件接口的事务，命令行不持有长事务。
 - **Windows**：stdout 用 UTF-8（`cli.md` 第 9 章已有约定）。
+
+## M15 增补
+
+增加一组命令，模块 `mao/commands/talk.py`，由 `mao.cli` 的 `_REGISTRARS` 注册：
+
+| 命令 | 调用 |
+|---|---|
+| `talk ls` | `list_messages` |
+| `talk show ID` | `show` |
+| `talk send --by NAME TEXT` | `post_human` |
+| `talk answer ID --by NAME [--confirm]` | `answer`；没有 `--confirm` 时 `confirm=False` |
+
+命令不写表，不调用 `LineRunner`、`ChangePipeline` 或 `Inbox`。M15 不加控制台路由。语义以 `talk.md` 为准。

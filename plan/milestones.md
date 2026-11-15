@@ -12,6 +12,7 @@ M7 运维与生产化 ◀── M6 真实接入 ◀── M5 自治闭环（含 
    │
    ▼
 M8 交付审查纠偏 ──▶ M9 闭环审查纠偏 ──▶ M10 接线审查纠偏
+M10 接线审查纠偏 ──▶ M11 委托与能力 ──▶ M12 常驻机器与入站 ──▶ M13 常驻 Agent ──▶ M14 跨端口来料约束 ──▶ M15 人与厂长的持久对话
 ```
 
 每个里程碑结束时，系统都处于可以使用、可以交接的状态，而不是半成品。
@@ -310,6 +311,21 @@ M1-01 基础设施 ──┬─▶ M1-02 快照与求值环境 ──┐
 **规范**：`spec/system/admit.md`；设计 `plan/design-admit.md`。
 
 **任务与退出条件**：见 `plan/tasks.yaml` 中的 M14-01、M14-02 和 `plan/gates.yaml` 中的阶段门 M14（继承 M13 的全部检查）。
+
+---
+
+
+## M15 人与厂长的持久对话
+
+**目标**：给人与常驻厂长一条工厂级线程。对话是意图通道，卡片是命令。控制面不调用模型。人的话进入线程和厂长邮箱；厂长用 `talk_reply` 写回。配置仍走 `changeset_propose`。产出产线先记运行卡片，人确认后控制面才 `start_run`（`plan/design-talk.md`）。
+
+**范围**：表 `talk_messages`；`post_human`、`talk_reply`、`factory talk ls/send/show`；未回复和邮箱丢弃时开收件箱事项；常驻厂长轮次里的 ChangeSet、上报、秘密申请卡片及后来的状态；`talk_propose_run`（含通知）与 `factory talk answer --confirm`（含 `EpochRouter`）。
+
+**不做**：Web 与控制台路由；对话里改宪法、`factory.json`、合入、回滚；模型直接 `start_run`；把全厂 `bean.sealed` 灌进线程。
+
+**规范**：`spec/system/talk.md`；设计 `plan/design-talk.md`。
+
+**任务与退出条件**：见 `plan/tasks.yaml` 中的 M15-01、M15-02、M15-03 和 `plan/gates.yaml` 中的阶段门 M15（继承 M14 的全部检查，`requires_gates: [M14]`）。
 
 ---
 

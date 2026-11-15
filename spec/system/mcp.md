@@ -6,6 +6,8 @@
 > 厂长新增 `approval_get`、`approval_decide`、`approval_escalate`（`delegation.md` 3.3）与 `escalate`、`inbox_get`、`inbox_list`、`secret_request`、`secret_verify`（`inbox.md` 3.5），M11。
 > **M12/M13 增补**：`instance_list` 见 `instances.md` 3.5（M12）；`Session.agent`、`agent` 角色与它的工具见 `agents.md` 3.4（M13）。冲突时以新规范为准。
 
+> **M15 增补**：见文末。冲突时以 `talk.md` 为准。
+
 ---
 
 ## 1. 目的与范围
@@ -291,3 +293,11 @@ return {"jsonrpc": "2.0", "id": i, "result": {"content": [...], "isError": True}
 - **大结果**：`job_transcript` 可能很长。打码后整段返回，不截断（截断会让 agent 误判）。邮箱文件的大小没有上限。
 - **顺序**：`factoryctl mcp` 串行处理。agent 并发发送多条请求时会排队，这是有意的：控制面的写操作不需要并发。
 - **打码**：工具结果一律经过 `ForemanQuery` 已有的打码，`SECRET_LEAK` 时整段换成错误（`foreman.md` 3.2）。
+
+## M15 增补
+
+厂长增加工具 `talk_reply`、`talk_propose_run`（`talk.md` 3.4）。`reviewer` 与 `agent` 不列出。`talk_propose_run` 不调用 `start_run`。
+
+常驻厂长正在跑的轮次里，不论该轮是否已经消费 human talk，`changeset_propose`、`escalate`、`secret_request` 成功后按 `talk.md` 5.5 追加卡片。成功的 `talk_reply` 把 `outcome["talk_replied"]` 置为 `True`。`talk_reply` 的 `by` 用会话 actor，允许 `@`。
+
+冲突时以 `talk.md` 为准。

@@ -4,6 +4,8 @@
 > 现在能长期运转的只有“重复触发”：每张唤醒票起一次新的厂长会话，处理完退出，下一张票不继承对话（`supervisor.md` 5.1）。长期收集信息、接收不定期消息这类工作被打散成许多次会话，状态散落在系统里，每次再拼成新会话的上下文。本文件让 agent 常驻：容器长期存活，对话由 CLI 自己保存并在每批消息到来时续接，上下文在 agent 身上。
 > 依赖 M12：常驻沙箱沿用 `instances.md` 的做法，入站路由沿用 `ingress.md`。
 
+> **M15 增补**：见文末。冲突时以 `talk.md` 为准。
+
 ---
 
 ## 1. 目的与范围
@@ -406,7 +408,7 @@ CREATE TABLE agent_schedule (
 4. `rotate_pending` 为真 → 先做交接轮（5.6），再继续。
 5. **沙箱**：5.4。
 6. 插入 `running` 轮次（`id = ctx.ids.new("at")`，`number = turns_in_conv + 1`，`session` 为当前会话），消息置 `delivered`、`turn` 为本轮 id，写 `agent.turn.started`，`register_job_cap(db, 轮次 id, "agent", turn_usd)`。按 4.3 准备 `in/` 与 `ctl/`。内置厂长另按 5.8 第 3 步准备克隆。
-7. **调用**：`build_runtime_invocation(snapshot, runtime 引用, task=4.5 的文本, contract=4.5 的规则, model=cfg.model, max_turns=cfg.max_turns, budget_usd=cfg.turn_usd, timeout_s=cfg.turn_timeout_s, session=当前会话)`。`exec` 的 `env` 依次合并：`AgentsConfig.env`（内置厂长再并上 `foreman.env`）、调用的 `env`、`FACTORY_JOB_ID=<轮次 id>`（模型代理按它计费）、`FACTORY_ATTEMPT=1`、`FACTORY_TURN=<number>`、`FACTORY_ROLE`（`agent`；内置厂长为 `foreman`）、`FACTORY_AGENT=<名>`、`FACTORY_ACTOR=<runtime 引用>`；内置厂长再加 `supervisor.md` 5.1 的 `GIT_*` 变量（邮箱用轮次 id）。沙箱网络为 `egress` 时并上 `proxy_env`，并用 `expand_control_vars` 代入 `FACTORY_JOB_ID`、`FACTORY_ATTEMPT`、`MODEL_PROXY`、`EGRESS_PROXY`。超时 `turn_timeout_s`，stdout、stderr 写到 `turns/<id>/`。执行期间运行 `CtlServer(agents/<名>/ctl, McpCtlHandler(McpServer(ctx, epochs, Session("agent", runtime 引用, None, 轮次 id, None, agent=名), pipeline=…)))`，`exec` 返回后停止它。
+7. **调用**：`build_runtime_invocation(snapshot, runtime 引用, task=4.5 的文本, contract=4.5 的规则, model=cfg.model, max_turns=cfg.max_turns, budget_usd=cfg.turn_usd, timeout_s=cfg.turn_timeout_s, session=当前会话)`。`exec` 的 `env` 依次合并：`AgentsConfig.env`（内置厂长再并上 `foreman.env`）、调用的 `env`、`FACTORY_JOB_ID=<轮次 id>`（模型代理按它计费）、`FACTORY_ATTEMPT=1`、`FACTORY_TURN=<number>`、`FACTORY_ROLE`（`agent`；内置厂长为 `foreman`）、`FACTORY_AGENT=<名>`、`FACTORY_ACTOR=<runtime 引用>`；内置厂长再加 `supervisor.md` 5.1 的 `GIT_*` 变量（邮箱用轮次 id）。沙箱网络为 `egress` 时并上 `proxy_env`，并用 `expand_control_vars` 代入 `FACTORY_JOB_ID`、`FACTORY_ATTEMPT`、`MODEL_PROXY`、`EGRESS_PROXY`。超时 `turn_timeout_s`，stdout、stderr 写到 `turns/<id>/`。执行期间运行 `CtlServer(agents/<名>/ctl, McpCtlHandler(McpServer(ctx, epochs, Session("agent", runtime 引用, None, 轮次 id, None, agent=名), pipeline=…)))`，`exec` 返回后停止它。这一行的 `Session("agent", runtime 引用, None, 轮次 id, None, agent=名)` 只描述 agent 角色，`wake_id` 保持 `None`。内置厂长不要按这一行改：厂长分支以 5.8 第 3 步和 `talk.md` 3.4 为准，把 `wake_id` 从 `None` 改成轮次 id，`session_id` 保持为轮次 id。
 8. **判定**，与 `supervisor.md` 5.5 相同的顺序：超时 → `timeout`（`SESSION_TIMEOUT`）；`budget_stops` 有本轮 → `failed`（该码）；退出码非 0 或摘要 `is_error` → `failed`（`SESSION_FAILED`，`detail.exit_code`）；其余 `ok`。`cost_usd` 取摘要的成本，没有摘要为 0。
 9. **`ok`**：本轮消息置 `done`。工作轮另外：`agents.session` = 摘要的 `session_id`（没有时保留旧值），`turns_in_conv + 1`，`last_tokens` = 摘要的 `input_tokens`；`number >= rotate_turns` 或 `input_tokens >= rotate_tokens` → `rotate_pending = 1`。
 10. **不是 `ok`**：本轮消息 `attempts + 1`，回到 `pending`、`turn` 置空；`attempts >= 3` 的改为 `dropped`（`turn` 保留），之后 `Inbox.open("question", subject=ctx.ids.new("aq"), origin="agent:" + 名, summary=f"agent {名} 连续 3 轮失败，{k} 条消息已丢弃", payload={"options": ["知道了"], "messages": [...id]})`，写 `agent.dropped`。`agents` 行不变：下一轮仍续接同一段对话，`number` 不变。
@@ -447,7 +449,7 @@ CREATE TABLE agent_schedule (
 
 1. 内置 Agent `foreman`：`foreman_agent(snapshot, foreman)` 从 `foreman` 段构造：`runtime`（解析为键）、`model`、`max_turns` 照搬；`turn_timeout_s = session_timeout_s`，`turn_usd = session_budget_usd`，`daily_usd = daily_budget_usd`；`batch`、`rotate_*` 取缺省；`charter` 是固定的厂长任务书（`supervisor.md` 4.7 的厂长任务书去掉“处理唤醒票 {wake.id}”与具体 epoch）；`digest` 是 `foreman` 段的摘要；runtime 没有 `invoke.resume` → `AGENT_INVALID`（`reason = "runtime"`）。沙箱镜像用 `foreman.image`、网络用 `foreman.network`；不在 Registry 里，不受 ChangeSet 管理。
 2. `WakeQueue.next` 增加关键字参数 `signals: tuple[str, ...] | None = None`（只取这些信号；空元组 → `None`）与 `exclude: tuple[str, ...] = ()`（不取这些信号）。`ForemanSupervisor.run_once` 在常驻模式下用 `signals=("review",)`；`AgentHost.collect` 第 3 步循环 `next(by="agents", exclude=("review",))`，把每张票作为 `post("foreman", "wake", "wake:" + id, {"wake": 票的全部字段})`，票保持 `taken`。`ForemanSupervisor` 的恢复与会话异常处理只重开 `by` 不是 `"agents"` 的 `taken` 票：`agents` 取走的票由邮箱负责。
-3. 厂长 Agent 的 MCP 角色是 `foreman`（工具与一次性会话相同），`Session("foreman", runtime 引用, None, 轮次 id, agents/foreman/workspace/registry)`。克隆：`.git` 不存在时按 `supervisor.md` 5.1 第 7 步克隆、拉取 `refs/factory/*` 与 `refs/changesets/*` 并检出 active；已存在时每轮开始前只做这次 `fetch`，不检出，保留厂长未提交的工作。
+3. 厂长 Agent 的 MCP 角色是 `foreman`（工具与一次性会话相同），`Session("foreman", runtime 引用, 轮次 id, 轮次 id, agents/foreman/workspace/registry)`。相对现有的 `Session("foreman", runtime 引用, None, 轮次 id, ...)`，只把第三个参数从 `None` 改成轮次 id，第四个 `session_id` 保持为轮次 id。留着 `None` 才会在轮次里得到 `TALK_NOT_IN_TURN`。把轮次 id 从 `session_id` 挪走才会拆掉 `changeset_propose`。agent 角色那一支不变。不要按 5.3 第 7 步的 `Session("agent", ...)` 去改厂长分支。细节与冲突时以 `talk.md` 3.4 为准。克隆：`.git` 不存在时按 `supervisor.md` 5.1 第 7 步克隆、拉取 `refs/factory/*` 与 `refs/changesets/*` 并检出 active；已存在时每轮开始前只做这次 `fetch`，不检出，保留厂长未提交的工作。
 4. 一轮结束后，对本轮里每条 `wake` 消息（票仍为 `taken` 时）：
    - 本轮 `ok`：`signal == "conversion"` 且 `server.outcome["proposed"]` 为空 → 失败处理，码 `SESSION_NO_OUTCOME`；`signal == "approval"` 且这条审批仍待厂长决定 → 失败处理，码 `APPROVAL_UNDECIDED`；其余 → 票 `done`（`by = "agents"`；转换票先照 `supervisor.md` 5.5 把转换需求标为 `in_progress`）。失败处理同 `supervisor.md` 5.5：`attempts + 1 >= max_attempts` → `fail`，否则 `reopen`（`failed=True`，`not_before = now + backoff_s × 2^attempts`）。
    - 本轮不是 `ok`：票保持 `taken`，消息照 5.3 重试；消息被丢弃时票 `fail`，码为本轮的错误码。
@@ -540,3 +542,15 @@ CREATE TABLE agent_schedule (
 | M13-03 | 轮次、沙箱、预算、失败与恢复、命令行、`serve` 装配；`McpServer` 接受 `agent` 角色（3.4 第一段，只有共享只读工具）；`fake_agent` 增补（由设计方安装） | M13-02 | 3.4 第一段、4.2–4.5、5.3–5.5、5.7 | `mao.agents`、`mao.mcp`、`mao.commands.agent`、`mao.daemon` | `test_m13_03_turns.py` |
 | M13-04 | 上下文轮换、`agent` 角色的四个 MCP 工具 | M13-03 | 3.4、5.6 | `mao.agents`、`mao.mcp` | `test_m13_04_context.py` |
 | M13-05 | 厂长常驻模式 | M13-04 | 5.8 | `mao.agents`、`mao.supervisor`、`mao.foreman` | `test_m13_05_foreman.py` |
+
+## M15 增补
+
+`Mailbox` 增加来源：`post_human` 投 `kind = talk`（`talk.md` 4.2）。`collect` 不产生这种消息。
+
+常驻厂长任务书增加原文：`本轮有 human talk 消息时必须 talk_reply。` 工作轮提示在本批含 `kind = talk` 时再附同一句（`talk.md` 5.4）。
+
+内置厂长一轮结束后：本轮 `ok`、消费了 human talk、且 `McpServer.outcome["talk_replied"]` 不为真时，按 `talk.md` 5.3 把这些消息标成 `unanswered` 并开收件箱事项。不是 `ok` 且消息仍会重试时不标。邮箱消息被标成 `dropped` 时，同样标 `unanswered` 并开事项。
+
+常驻厂长启动 MCP 时，把 `wake_id` 从 `None` 改成轮次 id，`session_id` 保持为轮次 id（5.8，`talk.md` 3.4）。留着 `None` 才会在轮次里得到 `TALK_NOT_IN_TURN`。把轮次 id 从 `session_id` 挪走才会拆掉 `changeset_propose`。
+
+冲突时以 `talk.md` 为准。

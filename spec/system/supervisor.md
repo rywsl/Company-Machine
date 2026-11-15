@@ -6,6 +6,8 @@
 > `approval` 与 `inbox` 唤醒票的角色、跳过条件、task 与结果判定见 `delegation.md` 5.8（M11），冲突时以它为准。
 > **M12/M13 增补**：`SupervisorConfig.mode` 与厂长常驻模式见 `agents.md` 5.8（M13）：常驻模式下 `run_once` 只取复核票，恢复与会话异常处理不重开 `by = "agents"` 的票。冲突时以新规范为准。
 
+> **M15 增补**：见文末。冲突时以 `talk.md` 为准。
+
 ---
 
 ## 1. 目的与范围
@@ -593,3 +595,9 @@ wake_queue.reopen(wake.id, not_before=None, failed=True, by="supervisor")
 - **提示注入**：唤醒票的载荷只有 id 和错误码（`foreman.md` 5.1 第 2 条），不把外部物料的原文放进 task。厂长要看内容时经 MCP 查询，结果已打码。
 - **Windows**：会话目录用 `pathlib`；git 与 CLI 都以参数列表调用，禁止 `shell=True`。`LocalProvider` 下 `/workspace` 被替换成宿主路径，git 接受混合斜杠。
 - **并发**：值守与 `factory serve` 是两个租约、两个 Context。不要把 `Context` 传给别的线程（`daemon.md` 5.7）。
+
+## M15 增补
+
+复核者仍是一次性会话，不使用 `talk_reply`，不写工厂线程。常驻厂长的任务书按 `talk.md` 5.4 增加必须 `talk_reply` 的那句。`run_once` 在常驻模式下仍只取复核票。
+
+冲突时以 `talk.md` 为准。

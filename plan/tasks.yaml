@@ -1806,3 +1806,84 @@ tasks:
       - *doccheck
       - id: lock
         run: uv run python tools/harness.py lock --verify
+
+  # ------------------------------------------------------------------ M15 人与厂长的持久对话
+  - id: M15-01
+    milestone: M15
+    title: 线程与回复
+    card: plan/tasks/M15-01.md
+    deps: [M14-02]
+    spec:
+      - spec/system/talk.md
+      - spec/system/agents.md
+      - spec/system/mcp.md
+      - spec/system/commands.md
+      - spec/system/supervisor.md
+      - plan/design-talk.md
+    paths:
+      - src/mao/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m15/test_m15_01_thread.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 10
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m15/test_m15_02_cards.py --ignore=tests/acceptance/m15/test_m15_03_confirm.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M15-02
+    milestone: M15
+    title: 卡片回写
+    card: plan/tasks/M15-02.md
+    deps: [M15-01]
+    spec:
+      - spec/system/talk.md
+      - spec/system/mcp.md
+      - spec/system/inbox.md
+      - plan/design-talk.md
+    paths:
+      - src/mao/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m15/test_m15_02_cards.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m15/test_m15_03_confirm.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M15-03
+    milestone: M15
+    title: 运行确认
+    card: plan/tasks/M15-03.md
+    deps: [M15-02]
+    spec:
+      - spec/system/talk.md
+      - spec/system/commands.md
+      - plan/design-talk.md
+    paths:
+      - src/mao/**
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m15/test_m15_03_confirm.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
