@@ -470,6 +470,12 @@ def _reject_busy(ctx: Any) -> None:
         raise FactoryError("ASSET_CHECKPOINT_BUSY", "有正在执行的轮次", resource="turn")
 
 
+def _mounted_workspace(ctx: Any, name: str) -> Path:
+    from mao.agents import workspace_path
+
+    return workspace_path(ctx, name)
+
+
 def _classify_workspaces(ctx: Any, data: dict[str, Any]) -> list[dict[str, str]]:
     declared = data.get("workspaces") or {}
     omitted: list[dict[str, str]] = []
@@ -479,22 +485,25 @@ def _classify_workspaces(ctx: Any, data: dict[str, Any]) -> list[dict[str, str]]
     for agent_dir in sorted(path for path in agents.iterdir() if path.is_dir()):
         name = agent_dir.name
         spec = declared.get(name)
-        workspace = agent_dir / "workspace"
+        workspace = _mounted_workspace(ctx, name)
         if not workspace.is_dir():
             continue
         if not isinstance(spec, dict):
-            raise FactoryError("ASSET_STATE_UNDECLARED", "岗位工作区未分类", path=f"agents/{name}/workspace")
+            raise FactoryError(
+                "ASSET_STATE_UNDECLARED", "岗位工作区未分类", path=workspace.relative_to(ctx.root).as_posix()
+            )
         business = [str(item) for item in spec.get("business") or []]
         ephemeral = [str(item) for item in spec.get("ephemeral") or []]
         for file in sorted(path for path in workspace.rglob("*") if path.is_file()):
             rel = file.relative_to(workspace).as_posix()
             parts = rel.split("/")
+            shown = file.relative_to(ctx.root).as_posix()
             if any(part in _OMITTED for part in parts):
-                omitted.append({"path": f"agents/{name}/workspace/{rel}", "reason": "private"})
+                omitted.append({"path": shown, "reason": "private"})
                 continue
             if _under(rel, business) or _under(rel, ephemeral):
                 continue
-            raise FactoryError("ASSET_STATE_UNDECLARED", "业务文件未分类", path=rel)
+            raise FactoryError("ASSET_STATE_UNDECLARED", "业务文件未分类", path=shown)
     return omitted
 
 
@@ -505,7 +514,7 @@ def _under(rel: str, prefixes: list[str]) -> bool:
 def _copy_business(ctx: Any, part: Path, data: dict[str, Any]) -> None:
     declared = data.get("workspaces") or {}
     for name, spec in declared.items():
-        workspace = ctx.root / "agents" / name / "workspace"
+        workspace = _mounted_workspace(ctx, name)
         if not workspace.is_dir() or not isinstance(spec, dict):
             continue
         for prefix in spec.get("business") or []:
@@ -524,13 +533,33 @@ def _restore_business(src: Path, root: Path) -> None:
     business = src / "business"
     if not business.is_dir():
         return
+    mounts = _restored_mounts(root)
     for file in business.rglob("*"):
         if not file.is_file():
             continue
         rel = file.relative_to(business)
-        dest = root / "agents" / rel.parts[0] / "workspace" / Path(*rel.parts[1:])
+        agent = rel.parts[0]
+        mount = mounts.get(agent, f"agents/{agent}/workspace")
+        dest = root / mount / Path(*rel.parts[1:])
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(file, dest)
+
+
+def _restored_mounts(root: Path) -> dict[str, str]:
+    from mao.db import Database
+
+    path = root / "factory.db"
+    if not path.is_file():
+        return {}
+    db = Database(path)
+    try:
+        return {
+            str(row["agent"]): str(row["current_path"])
+            for row in db.query("SELECT agent, current_path FROM agent_workspaces")
+            if row["current_path"]
+        }
+    finally:
+        db.close()
 
 
 def _mark_restored(root: Path) -> None:

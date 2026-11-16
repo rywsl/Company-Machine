@@ -176,3 +176,144 @@ def test_takeover_workspace_receives_codex_config_and_registry_clone(tmp_path: P
     assert clone == mounted / "registry"
     assert (clone / ".git").is_dir()
     assert not (world.root / "agents" / "foreman" / "workspace" / "registry").exists()
+
+
+def _wait_running(world: World, agent: str, worker: threading.Thread) -> None:
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        running = world.rows("SELECT id FROM agent_turns WHERE agent = ? AND state = 'running'", (agent,))
+        if running:
+            return
+        time.sleep(0.05)
+    worker.join(timeout=3)
+    raise AssertionError("工作轮没有进入 running")
+
+
+def test_failed_turn_cancels_pending_and_later_success_keeps_old_mount(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    handoff = world.handoff()
+    trial = world.trial(handoff, world.takeover_contract(), "takeover")
+    world.script({"default": [{"do": "sleep", "seconds": 2}, {"do": "exit", "code": 1}]})
+    world.post("scout", "这轮会失败")
+    host = world.host()
+    worker = threading.Thread(target=host.run_once, args=("scout",))
+    worker.start()
+    _wait_running(world, "scout", worker)
+    prepared = world.learning.prepare_takeover(trial["id"], by="ada")
+    assert prepared["phase"] == "pending"
+    worker.join(timeout=8)
+    assert not worker.is_alive()
+    failed = world.rows("SELECT state FROM agent_turns WHERE agent = 'scout' ORDER BY started_at")[-1]
+    assert failed["state"] != "ok"
+    row = world.rows("SELECT current_path, phase, trial_id FROM agent_workspaces WHERE agent = 'scout'")[0]
+    assert row["current_path"] == "agents/scout/workspace"
+    assert row["phase"] != "pending" and row["trial_id"] is None
+    world.script({"default": [{"do": "echo_task", "path": "/workspace/later.txt"}]})
+    later = host.run_once("scout")
+    assert later is not None and later.state == "ok"
+    again = world.rows("SELECT current_path, phase FROM agent_workspaces WHERE agent = 'scout'")[0]
+    assert again["current_path"] == "agents/scout/workspace"
+    assert again["phase"] != "testing"
+    assert not (world.root / "agents" / "scout" / "takeovers").exists()
+
+
+def test_recover_cancels_pending_before_a_later_success(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    handoff = world.handoff()
+    trial = world.trial(handoff, world.takeover_contract(), "takeover")
+    world.script({"default": [{"do": "sleep", "seconds": 3}, {"do": "exit", "code": 1}]})
+    world.post("scout", "这轮会被中断")
+    host = world.host()
+    worker = threading.Thread(target=host.run_once, args=("scout",))
+    worker.start()
+    _wait_running(world, "scout", worker)
+    assert world.learning.prepare_takeover(trial["id"], by="ada")["phase"] == "pending"
+    interrupted = host.recover()
+    assert interrupted
+    row = world.rows("SELECT current_path, phase, trial_id FROM agent_workspaces WHERE agent = 'scout'")[0]
+    assert row["current_path"] == "agents/scout/workspace"
+    assert row["phase"] != "pending" and row["trial_id"] is None
+    worker.join(timeout=8)
+    world.script({"default": [{"do": "echo_task", "path": "/workspace/after-recover.txt"}]})
+    later = host.run_once("scout")
+    assert later is not None and later.state == "ok"
+    again = world.rows("SELECT current_path, phase FROM agent_workspaces WHERE agent = 'scout'")[0]
+    assert again["current_path"] == "agents/scout/workspace" and again["phase"] != "testing"
+
+
+def test_pending_second_takeover_keeps_installed_workspace(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    world.host().pause("scout")
+    first = world.handoff()
+    trial = world.trial(first, world.takeover_contract(), "takeover")
+    prepared = world.learning.prepare_takeover(trial["id"], by="ada")
+    assert prepared["phase"] == "testing"
+    mounted = world.rows("SELECT current_path, previous_path FROM agent_workspaces WHERE agent = 'scout'")[0]
+    first_path = str(mounted["current_path"])
+    world.host().resume("scout")
+    evidence = world.takeover_work()
+    assert world.learning.evaluate(trial["id"], evidence, by="ada")["state"] == "passed"
+    world.learning.finish_takeover(trial["id"], by="ada")
+    second = capture_handoff(world.ctx, "scout", world.handoff_document(), expected=first["id"], by="ada")
+    trial2 = world.trial(second, world.takeover_contract(), "takeover")
+    world.script({"default": [{"do": "sleep", "seconds": 2}]})
+    world.post("scout", "占用已安装的工作区")
+    host = world.host()
+    worker = threading.Thread(target=host.run_once, args=("scout",))
+    worker.start()
+    _wait_running(world, "scout", worker)
+    prepared2 = world.learning.prepare_takeover(trial2["id"], by="ada")
+    assert prepared2["phase"] == "pending"
+    row = world.rows("SELECT current_path, previous_path, phase FROM agent_workspaces WHERE agent = 'scout'")[
+        0
+    ]
+    assert row["current_path"] == first_path
+    assert row["previous_path"] == mounted["previous_path"]
+    assert row["phase"] == "pending"
+    assert first_path != "agents/scout/workspace"
+    worker.join(timeout=8)
+
+
+def test_work_prompt_reads_handoff_from_mounted_workspace(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    world.host().pause("scout")
+    handoff = world.handoff()
+    trial = world.trial(handoff, world.takeover_contract(), "takeover")
+    world.learning.prepare_takeover(trial["id"], by="ada")
+    mounted = workspace_path(world.ctx, "scout")
+    (mounted / "notebook").mkdir(parents=True, exist_ok=True)
+    (mounted / "notebook" / "HANDOFF.md").write_text("新工作区的交接\n", encoding="utf-8")
+    old = world.workspace()
+    old.mkdir(parents=True, exist_ok=True)
+    assert not (old / "notebook" / "HANDOFF.md").exists()
+    world.script({"default": [{"do": "echo_task", "path": "/workspace/prompt.txt"}]})
+    world.host().resume("scout")
+    world.post("scout", "读取挂载的交接")
+    turn = world.host().run_once("scout")
+    assert turn is not None and turn.state == "ok"
+    prompt = (mounted / "prompt.txt").read_text(encoding="utf-8")
+    assert mounted != old
+    assert "上一段对话的交接在 /workspace/notebook/HANDOFF.md" in prompt
+
+
+def test_checkpoint_copies_business_from_mounted_takeover_workspace(tmp_path: Path) -> None:
+    from mao.packages import create_checkpoint, restore_checkpoint
+
+    world = World(tmp_path)
+    world.host().pause("scout")
+    handoff = world.handoff()
+    trial = world.trial(handoff, world.takeover_contract(), "takeover")
+    world.learning.prepare_takeover(trial["id"], by="ada")
+    mounted = workspace_path(world.ctx, "scout")
+    text = "只在接管工作区\n"
+    (mounted / "notebook" / "only-here.txt").write_text(text, encoding="utf-8")
+    assert not (world.workspace() / "notebook" / "only-here.txt").exists()
+    root = world.factory_asset()
+    dest = tmp_path / "checkpoint"
+    create_checkpoint(world.ctx, dest, factory_asset=root["id"])
+    copied = dest / "business" / "scout" / "notebook" / "only-here.txt"
+    assert copied.is_file() and copied.read_text(encoding="utf-8") == text
+    restored = tmp_path / "restored"
+    restore_checkpoint(dest, restored)
+    current = world.rows("SELECT current_path FROM agent_workspaces WHERE agent = 'scout'")[0]["current_path"]
+    assert (restored / current / "notebook" / "only-here.txt").read_text(encoding="utf-8") == text

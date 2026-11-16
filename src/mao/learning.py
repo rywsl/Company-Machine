@@ -319,7 +319,21 @@ class LearningStore:
                 raise FactoryError("ASSET_TAKEOVER_BUSY", "岗位已有接管", agent=agent)
             checkpoint = _handoff_checkpoint(self.ctx, trial)
             if phase == "pending":
-                _workspace_row(conn, agent, _default_workspace(agent), None, trial_id, "pending", now)
+                existing = conn.execute(
+                    "SELECT current_path, previous_path FROM agent_workspaces WHERE agent = ?",
+                    (agent,),
+                ).fetchone()
+                current = (
+                    str(existing["current_path"])
+                    if existing is not None and existing["current_path"]
+                    else _default_workspace(agent)
+                )
+                previous = (
+                    None
+                    if existing is None or existing["previous_path"] is None
+                    else str(existing["previous_path"])
+                )
+                _workspace_row(conn, agent, current, previous, trial_id, "pending", now)
             else:
                 _install_takeover(self.ctx, conn, agent, trial_id, now, checkpoint)
             _event(
@@ -387,10 +401,14 @@ class LearningStore:
         now = utc_iso(self.ctx.clock.now())
         with self.ctx.db.tx() as conn:
             row = conn.execute(
-                "SELECT previous_path FROM agent_workspaces WHERE agent = ?", (agent,)
+                "SELECT current_path, previous_path, phase FROM agent_workspaces WHERE agent = ?",
+                (agent,),
             ).fetchone()
-            previous = None if row is None or row["previous_path"] is None else str(row["previous_path"])
-            restored = previous or _default_workspace(agent)
+            if row is not None and str(row["phase"]) == "pending":
+                restored = str(row["current_path"])
+            else:
+                previous = None if row is None or row["previous_path"] is None else str(row["previous_path"])
+                restored = previous or _default_workspace(agent)
             conn.execute(
                 """UPDATE agent_workspaces
                    SET current_path = ?, phase = 'stable', trial_id = NULL, updated_at = ?
@@ -638,6 +656,29 @@ class LearningStore:
             "workspace_generation": str(trial["id"]) if str(trial["purpose"]) == "takeover" else None,
             "actions": json.loads(use_rows[0]["actions"]) if use_rows else [],
         }
+
+
+def cancel_pending_takeover(ctx: Any, agent: str) -> None:
+    """失败或中断的工作轮取消尚未安装的接管，保留当前挂载。"""
+    now = utc_iso(ctx.clock.now())
+    with ctx.db.tx() as conn:
+        row = conn.execute(
+            "SELECT trial_id FROM agent_workspaces WHERE agent = ? AND phase = 'pending'",
+            (agent,),
+        ).fetchone()
+        if row is None or not row["trial_id"]:
+            return
+        conn.execute(
+            "UPDATE agent_workspaces SET phase = 'stable', trial_id = NULL, updated_at = ? "
+            "WHERE agent = ? AND phase = 'pending'",
+            (now, agent),
+        )
+        _event(
+            ctx,
+            conn,
+            "agent.takeover.stale",
+            {"id": str(row["trial_id"]), "subject": "agent:" + agent, "state": "stable", "reason": "failed"},
+        )
 
 
 def install_pending_takeover(ctx: Any, agent: str) -> None:

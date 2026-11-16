@@ -466,6 +466,10 @@ class AgentHost:
                     (turn_id,),
                 )
             turn = self._turn(turn_id)
+            if turn.kind == "work":
+                from mao.learning import cancel_pending_takeover
+
+                cancel_pending_takeover(self.ctx, turn.agent)
             self._event(
                 "agent.turn.finished",
                 {
@@ -653,7 +657,7 @@ class AgentHost:
         turn_id = self.ctx.ids.new("at")
         now = utc_iso(self.ctx.clock.now())
         host = self.ctx.root / "agents" / name
-        workspace = host / "workspace"
+        workspace = workspace_path(self.ctx, name)
         (workspace / "notebook").mkdir(parents=True, exist_ok=True)
         incoming = host / "in"
         _clear(incoming)
@@ -784,10 +788,12 @@ class AgentHost:
                     "UPDATE agent_messages SET state = 'dropped' WHERE turn = ? AND attempts >= 3",
                     (turn_id,),
                 )
-        if state == "ok":
-            from mao.learning import install_pending_takeover
+        from mao.learning import cancel_pending_takeover, install_pending_takeover
 
+        if state == "ok":
             install_pending_takeover(self.ctx, name)
+        else:
+            cancel_pending_takeover(self.ctx, name)
         dropped = self.ctx.db.query(
             "SELECT id FROM agent_messages WHERE turn = ? AND state = 'dropped'",
             (turn_id,),
