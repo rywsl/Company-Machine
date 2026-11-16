@@ -603,6 +603,10 @@ class _LocalSandbox:
         return str(path)
 
     def _rewrite(self, arg: str) -> str:
+        # 解释器常常就装在仓库目录里，而 /workspace 同时是工位挂载。
+        # 不能把宿主机的 python 路径改写成工位工作区。
+        if arg == sys.executable:
+            return arg
         for target, source in self._mounts:
             if arg == target or arg.startswith(target + "/") or arg.startswith(target + "\\"):
                 rest = arg[len(target) :].lstrip("/\\").replace("/", os.sep).replace("\\", os.sep)

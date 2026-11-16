@@ -1,0 +1,6 @@
+apiVersion: mao/v1
+kind: Type
+metadata: {name: clip.mp4, version: "1.0", description: MiniMax H3 交出的 MP4}
+spec:
+  payload:
+    - {path: video.mp4, media_type: video/mp4, required: true}

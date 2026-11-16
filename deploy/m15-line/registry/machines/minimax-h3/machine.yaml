@@ -1,0 +1,24 @@
+# MiniMax H3 多图生视频。工作流 minimax_h3_zm_u24，文档见
+# https://www.autodl.art/large-model/comfyui/minimax_h3_zm_u24
+# 参考图用 data URI 交给接口，不另找图床。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: minimax-h3, version: 1}
+spec:
+  form: tool
+  runtime:
+    image: local/minimax-h3@sha256:2222222222222222222222222222222222222222222222222222222222222222
+    instance: per_job
+    resources: {cpus: 1, memory: 1Gi}
+  needs:
+    secrets: [AUTODL_AK]
+    egress:
+      providers: [autodl.art, www.autodl.art]
+  recipes:
+    image-to-video:
+      inputs:
+        image: {type: image.png@1}
+        brief: {type: brief.still@1}
+      outputs:
+        video: {type: clip.mp4@1, harvest: /factory/out/video/video.mp4}
+      run: [minimax-h3]

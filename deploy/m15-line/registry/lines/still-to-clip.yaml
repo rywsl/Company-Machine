@@ -1,0 +1,18 @@
+# 最短一条：说明 -> OpenMontage 静帧 -> MiniMax H3 视频。
+apiVersion: mao/v1
+kind: Line
+metadata: {name: still-to-clip, version: 1}
+spec:
+  interface:
+    inputs:
+      brief: {type: brief.still@1}
+    outputs:
+      video: {from: clip.video, type: clip.mp4@1}
+  budget: {cap_usd: 8.0}
+  steps:
+    still:
+      station: still@1
+      in: {brief: $inputs.brief}
+    clip:
+      station: clip@1
+      in: {image: still.image, brief: $inputs.brief}

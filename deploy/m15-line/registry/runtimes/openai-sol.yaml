@@ -1,0 +1,26 @@
+# gpt-6.1-sol。请求打到模型代理，代理按模型名注入密钥。
+# 常驻厂长要 invoke.resume 和 claude-json MCP。本地提供者用 commands.json 把二进制映射到 bin/openai_agent.py。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: openai-sol, version: 1}
+spec:
+  kind: agent-cli
+  inject:
+    volume: local/openai-sol@sha256:3333333333333333333333333333333333333333333333333333333333333333
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/openai-agent, -p, "{{ brief.task }}",
+           --append-system-prompt, "{{ brief.factory_contract }}",
+           --output-format, stream-json,
+           --max-turns, "{{ limits.max_turns }}",
+           --model, "{{ operator.model }}"]
+    resume: [/opt/operator/bin/openai-agent, -p, "{{ brief.task }}",
+             --append-system-prompt, "{{ brief.factory_contract }}",
+             --output-format, stream-json,
+             --max-turns, "{{ limits.max_turns }}",
+             --model, "{{ operator.model }}"]
+    mcp: {format: claude-json, flag: --mcp-config}
+  env:
+    MODEL_PROXY: ${MODEL_PROXY}
+  transcript: {format: stream-json, from: stdout}
+  models_allowed: [gpt-6.1-sol]

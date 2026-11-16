@@ -1,0 +1,4 @@
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: script, version: 1}
+spec: {kind: script}

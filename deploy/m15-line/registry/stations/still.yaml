@@ -1,0 +1,14 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: still, version: 1}
+spec:
+  role: transform
+  machine: openmontage@1
+  recipe: still
+  operator: {runtime: openai-sol@1, model: gpt-6.1-sol, max_turns: 2}
+  inputs:
+    brief: {type: brief.still@1}
+  outputs:
+    image: {type: image.png@1}
+  limits: {timeout: 180s, budget_usd: 2.0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: still-net@1

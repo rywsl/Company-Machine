@@ -1,0 +1,6 @@
+apiVersion: mao/v1
+kind: Type
+metadata: {name: image.png, version: "1.0", description: OpenMontage 生图工位交出的 PNG}
+spec:
+  payload:
+    - {path: image.png, required: true}

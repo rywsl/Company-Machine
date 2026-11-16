@@ -1,0 +1,15 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: clip, version: 1}
+spec:
+  role: transform
+  machine: minimax-h3@1
+  recipe: image-to-video
+  operator: {runtime: script@1}
+  inputs:
+    image: {type: image.png@1}
+    brief: {type: brief.still@1}
+  outputs:
+    video: {type: clip.mp4@1}
+  limits: {timeout: 900s, budget_usd: 0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: clip-net@1

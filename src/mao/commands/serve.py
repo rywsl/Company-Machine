@@ -60,5 +60,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
             return finish(args, report)
         stop = threading.Event()
         install_stop_signals(stop)
-        run_serve(ctx, config, executor=executor, stop=stop, registry=args.registry)
+        # spec/system/agents.md 5.7：有 agents 段时，run_serve 用 daemon.epochs 起常驻线程。
+        run_serve(
+            ctx,
+            config,
+            executor=executor,
+            stop=stop,
+            registry=args.registry,
+            epochs=daemon.epochs,
+            pipeline=daemon.pipeline,
+        )
     return 0

@@ -1179,7 +1179,7 @@ class ModelProxy:
         req = Request(_join_upstream(str(upstream["url"]), path), data=raw, method="POST")
         req.add_header(str(upstream["header"]), secret)
         req.add_header("Content-Type", "application/json")
-        with urlopen(req, timeout=5) as resp:
+        with urlopen(req, timeout=90) as resp:
             payload = resp.read()
             status = int(resp.status)
             content_type = resp.headers.get("Content-Type") or "application/json"

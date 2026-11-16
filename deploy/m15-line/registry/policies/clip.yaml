@@ -1,0 +1,17 @@
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: clip-net, version: 1}
+spec:
+  applies_to: [transform]
+  egress:
+    providers:
+      - autodl.art
+      - www.autodl.art
+      - "*.autodl.art"
+      - "*.aliyuncs.com"
+      - "*.myqcloud.com"
+      - "*.byteimg.com"
+      - "*.volces.com"
+      - "*.bcebos.com"
+  secrets: [AUTODL_AK]
+  resources: {cpus: 1, memory: 1Gi}

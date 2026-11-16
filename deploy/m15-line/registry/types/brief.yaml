@@ -1,0 +1,6 @@
+apiVersion: mao/v1
+kind: Type
+metadata: {name: brief.still, version: "1.0", description: 一张静帧加一句动作说明}
+spec:
+  payload:
+    - {path: brief.json, media_type: application/json, required: true}

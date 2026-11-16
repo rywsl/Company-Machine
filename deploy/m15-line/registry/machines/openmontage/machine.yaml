@@ -1,0 +1,30 @@
+# 机器是 OpenMontage。生图沿用 tools/graphics/openai_image.py 的 images.generate 契约，
+# 网关换成 newapi（tbtk.asia），模型 gpt-image-2.5。操作工是 gpt-6.1-sol，只负责写提示词。
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: openmontage, version: 1}
+spec:
+  form: workspace
+  source:
+    repo: https://github.com/calesthio/OpenMontage
+    commit: fecb9a1e3cc23ef84de30b272059457a427f16f8
+  runtime:
+    image: local/openmontage@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    workdir: /workspace
+    instance: per_job
+    resources: {cpus: 2, memory: 2Gi, gpu: none}
+  operate:
+    guide: [AGENT_GUIDE.md, tools/graphics/openai_image.py]
+  needs:
+    secrets: [TBTK_API_KEY]
+    egress:
+      providers: [tbtk.asia]
+  recipes:
+    still:
+      inputs:
+        brief: {type: brief.still@1, place: /factory/in/brief}
+      outputs:
+        image: {type: image.png@1, harvest: /factory/out/image/image.png}
+      task_template: |
+        你在操作 OpenMontage 的 openai_image。阅读 /factory/in/brief/brief.json 的 prompt，
+        把它收成一条英文静帧提示词。不要自己画图，画图由 openai_image 完成。
