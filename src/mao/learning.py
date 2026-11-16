@@ -317,15 +317,21 @@ class LearningStore:
             ).fetchone()
             if other is not None and str(other["trial_id"] or "") != trial_id:
                 raise FactoryError("ASSET_TAKEOVER_BUSY", "岗位已有接管", agent=agent)
+            checkpoint = _handoff_checkpoint(self.ctx, trial)
             if phase == "pending":
                 _workspace_row(conn, agent, _default_workspace(agent), None, trial_id, "pending", now)
             else:
-                _install_takeover(self.ctx, conn, agent, trial_id, now)
+                _install_takeover(self.ctx, conn, agent, trial_id, now, checkpoint)
             _event(
                 self.ctx,
                 conn,
                 "agent.takeover.prepared",
-                {"id": trial_id, "subject": str(trial["subject"]), "state": phase},
+                {
+                    "id": trial_id,
+                    "subject": str(trial["subject"]),
+                    "state": phase,
+                    "checkpoint": checkpoint,
+                },
             )
         return {"agent": agent, "trial_id": trial_id, "phase": phase}
 
@@ -641,9 +647,16 @@ def install_pending_takeover(ctx: Any, agent: str) -> None:
     )
     if not rows or not rows[0]["trial_id"]:
         return
+    trial_id = str(rows[0]["trial_id"])
     now = utc_iso(ctx.clock.now())
-    with ctx.db.tx() as conn:
-        _install_takeover(ctx, conn, agent, str(rows[0]["trial_id"]), now)
+    checkpoint = _prepared_checkpoint(ctx, trial_id)
+    try:
+        with ctx.db.tx() as conn:
+            _install_takeover(ctx, conn, agent, trial_id, now, checkpoint)
+    except FactoryError as exc:
+        if exc.code != "ASSET_HANDOFF_INVALID":
+            raise
+        _refuse_stale_takeover(ctx, agent, trial_id)
 
 
 def _default_workspace(agent: str) -> str:
@@ -666,18 +679,176 @@ def _workspace_row(
     )
 
 
-def _install_takeover(ctx: Any, conn: Any, agent: str, trial_id: str, now: str) -> None:
+def _install_takeover(
+    ctx: Any, conn: Any, agent: str, trial_id: str, now: str, checkpoint: dict[str, Any] | None = None
+) -> None:
+    if _handoff_progressed(ctx, trial_id, checkpoint or _prepared_checkpoint(ctx, trial_id)):
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接期间业务已变化", agent=agent, field="tasks")
     current = f"agents/{agent}/takeovers/{trial_id}/workspace"
     path = Path(ctx.root) / current
-    (path / "notebook").mkdir(parents=True, exist_ok=True)
-    (Path(ctx.root) / "agents" / agent / "takeovers" / trial_id / "home").mkdir(parents=True, exist_ok=True)
-    previous = _default_workspace(agent)
+    trial_root = path.parent
+    if path.exists():
+        raise FactoryError("ASSET_TAKEOVER_BUSY", "接管工作区已存在", agent=agent)
+    try:
+        path.mkdir(parents=True)
+        (path / "notebook").mkdir()
+        (path / ".home").mkdir()
+        (trial_root / "home").mkdir(parents=True, exist_ok=True)
+        _materialize_declared(ctx, path, trial_id)
+        if agent == "foreman":
+            from mao.agents import clone_foreman_registry
+            from mao.governance.epochs import EpochStore
+
+            clone_foreman_registry(ctx, path / "registry", EpochStore(ctx).current())
+    except Exception:
+        import shutil
+
+        shutil.rmtree(trial_root, ignore_errors=True)
+        raise
+    existing = conn.execute("SELECT current_path FROM agent_workspaces WHERE agent = ?", (agent,)).fetchone()
+    previous = (
+        str(existing["current_path"])
+        if existing is not None and existing["current_path"]
+        else _default_workspace(agent)
+    )
     _workspace_row(conn, agent, current, previous, trial_id, "testing", now)
     conn.execute(
         "UPDATE agents SET session = NULL, conversation = conversation + 1, turns_in_conv = 0, "
         "sandbox = NULL, updated_at = ? WHERE name = ?",
         (now, agent),
     )
+
+
+def _handoff_checkpoint(ctx: Any, trial: Any) -> dict[str, Any]:
+    record = AssetStore(ctx).get(str(trial["target"]))
+    data = record["document"].get("data") or {}
+    tasks = []
+    for task in data.get("tasks") or []:
+        if isinstance(task, dict):
+            tasks.append(
+                {
+                    "kind": str(task.get("kind") or ""),
+                    "id": str(task.get("id") or ""),
+                    "state": str(task.get("state") or ""),
+                }
+            )
+    receipts = []
+    for item in data.get("external") or []:
+        if not isinstance(item, dict):
+            continue
+        receipt_id = str(item.get("receipt") or "")
+        rows = ctx.db.query("SELECT status FROM receipts WHERE id = ?", (receipt_id,))
+        receipts.append({"id": receipt_id, "status": None if not rows else str(rows[0]["status"])})
+    return {"tasks": tasks, "receipts": receipts}
+
+
+def _prepared_checkpoint(ctx: Any, trial_id: str) -> dict[str, Any]:
+    rows = ctx.db.query("SELECT data FROM events WHERE kind = 'agent.takeover.prepared' ORDER BY seq DESC")
+    for row in rows:
+        body = json.loads(row["data"])
+        if str(body.get("id") or "") == trial_id and isinstance(body.get("checkpoint"), dict):
+            return body["checkpoint"]
+    return {"tasks": [], "receipts": []}
+
+
+def _handoff_progressed(ctx: Any, trial_id: str, checkpoint: dict[str, Any]) -> bool:
+    trial = ctx.db.query("SELECT target FROM asset_trials WHERE id = ?", (trial_id,))
+    if not trial:
+        return True
+    record = AssetStore(ctx).get(str(trial[0]["target"]))
+    data = record["document"].get("data") or {}
+    for task in data.get("tasks") or []:
+        if not isinstance(task, dict):
+            return True
+        kind = str(task.get("kind") or "")
+        ref = str(task.get("id") or "")
+        state = str(task.get("state") or "")
+        if kind == "job":
+            row = ctx.db.query("SELECT state FROM jobs WHERE id = ?", (ref,))
+        elif kind == "run":
+            row = ctx.db.query("SELECT state FROM runs WHERE id = ?", (ref,))
+        else:
+            return True
+        if not row or str(row[0]["state"]) != state:
+            return True
+    expected = {str(item.get("id")): item.get("status") for item in checkpoint.get("receipts") or []}
+    for item in data.get("external") or []:
+        if not isinstance(item, dict):
+            return True
+        receipt_id = str(item.get("receipt") or "")
+        row = ctx.db.query("SELECT status FROM receipts WHERE id = ?", (receipt_id,))
+        live = None if not row else str(row[0]["status"])
+        if not row or (receipt_id in expected and live != expected[receipt_id]):
+            return True
+    return False
+
+
+def _refuse_stale_takeover(ctx: Any, agent: str, trial_id: str) -> None:
+    now = utc_iso(ctx.clock.now())
+    with ctx.db.tx() as conn:
+        conn.execute(
+            "UPDATE agent_workspaces SET phase = 'stable', trial_id = NULL, updated_at = ? "
+            "WHERE agent = ? AND phase = 'pending'",
+            (now, agent),
+        )
+        _event(
+            ctx,
+            conn,
+            "agent.takeover.stale",
+            {"id": trial_id, "subject": "agent:" + agent, "state": "stable", "reason": "stale"},
+        )
+    from mao.agents import Mailbox
+    from mao.foreman import WakeQueue
+
+    WakeQueue(ctx).file("other", "agent:" + agent, {"id": trial_id, "reason": "stale"})
+    Mailbox(ctx).post(
+        "foreman",
+        "message",
+        "system:takeover",
+        {"text": "交接已过期，请重新固化", "trial": trial_id, "agent": agent},
+    )
+
+
+def _materialize_declared(ctx: Any, workspace: Path, trial_id: str) -> None:
+    import shutil
+
+    from mao.assets import _unsafe_workspace_path
+
+    trial = ctx.db.query("SELECT target FROM asset_trials WHERE id = ?", (trial_id,))
+    if not trial:
+        raise FactoryError("ASSET_NOT_FOUND", "试验不存在", id=trial_id)
+    record = AssetStore(ctx).get(str(trial[0]["target"]))
+    items = (record["document"].get("data") or {}).get("workspace") or []
+    seen: list[str] = []
+    root = workspace.resolve()
+    for item in items:
+        if not isinstance(item, dict):
+            raise FactoryError("ASSET_HANDOFF_INVALID", "交接工作区不合法", agent="", field="workspace")
+        rel = str(item.get("path") or "").replace("\\", "/")
+        if _unsafe_workspace_path(rel):
+            raise FactoryError("ASSET_HANDOFF_INVALID", "交接路径不安全", agent="", field="workspace")
+        for other in seen:
+            if rel == other or rel.startswith(other + "/") or other.startswith(rel + "/"):
+                raise FactoryError("ASSET_HANDOFF_INVALID", "交接路径重叠", agent="", field="workspace")
+        seen.append(rel)
+        dest = workspace / rel
+        if dest.is_symlink() or not _inside_workspace(dest, root):
+            raise FactoryError("ASSET_HANDOFF_INVALID", "交接路径不安全", agent="", field="workspace")
+        bean = ctx.warehouse.get(str(item.get("bean") or ""))
+        payload_path = str(item.get("payload_path") or "")
+        match = next((entry for entry in bean.payload if entry.path == payload_path), None)
+        if match is None:
+            raise FactoryError("ASSET_REFERENCE_INVALID", "交接载荷不存在", kind="bean", id=bean.id)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ctx.warehouse.blob_path(match.digest), dest)
+
+
+def _inside_workspace(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _message_digests(ctx: Any, message_ids: list[str]) -> list[str]:

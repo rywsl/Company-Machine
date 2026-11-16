@@ -18,6 +18,13 @@ _LABEL = re.compile(r"^[^=\s]+=[^=\s]+$")
 _LOG = __import__("logging").getLogger("mao.agents")
 _RESIDENT_NAME = "foreman"
 _TALK_OBLIGATION = "本轮有 human talk 消息时必须 talk_reply。"
+_HANDOFF_LEGACY = (
+    "请把仍在进行的事项、关键事实和下一步写进 /workspace/notebook/HANDOFF.md（覆盖旧文件），然后结束本轮。"
+)
+_HANDOFF_ASSET = (
+    "请把仍在进行的事项写成 /workspace/notebook/HANDOFF.next.json，"
+    "不要替换上一个可信交接。文件必须是完整交接 document，然后结束本轮。"
+)
 ASSET_FOREMAN_GUIDANCE = (
     "正式知识与临时记忆分开。notebook 只是便笺。"
     "用现有正常工作收集证据，经已授权契约晋升；未知条件保留为问题。"
@@ -914,7 +921,9 @@ class AgentHost:
         from mao.egress import register_job_cap
 
         register_job_cap(self.ctx.db, turn_id, "agent", cfg.turn_usd)
-        task = "请把仍在进行的事项、关键事实和下一步写进 /workspace/notebook/HANDOFF.md（覆盖旧文件），然后结束本轮。"
+        from mao.assets import assets_config
+
+        task = _HANDOFF_LEGACY if assets_config(self.ctx) is None else _HANDOFF_ASSET
         runtime_ref = cfg.runtime.split(":", 1)[-1]
         invocation = build_runtime_invocation(
             snapshot,
@@ -1118,7 +1127,7 @@ class AgentHost:
         elif fmt == "codex-toml":
             if mcp.get("flag"):
                 raise FactoryError("INVOCATION_INVALID", "codex-toml 不能带 flag", reason="mcp.flag")
-            codex_home = host / "workspace" / ".codex"
+            codex_home = workspace_path(self.ctx, cfg.name) / ".codex"
             codex_home.mkdir(parents=True, exist_ok=True)
             (codex_home / "config.toml").write_text(
                 "\n".join(
@@ -1138,61 +1147,8 @@ class AgentHost:
         return argv, extra
 
     def _prepare_foreman_clone(self, epoch: str) -> Any:
-        import shutil
-        from pathlib import Path
-
-        from mao.governance.git import git
-
-        dest = Path(self.ctx.root) / "agents" / _RESIDENT_NAME / "workspace" / "registry"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        registry = self.epochs.registry
-        timeout = self.epochs.timeout_s
-        if not (dest / ".git").exists():
-            if dest.exists():
-                shutil.rmtree(dest)
-            git(
-                registry,
-                "clone",
-                "-c",
-                "core.autocrlf=false",
-                "-c",
-                "core.filemode=false",
-                "--quiet",
-                "--no-hardlinks",
-                str(registry),
-                str(dest),
-                timeout_s=timeout,
-            )
-            git(
-                dest,
-                "fetch",
-                "--quiet",
-                str(registry),
-                "+refs/factory/*:refs/factory/*",
-                "+refs/changesets/*:refs/changesets/*",
-                timeout_s=timeout,
-            )
-            git(
-                dest,
-                "-c",
-                "core.autocrlf=false",
-                "checkout",
-                "--quiet",
-                "--detach",
-                epoch,
-                timeout_s=timeout,
-            )
-        else:
-            git(
-                dest,
-                "fetch",
-                "--quiet",
-                str(registry),
-                "+refs/factory/*:refs/factory/*",
-                "+refs/changesets/*:refs/changesets/*",
-                timeout_s=timeout,
-            )
-        return dest
+        dest = workspace_path(self.ctx, _RESIDENT_NAME) / "registry"
+        return clone_foreman_registry(self.ctx, dest, epoch)
 
     def _settle_wakes(
         self, pending: list[Message], state: str, error: dict[str, Any] | None, server: Any
@@ -1633,7 +1589,7 @@ def _handoff_head(ctx: Any, name: str) -> str | None:
 
 
 def _read_handoff_next(ctx: Any, name: str, *, unlink: bool = False) -> dict[str, Any] | None:
-    path = ctx.root / "agents" / name / "workspace" / "notebook" / "HANDOFF.next.json"
+    path = workspace_path(ctx, name) / "notebook" / "HANDOFF.next.json"
     if unlink:
         path.unlink(missing_ok=True)
         return None
@@ -1644,6 +1600,66 @@ def _read_handoff_next(ctx: Any, name: str, *, unlink: bool = False) -> dict[str
     except (OSError, json.JSONDecodeError):
         return None
     return body if isinstance(body, dict) else None
+
+
+def clone_foreman_registry(ctx: Any, dest: Path, epoch: str) -> Path:
+    """把 active epoch 的 Registry 克隆到已解析工作区，供 /workspace/registry 挂载。"""
+    import shutil
+
+    from mao.governance.epochs import EpochStore
+    from mao.governance.git import git
+
+    epochs = EpochStore(ctx)
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    registry = epochs.registry
+    timeout = epochs.timeout_s
+    if not (dest / ".git").exists():
+        if dest.exists():
+            shutil.rmtree(dest)
+        git(
+            registry,
+            "clone",
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.filemode=false",
+            "--quiet",
+            "--no-hardlinks",
+            str(registry),
+            str(dest),
+            timeout_s=timeout,
+        )
+        git(
+            dest,
+            "fetch",
+            "--quiet",
+            str(registry),
+            "+refs/factory/*:refs/factory/*",
+            "+refs/changesets/*:refs/changesets/*",
+            timeout_s=timeout,
+        )
+        git(
+            dest,
+            "-c",
+            "core.autocrlf=false",
+            "checkout",
+            "--quiet",
+            "--detach",
+            epoch,
+            timeout_s=timeout,
+        )
+    else:
+        git(
+            dest,
+            "fetch",
+            "--quiet",
+            str(registry),
+            "+refs/factory/*:refs/factory/*",
+            "+refs/changesets/*:refs/changesets/*",
+            timeout_s=timeout,
+        )
+    return dest
 
 
 def workspace_path(ctx: Any, name: str) -> Path:
