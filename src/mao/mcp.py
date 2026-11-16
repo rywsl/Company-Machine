@@ -87,6 +87,7 @@ class McpServer:
         self.initialized = False
         self._secrets = SecretStore(ctx.root)
         self._outcome: dict[str, list[str]] = {"proposed": [], "reviewed": []}
+        self.actions: list[dict[str, Any]] = []
         self._talk_replied = False
 
     @property
@@ -226,7 +227,9 @@ class McpServer:
         if name in _AGENT:
             from mao.agents import agent_tool
 
-            return agent_tool(self.ctx, self.epochs, str(self.session.agent or ""), name, arguments)
+            value = agent_tool(self.ctx, self.epochs, str(self.session.agent or ""), name, arguments)
+            self.actions.append({"tool": name, "refs": _action_refs(value)})
+            return value
         if name == "changeset_propose":
             self._fetch_session()
             found = submit.propose(
@@ -529,6 +532,15 @@ class _Proto(Exception):
     def __init__(self, code: int, message: str) -> None:
         self.code = code
         self.message = message
+
+
+def _action_refs(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, dict):
+        return []
+    ref = value.get("id")
+    if isinstance(ref, str) and ref:
+        return [{"kind": "object", "id": ref}]
+    return []
 
 
 def _tool(name: str) -> dict[str, Any]:

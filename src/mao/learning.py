@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from mao.assets import AssetStore, assets_config, require_enabled
@@ -184,6 +185,16 @@ class LearningStore:
                 "asset.trial.finished",
                 {"id": trial_id, "subject": str(trial["subject"]), "state": state},
             )
+            if state == "failed" and str(trial["purpose"]) == "takeover":
+                agent = str(trial["subject"]).removeprefix("agent:")
+                conn.execute(
+                    "UPDATE agents SET state = 'paused', updated_at = ? WHERE name = ?",
+                    (now, agent),
+                )
+                conn.execute(
+                    "UPDATE agent_workspaces SET phase = 'failed', updated_at = ? WHERE agent = ? AND trial_id = ?",
+                    (now, agent, trial_id),
+                )
         return self.get_trial(trial_id)
 
     def get_trial(self, trial_id: str) -> dict[str, Any]:
@@ -287,13 +298,110 @@ class LearningStore:
         return found
 
     def prepare_takeover(self, trial_id: str, *, by: str) -> dict[str, Any]:
-        raise FactoryError("ASSET_PROOF_REQUIRED", "接管尚未实现", id=trial_id)
+        require_enabled(self.ctx)
+        _actor(by)
+        trial = self._trial_row(trial_id)
+        if str(trial["state"]) != "open" or str(trial["purpose"]) != "takeover":
+            raise FactoryError("ASSET_PROOF_REQUIRED", "不是进行中的接管试验", id=trial_id)
+        agent = str(trial["subject"]).removeprefix("agent:")
+        running = self.ctx.db.query(
+            "SELECT id FROM agent_turns WHERE agent = ? AND state = 'running' AND kind = 'work'",
+            (agent,),
+        )
+        now = utc_iso(self.ctx.clock.now())
+        phase = "pending" if running else "testing"
+        with self.ctx.db.tx() as conn:
+            other = conn.execute(
+                "SELECT trial_id, phase FROM agent_workspaces WHERE agent = ? AND phase IN ('pending', 'testing')",
+                (agent,),
+            ).fetchone()
+            if other is not None and str(other["trial_id"] or "") != trial_id:
+                raise FactoryError("ASSET_TAKEOVER_BUSY", "岗位已有接管", agent=agent)
+            if phase == "pending":
+                _workspace_row(conn, agent, _default_workspace(agent), None, trial_id, "pending", now)
+            else:
+                _install_takeover(self.ctx, conn, agent, trial_id, now)
+            _event(
+                self.ctx,
+                conn,
+                "agent.takeover.prepared",
+                {"id": trial_id, "subject": str(trial["subject"]), "state": phase},
+            )
+        return {"agent": agent, "trial_id": trial_id, "phase": phase}
 
     def finish_takeover(self, trial_id: str, *, by: str) -> dict[str, Any]:
-        raise FactoryError("ASSET_PROOF_REQUIRED", "接管尚未实现", id=trial_id)
+        require_enabled(self.ctx)
+        _actor(by)
+        trial = self._trial_row(trial_id)
+        if str(trial["state"]) != "passed" or str(trial["purpose"]) != "takeover":
+            raise FactoryError("ASSET_PROOF_REQUIRED", "接管试验尚未通过", id=trial_id)
+        agent = str(trial["subject"]).removeprefix("agent:")
+        slot = f"capability:{trial['subject']}"
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            from mao.assets import _cas_head
+
+            current = conn.execute("SELECT asset_id FROM asset_heads WHERE slot = ?", (slot,)).fetchone()
+            expected = None if current is None else str(current["asset_id"])
+            if current is not None and expected == trial_id:
+                expected = trial_id
+            _cas_head(
+                self.ctx,
+                conn,
+                slot,
+                str(trial["target"]),
+                None if current is None else str(current["asset_id"]),
+                proof=trial_id,
+            )
+            conn.execute(
+                "UPDATE agent_workspaces SET phase = 'stable', updated_at = ? WHERE agent = ?",
+                (now, agent),
+            )
+            _event(
+                self.ctx,
+                conn,
+                "agent.takeover.finished",
+                {"id": trial_id, "subject": str(trial["subject"]), "state": "stable"},
+            )
+        return {"agent": agent, "trial_id": trial_id, "phase": "stable"}
 
     def abort_takeover(self, trial_id: str, *, reason: str, by: str) -> dict[str, Any]:
-        raise FactoryError("ASSET_PROOF_REQUIRED", "接管尚未实现", id=trial_id)
+        require_enabled(self.ctx)
+        _actor(by)
+        if not isinstance(reason, str) or not reason:
+            raise FactoryError("ASSET_INVALID", "中止原因不能为空", field="reason")
+        trial = self._trial_row(trial_id)
+        agent = str(trial["subject"]).removeprefix("agent:")
+        running = self.ctx.db.query(
+            "SELECT id FROM agent_turns WHERE agent = ? AND state = 'running'",
+            (agent,),
+        )
+        if running:
+            raise FactoryError("ASSET_TAKEOVER_BUSY", "接管轮次仍在运行", agent=agent)
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            row = conn.execute(
+                "SELECT previous_path FROM agent_workspaces WHERE agent = ?", (agent,)
+            ).fetchone()
+            previous = None if row is None or row["previous_path"] is None else str(row["previous_path"])
+            restored = previous or _default_workspace(agent)
+            conn.execute(
+                """UPDATE agent_workspaces
+                   SET current_path = ?, phase = 'stable', trial_id = NULL, updated_at = ?
+                   WHERE agent = ?""",
+                (restored, now, agent),
+            )
+            conn.execute(
+                "UPDATE agents SET session = NULL, state = 'paused', updated_at = ? WHERE name = ?",
+                (now, agent),
+            )
+            _event(
+                self.ctx,
+                conn,
+                "agent.takeover.aborted",
+                {"id": trial_id, "subject": str(trial["subject"]), "state": "stable", "reason": reason},
+            )
+        return {"agent": agent, "trial_id": trial_id, "phase": "stable"}
 
     def _trial_row(self, trial_id: str) -> Any:
         rows = self.ctx.db.query("SELECT * FROM asset_trials WHERE id = ?", (trial_id,))
@@ -487,14 +595,25 @@ class LearningStore:
                 reason="watermark",
             )
         use_rows = self.ctx.db.query(
-            "SELECT assets, handoff, fresh, context FROM asset_uses WHERE kind = 'turn' AND execution_id = ?",
+            "SELECT assets, handoff, fresh, context, actions FROM asset_uses WHERE kind = 'turn' AND execution_id = ?",
             (turn_id,),
         )
         assets = json.loads(use_rows[0]["assets"]) if use_rows else []
-        if case.get("uses_target") and target["id"] not in assets:
-            raise FactoryError(
-                "ASSET_EVIDENCE_INVALID", "轮次没有挂载候选", case=str(case["name"]), reason="target"
-            )
+        handoff = None if not use_rows or use_rows[0]["handoff"] is None else str(use_rows[0]["handoff"])
+        if case.get("uses_target"):
+            if str(trial["purpose"]) == "takeover":
+                if handoff != target["id"]:
+                    raise FactoryError(
+                        "ASSET_EVIDENCE_INVALID",
+                        "轮次没有使用接管交接",
+                        case=str(case["name"]),
+                        reason="target",
+                    )
+            elif target["id"] not in assets:
+                raise FactoryError(
+                    "ASSET_EVIDENCE_INVALID", "轮次没有挂载候选", case=str(case["name"]), reason="target"
+                )
+        messages = json.loads(row["messages"])
         return {
             "kind": "turn",
             "id": turn_id,
@@ -505,16 +624,59 @@ class LearningStore:
             "context_digest": str(trial["context_digest"]),
             "assets": assets,
             "fresh": bool(use_rows and use_rows[0]["fresh"]),
-            "handoff": None
-            if not use_rows or use_rows[0]["handoff"] is None
-            else str(use_rows[0]["handoff"]),
+            "handoff": handoff,
             "agent": str(row["agent"]),
             "conversation": int(row["conversation"]),
-            "messages": json.loads(row["messages"]),
-            "message_digests": [],
-            "workspace_generation": None,
-            "actions": [],
+            "messages": messages,
+            "message_digests": _message_digests(self.ctx, messages),
+            "workspace_generation": str(trial["id"]) if str(trial["purpose"]) == "takeover" else None,
+            "actions": json.loads(use_rows[0]["actions"]) if use_rows else [],
         }
+
+
+def _default_workspace(agent: str) -> str:
+    return f"agents/{agent}/workspace"
+
+
+def _workspace_row(
+    conn: Any, agent: str, current: str, previous: str | None, trial_id: str | None, phase: str, now: str
+) -> None:
+    conn.execute(
+        """INSERT INTO agent_workspaces (agent, current_path, previous_path, trial_id, phase, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(agent) DO UPDATE SET
+             current_path = excluded.current_path,
+             previous_path = excluded.previous_path,
+             trial_id = excluded.trial_id,
+             phase = excluded.phase,
+             updated_at = excluded.updated_at""",
+        (agent, current, previous, trial_id, phase, now),
+    )
+
+
+def _install_takeover(ctx: Any, conn: Any, agent: str, trial_id: str, now: str) -> None:
+    current = f"agents/{agent}/takeovers/{trial_id}/workspace"
+    path = Path(ctx.root) / current
+    (path / "notebook").mkdir(parents=True, exist_ok=True)
+    (Path(ctx.root) / "agents" / agent / "takeovers" / trial_id / "home").mkdir(parents=True, exist_ok=True)
+    previous = _default_workspace(agent)
+    _workspace_row(conn, agent, current, previous, trial_id, "testing", now)
+    conn.execute(
+        "UPDATE agents SET session = NULL, conversation = conversation + 1, turns_in_conv = 0, "
+        "sandbox = NULL, updated_at = ? WHERE name = ?",
+        (now, agent),
+    )
+
+
+def _message_digests(ctx: Any, message_ids: list[str]) -> list[str]:
+    found = []
+    for message_id in message_ids:
+        rows = ctx.db.query("SELECT body FROM agent_messages WHERE id = ?", (message_id,))
+        if not rows:
+            continue
+        body = json.loads(rows[0]["body"])
+        found.append(digest_bytes(canonical_bytes(body)))
+    return found
 
 
 def _authorization_kind(record: dict[str, Any]) -> str:
@@ -760,6 +922,16 @@ def mount_turn_context(ctx: Any, epochs: Any, agent: str, incoming: Any) -> tupl
     records = store.pinned_records(target)
     handoff_rows = ctx.db.query("SELECT asset_id FROM asset_heads WHERE slot = ?", (f"handoff:{agent}",))
     handoff = None if not handoff_rows else str(handoff_rows[0]["asset_id"])
+    workspace = ctx.db.query(
+        "SELECT trial_id, phase FROM agent_workspaces WHERE agent = ? AND phase = 'testing'",
+        (agent,),
+    )
+    if workspace and workspace[0]["trial_id"]:
+        trial = ctx.db.query("SELECT target FROM asset_trials WHERE id = ?", (workspace[0]["trial_id"],))
+        if trial:
+            handoff = str(trial[0]["target"])
+            if handoff not in [item["id"] for item in records]:
+                records = [_load_asset(ctx, handoff), *records]
     context = {
         "context_digest": digest_bytes(
             canonical_bytes({"assets": [item["id"] for item in records], "handoff": handoff})

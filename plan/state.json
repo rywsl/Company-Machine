@@ -7660,6 +7660,78 @@
       "status": "done",
       "updated_at": "2026-11-16T08:30:30Z"
     },
+    "M16-03": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "rc/mao/agents.py": "(deleted)",
+        "src/mao/learning.py": "b0d7968a12ddb2879487a33b2cd93abd7cc21a01157cb19c25b9dc3fb10ca81e",
+        "src/mao/mcp.py": "bf6254bc9cb130bd4e94d7a215d7de7c66325aa722b40c1af3919d9420d166bd",
+        "tests/system/test_assets_handoff.py": "cdd254914e00cca8f4e545d32e7c7bbbc84d91b45835832f6ed5e5b8277bc365"
+      },
+      "commit": "fa4bd68",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_03_handoff.py",
+          "seconds": 25.8,
+          "stdout_sha256": "4d26be3aab5af83ee9bc17b2f3d5d2062d20bea84d7d67cbc6f383d774caaf80",
+          "tail": "{\"exit\": 0, \"total\": 8, \"passed\": 8, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........                                                                 [100%]\n8 passed in 25.32s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m16/test_m16_04_checkpoint.py --ignore=tests/acceptance/m16/test_m16_05_package.py --ignore=tests/acceptance/m16/test_m16_06_surface.py",
+          "seconds": 1016.2,
+          "stdout_sha256": "e5777191bf52378dc880b033895e925a9fd7e8420d36ec3a1e6003e65932b72a",
+          "tail": "........................................................................ [ 60%]\n........................................................................ [ 64%]\n........................................................................ [ 69%]\n........................................................................ [ 73%]\n........................................................................ [ 77%]\n........................................................................ [ 82%]\n........................................................................ [ 86%]\n........................................................................ [ 90%]\n........................................................................ [ 95%]\n........................................................................ [ 99%]\n......                                                                   [100%]\n1662 passed in 1015.25s (0:16:55)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.2,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "287cc8e737362a0fa91b6a1fc144b8698be17ffd396d05aaea1b53764d0eb8e1",
+          "tail": "264 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 2.2,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [
+        "lan/state.json"
+      ],
+      "status": "done",
+      "updated_at": "2026-11-16T09:13:58Z"
+    },
     "M2-01": {
       "baseline": {
         "lan/protected.lock": "(deleted)",

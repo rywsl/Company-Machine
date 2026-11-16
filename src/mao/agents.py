@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from mao.base import canonical_bytes, canonical_json, parse_duration, utc_iso
@@ -428,6 +429,8 @@ class AgentHost:
         if int(row["rotate_pending"]):
             self._rotate(snapshot, cfg, row)
             row = self._agent_row(name)
+            if str(row["state"]) == "paused":
+                return None
         pending = self._pending(name, cfg.batch)
         if not pending:
             return None
@@ -710,6 +713,7 @@ class AgentHost:
         logs = host / "turns" / turn_id
         logs.mkdir(parents=True, exist_ok=True)
         result, server = self._run_cli(snapshot, cfg, turn_id, number, invocation, sandbox, logs)
+        _store_turn_actions(self.ctx, turn_id, server.actions)
         summary = None
         try:
             summary = parse_transcript(logs / "transcript.raw", invocation.transcript or "stream-json")
@@ -798,6 +802,14 @@ class AgentHost:
             )
 
     def _rotate(self, snapshot: Any, cfg: AgentConfig, row: Any) -> None:
+        from mao.assets import assets_config
+
+        if assets_config(self.ctx) is None:
+            self._rotate_legacy(snapshot, cfg, row)
+            return
+        self._rotate_assets(snapshot, cfg, row)
+
+    def _rotate_legacy(self, snapshot: Any, cfg: AgentConfig, row: Any) -> None:
         session = None if row["session"] is None else str(row["session"])
         ok = True
         if session:
@@ -811,6 +823,55 @@ class AgentHost:
                 (conversation, now, cfg.name),
             )
         self._event("agent.rotated", {"agent": cfg.name, "conversation": conversation, "ok": ok})
+
+    def _rotate_assets(self, snapshot: Any, cfg: AgentConfig, row: Any) -> None:
+        from mao.assets import capture_handoff
+
+        session = None if row["session"] is None else str(row["session"])
+        turn = self._handoff(snapshot, cfg, row, session) if session else None
+        document = _read_handoff_next(self.ctx, cfg.name)
+        if turn is not None and turn.state == "ok" and document is not None:
+            try:
+                expected = _handoff_head(self.ctx, cfg.name)
+                now = utc_iso(self.ctx.clock.now())
+                conversation = int(row["conversation"]) + 1
+                with self.ctx.db.tx() as conn:
+                    capture_handoff(self.ctx, cfg.name, document, expected=expected, by="system")
+                    conn.execute(
+                        "UPDATE agents SET session = NULL, conversation = ?, turns_in_conv = 0, last_tokens = 0, "
+                        "rotate_pending = 0, state = 'active', updated_at = ? WHERE name = ?",
+                        (conversation, now, cfg.name),
+                    )
+                self._event("agent.rotated", {"agent": cfg.name, "conversation": conversation, "ok": True})
+                _read_handoff_next(self.ctx, cfg.name, unlink=True)
+                return
+            except FactoryError:
+                pass
+        self._block_handoff(cfg.name)
+
+    def _block_handoff(self, name: str) -> None:
+        from mao.inbox import Inbox, RequestKind
+
+        now = utc_iso(self.ctx.clock.now())
+        origin = f"asset-handoff:{name}"
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE agents SET state = 'paused', rotate_pending = 1, updated_at = ? WHERE name = ?",
+                (now, name),
+            )
+        self._event("agent.handoff.blocked", {"agent": name, "state": "paused", "reason": "handoff"})
+        existing = self.ctx.db.query(
+            "SELECT id FROM human_requests WHERE origin = ? AND status = 'open'",
+            (origin,),
+        )
+        if not existing:
+            Inbox(self.ctx).open(
+                RequestKind.QUESTION.value,
+                subject=origin,
+                origin=origin,
+                summary="交接没有固化，岗位已暂停",
+                payload={"agent": name},
+            )
 
     def _handoff(self, snapshot: Any, cfg: AgentConfig, row: Any, session: str) -> Any:
         from mao.operator import build_runtime_invocation, parse_transcript
@@ -1178,7 +1239,8 @@ class AgentHost:
             held = self._sandboxes
         digests = self._box_digest
         image, network, plan = self._box_network(snapshot, name, cfg)
-        digest = _box_digest(cfg, image, network)
+        workspace = workspace_path(self.ctx, name)
+        digest = _box_digest(cfg, image, network, str(workspace))
         current = held.get(name)
         if current is not None and digests.get(name) == digest and current.alive():
             return current
@@ -1247,13 +1309,14 @@ class AgentHost:
         from mao.sandbox import Mount, SandboxSpec
 
         host = self.ctx.root / "agents" / name
-        for folder in (host / "in", host / "ctl", host / "workspace" / "notebook"):
+        workspace = workspace_path(self.ctx, name)
+        for folder in (host / "in", host / "ctl", workspace / "notebook"):
             folder.mkdir(parents=True, exist_ok=True)
         builtin = self.foreman is not None and name == _RESIDENT_NAME
         mounts = [
             Mount(str((host / "in").resolve()), "/factory/in", True),
             Mount(str((host / "ctl").resolve()), "/factory/ctl", False),
-            Mount(str((host / "workspace").resolve()), "/workspace", False),
+            Mount(str(workspace.resolve()), "/workspace", False),
             Mount(str((self.ctx.root / "tools" / "factory").resolve()), "/opt/factory", True),
         ]
         runtime = snapshot.spec(cfg.runtime)
@@ -1527,10 +1590,54 @@ def _wake_fields(wake: Any) -> dict[str, Any]:
     }
 
 
-def _box_digest(cfg: AgentConfig, image: str, network: str) -> str:
+def _box_digest(cfg: AgentConfig, image: str, network: str, workspace: str = "") -> str:
     return hashlib.sha256(
-        canonical_json({"config": cfg.digest, "image": image, "network": network}).encode("utf-8")
+        canonical_json(
+            {"config": cfg.digest, "image": image, "network": network, "workspace": workspace}
+        ).encode("utf-8")
     ).hexdigest()
+
+
+def _store_turn_actions(ctx: Any, turn_id: str, actions: list[dict[str, Any]]) -> None:
+    if not actions:
+        return
+    with ctx.db.tx() as conn:
+        row = conn.execute(
+            "SELECT actions FROM asset_uses WHERE kind = 'turn' AND execution_id = ?",
+            (turn_id,),
+        ).fetchone()
+        if row is None:
+            return
+        conn.execute(
+            "UPDATE asset_uses SET actions = ? WHERE kind = 'turn' AND execution_id = ?",
+            (canonical_json(actions), turn_id),
+        )
+
+
+def _handoff_head(ctx: Any, name: str) -> str | None:
+    rows = ctx.db.query("SELECT asset_id FROM asset_heads WHERE slot = ?", (f"handoff:{name}",))
+    return None if not rows else str(rows[0]["asset_id"])
+
+
+def _read_handoff_next(ctx: Any, name: str, *, unlink: bool = False) -> dict[str, Any] | None:
+    path = ctx.root / "agents" / name / "workspace" / "notebook" / "HANDOFF.next.json"
+    if unlink:
+        path.unlink(missing_ok=True)
+        return None
+    if not path.is_file():
+        return None
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def workspace_path(ctx: Any, name: str) -> Path:
+    rows = ctx.db.query("SELECT current_path FROM agent_workspaces WHERE agent = ?", (name,))
+    if rows and rows[0]["current_path"]:
+        return Path(ctx.root) / str(rows[0]["current_path"])
+    return Path(ctx.root) / "agents" / name / "workspace"
 
 
 def _runtime_wants_proxy(runtime: Mapping[str, Any]) -> bool:
