@@ -416,7 +416,9 @@ def _closure(ctx: Any, conn: Any, roots: list[str]) -> dict[str, Any]:
         for item in conn.execute("SELECT digest FROM payload_files WHERE bean_id = ?", (bean_id,)):
             blobs.add(str(item["digest"]))
         for item in conn.execute("SELECT report_digest, job_id FROM seals WHERE bean_id = ?", (bean_id,)):
-            blobs.add(str(item["report_digest"]))
+            digest = str(item["report_digest"])
+            if ctx.warehouse.blob_path(digest).is_file():
+                blobs.add(digest)
             if item["job_id"]:
                 _add_epoch(conn, epochs, _job_epoch(conn, str(item["job_id"])))
     for digest in sorted(blobs):

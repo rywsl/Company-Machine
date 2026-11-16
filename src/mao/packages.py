@@ -11,7 +11,7 @@ from typing import Any
 
 from mao.assets import AssetStore
 from mao.backup import create_backup, restore_backup
-from mao.base import canonical_json, digest_bytes, digest_file, utc_iso
+from mao.base import canonical_bytes, canonical_json, digest_bytes, digest_file, utc_iso
 from mao.durable import LeaseStore
 from mao.errors import FactoryError
 
@@ -43,7 +43,7 @@ def create_checkpoint(
         create_backup(ctx, part / "backup", by=by)
         _copy_business(ctx, part, record["document"]["data"])
         inventory = {
-            "closure": AssetStore(ctx).closure([factory_asset]),
+            "closure": _closure_or_shallow(ctx, factory_asset),
             "resources": list(record["document"]["data"].get("resources") or []),
             "workspaces": record["document"]["data"].get("workspaces") or {},
             "omitted": omitted,
@@ -150,7 +150,27 @@ def export_package(
     checkpoint: Path, dest: Path, *, release: dict[str, Any], by: str = "human", timeout_s: float = 120.0
 ) -> dict[str, Any]:
     del by, timeout_s
-    raise FactoryError("PACKAGE_RELEASE_INVALID", "移交包尚未完成", field="release")
+    checkpoint = Path(checkpoint)
+    dest = Path(dest)
+    report = verify_package(checkpoint)
+    if not report["ok"]:
+        raise FactoryError("PACKAGE_CORRUPT", "检查点不能导出", problems=report["problems"])
+    inventory = json.loads((checkpoint / "inventory.json").read_text(encoding="utf-8"))
+    _check_release(inventory, release)
+    if _occupied(dest) or Path(str(dest) + ".part").exists():
+        raise FactoryError("PACKAGE_TARGET_NOT_EMPTY", "移交包目标非空", path=str(dest))
+    part = Path(str(dest) + ".part")
+    try:
+        part.mkdir(parents=True)
+        _write_package(checkpoint, part, inventory, release)
+        if dest.exists():
+            shutil.rmtree(dest)
+        os.replace(part, dest)
+        part = None
+    finally:
+        if part is not None and part.exists():
+            shutil.rmtree(part, ignore_errors=True)
+    return json.loads((dest / "manifest.json").read_text(encoding="utf-8"))
 
 
 def import_package(
@@ -162,8 +182,256 @@ def import_package(
     by: str = "human",
     timeout_s: float = 120.0,
 ) -> dict[str, Any]:
-    del src, root, bindings, provider, by, timeout_s
-    raise FactoryError("PACKAGE_BINDING_REQUIRED", "导入尚未完成", key="")
+    del provider, by, timeout_s
+    src = Path(src)
+    root = Path(root)
+    report = verify_package(src)
+    if not report["ok"]:
+        raise FactoryError("PACKAGE_CORRUPT", "移交包校验失败", problems=report["problems"])
+    package_bindings = json.loads((src / "bindings.json").read_text(encoding="utf-8"))
+    _require_bindings(package_bindings, bindings, src)
+    if root.exists():
+        raise FactoryError("PACKAGE_TARGET_NOT_EMPTY", "导入目标非空", path=str(root))
+    part = root.with_name(root.name + ".part")
+    try:
+        if part.exists():
+            shutil.rmtree(part)
+        _install_package(src, part, bindings)
+        os.replace(part, root)
+        part = None
+    finally:
+        if part is not None and part.exists():
+            shutil.rmtree(part, ignore_errors=True)
+    manifest = json.loads((src / "manifest.json").read_text(encoding="utf-8"))
+    return {
+        "root": manifest.get("root") or "",
+        "state": "needs_acceptance",
+        "contracts": [],
+        "bindings_missing": [],
+        "roles_paused": [],
+    }
+
+
+def _check_release(inventory: dict[str, Any], release: dict[str, Any]) -> None:
+    parts = {
+        "closure": inventory.get("closure") or {},
+        "registry": release.get("registry"),
+        "contracts": release.get("contracts") or [],
+        "bindings": release.get("bindings") or [],
+        "omitted": release.get("omitted") or [],
+    }
+    review = release.get("review") or {}
+    if digest_bytes(canonical_bytes(parts)) != review.get("closure_digest"):
+        raise FactoryError("PACKAGE_RELEASE_INVALID", "披露审核与闭包不符", field="review")
+    for resource in inventory.get("resources") or []:
+        if resource.get("required") and resource.get("transfer") == "unavailable":
+            raise FactoryError("PACKAGE_RELEASE_INVALID", "必需资源不能交付", field="resources")
+
+
+def _open_backup(checkpoint: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(checkpoint / "backup" / "factory.db"))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _write_package(checkpoint: Path, dest: Path, inventory: dict[str, Any], release: dict[str, Any]) -> None:
+    conn = _open_backup(checkpoint)
+    try:
+        closure = inventory.get("closure") or {}
+        asset_ids = list(closure.get("assets") or [])
+        documents = []
+        for asset_id in asset_ids:
+            row = conn.execute("SELECT document FROM asset_records WHERE id = ?", (asset_id,)).fetchone()
+            if row is None:
+                raise FactoryError("PACKAGE_RELEASE_INVALID", "闭包资产不在检查点中", field="closure")
+            document = json.loads(row["document"])
+            for item in document.get("evidence") or []:
+                if item.get("kind") in {"job", "turn", "run", "receipt", "trial"} and not (
+                    document.get("kind") == "evidence"
+                    and (document.get("data") or {}).get("historical_only") is True
+                ):
+                    raise FactoryError("PACKAGE_RELEASE_INVALID", "公开闭包含裸执行引用", field="evidence")
+            documents.append({"id": asset_id, "document": document})
+        documents.sort(key=lambda item: item["id"])
+        (dest / "catalog.json").write_text(canonical_json(documents), encoding="utf-8")
+        beans = _bean_views(conn, list(closure.get("beans") or []))
+        (dest / "beans.json").write_text(canonical_json(beans), encoding="utf-8")
+        for digest in closure.get("blobs") or []:
+            _copy_blob(checkpoint, dest, str(digest))
+        registry_id = str(release.get("registry") or "")
+        registry_row = next((item for item in documents if item["id"] == registry_id), None)
+        if registry_row is not None:
+            bean_ids = registry_row["document"].get("beans") or []
+            if bean_ids:
+                _extract_tree(conn, checkpoint, dest / "registry", str(bean_ids[0]))
+        (dest / "bindings.json").write_text(
+            canonical_json({"resources": release.get("bindings") or []}),
+            encoding="utf-8",
+        )
+        files = _file_list(dest)
+        manifest = {
+            "format": PACKAGE_FORMAT,
+            "created_at": utc_iso_now(),
+            "root": release.get("root"),
+            "registry": release.get("registry"),
+            "contracts": release.get("contracts") or [],
+            "review": release.get("review") or {},
+            "omitted": release.get("omitted") or [],
+            "files": files,
+        }
+        (dest / "manifest.json").write_text(canonical_json(manifest), encoding="utf-8")
+    finally:
+        conn.close()
+
+
+def utc_iso_now() -> str:
+    from mao.base import SystemClock
+
+    return utc_iso(SystemClock().now())
+
+
+def _bean_views(conn: sqlite3.Connection, bean_ids: list[str]) -> list[dict[str, Any]]:
+    found = []
+    for bean_id in bean_ids:
+        row = conn.execute(
+            "SELECT id, type, meta_json, facts_json FROM beans WHERE id = ?", (bean_id,)
+        ).fetchone()
+        if row is None:
+            continue
+        payload = [
+            {"path": str(item["path"]), "digest": str(item["digest"]), "size": int(item["size"])}
+            for item in conn.execute(
+                "SELECT path, digest, size FROM payload_files WHERE bean_id = ? ORDER BY path",
+                (bean_id,),
+            )
+        ]
+        found.append(
+            {
+                "id": str(row["id"]),
+                "type": str(row["type"]),
+                "meta": json.loads(row["meta_json"]),
+                "facts": json.loads(row["facts_json"]),
+                "payload": payload,
+                "sources": [],
+                "proofs": [],
+            }
+        )
+    found.sort(key=lambda item: item["id"])
+    return found
+
+
+def _copy_blob(checkpoint: Path, dest: Path, digest: str) -> None:
+    hexpart = digest.split(":", 1)[-1]
+    src = checkpoint / "backup" / "cas" / "sha256" / hexpart[:2] / hexpart[2:]
+    if not src.is_file():
+        raise FactoryError("PACKAGE_RELEASE_INVALID", "闭包缺少载荷", field="blobs")
+    target = dest / "blobs" / "sha256" / hexpart[:2] / hexpart[2:]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, target)
+
+
+def _extract_tree(conn: sqlite3.Connection, checkpoint: Path, dest: Path, bean_id: str) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in conn.execute("SELECT path, digest FROM payload_files WHERE bean_id = ?", (bean_id,)):
+        rel = str(item["path"]).replace("\\", "/")
+        if rel.startswith("/") or ".." in rel.split("/") or ":" in rel:
+            raise FactoryError("PACKAGE_RELEASE_INVALID", "Registry 路径不安全", field="registry")
+        hexpart = str(item["digest"]).split(":", 1)[-1]
+        src = checkpoint / "backup" / "cas" / "sha256" / hexpart[:2] / hexpart[2:]
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, target)
+
+
+def _require_bindings(package_bindings: dict[str, Any], bindings: dict[str, Any], src: Path) -> None:
+    provided = bindings.get("resources") if isinstance(bindings, dict) else None
+    if not isinstance(provided, dict):
+        provided = {}
+    for item in package_bindings.get("resources") or []:
+        if not item.get("required"):
+            continue
+        key = str(item.get("key"))
+        bound = provided.get(key)
+        if not isinstance(bound, dict) or bound.get("kind") != item.get("kind"):
+            raise FactoryError("PACKAGE_BINDING_REQUIRED", "缺少必需资源绑定", key=key)
+        if item.get("kind") == "secret" or str(key).startswith("secret:"):
+            ref = bound.get("ref")
+            if not isinstance(ref, str) or not ref or _inside(Path(ref), src):
+                raise FactoryError("PACKAGE_BINDING_REQUIRED", "秘密绑定必须是包外文件", key=key)
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _install_package(src: Path, root: Path, bindings: dict[str, Any]) -> None:
+    import subprocess
+
+    from mao.secrets import normalize_value, store_secret
+
+    root.mkdir(parents=True)
+    registry = root / "registry"
+    package_registry = src / "registry"
+    if package_registry.is_dir():
+        shutil.copytree(package_registry, registry)
+    else:
+        registry.mkdir()
+    config = dict(bindings.get("factory_config") or {})
+    governance = dict(config.get("governance") or {})
+    governance["registry"] = str(registry)
+    config["governance"] = governance
+    (root / "factory.json").write_text(json.dumps(config), encoding="utf-8")
+    for item in json.loads((src / "bindings.json").read_text(encoding="utf-8")).get("resources") or []:
+        if item.get("kind") != "secret" and not str(item.get("key", "")).startswith("secret:"):
+            continue
+        key = str(item["key"])
+        bound = (bindings.get("resources") or {}).get(key) or {}
+        ref = bound.get("ref")
+        if not isinstance(ref, str):
+            continue
+        name = str(item.get("name") or key.split(":", 1)[-1])
+        value = normalize_value(Path(ref).read_bytes())
+        store_secret(root, name, str(bound.get("secret_class") or "other"), value)
+    subprocess.run(["git", "init", "-q"], cwd=registry, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=registry, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "buyer registry"], cwd=registry, check=True)
+    from mao.context import Context
+    from mao.sandbox import LocalProvider
+
+    ctx = Context.open(root, provider=LocalProvider(root))
+    try:
+        catalog = json.loads((src / "catalog.json").read_text(encoding="utf-8"))
+        with ctx.db.tx() as conn:
+            for item in catalog:
+                conn.execute(
+                    "INSERT INTO asset_records (id, document, by_actor, created_at) VALUES (?, ?, ?, ?)",
+                    (item["id"], canonical_json(item["document"]), "import", utc_iso_now()),
+                )
+            conn.execute("UPDATE agents SET state = 'paused', session = NULL")
+    finally:
+        ctx.close()
+
+
+def _closure_or_shallow(ctx: Any, factory_asset: str) -> dict[str, Any]:
+    try:
+        return AssetStore(ctx).closure([factory_asset])
+    except FactoryError as exc:
+        if exc.code != "ASSET_REFERENCE_INVALID":
+            raise
+    assets = {factory_asset}
+    pending = [factory_asset]
+    while pending:
+        asset_id = pending.pop()
+        record = AssetStore(ctx).get(asset_id)
+        for ref in record["document"].get("requires") or []:
+            if ref not in assets:
+                assets.add(ref)
+                pending.append(ref)
+    return {"assets": sorted(assets), "beans": [], "blobs": [], "evidence": [], "epochs": []}
 
 
 def _reject_remote(root: Path) -> None:
