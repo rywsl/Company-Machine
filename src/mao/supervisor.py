@@ -333,6 +333,12 @@ class ForemanSupervisor:
         (folder / "ctl" / "responses").mkdir(exist_ok=True)
         self._clone(folder / "workspace" / "registry", epoch)
         brief = _brief(role, wake, epoch)
+        if role == "foreman":
+            from mao.agents import ASSET_FOREMAN_GUIDANCE
+            from mao.assets import assets_config
+
+            if assets_config(self.ctx) is not None:
+                brief = brief + "\n\n" + ASSET_FOREMAN_GUIDANCE
         (folder / "in" / "brief.md").write_text(brief, encoding="utf-8")
         (folder / "in" / "wake.json").write_text(
             canonical_json(

@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,10 @@ _LABEL = re.compile(r"^[^=\s]+=[^=\s]+$")
 _LOG = __import__("logging").getLogger("mao.agents")
 _RESIDENT_NAME = "foreman"
 _TALK_OBLIGATION = "本轮有 human talk 消息时必须 talk_reply。"
+ASSET_FOREMAN_GUIDANCE = (
+    "正式知识与临时记忆分开。notebook 只是便笺。"
+    "用现有正常工作收集证据，经已授权契约晋升；未知条件保留为问题。"
+)
 _FOREMAN_CHARTER = (
     "你是这座工厂的厂长。\n"
     "/workspace/registry 是 active epoch 的 Registry 克隆。\n"
@@ -608,7 +612,12 @@ class AgentHost:
 
     def _config_for(self, snapshot: Any, name: str) -> AgentConfig:
         if self.foreman is not None and name == _RESIDENT_NAME:
-            return foreman_agent(snapshot, self.foreman)
+            cfg = foreman_agent(snapshot, self.foreman)
+            from mao.assets import assets_config
+
+            if assets_config(self.ctx) is not None:
+                cfg = replace(cfg, charter=cfg.charter + "\n" + ASSET_FOREMAN_GUIDANCE)
+            return cfg
         return agent_config(snapshot, name)
 
     def _valid(self, snapshot: Any) -> list[str]:
@@ -768,6 +777,10 @@ class AgentHost:
                     "UPDATE agent_messages SET state = 'dropped' WHERE turn = ? AND attempts >= 3",
                     (turn_id,),
                 )
+        if state == "ok":
+            from mao.learning import install_pending_takeover
+
+            install_pending_takeover(self.ctx, name)
         dropped = self.ctx.db.query(
             "SELECT id FROM agent_messages WHERE turn = ? AND state = 'dropped'",
             (turn_id,),

@@ -14,7 +14,7 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 _SUBJECT = re.compile(
     r"^(?:factory|agent:[A-Za-z0-9][A-Za-z0-9._-]*|station:[A-Za-z0-9][A-Za-z0-9._-]*@[0-9]+)$"
 )
-_HUMAN = re.compile(r"^[A-Za-z0-9._-]+$")
+_HUMAN = re.compile(r"^[A-Za-z0-9._@-]+$")
 _FIELDS = ("key", "kind", "summary", "scope", "beans", "requires", "evidence", "data")
 _EVIDENCE_KINDS = ("job", "turn", "run", "receipt", "trial")
 _JOB_DONE = ("SEALED", "DEAD")

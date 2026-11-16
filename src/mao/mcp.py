@@ -53,6 +53,23 @@ _FOREMAN = (
 )
 _REVIEWER = ("review_submit",)
 _AGENT = ("run_start", "ask_human", "remind", "agent_send")
+_ASSET_SHARED = (
+    "asset_get",
+    "asset_list",
+    "asset_closure",
+    "knowledge_heads",
+    "knowledge_trial_get",
+)
+_ASSET_FOREMAN = (
+    "knowledge_trial_open",
+    "knowledge_evaluate",
+    "knowledge_trial_cancel",
+    "knowledge_promote",
+    "knowledge_invalidate",
+    "agent_takeover_prepare",
+    "agent_takeover_finish",
+    "agent_takeover_abort",
+)
 
 
 @dataclass(frozen=True)
@@ -99,14 +116,27 @@ class McpServer:
         }
 
     def tools(self) -> list[dict[str, Any]]:
+        from mao.agents import resident_foreman
+        from mao.assets import assets_config
+
         names = list(_SHARED)
+        enabled = assets_config(self.ctx) is not None
+        if enabled:
+            names.extend(_ASSET_SHARED)
         if self.session.role == "foreman":
             names.extend(_FOREMAN)
+            if enabled:
+                names.extend(_ASSET_FOREMAN)
+                names.append("asset_put")
+                if resident_foreman(self.ctx.root) is not None:
+                    names.extend(("agent_send", "remind"))
         elif self.session.role == "reviewer":
             names.extend(_REVIEWER)
         else:
             names.extend(_AGENT)
-        return [_tool(name) for name in sorted(names)]
+            if enabled:
+                names.append("asset_put")
+        return [_tool(name) for name in sorted(set(names))]
 
     def handle(self, message: Any) -> dict[str, Any] | None:
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0" or "method" not in message:
@@ -185,6 +215,67 @@ class McpServer:
             "isError": False,
         }
 
+    def _asset_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        from mao.assets import AssetStore, assets_config
+        from mao.learning import LearningStore
+
+        if assets_config(self.ctx) is None or not name.startswith(
+            ("asset_", "knowledge_", "agent_takeover_")
+        ):
+            return _ASSET_SKIP
+        assets = AssetStore(self.ctx)
+        learning = LearningStore(self.ctx, self.epochs)
+        actor = str(self.session.actor)
+        if name == "asset_get":
+            return assets.get(str(arguments["asset_id"]))
+        if name == "asset_list":
+            return assets.list(kind=arguments.get("kind"), subject=arguments.get("subject"))
+        if name == "asset_closure":
+            return assets.closure(list(arguments["roots"]))
+        if name == "asset_put":
+            document = dict(arguments["document"])
+            if self.session.role == "agent":
+                subject = str((document.get("scope") or {}).get("subject") or "")
+                if subject != f"agent:{self.session.agent}":
+                    raise FactoryError("ASSET_INVALID", "只能登记本岗位资产", field="scope")
+            return assets.put(document, by=actor)
+        if name == "knowledge_heads":
+            return learning.heads(str(arguments["subject"]))
+        if name == "knowledge_trial_get":
+            return learning.get_trial(str(arguments["trial_id"]))
+        if name == "knowledge_trial_open":
+            return learning.open_trial(
+                str(arguments["target"]),
+                str(arguments["contract"]),
+                purpose=str(arguments["purpose"]),
+                by=actor,
+            )
+        if name == "knowledge_evaluate":
+            return learning.evaluate(str(arguments["trial_id"]), arguments["evidence"], by=actor)
+        if name == "knowledge_trial_cancel":
+            return learning.cancel_trial(
+                str(arguments["trial_id"]), reason=str(arguments["reason"]), by=actor
+            )
+        if name == "knowledge_promote":
+            expected = arguments.get("expected")
+            return learning.promote(
+                str(arguments["target"]),
+                trial_id=arguments.get("trial_id"),
+                expected=None if expected in (None, "none", "") else str(expected),
+                by=actor,
+            )
+        if name == "knowledge_invalidate":
+            return learning.invalidate(str(arguments["target"]), reason=str(arguments["reason"]), by=actor)
+        if name == "agent_takeover_prepare":
+            return learning.prepare_takeover(str(arguments["trial_id"]), by=actor)
+        if name == "agent_takeover_finish":
+            return learning.finish_takeover(str(arguments["trial_id"]), by=actor)
+        if name == "agent_takeover_abort":
+            return learning.abort_takeover(
+                str(arguments["trial_id"]), reason=str(arguments["reason"]), by=actor
+            )
+        return _ASSET_SKIP
+
     def _invoke(self, name: str, arguments: dict[str, Any]) -> Any:
         query = ForemanQuery(self.ctx, self.epochs)
         submit = ForemanSubmit(self.ctx, self.pipeline)
@@ -224,12 +315,18 @@ class McpServer:
             return ConversionStore(self.ctx).list(status=arguments.get("status"))
         if name == "changeset_status":
             return submit.status(str(arguments["changeset_id"]))
-        if name in _AGENT:
+        if name in _AGENT or name in ("agent_send", "remind"):
             from mao.agents import agent_tool
 
-            value = agent_tool(self.ctx, self.epochs, str(self.session.agent or ""), name, arguments)
+            actor = str(self.session.agent or "")
+            if self.session.role == "foreman" and not actor:
+                actor = "foreman"
+            value = agent_tool(self.ctx, self.epochs, actor, name, arguments)
             self.actions.append({"tool": name, "refs": _action_refs(value)})
             return value
+        asset_value = self._asset_tool(name, arguments)
+        if asset_value is not _ASSET_SKIP:
+            return asset_value
         if name == "changeset_propose":
             self._fetch_session()
             found = submit.propose(
@@ -528,6 +625,9 @@ class McpServer:
         return {"ok": not errors, "diags": diags, "conversions": conversions}
 
 
+_ASSET_SKIP = object()
+
+
 class _Proto(Exception):
     def __init__(self, code: int, message: str) -> None:
         self.code = code
@@ -593,6 +693,42 @@ def _rid(message: Any) -> Any:
 
 
 _SCHEMAS: dict[str, tuple[dict[str, Any], list[str]]] = {
+    "asset_get": ({"asset_id": {"type": "string"}}, ["asset_id"]),
+    "asset_list": ({"kind": {"type": "string"}, "subject": {"type": "string"}}, []),
+    "asset_closure": ({"roots": {"type": "array"}}, ["roots"]),
+    "asset_put": ({"document": {"type": "object"}}, ["document"]),
+    "knowledge_heads": ({"subject": {"type": "string"}}, ["subject"]),
+    "knowledge_trial_get": ({"trial_id": {"type": "string"}}, ["trial_id"]),
+    "knowledge_trial_open": (
+        {
+            "target": {"type": "string"},
+            "contract": {"type": "string"},
+            "purpose": {"type": "string", "enum": ["knowledge", "takeover", "release"]},
+        },
+        ["target", "contract", "purpose"],
+    ),
+    "knowledge_evaluate": (
+        {"trial_id": {"type": "string"}, "evidence": {"type": "object"}},
+        ["trial_id", "evidence"],
+    ),
+    "knowledge_trial_cancel": (
+        {"trial_id": {"type": "string"}, "reason": {"type": "string"}},
+        ["trial_id", "reason"],
+    ),
+    "knowledge_promote": (
+        {"target": {"type": "string"}, "trial_id": {"type": "string"}, "expected": {}},
+        ["target"],
+    ),
+    "knowledge_invalidate": (
+        {"target": {"type": "string"}, "reason": {"type": "string"}},
+        ["target", "reason"],
+    ),
+    "agent_takeover_prepare": ({"trial_id": {"type": "string"}}, ["trial_id"]),
+    "agent_takeover_finish": ({"trial_id": {"type": "string"}}, ["trial_id"]),
+    "agent_takeover_abort": (
+        {"trial_id": {"type": "string"}, "reason": {"type": "string"}},
+        ["trial_id", "reason"],
+    ),
     "registry_get": ({"key": {"type": "string"}}, ["key"]),
     "registry_list": ({"kind": {"type": "string"}}, ["kind"]),
     "registry_diff": ({"base": {"type": "string"}, "commit": {"type": "string"}}, ["base", "commit"]),

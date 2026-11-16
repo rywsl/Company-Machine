@@ -7873,6 +7873,85 @@
       "status": "done",
       "updated_at": "2026-11-16T10:23:38Z"
     },
+    "M16-06": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "rc/mao/agents.py": "(deleted)",
+        "src/mao/assets.py": "bfd97f0ff93fbed70c6e5ba1941144cd7bd58c5599cbe3eab11840dd66d3ef10",
+        "src/mao/cli.py": "306f4c81f5d9abdcb991bdae0fdd9f9e1a97ee4415317c267c0861ff47383034",
+        "src/mao/commands/agent.py": "7f8d57a9b308cda040a6cf9529818901a60977f6659ef56847e3e47dc363206a",
+        "src/mao/commands/asset.py": "e7aca007abc01723eb5a05ff30873214c11c33da082c01e1a1a93c5b31d2ccab",
+        "src/mao/commands/knowledge.py": "7e61ef9d72fd96b7b7cf9fb7c2a7082e988c66b46cd91e68e5437d694fd5d96c",
+        "src/mao/commands/package.py": "0f9f280bb6cd3351199ed7f01d5d9f49ae3f1e05e0c3201d317212e42398a131",
+        "src/mao/learning.py": "0dfcdd89fe7e03e37deda96580fb09fec8a2385970215d80665317d83e1e1807",
+        "src/mao/mcp.py": "77ec5960fbf11e53a0f4b85bae19ef76eaada76d518fb32c63b52f2cd7ca5de3",
+        "src/mao/supervisor.py": "b8e5ce8027c6e2c783a24c6498dd79c14a62d54faddd3a422c77df9b2e6fab05",
+        "tests/system/test_assets_surface.py": "6e511ab661e6a5c5005c277fdb66e4763f002013fed195a0531c92b3ca651352"
+      },
+      "commit": "495e38c",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_06_surface.py",
+          "seconds": 18.8,
+          "stdout_sha256": "723600f8050b611446125ab9a115dfd016520065464ae08ee2ec636c19294ec7",
+          "tail": "{\"exit\": 0, \"total\": 9, \"passed\": 9, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........                                                                [100%]\n9 passed in 18.18s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests",
+          "seconds": 1042.2,
+          "stdout_sha256": "0a28e790f868610da50d11eea567a8ce4c79cb7c7390b82e3b73a4afe8e8a47d",
+          "tail": "........................................................................ [ 59%]\n........................................................................ [ 63%]\n........................................................................ [ 68%]\n........................................................................ [ 72%]\n........................................................................ [ 76%]\n........................................................................ [ 80%]\n........................................................................ [ 85%]\n........................................................................ [ 89%]\n........................................................................ [ 93%]\n........................................................................ [ 97%]\n......................................                                   [100%]\n1694 passed in 1041.29s (0:17:21)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.2,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "dec187aa6b2b55478da214039191912d8bdb25983a7e79119e26593913ecd790",
+          "tail": "271 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 2.1,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [
+        "lan/state.json"
+      ],
+      "status": "done",
+      "updated_at": "2026-11-16T11:12:10Z"
+    },
     "M2-01": {
       "baseline": {
         "lan/protected.lock": "(deleted)",

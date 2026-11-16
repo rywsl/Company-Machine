@@ -634,6 +634,18 @@ class LearningStore:
         }
 
 
+def install_pending_takeover(ctx: Any, agent: str) -> None:
+    rows = ctx.db.query(
+        "SELECT trial_id FROM agent_workspaces WHERE agent = ? AND phase = 'pending'",
+        (agent,),
+    )
+    if not rows or not rows[0]["trial_id"]:
+        return
+    now = utc_iso(ctx.clock.now())
+    with ctx.db.tx() as conn:
+        _install_takeover(ctx, conn, agent, str(rows[0]["trial_id"]), now)
+
+
 def _default_workspace(agent: str) -> str:
     return f"agents/{agent}/workspace"
 

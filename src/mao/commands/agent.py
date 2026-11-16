@@ -9,6 +9,8 @@ from typing import Any
 from mao.agents import AgentHost, AgentsConfig, Mailbox, agent_names, agent_status
 from mao.commands.common import finish, open_context, open_snapshot
 from mao.errors import FactoryError
+from mao.governance.epochs import EpochStore
+from mao.learning import LearningStore
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -35,12 +37,30 @@ def register(sub: argparse._SubParsersAction) -> None:
     rotate = commands.add_parser("rotate")
     rotate.add_argument("name")
     rotate.set_defaults(func=cmd_rotate)
+    takeover = commands.add_parser("takeover")
+    actions = takeover.add_subparsers(dest="takeover_cmd", required=True)
+    prepare = actions.add_parser("prepare")
+    prepare.add_argument("trial")
+    prepare.add_argument("--by", required=True)
+    prepare.set_defaults(func=cmd_takeover_prepare)
+    finish_over = actions.add_parser("finish")
+    finish_over.add_argument("trial")
+    finish_over.add_argument("--by", required=True)
+    finish_over.set_defaults(func=cmd_takeover_finish)
+    abort = actions.add_parser("abort")
+    abort.add_argument("trial")
+    abort.add_argument("--reason", required=True)
+    abort.add_argument("--by", required=True)
+    abort.set_defaults(func=cmd_takeover_abort)
 
 
 def _host(ctx: Any, args: argparse.Namespace) -> AgentHost:
-    from mao.governance.epochs import EpochStore
-
+    del args
     return AgentHost(ctx, EpochStore(ctx), AgentsConfig.load(ctx.root))
+
+
+def _learning(ctx: Any) -> LearningStore:
+    return LearningStore(ctx, EpochStore(ctx))
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -87,6 +107,24 @@ def cmd_turns(args: argparse.Namespace) -> int:
     with open_context(args) as ctx:
         host = _host(ctx, args)
         body = [item.to_json() for item in host.turns(args.name)]
+    return finish(args, body)
+
+
+def cmd_takeover_prepare(args: argparse.Namespace) -> int:
+    with open_context(args) as ctx:
+        body = _learning(ctx).prepare_takeover(args.trial, by=args.by)
+    return finish(args, body)
+
+
+def cmd_takeover_finish(args: argparse.Namespace) -> int:
+    with open_context(args) as ctx:
+        body = _learning(ctx).finish_takeover(args.trial, by=args.by)
+    return finish(args, body)
+
+
+def cmd_takeover_abort(args: argparse.Namespace) -> int:
+    with open_context(args) as ctx:
+        body = _learning(ctx).abort_takeover(args.trial, reason=args.reason, by=args.by)
     return finish(args, body)
 
 
