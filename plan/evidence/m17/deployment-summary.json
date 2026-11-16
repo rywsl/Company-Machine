@@ -1,0 +1,31 @@
+{
+  "schema": "mao-m17-deployment-diagnostics/1",
+  "date": "2026-11-16",
+  "baseline_commit": "c538768",
+  "separate_from_original_25_cases": true,
+  "command": "uv run --offline python tools/harness.py pytest plan/evidence/m17/deployment/test_host_paths.py --basetemp=.factory/m17-repro/deployment-paths --tb=short",
+  "baseline": {
+    "total": 2,
+    "passed": 0,
+    "failed": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "pr2_module_only_control": {
+    "commit": "d19bbdaac90acf048975fb9efac15047a896fd0f",
+    "source": "src/mao/sandbox.py",
+    "source_sha256": "2190fee886147823fd3d60dca186084ab1ec6808576ef03a8c40379f261ea1e1",
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "method": "Load only the immutable PR2 sandbox.py in a temporary mao.__path__ overlay; run identical tests. All other modules remain the frozen baseline.",
+    "scope_limit": "This validates these two host-path cases only, not the whole PR or real production deployment."
+  },
+  "invariants": {
+    "production_source_modified": false,
+    "m16_workspace_modified": false,
+    "external_network_or_paid_api_used_by_tests": false
+  }
+}

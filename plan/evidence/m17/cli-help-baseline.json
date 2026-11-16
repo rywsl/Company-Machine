@@ -1,0 +1,157 @@
+{
+  "baseline_commit": "c538768",
+  "scope": "Help only; no factory context opened or business command executed.",
+  "records": [
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "usage: factory [-h] [--root ROOT] [--registry REGISTRY] [--json]\n               [--provider {docker,local}] [--local-commands LOCAL_COMMANDS]\n               [--epoch EPOCH] [--version]\n               {check,bean,job,run,line,receipt,trigger,cache,agent,approval,autonomy,secret,source,egress,console,contract,schedule,epoch,changeset,governance,image,inbox,instance,audit,drift,foreman,maintain,gateway,gc,backend,backup,mcp,serve,status,metrics,events,talk} ...\n\npositional arguments:\n  {check,bean,job,run,line,receipt,trigger,cache,agent,approval,autonomy,secret,source,egress,console,contract,schedule,epoch,changeset,governance,image,inbox,instance,audit,drift,foreman,maintain,gateway,gc,backend,backup,mcp,serve,status,metrics,events,talk}\n\noptions:\n  -h, --help            show this help message and exit\n  --root ROOT\n  --registry REGISTRY\n  --json\n  --provider {docker,local}\n  --local-commands LOCAL_COMMANDS\n  --epoch EPOCH\n  --version             show program's version number and exit\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "serve",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "usage: factory serve [-h] [--root ROOT] [--registry REGISTRY] [--json]\n                     [--provider {docker,local}]\n                     [--local-commands LOCAL_COMMANDS] [--epoch EPOCH]\n                     [--once]\n\noptions:\n  -h, --help            show this help message and exit\n  --root ROOT\n  --registry REGISTRY\n  --json\n  --provider {docker,local}\n  --local-commands LOCAL_COMMANDS\n  --epoch EPOCH\n  --once\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "talk",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "usage: factory talk [-h] {ls,show,send,answer} ...\n\npositional arguments:\n  {ls,show,send,answer}\n\noptions:\n  -h, --help            show this help message and exit\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "talk",
+        "send",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "usage: factory talk send [-h] --by BY text\n\npositional arguments:\n  text\n\noptions:\n  -h, --help  show this help message and exit\n  --by BY\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "talk",
+        "answer",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "usage: factory talk answer [-h] --by BY [--confirm] message\n\npositional arguments:\n  message\n\noptions:\n  -h, --help  show this help message and exit\n  --by BY\n  --confirm\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "agent",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "usage: factory agent [-h] {list,show,send,pause,resume,turns,rotate} ...\n\npositional arguments:\n  {list,show,send,pause,resume,turns,rotate}\n\noptions:\n  -h, --help            show this help message and exit\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "line",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "usage: factory line [-h] {plan,run,ls,show,nodes,cancel,retry,rebuild} ...\n\npositional arguments:\n  {plan,run,ls,show,nodes,cancel,retry,rebuild}\n\noptions:\n  -h, --help            show this help message and exit\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "foreman",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "usage: factory foreman [-h]\n                       {next,done,get,list,diff,bean,job,dlq,drift,invariant,metrics,approval,changeset,review,conversion,supervise,sessions,wakes,reopen} ...\n\npositional arguments:\n  {next,done,get,list,diff,bean,job,dlq,drift,invariant,metrics,approval,changeset,review,conversion,supervise,sessions,wakes,reopen}\n\noptions:\n  -h, --help            show this help message and exit\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "init",
+        "--help"
+      ],
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: factory [-h] [--root ROOT] [--registry REGISTRY] [--json]\n               [--provider {docker,local}] [--local-commands LOCAL_COMMANDS]\n               [--epoch EPOCH] [--version]\n               {check,bean,job,run,line,receipt,trigger,cache,agent,approval,autonomy,secret,source,egress,console,contract,schedule,epoch,changeset,governance,image,inbox,instance,audit,drift,foreman,maintain,gateway,gc,backend,backup,mcp,serve,status,metrics,events,talk} ...\nfactory: error: argument command: invalid choice: 'init' (choose from check, bean, job, run, line, receipt, trigger, cache, agent, approval, autonomy, secret, source, egress, console, contract, schedule, epoch, changeset, governance, image, inbox, instance, audit, drift, foreman, maintain, gateway, gc, backend, backup, mcp, serve, status, metrics, events, talk)\n"
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "-m",
+        "mao",
+        "doctor",
+        "--help"
+      ],
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: factory [-h] [--root ROOT] [--registry REGISTRY] [--json]\n               [--provider {docker,local}] [--local-commands LOCAL_COMMANDS]\n               [--epoch EPOCH] [--version]\n               {check,bean,job,run,line,receipt,trigger,cache,agent,approval,autonomy,secret,source,egress,console,contract,schedule,epoch,changeset,governance,image,inbox,instance,audit,drift,foreman,maintain,gateway,gc,backend,backup,mcp,serve,status,metrics,events,talk} ...\nfactory: error: argument command: invalid choice: 'doctor' (choose from check, bean, job, run, line, receipt, trigger, cache, agent, approval, autonomy, secret, source, egress, console, contract, schedule, epoch, changeset, governance, image, inbox, instance, audit, drift, foreman, maintain, gateway, gc, backend, backup, mcp, serve, status, metrics, events, talk)\n"
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+schema_version: mao-m17-operability-cases-1
+status: design_frozen
+spec: spec/system/operability.md
+groups:
+- id: M17-09
+  task: M17-09
+  mode: offline
+  nodes:
+  - tests/system/test_m17_09_transport.py::test_model_deadlines_and_partial_response
+  - tests/system/test_m17_09_transport.py::test_total_deadline_not_extended_by_progress
+  - tests/system/test_m17_09_transport.py::test_timeout_unknown_keeps_cost_and_prevents_resubmit
+  - tests/system/test_m17_09_transport.py::test_connect_buffered_fragmented_and_empty_payload
+  - tests/system/test_m17_09_transport.py::test_connect_tls_method_and_authority_enforcement
+  - tests/system/test_m17_09_transport.py::test_tunnel_cancel_and_capacity_release
+  minimum_cases: 6
+- id: M17-10
+  task: M17-10
+  mode: offline
+  nodes:
+  - tests/system/test_m17_10_qualification.py::test_real_cli_session_contract_and_negative_adapters
+  - tests/system/test_m17_10_qualification.py::test_tool_ids_duplicates_errors_and_turn_limit
+  - tests/system/test_m17_10_qualification.py::test_two_runtime_adapters_share_protocol
+  - tests/system/test_m17_10_qualification.py::test_machine_identity_cannot_be_replaced_by_stub
+  - tests/system/test_m17_10_qualification.py::test_service_relative_absolute_redirect_and_integrity
+  - tests/system/test_m17_10_qualification.py::test_sync_and_async_nonmedia_operations
+  - tests/system/test_m17_10_qualification.py::test_qualification_invalidates_on_version_change
+  minimum_cases: 7
+- id: M17-11
+  task: M17-11
+  mode: offline
+  nodes:
+  - tests/system/test_m17_11_deployment.py::test_doctor_and_plan_are_read_only
+  - tests/system/test_m17_11_deployment.py::test_init_repeat_preserves_registry_assets_secrets_and_runs
+  - tests/system/test_m17_11_deployment.py::test_apply_crash_and_state_conflict_recover
+  - tests/system/test_m17_11_deployment.py::test_missing_docker_or_qualification_blocks_resident
+  - tests/system/test_m17_11_deployment.py::test_external_cli_cannot_impersonate_human_or_open_database
+  - tests/system/test_m17_11_deployment.py::test_operator_credential_expiry_revoke_and_dedup
+  - tests/system/test_m17_11_deployment.py::test_rollout_minimums_and_truthful_zero_evidence
+  minimum_cases: 7
+- id: M17-12
+  task: M17-12
+  mode: offline
+  nodes:
+  - tests/system/test_m17_12_cli_usage.py::test_public_help_discovers_complete_lifecycle
+  - tests/system/test_m17_12_cli_usage.py::test_capabilities_examples_match_installed_parser
+  - tests/system/test_m17_12_cli_usage.py::test_error_recovery_handles_pending_unknown_and_permission
+  - tests/system/test_m17_12_cli_usage.py::test_skill_packaging_version_and_truthful_capabilities
+  - tests/system/test_m17_12_cli_usage.py::test_help_only_operator_hands_goal_to_factory
+  - tests/system/test_m17_12_cli_usage.py::test_skill_operator_hands_goal_to_factory
+  minimum_cases: 6
+live_witness:
+  node: tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery
+  output_index: .factory/m17-repro/operability-live/index.json
+  requires:
+  - M17-01
+  - M17-02
+  - M17-03
+  - M17-04
+  - M17-05
+  - M17-06
+  - M17-07
+  - M17-09
+  - M17-10
+  - M17-11
+  - M17-12
+  cells: Cartesian product of two distinct actual domains and two qualified native CLI adapters; four fresh isolated
+    factories, same platform source digest.
+  minimum_cycles_per_cell: 4
+  facts: idle window, two independently observed works, one evidence-based failure adjustment in every cell
+  inputs: Macro intent, fixed domain contract/grant, raw sources and published CLI/help/skill only. No platform
+    source or prewritten business plan to external operator.
+  actions: Observe/submit macro intent with operate credential; inner agents discover, plan, propose, dispatch,
+    execute and evaluate.
+  runtime_resume: Private random fact challenge, wrong-session and ignored-contract negative qualification, matched
+    native CLI version and live receipt.
+  product_inventory: All closure.yaml required_live_products must run actual pinned products; declaration names
+    or replacement stubs cannot satisfy identity.
+  prohibited: External source edits, manual Registry/business scripts, direct scheduling/governance/approval, disabling
+    audit/canary, state edits, blind paid resubmission.
+  evidence: Each cell has existing mao-m17-live-1 report+consistent factory snapshot validated by verify_live.py;
+    index includes product live qualification receipts, doctor/init/network/operator audit artifacts, all with sha256.
+  block_rule: Missing resources, support, test node or evidence => failed/blocked; cannot pass M17 or downgrade
+    to offline.
+  trust: Independent witness has management access, factory/external agents cannot write witness or reports; normal
+    operator observations are logged separately from forbidden business intervention.
+  onboarding_modes:
+    allowed:
+    - help_only
+    - skill
+    assignment:
+    - - help_only
+      - skill
+    - - skill
+      - help_only
+    meaning: Rows are fixed domain A/B; columns are fixed native runtime A/B. Four fresh factories, not eight runs
+      or repeated factory reuse.
+    isolation: Fresh external operator session, native CLI session and credential per cell; help_only cannot read
+      skill content; run help_only cells first.
+    evidence: entry_mode in each cell and its core live report must match; both modes occur for every domain and
+      every runtime.

@@ -2082,3 +2082,532 @@ tasks:
       - *doccheck
       - id: lock
         run: uv run python tools/harness.py lock --verify
+
+  # M17：先完成M16再进入实现；当前仅设计冻结，未开始任务。
+  - id: M17-01
+    milestone: M17
+    title: 可靠投递、领取与所有权
+    card: plan/tasks/M17-01.md
+    deps: [M16-06]
+    spec:
+      - spec/system/continuity.md
+      - plan/design-continuity.md
+      - spec/system/agents.md
+      - spec/system/durable.md
+      - spec/system/foreman.md
+    paths:
+      - src/mao/delivery.py
+      - src/mao/durable.py
+      - src/mao/foreman.py
+      - src/mao/agents.py
+      - src/mao/context.py
+      - src/mao/db.py
+      - src/mao/errors.py
+      - src/mao/migrations/043_delivery.sql
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro/test_host.py -k "wake_claim or taken_wake or schedule_post or batch_order or lost_agents" --basetemp=.factory/m17-repro/accept-M17-01
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 5
+        timeout: 6000
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M17-02
+    milestone: M17
+    title: 真实宿主装配与轮次恢复
+    card: plan/tasks/M17-02.md
+    deps: [M17-01]
+    spec:
+      - spec/system/continuity.md
+      - plan/design-continuity.md
+      - spec/system/agents.md
+      - spec/system/daemon.md
+      - spec/system/mcp.md
+      - spec/system/supervisor.md
+    paths:
+      - src/mao/commands/serve.py
+      - src/mao/daemon.py
+      - src/mao/agents.py
+      - src/mao/operator.py
+      - src/mao/supervisor.py
+      - src/mao/mcp.py
+      - src/mao/commands/**
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro/test_host.py -k "cli_serve or cli_launch or empty_successful or local_agent" --basetemp=.factory/m17-repro/accept-M17-02
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+        timeout: 6000
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M17-03
+    milestone: M17
+    title: 可恢复治理与完整岗位风险
+    card: plan/tasks/M17-03.md
+    deps: [M17-01]
+    spec:
+      - spec/system/continuity.md
+      - plan/design-continuity.md
+      - spec/system/governance.md
+      - spec/system/delegation.md
+      - spec/system/foreman.md
+    paths:
+      - src/mao/governance/**
+      - src/mao/foreman.py
+      - src/mao/daemon.py
+      - src/mao/delivery.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro/test_governance.py --basetemp=.factory/m17-repro/accept-M17-03
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+        timeout: 6000
+      - id: agent-risk
+        run: uv run python tools/harness.py pytest plan/evidence/m17/acceptance/test_agent_risk.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M17-04
+    milestone: M17
+    title: 真实服务操作工与外部任务续接
+    card: plan/tasks/M17-04.md
+    deps: [M17-01]
+    spec:
+      - spec/system/continuity.md
+      - plan/design-continuity.md
+      - spec/system/gateway.md
+      - spec/system/sandbox.md
+      - spec/system/operator.md
+      - spec/system/factoryctl.md
+      - spec/system/durable.md
+      - spec/system/instances.md
+      - spec/system/closure.md
+    paths:
+      - src/mao/gateway.py
+      - src/mao/runner.py
+      - src/mao/operator.py
+      - src/mao/instances.py
+      - src/mao/ctl/**
+      - src/mao/sandbox.py
+      - src/mao/runs.py
+      - src/mao/errors.py
+      - src/mao/migrations/044_execution.sql
+      - tests/system/**
+      - tests/acceptance/m4/test_m4_03_gateway.py
+      - plan/protected.lock
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro/test_execution.py -k "e01 or e02 or e03 or e05" --basetemp=.factory/m17-repro/accept-M17-04
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+        timeout: 6000
+      - id: deployment-paths
+        run: uv run python tools/harness.py pytest plan/evidence/m17/deployment/test_host_paths.py --basetemp=.factory/m17-repro/accept-M17-04-paths
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed == 2
+        timeout: 60
+      - id: pool-isolation
+        run: uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_03_gateway.py::test_pooled_reset_between_jobs tests/system/test_m17_04_pool_isolation.py::test_pooled_jobs_isolate_outputs_and_reset_failures --basetemp=.factory/m17-repro/accept-M17-04-pool
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 2
+        timeout: 6000
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M17-05
+    milestone: M17
+    title: 持久预算与真实余额反馈
+    card: plan/tasks/M17-05.md
+    deps: [M17-04]
+    spec:
+      - spec/system/continuity.md
+      - plan/design-continuity.md
+      - spec/system/egress.md
+      - spec/system/runtimes.md
+      - spec/system/factoryctl.md
+      - spec/system/runner.md
+    paths:
+      - src/mao/budget.py
+      - src/mao/egress.py
+      - src/mao/runner.py
+      - src/mao/agents.py
+      - src/mao/runs.py
+      - src/mao/gateway.py
+      - src/mao/ctl/**
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro/test_execution.py -k "e04 or e06" --basetemp=.factory/m17-repro/accept-M17-05
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 2
+        timeout: 6000
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M17-06
+    milestone: M17
+    title: 运行身份、结果回传与评价事实
+    card: plan/tasks/M17-06.md
+    deps: [M17-02, M17-03, M17-04, M17-05]
+    spec:
+      - spec/system/continuity.md
+      - plan/design-continuity.md
+      - spec/system/lines.md
+      - spec/system/agents.md
+      - spec/system/foreman.md
+      - spec/system/mcp.md
+      - spec/system/assets.md
+    paths:
+      - src/mao/results.py
+      - src/mao/runs.py
+      - src/mao/runplan.py
+      - src/mao/agents.py
+      - src/mao/mcp.py
+      - src/mao/foreman.py
+      - src/mao/daemon.py
+      - src/mao/delivery.py
+      - src/mao/learning.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro/test_feedback.py --basetemp=.factory/m17-repro/accept-M17-06
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 3
+        timeout: 6000
+      - id: repro-regress
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro --basetemp=.factory/m17-repro/regress-M17-06
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 25
+        timeout: 6000
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M17-07
+    milestone: M17
+    title: 宏观目标授权与自主周期
+    card: plan/tasks/M17-07.md
+    deps: [M17-06]
+    spec:
+      - spec/system/continuity.md
+      - plan/design-continuity.md
+      - spec/system/assets.md
+      - spec/system/agents.md
+      - spec/system/talk.md
+      - spec/system/delegation.md
+    paths:
+      - src/mao/objectives.py
+      - src/mao/agents.py
+      - src/mao/mcp.py
+      - src/mao/commands/**
+      - src/mao/cli.py
+      - src/mao/results.py
+      - src/mao/runs.py
+      - src/mao/learning.py
+      - src/mao/assets.py
+      - src/mao/packages.py
+      - src/mao/backup.py
+      - src/mao/retention.py
+      - src/mao/budget.py
+      - src/mao/delivery.py
+      - src/mao/daemon.py
+      - src/mao/governance/**
+      - src/mao/errors.py
+      - src/mao/migrations/045_objectives.sql
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest plan/evidence/m17/acceptance/test_objectives.py --basetemp=.factory/m17-repro/accept-M17-07
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 13
+        timeout: 6000
+      - id: repro-regress
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro --basetemp=.factory/m17-repro/regress-M17-07
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 25
+        timeout: 6000
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M17-08
+    milestone: M17
+    title: 跨进程多周期与真实能力总验收
+    card: plan/tasks/M17-08.md
+    deps: [M17-07, M17-09, M17-10, M17-11, M17-12]
+    spec:
+      - spec/system/continuity.md
+      - spec/system/operability.md
+      - plan/design-operability.md
+      - plan/design-continuity.md
+      - spec/system/autonomy.md
+      - spec/system/live.md
+    paths:
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_macro_objective_drives_multiple_cycles tests/system/test_m17_08_continuity_e2e.py::test_host_restart_and_lease_fencing tests/system/test_m17_08_continuity_e2e.py::test_known_external_task_resumes_fetch tests/system/test_m17_08_continuity_e2e.py::test_unknown_submit_outcome_never_blindly_retries tests/system/test_m17_08_continuity_e2e.py::test_budget_survives_restart_and_stops_authorized_work tests/system/test_m17_08_continuity_e2e.py::test_revoke_and_expiry_stop_new_actions tests/system/test_m17_08_continuity_e2e.py::test_real_factoryctl_and_declared_operator_run tests/system/test_m17_08_continuity_e2e.py::test_results_return_once_and_drive_next_cycle tests/system/test_m17_08_continuity_e2e.py::test_change_governance_keeps_scope_and_safe_mode --basetemp=.factory/m17-repro/accept-M17-08
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
+        timeout: 6000
+      - id: repro-regress
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro --basetemp=.factory/m17-repro/regress-M17-08
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 25
+        timeout: 6000
+      - id: live-witness
+        run: uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_live_docker_real_cli_produces_evidence --basetemp=.factory/m17-repro/live-witness
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        timeout: 14400
+      - id: live-evidence-integrity
+        run: uv run python plan/evidence/m17/verify_live.py --report .factory/m17-repro/live/report.json --factory-root .factory/m17-repro/live/factory
+        assert: out.ok && out.status == "passed"
+      - id: all-known-issues
+        run: uv run python plan/evidence/m17/run_contracts.py --all
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 77
+        timeout: 9000
+      - id: operability-live-witness
+        run: uv run python tools/harness.py pytest tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery --basetemp=.factory/m17-repro/operability-live-witness
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        timeout: 28800
+      - id: operability-live-integrity
+        run: uv run python plan/evidence/m17/verify_plan.py --live-index .factory/m17-repro/operability-live/index.json
+        assert: out.ok && out.scope == "evidence_integrity"
+      - id: design-coverage
+        run: uv run python plan/evidence/m17/verify_plan.py
+        assert: out.ok && out.issue_count == 46
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M17-09
+    milestone: M17
+    title: 有界传输、CONNECT 与未知请求恢复
+    card: plan/tasks/M17-09.md
+    deps: [M17-04, M17-05, M17-07]
+    spec:
+      - spec/system/operability.md
+      - spec/system/continuity.md
+      - plan/design-operability.md
+      - spec/system/egress.md
+      - spec/system/gateway.md
+      - spec/system/runtimes.md
+    paths:
+      - src/mao/transport.py
+      - src/mao/egress.py
+      - src/mao/gateway.py
+      - src/mao/ctl/**
+      - src/mao/budget.py
+      - src/mao/delivery.py
+      - src/mao/daemon.py
+      - src/mao/context.py
+      - src/mao/errors.py
+      - src/mao/migrations/046_operability.sql
+      - tests/system/**
+      - src/mao/db.py
+    accept:
+      - id: contract
+        run: uv run python plan/evidence/m17/run_contracts.py --task M17-09
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
+        timeout: 6000
+      - id: design-coverage
+        run: uv run python plan/evidence/m17/verify_plan.py
+        assert: out.ok && out.issue_count == 46
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M17-10
+    milestone: M17
+    title: 真实运行时和产品接入资格
+    card: plan/tasks/M17-10.md
+    deps: [M17-02, M17-04, M17-05, M17-09]
+    spec:
+      - spec/system/operability.md
+      - spec/system/continuity.md
+      - plan/design-operability.md
+      - spec/system/agents.md
+      - spec/system/operator.md
+      - spec/system/runtimes.md
+      - spec/system/gateway.md
+      - spec/system/sandbox.md
+    paths:
+      - src/mao/commands/serve.py
+      - src/mao/qualification.py
+      - src/mao/operator.py
+      - src/mao/agents.py
+      - src/mao/supervisor.py
+      - src/mao/runner.py
+      - src/mao/gateway.py
+      - src/mao/ctl/**
+      - src/mao/commands/qualification.py
+      - src/mao/cli.py
+      - src/mao/errors.py
+      - tests/system/**
+      - src/mao/images.py
+      - src/mao/instances.py
+    accept:
+      - id: contract
+        run: uv run python plan/evidence/m17/run_contracts.py --task M17-10
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+        timeout: 6000
+      - id: design-coverage
+        run: uv run python plan/evidence/m17/verify_plan.py
+        assert: out.ok && out.issue_count == 46
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M17-11
+    milestone: M17
+    title: 幂等部署、预检与可信操作边界
+    card: plan/tasks/M17-11.md
+    deps: [M17-03, M17-07, M17-10]
+    spec:
+      - spec/system/operability.md
+      - spec/system/continuity.md
+      - plan/design-operability.md
+      - spec/system/daemon.md
+      - spec/system/governance.md
+      - spec/system/delegation.md
+      - spec/system/backup.md
+      - spec/system/assets.md
+    paths:
+      - src/mao/commands/serve.py
+      - src/mao/deployment.py
+      - src/mao/operations.py
+      - src/mao/base.py
+      - src/mao/context.py
+      - src/mao/daemon.py
+      - src/mao/commands/deployment.py
+      - src/mao/commands/access.py
+      - src/mao/commands/common.py
+      - src/mao/cli.py
+      - src/mao/governance/**
+      - src/mao/backup.py
+      - src/mao/packages.py
+      - src/mao/errors.py
+      - tests/system/**
+      - src/mao/status.py
+      - src/mao/commands/status.py
+    accept:
+      - id: contract
+        run: uv run python plan/evidence/m17/run_contracts.py --task M17-11
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 7
+        timeout: 6000
+      - id: design-coverage
+        run: uv run python plan/evidence/m17/verify_plan.py
+        assert: out.ok && out.issue_count == 46
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M17-12
+    milestone: M17
+    title: CLI 帮助、恢复与外部 Agent skill
+    card: plan/tasks/M17-12.md
+    deps: [M17-07, M17-09, M17-10, M17-11]
+    spec:
+      - spec/system/operability.md
+      - spec/system/continuity.md
+      - plan/design-operability.md
+      - spec/system/cli.md
+      - spec/system/commands.md
+      - spec/system/talk.md
+      - spec/system/factoryctl.md
+    paths:
+      - src/mao/command_help.py
+      - src/mao/cli.py
+      - src/mao/commands/**
+      - src/mao/errors.py
+      - skills/mao-factory/**
+      - docs/en/**
+      - docs/zh-CN/**
+      - docs/ja/**
+      - docs/ko/**
+      - docs/fr/**
+      - docs/de/**
+      - docs/es/**
+      - docs/pt-BR/**
+      - docs/ru/**
+      - README*.md
+      - tests/system/**
+      - plan/protected.lock
+    accept:
+      - id: contract
+        run: uv run python plan/evidence/m17/run_contracts.py --task M17-12
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
+        timeout: 6000
+      - id: design-coverage
+        run: uv run python plan/evidence/m17/verify_plan.py
+        assert: out.ok && out.issue_count == 46
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
