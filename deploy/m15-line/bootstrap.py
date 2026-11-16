@@ -4,6 +4,7 @@
   MAO_OPENAI_API_KEY   gpt-6.1-sol，https://openai.createsis.cn
   MAO_TBTK_API_KEY     newapi，https://tbtk.asia，给 OpenMontage 生图
   MAO_AUTODL_AK        AutoDL ComfyUI 令牌，给 MiniMax H3
+  MAO_GROK_API_KEY     可选，https://openai.createsis.cn，给 grok-imagine-video
 """
 
 from __future__ import annotations
@@ -122,7 +123,7 @@ def _factory_json(root: Path, registry: Path) -> None:
         "agents": {"image": image, "network": "egress", "poll_s": 2},
         "autonomy": {
             "mode": "standard",
-            "changesets": {"T0": "human", "T1": "human", "T2": "human", "T3": "review"},
+            "changesets": {"T0": "human", "T1": "human", "T2": "human", "T3": "human"},
         },
     }
     (root / "factory.json").write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -162,6 +163,7 @@ def _secrets(root: Path) -> None:
     openai = os.environ.get("MAO_OPENAI_API_KEY", "")
     tbtk = os.environ.get("MAO_TBTK_API_KEY", "")
     autodl = os.environ.get("MAO_AUTODL_AK", "")
+    grok = os.environ.get("MAO_GROK_API_KEY", "")
     missing = [
         name
         for name, value in (
@@ -176,6 +178,8 @@ def _secrets(root: Path) -> None:
     _secret(root, "OPENAI_API_KEY", "model", "Bearer " + openai)
     _secret(root, "TBTK_API_KEY", "other", tbtk)
     _secret(root, "AUTODL_AK", "other", autodl)
+    if grok:
+        _secret(root, "GROK_API_KEY", "other", grok)
 
 
 def _secret(root: Path, name: str, kind: str, value: str) -> None:
@@ -192,11 +196,14 @@ def _commands(root: Path) -> None:
     bindir.mkdir(parents=True, exist_ok=True)
     agent = bindir / "openai_agent.py"
     video = bindir / "minimax_h3.py"
+    grok = bindir / "grok_video.py"
     shutil.copy2(HERE / "bin" / "openai_agent.py", agent)
     shutil.copy2(HERE / "bin" / "minimax_h3.py", video)
+    shutil.copy2(HERE / "bin" / "grok_video.py", grok)
     body = {
         "/opt/operator/bin/openai-agent": ["/usr/bin/python3", str(agent)],
         "minimax-h3": ["/usr/bin/python3", str(video)],
+        "grok-video": ["/usr/bin/python3", str(grok)],
     }
     path = root.parent / "commands.json"
     path.write_text(json.dumps(body), encoding="utf-8")

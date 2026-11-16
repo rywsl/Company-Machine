@@ -1,0 +1,9 @@
+apiVersion: mao/v1
+kind: Policy
+metadata: {name: grok-net, version: 1}
+spec:
+  applies_to: [transform]
+  egress:
+    providers: [openai.createsis.cn, "*.createsis.cn", "*.x.ai"]
+  secrets: [GROK_API_KEY]
+  resources: {cpus: 1, memory: 1Gi}

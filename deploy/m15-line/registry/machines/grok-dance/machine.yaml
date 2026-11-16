@@ -1,0 +1,28 @@
+apiVersion: mao/v1
+kind: Machine
+metadata: {name: grok-dance, version: 1, description: Grok 视频编辑，保留参考视频舞蹈、镜头和节奏的 5 秒角色替换}
+spec:
+  form: tool
+  runtime:
+    image: local/minimax-h3@sha256:2222222222222222222222222222222222222222222222222222222222222222
+    instance: per_job
+    resources: {cpus: 1, memory: 1Gi}
+  needs:
+    secrets: [GROK_API_KEY]
+    egress:
+      providers: [openai.createsis.cn, "*.x.ai"]
+  recipes:
+    dance:
+      inputs:
+        sheet: {type: image.png@1}
+        audio: {type: dance.audio.mp3@1}
+        brief: {type: brief.still@1}
+        motion: {type: clip.mp4@1}
+      outputs:
+        video: {type: clip.mp4@1, harvest: /factory/out/video/video.mp4}
+      task_template: |
+        这是 Grok 视频编辑任务，使用 grok-video 编辑参考视频 motion，生成严格 5 秒的视频。
+        读取 sheet 三视图、audio 原声音频、brief 和 motion 参考视频。保留参考视频的舞蹈动作、镜头和节奏，只替换角色，不重新编舞或改变镜头。
+        替换角色的外观严格遵循 sheet 和 brief，使用 audio 对应的 5 秒原声音频，不替换音乐，保持音画节拍一致。
+        检查 /factory/out/video/video.mp4 的 5 秒时长、角色一致性、参考舞蹈、镜头、节奏和原声音轨后交付。
+      run: [grok-video]

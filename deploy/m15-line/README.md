@@ -11,14 +11,17 @@
 
 跳舞产线 `fluffy-jumpstyle@1` 由常驻厂长写进 Registry：工位 `jumpstyle-dance@1` 的操作工先让模型写动作提示，再调用旁边的 MiniMax 机器。机器接受参考图、原声音频和 brief；成片的画面来自工作流，音轨用 ffmpeg 换成输入里的原声。接口时长上限是 15 秒。
 
+有参考视频时，操作工改走 Grok。`grok-video` 把参考片裁成 5 秒，调用 createsis 上的 `grok-imagine-video` 编辑接口，保留原片的动作，再把同一段原声合成进去。密钥名是 `GROK_API_KEY`。
+
 视频工位按 [ComfyUI API](https://autodl.art/docs/comfyui_api/) 提交：`Authorization` 是令牌原文，工作流 `minimax_h3_zm_u24`，参考图是 data URI。令牌必须在 [令牌管理](https://autodl.art/large-model/tokens) 里创建，并且分组选 ComfyUI。开发者 Token 和别的分组会被网关拒绝（HTTP 401，`Invalid authentication credentials`）。
 
-密钥不进 git。准备三个环境变量后，在仓库根目录执行：
+密钥不进 git。准备下面的环境变量后，在仓库根目录执行。`MAO_GROK_API_KEY` 只在要跑 `grok-jump` 时需要：
 
 ```bash
 export MAO_OPENAI_API_KEY=...    # createsis，不要带 Bearer
 export MAO_TBTK_API_KEY=...      # tbtk.asia
 export MAO_AUTODL_AK=...         # AutoDL ComfyUI 分组令牌，原样放进 Authorization
+export MAO_GROK_API_KEY=...      # createsis，给 grok-imagine-video，不要带 Bearer
 uv run python deploy/m15-line/bootstrap.py
 ```
 

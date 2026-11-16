@@ -30,8 +30,11 @@ def main() -> int:
         incoming = Path(os.environ.get("FACTORY_IN", "/factory/in"))
         audio = _media(incoming, (".mp3", ".wav", ".flac"))
         image = _media(incoming, (".png", ".jpg", ".jpeg", ".webp"))
+        motion = _media(incoming, (".mp4",))
         if role == "foreman":
             text = _foreman(model, _flag("-p") or "")
+        elif motion is not None and image is not None:
+            text = _grok(model, brief if brief.is_file() else None)
         elif audio is not None and image is not None:
             text = _dance(model, brief if brief.is_file() else None)
         elif brief.is_file():
@@ -64,6 +67,28 @@ def _still(path: Path, model: str) -> str:
     dest = Path(os.environ.get("FACTORY_OUT", "/factory/out")) / "image" / "image.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(image)
+    return prompt
+
+
+def _grok(model: str, brief: Path | None) -> str:
+    source = ""
+    if brief is not None:
+        source = brief.read_text(encoding="utf-8")
+    prompt = _chat(
+        model,
+        "参考视频里的舞蹈、镜头、节奏和背景都要保留，只把跳舞的人换成说明里的角色。"
+        "这是 5 秒试片。写一条给 Grok 视频编辑的中文提示，只输出提示词。\n\n" + source,
+        "你在操作 Grok 视频编辑。回答只要提示词。",
+        max_tokens=180,
+    ).strip().strip("`\"'")
+    if not prompt:
+        raise RuntimeError("模型没有写出动作提示")
+    env = dict(os.environ)
+    env["DANCE_PROMPT"] = prompt
+    machine = Path(__file__).with_name("grok_video.py")
+    proc = subprocess.run([sys.executable, str(machine)], env=env, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"视频机器退出 {proc.returncode}")
     return prompt
 
 
@@ -113,17 +138,14 @@ def _foreman(model: str, user: str) -> str:
             "role": "system",
             "content": (
                 "你是常驻厂长。工作区根下有 registry/，那是本厂 Registry 的克隆。"
-                "新增产线时只添加文件，不要改已有对象。策略复用 clip-net@1，操作工运行时复用 openai-sol@1，模型 gpt-6.1-sol。"
-                "先读 registry/machines/minimax-h3/machine.yaml、registry/lines/still-to-clip.yaml 和 registry/stations/still.yaml，再按同样的字段写新文件。"
-                "新机器的 runtime.image 必须照抄现有 minimax-h3，recipe 的 run 必须是 [minimax-h3]。"
-                "这条命令会读参考图、原声音频和 brief，操作工会把动作提示放进 DANCE_PROMPT，机器把原声合成进成片。"
-                "Type 版本用 \"1.0\"，不要给 mp3 写 media_type。Station 的 role 必须是 transform，timeout 用 1200s。"
-                "产线输入端口用 sheet、audio、brief，输出从跳舞步骤的 video 来。"
+                "只添加文件，不要改已有对象。人指定了策略、命令、端口和对象名字时，按人的话写，不要改回旧的 MiniMax 配置。"
+                "先读一条现有的 machine、station、line，对照字段。Station 的 spec 不能写 instructions。"
+                "Type 版本用 \"1.0\"。Station 的 role 用 transform，除非人指定别的。"
                 "写完后 git_commit，用返回的完整 commit 调 factory registry_check。检查失败就改文件再提交。"
                 "然后 factory epoch_show，用返回的 epoch 作为 base_epoch，factory changeset_propose。"
-                "changes 只列出这次真正新增的对象，op 用 upsert。不要写 Policy。"
+                "changes 只列出这次真正新增的对象，op 用 upsert。"
                 "rollout 用 shadow.runs=0、shadow.budget_usd=1、canary.percent=100、canary.min_runs=1、observe=0s，不要写 slo。"
-                "最后必须 factory talk_reply，用中文说明产线名字、新增了哪些对象、输入端口叫什么。"
+                "最后必须 factory talk_reply，用中文说明变更号、产线名字和输入端口。"
             ),
         },
         {"role": "user", "content": user},
@@ -269,12 +291,37 @@ def _git_commit(message: str) -> str:
         repo = _workspace(".")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     dirty = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo, check=False)
-    if dirty.returncode == 0:
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True)
-        return head.stdout.strip()
-    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True)
+    if dirty.returncode != 0:
+        subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True)
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True)
-    return head.stdout.strip()
+    current = head.stdout.strip()
+    active = subprocess.run(
+        ["git", "rev-parse", "--verify", "refs/factory/active"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if active.returncode != 0:
+        return current
+    base = active.stdout.strip()
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base, current], cwd=repo, check=False
+    )
+    if ancestor.returncode == 0:
+        return current
+    tree = subprocess.run(
+        ["git", "rev-parse", f"{current}^{{tree}}"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    rebased = subprocess.run(
+        ["git", "commit-tree", tree, "-p", base, "-m", message],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "--detach", rebased], cwd=repo, check=True)
+    return rebased
 
 
 def _chat_tools(model: str, messages: list[dict[str, object]], tools: list[dict[str, object]]) -> dict[str, object]:
