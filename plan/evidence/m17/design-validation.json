@@ -1,0 +1,274 @@
+{
+  "schema": "mao-m17-design-validation/1",
+  "date": "2026-11-16",
+  "scope": "User-authorized M17 investigation/design handoff, lock refresh and Git delivery; no production implementation or milestone acceptance.",
+  "limitations": [
+    "No production M17 implementation was performed and no task was started, accepted or gated.",
+    "The 77 required behavior cases have not passed; missing future nodes are deliberately rejected.",
+    "No real live autonomy witness or cross-domain matrix was run.",
+    "The frozen 13 objective contracts remain unexecutable until M16/M17 modules exist; prior skips are not passes.",
+    "The old pooled-reset assertion remains unchanged and failing on the audit baseline; its design conflict and stronger closure are frozen as R01.",
+    "Historical network/runtime/product observations retain their evidence limits; design completeness does not establish every historical root cause or exclude undiscovered defects."
+  ],
+  "invariants": {
+    "source_src_changed": false,
+    "state_json_changed": false,
+    "m16_docs_or_tests_changed": false,
+    "original_worktree_written": false
+  },
+  "supplemental_audit": {
+    "date": "2026-11-16",
+    "overall_implementation_readiness": "All currently registered findings have frozen contracts, task scope and exact acceptance. Implementation remains unstarted and awaits the final M16 baseline and actual required resources.",
+    "cli_help_snapshot": {
+      "commands": 10,
+      "help_exit_0": 8,
+      "unknown_command_exit_2": 2,
+      "unknown_commands": [
+        "init",
+        "doctor"
+      ]
+    },
+    "deployment_paths": {
+      "baseline_failed": 2,
+      "baseline_errors": 0,
+      "baseline_skipped": 0,
+      "pr2_module_only_control_passed": 2,
+      "included_in_original_25": false
+    },
+    "skill_draft": "frontmatter valid; commands and links reviewed; not installed, published or independently user-tested",
+    "pr_review": "immutable PR1 and PR2 heads inspected; PR2 sandbox module only executed as a control, not full PR integration",
+    "historical_design_coverage_complete": true,
+    "closure_manifest": "plan/evidence/m17/closure.yaml",
+    "pool_regression": {
+      "id": "R01",
+      "classification": "contract_conflict",
+      "design": "continuity.md section 5.9",
+      "old_test_modified_this_phase": false,
+      "closure": "Real Runner/Instances job-content isolation and failure controls; bounded old-fixture design maintenance, with original node retained."
+    }
+  },
+  "status": "known_issue_design_complete_implementation_not_started",
+  "prior_audit_checks": {
+    "doccheck": "passed",
+    "ruff_default_src_tests_tools": "passed",
+    "ruff_evidence": "passed",
+    "ruff_format": "passed",
+    "git_diff_check": "passed",
+    "agent_risk_and_live_integrity_tools": {
+      "total": 32,
+      "passed": 32,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "meaning": "Design inputs and synthetic validator tests only."
+    },
+    "baseline_repro": {
+      "total": 25,
+      "passed": 1,
+      "failed": 24,
+      "errors": 0,
+      "skipped": 0,
+      "meaning": "Expected evidence of unfixed baseline defects/contract gaps."
+    },
+    "future_objective_contracts": {
+      "total": 13,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 13,
+      "reason": "M16 assets deliberately absent in frozen c538768 baseline; not accepted."
+    },
+    "selected_existing_regression": {
+      "total": 29,
+      "passed": 28,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "failed_node": "tests/acceptance/m4/test_m4_03_gateway.py::test_pooled_reset_between_jobs"
+    },
+    "pristine_c538768_regression_control": {
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "meaning": "Same pooled output path assertion fails without any M17 changes; see baseline-regression.md."
+    },
+    "default_collection": {
+      "collected": 1626,
+      "m17_evidence_collected": false,
+      "existing_m16_module_skips": 6
+    },
+    "missing_live_report": "correctly rejected with ok=false,status=failed,exit=1",
+    "fast_checks": "passed: lint, format, lock, doccheck, 715 conformance cases, full coverage, strict example registry, all 4 scenarios",
+    "protected_lock": "passed; only authorized M17 design/evidence hashes updated, no unrelated hash changes",
+    "pre_handoff_design_tool_tests": {
+      "file": "plan/evidence/m17/acceptance/test_plan_coverage.py",
+      "total": 43,
+      "passed": 43,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "meaning": "Frozen design checks, genuine missing-node execution in isolated clone and synthetic index integrity; not production behavior or real live capability."
+    },
+    "pre_handoff_protected_lock": {
+      "status": "passed",
+      "mode": "Only 27 reviewed, user-authorized design/evidence hashes synchronized; no full lock update.",
+      "unrelated_hashes_preserved": true,
+      "conformance_case_hashes_preserved": true
+    },
+    "pre_handoff_fast_checks": {
+      "status": "passed",
+      "exit": 0,
+      "lint": true,
+      "format": true,
+      "lock": true,
+      "doccheck": true,
+      "conformance": {
+        "total": 715,
+        "failures": 0
+      },
+      "coverage": {
+        "unexercised_codes": 0,
+        "unfired_rules": 0
+      },
+      "strict_registry": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "scenarios": {
+        "total": 4,
+        "passed": 4
+      }
+    }
+  },
+  "checks": {
+    "design_coverage": {
+      "ok": true,
+      "scope": "design_coverage",
+      "registered_entries": 46,
+      "issues": [],
+      "note": "Includes aliases, requirements and R01; not a count of independent code bugs."
+    },
+    "design_and_integrity_tool_tests": {
+      "file": "plan/evidence/m17/acceptance/test_plan_coverage.py",
+      "total": 49,
+      "passed": 49,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "meaning": "Frozen design checks, genuine missing-node execution in isolated clone and synthetic index integrity; not production behavior or real live capability."
+    },
+    "exact_execution_plan": {
+      "scope": "execution_plan_only",
+      "exact_offline_nodes": 74,
+      "minimum_behavior_cases": 77,
+      "new_operability_nodes": 26,
+      "pool_regression_nodes": 2,
+      "live_included": false,
+      "behavior_suite_executed_to_pass": false
+    },
+    "contract_gate": {
+      "minimum_cases": 94,
+      "original_contract_cases": 45,
+      "new_tool_cases": 49,
+      "fully_executed": false,
+      "reason": "13 objective contracts still require absent M16 modules on this audit baseline."
+    },
+    "missing_behavior_execution": {
+      "exit": 1,
+      "passed": 0,
+      "correctly_rejected": true,
+      "task": "M17-09",
+      "note": "A missing node cannot be accepted, regardless of zero failures in an empty pytest report."
+    },
+    "missing_supplemental_live_index": {
+      "exit": 1,
+      "ok": false,
+      "correctly_rejected": true
+    },
+    "doccheck": "passed",
+    "ruff_src_tests_tools_and_evidence": "passed",
+    "ruff_format": {
+      "status": "passed",
+      "files": 276
+    },
+    "git_diff_check": "passed",
+    "protected_lock": {
+      "status": "passed",
+      "command": "uv run python tools/harness.py lock --update",
+      "mode": "Full refresh explicitly requested by user for this reviewed design handoff; subsequent lock --verify passed.",
+      "registered_files": 438,
+      "conformance_cases": 715,
+      "authorized_changed_or_new_protected_files": 55,
+      "unrelated_hashes_preserved": true,
+      "conformance_case_hashes_preserved": true
+    },
+    "fast_checks": {
+      "status": "passed",
+      "exit": 0,
+      "command": "UV_OFFLINE=1 uv run --offline python tools/harness.py check --fast",
+      "lint": true,
+      "format": true,
+      "lock": true,
+      "doccheck": true,
+      "conformance": {
+        "total": 715,
+        "failures": 0
+      },
+      "coverage": {
+        "unexercised_codes": 0,
+        "unfired_rules": 0
+      },
+      "strict_registry": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "scenarios": {
+        "total": 4,
+        "passed": 4
+      },
+      "scope": "Fast design checks do not run or accept production behavior/live suites."
+    },
+    "source_state_m16_unchanged": true,
+    "pre_m17_tasks_and_gates_preserved": true,
+    "all_executable_design_tools": {
+      "files": [
+        "plan/evidence/m17/acceptance/test_agent_risk.py",
+        "plan/evidence/m17/acceptance/test_live_validator.py",
+        "plan/evidence/m17/acceptance/test_plan_coverage.py"
+      ],
+      "total": 81,
+      "passed": 81,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "command": "uv run --offline python tools/harness.py pytest plan/evidence/m17/acceptance/test_agent_risk.py plan/evidence/m17/acceptance/test_live_validator.py plan/evidence/m17/acceptance/test_plan_coverage.py --basetemp=.factory/m17-repro/handoff-tools --tb=short",
+      "meaning": "7 risk inputs + 25 synthetic live validator cases + 49 design/index integrity cases. No M17 production behavior or real witness was accepted."
+    },
+    "implementation_guide": {
+      "path": "plan/m17-implementation.md",
+      "linked_from_all_12_cards": true,
+      "clarified": [
+        "completed M16 integration prerequisite",
+        "01-07 then 09-12 then final 08",
+        "actual source entry points and per-task boundaries",
+        "migration ownership and 045 before 046",
+        "M17-06 generic results versus M17-07 target authority",
+        "independent crossed help_only/skill live cells",
+        "qualification then initialization and trusted authorization",
+        "bounded design-maintenance exceptions and block procedure"
+      ]
+    }
+  },
+  "delivery_request": {
+    "authorized": [
+      "review and clarify M17 spec/plan",
+      "uv run python tools/harness.py lock --update",
+      "commit M17 design",
+      "push codex/m17-autonomy-audit"
+    ],
+    "scope": "This delivery only; no production implementation, M16 merge, task start/accept/gate, main push or force push.",
+    "git_receipt": "The resulting commit/upstream are verified after this source snapshot is committed; inspect Git for the final delivery receipt."
+  }
+}

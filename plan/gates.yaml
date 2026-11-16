@@ -1007,3 +1007,136 @@ gates:
         run: uv run python tools/harness.py pytest tests/acceptance/m16
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 49
         timeout: 6000
+
+  M17:
+    title: 持续自治与故障闭环
+    requires_gates: [M16]
+    checks:
+      - *lint
+      - *format
+      - *lock
+      - *doccheck
+      - id: conformance
+        run: uv run mrl conformance --json
+        assert: size(out.failures) == 0 && out.total >= 715
+      - id: coverage
+        run: uv run mrl coverage --json
+        assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 85
+      - *example
+      - *scenarios
+      - *pytest
+      - id: unit-m1
+        run: uv run python tools/harness.py pytest tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
+      - id: policy
+        run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 12
+      - id: acceptance-m1
+        run: uv run python tools/harness.py pytest tests/acceptance/m1
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 98
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 2400
+      - id: acceptance-m2
+        run: uv run python tools/harness.py pytest tests/acceptance/m2
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 111
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m3
+        run: uv run python tools/harness.py pytest tests/acceptance/m3
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 58
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m4
+        run: uv run python tools/harness.py pytest tests/acceptance/m4
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 40
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m5
+        run: uv run python tools/harness.py pytest tests/acceptance/m5
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 63
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m6
+        run: uv run python tools/harness.py pytest tests/acceptance/m6
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 25
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 5400
+      - id: acceptance-m7
+        run: uv run python tools/harness.py pytest tests/acceptance/m7
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 29
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m8
+        run: uv run python tools/harness.py pytest tests/acceptance/m8
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+        env: {MAO_REQUIRE_DOCKER: "1"}
+        timeout: 3600
+      - id: acceptance-m9
+        run: uv run python tools/harness.py pytest tests/acceptance/m9
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 23
+        timeout: 3600
+      - id: acceptance-m10
+        run: uv run python tools/harness.py pytest tests/acceptance/m10
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 23
+        timeout: 3600
+      - id: acceptance-m11
+        run: uv run python tools/harness.py pytest tests/acceptance/m11
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 41
+        timeout: 3600
+      - id: acceptance-m12
+        run: uv run python tools/harness.py pytest tests/acceptance/m12
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 29
+        timeout: 3600
+      - id: acceptance-m13
+        run: uv run python tools/harness.py pytest tests/acceptance/m13
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 22
+        timeout: 3600
+      - id: acceptance-m14
+        run: uv run python tools/harness.py pytest tests/acceptance/m14
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 17
+        timeout: 3600
+      - id: acceptance-m15
+        run: uv run python tools/harness.py pytest tests/acceptance/m15
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 21
+        timeout: 6000
+      - id: acceptance-m16
+        run: uv run python tools/harness.py pytest tests/acceptance/m16
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 49
+        timeout: 6000
+      - id: m17-repro
+        run: uv run python tools/harness.py pytest plan/evidence/m17/repro --basetemp=.factory/m17-repro/gate-repro
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 25
+        timeout: 6000
+      - id: m17-deployment-paths
+        run: uv run python tools/harness.py pytest plan/evidence/m17/deployment/test_host_paths.py --basetemp=.factory/m17-repro/gate-deployment-paths
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed == 2
+        timeout: 60
+      - id: m17-contracts
+        run: uv run python tools/harness.py pytest plan/evidence/m17/acceptance --basetemp=.factory/m17-repro/gate-contracts
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 94
+        timeout: 6000
+      - id: m17-e2e
+        run: uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_macro_objective_drives_multiple_cycles tests/system/test_m17_08_continuity_e2e.py::test_host_restart_and_lease_fencing tests/system/test_m17_08_continuity_e2e.py::test_known_external_task_resumes_fetch tests/system/test_m17_08_continuity_e2e.py::test_unknown_submit_outcome_never_blindly_retries tests/system/test_m17_08_continuity_e2e.py::test_budget_survives_restart_and_stops_authorized_work tests/system/test_m17_08_continuity_e2e.py::test_revoke_and_expiry_stop_new_actions tests/system/test_m17_08_continuity_e2e.py::test_real_factoryctl_and_declared_operator_run tests/system/test_m17_08_continuity_e2e.py::test_results_return_once_and_drive_next_cycle tests/system/test_m17_08_continuity_e2e.py::test_change_governance_keeps_scope_and_safe_mode --basetemp=.factory/m17-repro/gate-e2e
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
+        timeout: 6000
+      - id: m17-live-witness
+        run: uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_live_docker_real_cli_produces_evidence --basetemp=.factory/m17-repro/gate-live-witness
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        timeout: 14400
+      - id: m17-live-evidence-integrity
+        run: uv run python plan/evidence/m17/verify_live.py --report .factory/m17-repro/live/report.json --factory-root .factory/m17-repro/live/factory
+        assert: out.ok && out.status == "passed"
+      - id: m17-design-coverage
+        run: uv run python plan/evidence/m17/verify_plan.py
+        assert: out.ok && out.issue_count == 46
+      - id: m17-all-known-issues
+        run: uv run python plan/evidence/m17/run_contracts.py --all
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 77
+        timeout: 9000
+      - id: m17-operability-live
+        run: uv run python tools/harness.py pytest tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery --basetemp=.factory/m17-repro/gate-operability-live
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
+        timeout: 28800
+      - id: m17-operability-integrity
+        run: uv run python plan/evidence/m17/verify_plan.py --live-index .factory/m17-repro/operability-live/index.json
+        assert: out.ok && out.scope == "evidence_integrity"

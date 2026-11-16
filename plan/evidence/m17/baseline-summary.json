@@ -1,0 +1,59 @@
+{
+  "schema": "mao-m17-baseline/1",
+  "date": "2026-11-16",
+  "baseline_commit": "c538768",
+  "branch": "codex/m17-autonomy-audit",
+  "purpose": "Diagnosis only; failed assertions are defect/gap evidence, not a passed M17 gate.",
+  "command": "uv run --offline python tools/harness.py pytest plan/evidence/m17/repro --basetemp=.factory/m17-repro/baseline-all --tb=short",
+  "result": {
+    "exit": 1,
+    "total": 25,
+    "passed": 1,
+    "failed": 24,
+    "errors": 0,
+    "skipped": 0,
+    "failures": [
+      "plan.evidence.m17.repro.test_execution::test_e01_real_factoryctl_runs_service_job",
+      "plan.evidence.m17.repro.test_execution::test_e02_openapi_default_does_not_export_unrelated_operations",
+      "plan.evidence.m17.repro.test_execution::test_e03_agent_operator_runs_for_service_station",
+      "plan.evidence.m17.repro.test_execution::test_e04_model_proxy_restart_keeps_job_budget",
+      "plan.evidence.m17.repro.test_execution::test_e05_fetch_retry_reuses_known_external_task",
+      "plan.evidence.m17.repro.test_execution::test_e06_factoryctl_budget_reports_live_balance",
+      "plan.evidence.m17.repro.test_feedback::test_terminal_run_returns_to_initiating_agent[success]",
+      "plan.evidence.m17.repro.test_feedback::test_terminal_run_returns_to_initiating_agent[failure]",
+      "plan.evidence.m17.repro.test_feedback::test_metrics_query_returns_evidence_not_only_echoed_arguments",
+      "plan.evidence.m17.repro.test_governance::test_safe_mode_stops_existing_t2_shadow",
+      "plan.evidence.m17.repro.test_governance::test_safe_mode_stops_existing_t2_canary_promotion",
+      "plan.evidence.m17.repro.test_governance::test_failed_promotion_keeps_database_and_git_pointers_atomic",
+      "plan.evidence.m17.repro.test_governance::test_rebuild_failure_preserves_promotion_and_wakes_foreman",
+      "plan.evidence.m17.repro.test_governance::test_existing_shadow_blocks_second_changeset",
+      "plan.evidence.m17.repro.test_governance::test_undeclared_new_agent_cannot_hide_in_changeset",
+      "plan.evidence.m17.repro.test_governance::test_verifying_resumes_after_transient_epoch_failure",
+      "plan.evidence.m17.repro.test_host::test_cli_serve_starts_configured_resident_host",
+      "plan.evidence.m17.repro.test_host::test_cli_launch_error_does_not_strand_delivered_mail",
+      "plan.evidence.m17.repro.test_host::test_taken_wake_survives_mailbox_write_failure",
+      "plan.evidence.m17.repro.test_host::test_schedule_post_is_not_duplicated_across_interruption",
+      "plan.evidence.m17.repro.test_host::test_lost_agents_lease_stops_host",
+      "plan.evidence.m17.repro.test_host::test_empty_successful_cli_output_is_not_completed_work",
+      "plan.evidence.m17.repro.test_host::test_wake_claim_is_exclusive_under_concurrency",
+      "plan.evidence.m17.repro.test_host::test_batch_order_matches_chronological_prompt"
+    ],
+    "skips": []
+  },
+  "environment": {
+    "python": "CPython 3.14.2 free-threaded",
+    "uv": "0.9.4",
+    "provider": "LocalProvider",
+    "external_paid_models": false
+  },
+  "positive_controls": {
+    "host": 1,
+    "original_m3_governance": 5,
+    "original_m2_m4_m9_execution": 3
+  },
+  "notes": [
+    "The original M15 final run did reach SUCCEEDED/SEALED; this does not establish sustained autonomy.",
+    "M16 is intentionally absent from this frozen implementation baseline and is not diagnosed as defective.",
+    "Goal protocol and live validator tests are separately classified as future acceptance, not baseline defects."
+  ]
+}

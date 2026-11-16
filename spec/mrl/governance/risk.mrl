@@ -70,6 +70,9 @@ op_tier("Line", "add", 2).
 op_tier("Policy", "add", 3).
 op_tier("GoldenSet", "add", 2).
 op_tier("Baseline", "add", 2).
+// M17: Agent 生命周期与字段；scope.* 是宿主从真实差异计算的受保护事实。
+op_tier("Agent", "add", 2).
+op_tier("Agent", "deprecate", 2).
 op_tier(K, "deprecate", 1) :- governed_kind(K).
 op_tier(K, "retire", 3) :- governed_kind(K).
 
@@ -82,6 +85,7 @@ governed_kind("Line").
 governed_kind("Policy").
 governed_kind("GoldenSet").
 governed_kind("Baseline").
+governed_kind("Agent").
 
 @doc("原地修改：哪个字段变了就取哪个等级。表里没有的字段 → unscored（不默认为低风险）")
 rel field_tier(kind: string, field: string, tier: int).
@@ -122,6 +126,16 @@ field_tier("Line", F, 2) :- line_field_name(F).
 field_tier("GoldenSet", "spec", 2).
 field_tier("Baseline", "spec", 2).
 field_tier("Policy", F, 3) :- policy_field_name(F).
+field_tier("Agent", "runtime", 2).
+field_tier("Agent", "model", 2).
+field_tier("Agent", "charter", 2).
+field_tier("Agent", "context", 2).
+field_tier("Agent", "policy", 3).
+field_tier("Agent", "lines", 2).
+field_tier("Agent", "subscribe", 2).
+field_tier("Agent", "budget", 2).
+field_tier("Agent", "scope.reduced", 1).
+field_tier("Agent", "scope.expanded", 3).
 
 rel type_field_name(f: string).
 type_field_name("extends").

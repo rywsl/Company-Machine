@@ -46,7 +46,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "op": {"enum": ["upsert", "deprecate", "retire"]},
-                  "kind": {"enum": ["Type", "Machine", "OperatorRuntime", "Station", "Line", "Policy", "GoldenSet", "Baseline"]},
+                  "kind": {"enum": ["Type", "Machine", "OperatorRuntime", "Station", "Line", "Policy", "GoldenSet", "Baseline", "Agent"]},
                   "name": {"$ref": "common.schema.json#/$defs/name"},
                   "from": {"type": ["string", "integer", "null"]},
                   "to": {"type": ["string", "integer", "null"]},

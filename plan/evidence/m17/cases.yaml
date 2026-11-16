@@ -1,0 +1,332 @@
+# M17-08 的冻结验收设计数据。此文件本身不是可执行 runner，也不会自行判定通过。
+version: 1
+milestone: M17-08
+status: design_frozen
+normative_sources:
+  - plan/design-continuity.md
+  - spec/system/continuity.md
+  - spec/system/gateway.md
+  - spec/system/egress.md
+  - spec/system/assets.md
+purpose: >-
+  检验已完成 M16 与 M17-01 至 M17-07 的工厂，能否从一次宏观目标和长期授权出发，
+  在外部代理不代做业务的情况下持续发现、组织、执行、评价、恢复和继续工作。
+
+execution_contract:
+  planned_test_file: tests/system/test_m17_08_continuity_e2e.py
+  planned_test_count_min: 10
+  gate_partition:
+    offline_case_ids: [C01, C02, C03, C04, C05, C06, C07, C08, C09]
+    live_case_ids: [C10]
+    policy: >-
+      离线测试单独执行并要求零失败、零错误、零跳过；真实 live 作为独立结果明确 passed、failed 或 blocked。
+      两部分都 passed 才能通过 M17-08 和 M17 阶段门。缺真实资源时允许离线测试完成，live 必须 blocked，
+      不能靠 pytest skip、忽略 live 或把离线证据当真实能力退出条件。
+  note: >-
+    M17-08 实现任务必须编写并运行真实跨进程集成测试，逐项映射本文件全部 case ID；
+    解析本文件、检查文件存在或根据本文件自评均不算验收。此处不假设已有 YAML runner。
+    每项必须有独立可观察断言与结果，failed=0、errors=0、skipped=0，不能用 xfail。
+    原有全部阶段门和检查项继续生效。测试所需的控制式异常只作用于临时工厂和本地替身。
+  deterministic_and_live_separate: true
+  deterministic_boundary: >-
+    离线套件从真实 factory CLI 入口启动工厂和独立 Agent 子进程；操作工可使用确定性脚本，
+    上游可以是可计数的本地服务。它只能证明协议、调度、恢复和权限接线，不能证明模型的自主发现能力。
+  live_boundary: >-
+    live 使用真实 Docker 和用户已有的真实 CLI、配置的真实模型及模型上游；固定并报告实际版本与运行配置。
+    不以脚本 Agent、假的模型响应或仅一次作业替代真实能力记录。可单独使用可控服务注入故障，
+    必须披露替身边界。无法运行则记录 blocked，M17 不能报告真实自治验收通过。
+  time_and_identity:
+    - 离线允许可控时钟前进与可控进程中断；live 记录实际 UTC 时间与真实耗时，不伪装成长期实测。
+    - 管理 CLI 属于宿主管理信任边界；by 是审计标签，不能作为真人身份或独立人审的证据。
+    - 测试只统计本轮执行期间的动作与效果；事前初始授权和计划内故障注入单独记账。
+  setup_before_observation:
+    - M16-06 和 M16 阶段门已真实通过，M17-01 至 M17-07 的验收已通过。
+    - 固定目标资产版本、观察范围、已获授权的 M16 领域契约、允许岗位及产线、预算和周期配置。
+    - 观察来源初始化为可查询的原始资料源；只有资料事实，没有预生成的业务候选、任务、计划或运行记录。
+    - 完成一次管理员授权并封存授权快照；记录 active epoch、Registry 摘要、代码版本、启动时间与基线成本。
+    - 从真实 CLI 启动 serve；以厂内受限 MCP、邮箱和运行通道连接厂长、worker、operator 和 machine。
+  allowed_after_setup:
+    - 测试可只读观察 CLI、MCP、数据库快照、outbox、事件、日志、产物和本地服务计数。
+    - 测试可向预先声明的外部原始资料源加入新资料，并记录资料摘要及投放时间。
+    - 测试可按各 case 注入可控网络失败、服务故障、进程中断、失租和时间推进。
+    - 仅授权撤销或到期场景，测试可按测试计划调用一次管理员 revoke 或推进至到期，并计入计划内操作。
+    - 测试可重启同一工厂服务来模拟故障恢复；启动与重启参数须固定且可审计。
+    - 负向权限案例可在独立丢弃式工厂用受限厂内测试角色尝试越权；只能证明拒绝，不能作为主场景生产成果。
+  forbidden_after_setup:
+    - 测试或外部代理编写、选择或提交具体候选、objective_plan、厂长业务决策、派工消息或评价证据。
+    - 测试或外部代理代调用 objective_commit_plan、objective_evaluate、agent_send、run_start、talk_propose_run 或代替角色处理结果。
+    - 测试或外部代理代签 ChangeSet、确认人审卡片、使用 human 标签冒充人、推进或合入 Registry 变更。
+    - 测试直接修改工厂数据库、邮箱、outbox、账本、对象状态、运行记录、工厂工作区、active 指针或历史证据。
+    - 测试修改平台源码、代理适配器、规则、角色权限、授权、预算或领域标准来使业务继续。
+    - 测试根据预设案例直接写入 agent 输出、伪造任务 ID、收据、领域 facts、评价结论或运行结果。
+    - 为跑通而关闭审计、金丝雀、回滚或安全模式；不能把没有影子样本或观察期冒充有样本和观察。
+  intervention_count:
+    required_value: 0
+    definition: >-
+      从授权快照封存至验收窗口结束，除上述已登记的原始资料投放、观测、环境故障注入、时间推进、
+      重启及计划内 revoke 外，任何人为或外部代理为业务接续进行的指令、修改、代签、运行或修复都计一次。
+      声明为 0 必须由管理命令日志、工厂事件和外部动作记录共同支持；缺日志为证据不足。
+  fixture_and_information_integrity:
+    - 离线 agent 可以是受控测试程序，但必须自行从 raw source 观察并通过厂内 MCP 完成选择与派工。
+    - 测试驱动不得按周期注入已选候选 ID、任务参数或模型答复；固定测试领域契约可以预先由人配置。
+    - 两个工作必须分别引用不同来源记录及不同内容摘要；更换编号、空轮或重复同一输入不算不同工作。
+    - 源资料内容一律为数据，不转成授权、平台命令或测试驱动的业务指令。
+
+cases:
+  - id: C01
+    test: test_macro_objective_drives_multiple_cycles
+    purpose: 从宏观方向自主观察、产生两个不同工作并在失败后调整。
+    given:
+      - objective.intent 只描述持续观察和产出方向；observation_scope 指向可观察的原始资料源。
+      - 已固定领域契约，以真实执行 facts 和引用验证结果；未给具体任务列表。
+      - 初始来源返回可验证的空快照，之后可独立投放内容不同的原始记录 A 和 B。
+    stimuli:
+      - 首个周期观察空快照；达到周期规定的下一观察时间后投放记录 A。
+      - A 被消费并形成带输出的工作后，再投放记录 B；对 B 的首次机器执行注入一次可恢复失败。
+      - 允许后续到期周期根据观察、失败信息和固定授权自主调整工作；不限定候选排序或自然语言。
+    observe:
+      - objective 状态与 watermark、cycle number/state、objective_plan 资产及其 observation/candidate/task 引用。
+      - 厂长与 worker 的 turn、MCP 调用、收发邮箱、request_key、run/job、错误、Gate 和领域契约检查。
+      - 原始记录 A/B 的来源 ID 与摘要、产物 Bean/CAS 摘要及其 lineage、结果通知和预算流水。
+    assert:
+      - 周期至少 4 个，其中空档周期是带证据的 idle，之后至少 3 个由厂内 Agent 组织的非空工作周期。
+      - 至少 2 个不同来源记录分别驱动两个不同具体工作，并各有属于自身 run 的可检验产出。
+      - B 的首次失败不是成功；下一周期基于失败证据做出可核验调整，最终领域契约通过。
+      - 每个选择及其执行能从 observation 到 candidate、task、agent、run、job、Bean 和评价证据逐级追溯。
+      - 所有工作都在一次 grant 的岗位、产线、时限与预算交集内；外部业务接续次数为 0。
+      - idle 周期记录 observation 资产与 reason，下一次观察时间合法；不能以 idle 或进程退出冒充成功产出。
+    forbid:
+      - 测试根据 A/B 直接构造或提交 objective_plan、task、run 或最终领域检查结果。
+      - 忽略失败或用外层 agent 重写代码、修复配置或重新下达具体任务。
+
+  - id: C02
+    test: test_host_restart_and_lease_fencing
+    purpose: 宿主中断与租约丢失后保持持久所有权、消息和业务动作一致。
+    given:
+      - 已有正在执行的周期、一个活动 worker turn 和已提交或待处理的厂内消息。
+      - 两个独立宿主竞争同一 agents 租约，记录 owner、generation、turn 与消息标识。
+    stimuli:
+      - 在消息领取后、结果提交前中断原宿主；让租约到期并由新宿主接管。
+      - 延迟投递旧宿主的成功结果或后续工具动作，随后重启原宿主。
+    observe:
+      - lease generation、running/interrupted turn、消息顺序、投递去重键、run request 与结果 outbox。
+    assert:
+      - 同一代租约只允许一个有效拥有者；旧 owner 的提交和新动作被 LEASE_LOST 拒绝。
+      - 新宿主恢复同一周期及未完成任务；消息不永久停在 taken/delivered，也不产生重复逻辑任务或 run。
+      - 已发生的外部请求如实保留及对账；不宣称失租撤销了已发出的远程动作。
+      - 不依赖人为改数据库、重新派工或代调用业务工具；其他独立工作可继续。
+    forbid:
+      - 通过直接写 leases、turn、mailbox、run 或 active 指针模拟恢复。
+
+  - id: C03
+    test: test_known_external_task_resumes_fetch
+    purpose: 已知远端任务 ID 的取回故障可恢复，不能再次购买任务。
+    given:
+      - 真实 service client、一个可计数本地服务、已持久化的 job/operation key 和非空 task_id。
+      - 远端任务已完成，产出可通过同一 task_id 查询并以摘要核验。
+    stimuli:
+      - 首次 fetch 受控失败一次，随后恢复；另在第二次尝试前重启执行进程。
+    observe:
+      - service_operations 状态与 task_id、请求摘要、submit/poll/fetch 计数、下载摘要和 Gate 结果。
+    assert:
+      - 远端 submit 总数严格为 1；恢复使用原 task_id 查询或取回，输出摘要与服务事实一致。
+      - 唯一 operation 最终 completed，业务结果至多封存一次，关联同一 run/job。
+      - 失败阶段、恢复和结果通知可追溯，厂内岗位收到结果后可继续下一周期。
+    forbid:
+      - 测试代替工厂保存 task_id、调用远端 fetch、修改 operation 状态或手动重试 submit。
+
+  - id: C04
+    test: test_unknown_submit_outcome_never_blindly_retries
+    purpose: 提交可能成功但响应丢失时保持未知状态并有界对账。
+    given:
+      - 使用两个可计数服务场景：一个支持按原幂等键查询，另一个不支持幂等或查询。
+    stimuli:
+      - 服务接收首次 submit 后主动断开响应；按策略触发重启、恢复和重复调度检查。
+    observe:
+      - operation key、idempotency key、provider/request digest、远端实际提交次数、unknown 状态和通知。
+    assert:
+      - 支持对账的服务仅使用原键核对，实际副作用数量为 1，恢复记录关联原 operation。
+      - 不支持对账的服务进入 outcome_unknown 并投递一次可处理异常，禁止盲目重新提交或伪报完成。
+      - 其他无依赖且在授权范围内的工作仍可继续；未知操作和预算保留可查询。
+    forbid:
+      - 以测试脚本向工厂写入假 task_id 或把 outcome_unknown 手工改为 completed。
+      - 声称对任意供应商都能实现 exactly-once 或靠租约撤销远端已发生效果。
+
+  - id: C05
+    test: test_budget_survives_restart_and_stops_authorized_work
+    purpose: 作业、岗位、run 和目标预算以持久事实控制，并向操作工提供真实余额。
+    given:
+      - 固定测试价格与各层预算；账本、model_usage 和可计数模型上游为空。
+    stimuli:
+      - 首次请求计量后重启代理；累计费用越过既定 job 上限，再请求一次。
+      - 单独测试目标 UTC 日额耗尽、次日恢复条件、总额耗尽及未知供应商成本。
+    observe:
+      - 请求计数、model_usage、budget_entries、budget_stops、model.metered、budget.json 与真实 factoryctl budget 输出。
+      - objective 的 active/paused、次日时间边界、去重异常消息以及各层累计与预留。
+    assert:
+      - 代理重启前后同一账目累计不清零；超限之后下一请求拒绝，超限结果不被封存。
+      - 保持既有 job 严格 spent 大于 cap 的兼容语义；已发出的越限请求如实入账。
+      - 同一执行费用在 job、run、agent、objective 的聚合中可关联且不重复结算。
+      - 实时余额文件和真实 factoryctl 输出与账本一致；未知成本明确标识，不能伪装成零。
+      - 日额暂停可按授权于 UTC 次日解除；总额耗尽不得自动恢复或超越原 grant。
+    forbid:
+      - 通过测试写入预算流水、stop、余额文件或修改价格使断言通过。
+      - 承诺无法事前估算的外部费用绝对零超支。
+
+  - id: C06
+    test: test_revoke_and_expiry_stop_new_actions
+    purpose: 撤销或授权到期即时阻断新周期和任务，并保留已发生事实。
+    given:
+      - 宏观目标已获一次 grant；已有一个可观察的在途 run 和尚未派发的任务。
+    stimuli:
+      - 测试管理端按计划调用一次 revoke；单独场景将时钟推进到 expires_at。
+      - 在独立负向场景中，由受限厂内测试角色通过旧消息、旧 request_key 或省略 cycle_id 尝试越权。
+    observe:
+      - 目标状态、未派发任务、在途 run、异常与结果邮件、远端副作用和授权事件。
+    assert:
+      - 撤销及到期后不再创建新周期和新任务，旧消息和绕过周期参数均不能扩大权限。
+      - 尚未派发的任务关闭，在途执行及先前远端效果继续可查；不得声称撤销已经完成的外部操作。
+      - 新动作拒绝有稳定错误和审计；工厂可继续不依赖此授权的独立工作。
+    forbid:
+      - 让外层 agent 代表管理员在未声明的时间撤销、恢复、重新授权或修改 grant。
+
+  - id: C07
+    test: test_real_factoryctl_and_declared_operator_run
+    purpose: 服务型工位经真实 factoryctl 和实际声明的 operator 驱动机器与 Gate。
+    given:
+      - 从生产安装路径装入真实 factoryctl；服务为可计数本地机器，agent-cli operator 为独立子进程。
+      - Machine、Station、operator runtime、受限工具列表与任务书通过正常 Registry 解析。
+    stimuli:
+      - 提交厂内派发的服务型工作；单独运行 operator 非零退出或无合法 transcript 的反例。
+    observe:
+      - factoryctl openapi/submit/poll/fetch 的真实进程命令、服务请求、operator transcript、工具调用、产物和 Gate。
+    assert:
+      - 成功链中真实 operator 至少一次受控调用机器工具；真实 factoryctl 协议完整且没有用假客户端替换。
+      - agent-cli 工位不能绕过 operator 封存；operator 失败、结果无效或 Gate 拒绝时不得标记成功。
+      - 白名单以外工具不导出或不能执行；allow=None 对外工具集为空。
+      - 结果可追溯到角色、job、run、服务操作、产物与契约；不得用标记文件单独证明业务成功。
+    forbid:
+      - 将被测 factoryctl、Runner、Gateway、Gate、操作工或工厂 MCP 替换成直接返回成功的 mock。
+
+  - id: C08
+    test: test_results_return_once_and_drive_next_cycle
+    purpose: 成功、失败和取消都可靠返回发起岗位并供下一周期使用。
+    given:
+      - 分别产生由不同 request_key 驱动的成功、失败、取消 run，保留发起 agent 和周期关联。
+    stimuli:
+      - 重启守护进程并重复收集 outbox；让岗位读取对应结果并继续安排下一周期。
+    observe:
+      - run terminal event、agent_mail effect_key、邮件收件岗位、run_get、节点、错误、成本与产物。
+    assert:
+      - 每个 run 产生一条逻辑终态通知；重复投递可 at-least-once，但相同 request_key 不重复业务动作。
+      - 每个岗位查询到属于自己的真实成功、失败或取消事实，run_id 不被误当 job_id。
+      - 失败证据能用于后续调整，不能由测试替岗位写评价；被删除岗位的结果转厂长异常。
+      - 无平台故障影响的独立任务继续推进，记录可核验的结果和领域证据。
+    forbid:
+      - 测试代发结果邮件、代调用 agent 工具、直接补终态或替换 run_get 内容。
+
+  - id: C09
+    test: test_change_governance_keeps_scope_and_safe_mode
+    purpose: 自治扩展通过既有治理且不会绕过授权、安全模式和发布守卫。
+    given:
+      - 需要扩展业务 Registry 的合法目标和已有固定授权；风险策略、审计和治理配置保持启用。
+    stimuli:
+      - 由厂长提出业务变更；在独立负向工厂由受限厂内角色尝试 undeclared Agent 变更。
+      - 环境注入 T2 及以上阶段的 safe_mode 和发布中断；不得由外层测试者代替厂长执行正常业务变更。
+    observe:
+      - ChangeSet 来源、完整差异、风险层级、验证、shadow/canary、签核配置、数据库指针与 Git refs/outbox。
+    assert:
+      - 工厂 Agent 提议的变更被真实验证，未声明或未知 kind 的结构差异失败关闭。
+      - safe_mode 下 T2 及以上不得在任何受保护阶段向前推进；安全回滚仍可用。
+      - 中断后数据库决议、Git refs 和 outbox 可恢复一致，不重复建业务 run。
+      - 新业务线经授权的extensions范围、实际ChangeSet与EpochRouter可进入canary取得样本；未授权候选拒绝，回滚后不得继续借用旧候选权限。
+      - grant 不因 Registry 更新超出其精确集合或结构化extensions范围；既有验证、影子、金丝雀、观察和审批策略不被测试关闭。
+    forbid:
+      - 测试代替厂长写 Registry、提议、推进、签核、切换指针或重放业务命令。
+      - 用空 shadow 样本或零观察期宣称已经做过实际影子比较与观察。
+
+  - id: C10
+    test: test_live_docker_real_cli_produces_evidence
+    purpose: 验证用户已有真实运行环境中的多周期能力，并单独记录可控故障边界。
+    given:
+      - 用户配置的真实 Docker 引擎、固定镜像 digest、真实 CLI 版本、实际模型和经批准的访问条件。
+      - 独立工厂、固定宏观目标及 grant、可观察资料源和不可更改的领域契约。
+    stimuli:
+      - 执行 C01 的原始资料变化和失败调整；在独立工作目录执行适用的 C02 至 C09 故障场景。
+      - 计划内中断、重启、外部资料投放和撤销均单独记录，不通过外层代理代做业务。
+    observe:
+      - Docker 容器和 CLI 实例、真实模型响应所驱动的 agent turns、调用日志与工厂持久证据。
+      - 多周期观察、计划、不同工作、运行产物、领域 facts、错误恢复、预算和人工介入计数。
+    assert:
+      - 至少四个真实自主周期及两个不同工作，满足 C01 的空档、领域、追溯与失败调整要求。
+      - 真实 CLI、Docker 与实际模型上游均有可复核版本、来源和运行证据；脚本模拟结果单独报告。
+      - 非计划人工或外部代理介入次数为 0；授权、故障注入、重启和撤销作为计划内操作单列。
+      - 各 case 的必需证据完整、脱敏且具有可验证摘要；缺真实资源或证据为 blocked，不是 passed。
+      - 本次窗口的时长、开销、失败及空转都真实报告，不推断未测试的长期稳定性。
+    forbid:
+      - 用离线脚本 Agent、模拟模型、M15 历史视频或单次 SUCCEEDED 代替 live 结果。
+      - 将被测生产客户端或控制面替换为直接宣布成功的替身，或在运行途中修代码后继续计入同一成功窗口。
+
+live_report_contract:
+  format: JSON
+  schema_version_literal: mao-m17-live-1
+  location: .factory/m17-repro/live/report.json
+  status_values: [passed, failed, blocked]
+  rules:
+    - 由 M17-08 集成测试或报告校验器读取并验证字段、引用和实际结果，不能由人手填 passed 代替证据。
+    - blocked 和 failed 必须包含原因、缺失证据与待处理事项；二者均不能作为阶段门通过。
+    - 每条 case 必须包含观察窗口、实际结果、断言及已验证的证据引用；字段缺失或证据无法解析即失败。
+    - receipt_ids 字段始终存在；无 sink 时为空数组且填写 not_applicable_reason，涉及 sink 时必须有可核验回执。
+    - 任何摘要只能证明引用内容一致，不自动证明业务事实、权限真实性或更长时间稳定性。
+    - cases断言按各case冻结assert数组顺序编号A01、A02等，全部逐项有passed=true及证据引用，不能只写case总结果。
+    - evidence_index的kind至少包含docker、cli、model、audit四类可核验的脱敏文件；环境布尔声明必须与这些证据并列。
+    - 校验器只证明结构、摘要和数据库引用完整；不能自动证明报告来源真实性、模型判断或领域业务质量。
+    - 只读校验使用同一工厂的一致快照；非空SQLite WAL拒绝通过，不以遗漏WAL的数据库当完整证据。
+    - 不保存凭据、敏感请求头或历史轨迹原文；日志证据先脱敏再固定摘要。
+  required_fields:
+    deterministic_suite: "object: passed integer > 0, failed=0, errors=0, skipped=0; offline test result evidence must be referenced"
+    schema_version: "string; exactly mao-m17-live-1"
+    status: "passed | failed | blocked"
+    started_at: "UTC ISO8601 string"
+    ended_at: "UTC ISO8601 string; later than started_at"
+    environment: "object: os, architecture, docker_engine_version, image_digests, cli_name, cli_version, runtime_ref, model_id, upstream_identity_redacted, real_docker=true, real_cli=true, real_model_upstream=true"
+    baseline: "object: platform_commit, platform_source_digest, dirty_paths, M16_gate_evidence, M17_task_evidence, active_epoch, registry_digest"
+    authorization: "object: objective_asset_id, objective_version_digest, grant_digest, contract_id, contract_digest, source_scope_digest, total_usd, daily_usd, expires_at"
+    observation_window: "object: actual_duration_s, clock_mode, cycle_count, work_cycle_count, distinct_work_count, idle_cycle_count, failed_cycle_count"
+    intervention: "object: unplanned_count, planned_actions[{type,at,actor,reason}], unplanned_actions[{type,at,actor,reason}], audit_refs"
+    cycles: "array: cycle_id, number, state, watermark, plan_asset_id, observation_asset_ids, candidate_ids, selected_ids, task_ids, turn_ids, event_ids, run_ids, job_ids, output_bean_ids, receipt_ids, receipt_not_applicable_reason, domain_case_evidence, costs"
+    external_operations: "array: job_id, operation_key, provider_digest, request_digest, idempotency_key_digest, state, task_id_redacted_or_digest, submit_count, poll_count, fetch_count, output_digests, error_code"
+    budgets: "object: scopes, cap_usd, spent_usd, reserved_usd, remaining_usd, unknown_cost, as_of_seq, model_usage_refs, budget_event_ids"
+    governance: "object: changeset_ids, risk_tiers, validation_refs, shadow_refs, canary_refs, signoff_evidence, safe_mode_events, active_epoch_before, active_epoch_after, outbox_refs"
+    cases: "array: case_id, status, stimuli_refs, observation_refs, assertions[{id,passed,evidence_refs}], failed_reasons, started_at, ended_at"
+    evidence_index: "array: evidence_id, kind, source_id, sanitized_location, sha256, captured_at; includes applicable event, turn, job, run and receipt IDs"
+    exclusions: "array: each substituted component, reason and what it does not prove"
+    blocked_reasons: "array of strings; empty only when not blocked"
+  passed_requires:
+    - "Every C01 through C10 reports passed with complete evidence and no omitted or skipped case."
+    - "Deterministic suite reports failed=0, errors=0, skipped=0; source evidence resolves to the stated IDs and digests."
+    - "intervention.unplanned_count=0 and no unplanned_actions; a missing audit trail is not zero."
+    - "At least four actual live cycles, at least two distinct evidence-derived works, an observed idle window and one evidence-driven failure adjustment."
+    - "Live Docker, real CLI and actual model upstream are present; substitutions are explicitly limited and disclosed."
+    - "Prior M16 and M17 task gates remain intact; no protected standards or tests are weakened."
+
+# 完整性校验通过不等于现场验收。此入口在M17-08编写和运行，缺失则gate失败。
+live_witness_contract:
+  entrypoint: tests/system/test_m17_08_continuity_e2e.py::test_live_docker_real_cli_produces_evidence
+  role: isolated_acceptance_witness
+  trust_boundary: >-
+    验收witness在工厂Agent沙箱之外，按冻结测试启动真实Docker/CLI/serve和实际模型连接；
+    工厂Agent无权改witness源、运行配置、观测日志或断言。宿主管理员本身可信；若将管理shell和验收源写权限
+    交给不可信外部代理，无法靠by字符串或自报JSON证明现场真实性，必须blocked并披露。
+  rules:
+    - 此测试必须在本次验收调用内真实启动和观察运行，不能只接收已有report.json或把完整性脚本exit0当通过。
+    - 启动前固定runtime/image/平台源摘要、已授权目标/contract/grant及MAX(events.seq)，记录本次独立witness run id与UTC时间。
+    - 通过实际docker inspect、真实CLI版本命令、serve和CLI子进程句柄/日志、实际模型代理请求记录核验环境，不只读real_*布尔声明。
+    - 从本次witness水位后产生的cycle/turn/run/job/receipt、Gate与授权contract的真实结果生成报告，按C01至C10逐条独立断言。
+    - 测试控制面只执行已冻结的setup/资料投放/时钟/故障/重启/撤销；全部管理动作被witness捕获，与0非计划接续声明核对。
+    - raw观测及脱敏导出有同源摘要和关联；只报告可验证事实，不把日志摘要视为模型业务能力的通用证明。
+    - 外部真实资源不足、真实性无法核验或测试入口未实现时必须失败/blocked，不能skip、回退脚本Agent或只校验合成报告。
+    - 生成报告后再调用verify_live.py作为第二道完整性检查；两个结果都通过才允许M17-08和M17 gate通过。
+  necessary_supplementary_tests:
+    - 同一输入在CLI/talk/agent的路由一致；已有request在候选激活/回滚/撤销后只读返回原run，不产生新动作。
+    - run消耗完生产额度后，已保留closeout轮能收尾；closeout失败确定性记录失败、不无限付费；撤销后不启动closeout。

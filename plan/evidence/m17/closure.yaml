@@ -1,0 +1,864 @@
+schema_version: mao-m17-closure-1
+status: design_frozen
+baseline_commit: c538768
+implementation_evidence_source: Actual task status and completion come from plan/state.json and executed acceptance
+  reports, not the frozen audit baseline.
+coverage_scope: All currently registered findings and historical compensation categories; not a claim that undiscovered
+  bugs cannot exist.
+mandatory_issue_ids:
+- E01
+- E02
+- E03
+- E04
+- E05
+- E06
+- F01
+- F02
+- G01
+- G02
+- G03
+- G04
+- G05
+- G06
+- G07
+- G08
+- H01
+- H02
+- H03
+- H04
+- H05
+- H06
+- H07
+- H08
+- H09
+- HC01
+- HC02
+- HC03
+- HC04
+- HC05
+- HC06
+- HC07
+- HC08
+- HC09
+- HC10
+- HC11
+- HC12
+- HC13
+- HC14
+- U01
+- U02
+- U03
+- U04
+- U05
+- U06
+- R01
+issue_count_is_not_bug_count: true
+issues:
+- id: H01
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-02
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_cli_serve_starts_configured_resident_host
+  design_baseline_status: not_implemented
+- id: H02
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-02
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_cli_launch_error_does_not_strand_delivered_mail
+  design_baseline_status: not_implemented
+- id: H03
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.1'
+  tasks:
+  - M17-01
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_taken_wake_survives_mailbox_write_failure
+  design_baseline_status: not_implemented
+- id: H04
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.1'
+  tasks:
+  - M17-01
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_schedule_post_is_not_duplicated_across_interruption
+  design_baseline_status: not_implemented
+- id: H05
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.1'
+  tasks:
+  - M17-01
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_lost_agents_lease_stops_host
+  design_baseline_status: not_implemented
+- id: H06
+  evidence_level: contract_gap
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-02
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_empty_successful_cli_output_is_not_completed_work
+  design_baseline_status: not_implemented
+- id: H07
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.1'
+  tasks:
+  - M17-01
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_wake_claim_is_exclusive_under_concurrency
+  design_baseline_status: not_implemented
+- id: H08
+  evidence_level: contract_gap
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.1'
+  tasks:
+  - M17-01
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_batch_order_matches_chronological_prompt
+  design_baseline_status: not_implemented
+- id: H09
+  evidence_level: contract_gap
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.6'
+  tasks:
+  - M17-07
+  - M17-08
+  tests:
+  - tests/system/test_m17_08_continuity_e2e.py::test_macro_objective_drives_multiple_cycles
+  design_baseline_status: not_implemented
+- id: G01
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-governance-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-03
+  tests:
+  - plan/evidence/m17/repro/test_governance.py::test_safe_mode_stops_existing_t2_shadow
+  - plan/evidence/m17/repro/test_governance.py::test_safe_mode_stops_existing_t2_canary_promotion
+  design_baseline_status: not_implemented
+- id: G02
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-governance-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-03
+  tests:
+  - plan/evidence/m17/repro/test_governance.py::test_failed_promotion_keeps_database_and_git_pointers_atomic
+  design_baseline_status: not_implemented
+- id: G03
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-governance-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-03
+  tests:
+  - plan/evidence/m17/repro/test_governance.py::test_rebuild_failure_preserves_promotion_and_wakes_foreman
+  design_baseline_status: not_implemented
+- id: G04
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-governance-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-03
+  tests:
+  - plan/evidence/m17/repro/test_governance.py::test_existing_shadow_blocks_second_changeset
+  design_baseline_status: not_implemented
+- id: G05
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-host-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.1'
+  tasks:
+  - M17-01
+  tests:
+  - plan/evidence/m17/repro/test_host.py::test_wake_claim_is_exclusive_under_concurrency
+  design_baseline_status: not_implemented
+- id: G06
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-governance-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-03
+  tests:
+  - plan/evidence/m17/repro/test_governance.py::test_undeclared_new_agent_cannot_hide_in_changeset
+  design_baseline_status: not_implemented
+- id: G07
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-governance-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-03
+  tests:
+  - plan/evidence/m17/repro/test_governance.py::test_verifying_resumes_after_transient_epoch_failure
+  design_baseline_status: not_implemented
+- id: G08
+  evidence_level: contract_gap
+  evidence:
+  - plan/journal/2026-11-16-M17-feedback-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.5'
+  - path: spec/system/continuity.md
+    section: '3.3'
+  tasks:
+  - M17-06
+  tests:
+  - plan/evidence/m17/repro/test_feedback.py::test_metrics_query_returns_evidence_not_only_echoed_arguments
+  design_baseline_status: not_implemented
+- id: E01
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-execution-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.3'
+  tasks:
+  - M17-04
+  tests:
+  - plan/evidence/m17/repro/test_execution.py::test_e01_real_factoryctl_runs_service_job
+  design_baseline_status: not_implemented
+- id: E02
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-execution-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.3'
+  - path: spec/system/continuity.md
+    section: '3.2'
+  tasks:
+  - M17-04
+  tests:
+  - plan/evidence/m17/repro/test_execution.py::test_e02_openapi_default_does_not_export_unrelated_operations
+  design_baseline_status: not_implemented
+- id: E03
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-execution-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.3'
+  tasks:
+  - M17-04
+  tests:
+  - plan/evidence/m17/repro/test_execution.py::test_e03_agent_operator_runs_for_service_station
+  design_baseline_status: not_implemented
+- id: E04
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-execution-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.4'
+  tasks:
+  - M17-05
+  tests:
+  - plan/evidence/m17/repro/test_execution.py::test_e04_model_proxy_restart_keeps_job_budget
+  design_baseline_status: not_implemented
+- id: E05
+  evidence_level: contract_gap
+  evidence:
+  - plan/journal/2026-11-16-M17-execution-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.3'
+  tasks:
+  - M17-04
+  tests:
+  - plan/evidence/m17/repro/test_execution.py::test_e05_fetch_retry_reuses_known_external_task
+  design_baseline_status: not_implemented
+- id: E06
+  evidence_level: reproduced
+  evidence:
+  - plan/journal/2026-11-16-M17-execution-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.4'
+  tasks:
+  - M17-05
+  tests:
+  - plan/evidence/m17/repro/test_execution.py::test_e06_factoryctl_budget_reports_live_balance
+  design_baseline_status: not_implemented
+- id: F01
+  evidence_level: contract_gap
+  evidence:
+  - plan/journal/2026-11-16-M17-feedback-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.5'
+  tasks:
+  - M17-06
+  tests:
+  - plan/evidence/m17/repro/test_feedback.py::test_terminal_run_returns_to_initiating_agent
+  design_baseline_status: not_implemented
+- id: F02
+  evidence_level: contract_gap
+  evidence:
+  - plan/journal/2026-11-16-M17-feedback-audit.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.5'
+  - path: spec/system/continuity.md
+    section: '3.3'
+  tasks:
+  - M17-06
+  tests:
+  - plan/evidence/m17/repro/test_feedback.py::test_metrics_query_returns_evidence_not_only_echoed_arguments
+  design_baseline_status: not_implemented
+- id: HC01
+  evidence_level: reproduced
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.2'
+  tasks:
+  - M17-02
+  - M17-08
+  tests:
+  - tests/system/test_m17_08_continuity_e2e.py::test_host_restart_and_lease_fencing
+  - plan/evidence/m17/repro/test_host.py::test_cli_serve_starts_configured_resident_host
+  design_baseline_status: not_implemented
+- id: HC02
+  evidence_level: reproduced
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.3'
+  tasks:
+  - M17-04
+  tests:
+  - plan/evidence/m17/deployment/test_host_paths.py::test_mapped_host_script_and_virtual_argument
+  design_baseline_status: not_implemented
+- id: HC03
+  evidence_level: static
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.1'
+  tasks:
+  - M17-09
+  - M17-05
+  tests:
+  - tests/system/test_m17_09_transport.py::test_model_deadlines_and_partial_response
+  - tests/system/test_m17_09_transport.py::test_total_deadline_not_extended_by_progress
+  - tests/system/test_m17_09_transport.py::test_timeout_unknown_keeps_cost_and_prevents_resubmit
+  design_baseline_status: not_implemented
+- id: HC04
+  evidence_level: historical_observation
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.2'
+  tasks:
+  - M17-09
+  tests:
+  - tests/system/test_m17_09_transport.py::test_connect_buffered_fragmented_and_empty_payload
+  - tests/system/test_m17_09_transport.py::test_connect_tls_method_and_authority_enforcement
+  - tests/system/test_m17_09_transport.py::test_tunnel_cancel_and_capacity_release
+  design_baseline_status: not_implemented
+- id: HC05
+  evidence_level: static
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.3'
+  tasks:
+  - M17-10
+  tests:
+  - tests/system/test_m17_10_qualification.py::test_real_cli_session_contract_and_negative_adapters
+  - tests/system/test_m17_10_qualification.py::test_tool_ids_duplicates_errors_and_turn_limit
+  - tests/system/test_m17_10_qualification.py::test_two_runtime_adapters_share_protocol
+  design_baseline_status: not_implemented
+- id: HC06
+  evidence_level: contract_gap
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.3'
+  tasks:
+  - M17-10
+  - M17-08
+  tests:
+  - tests/system/test_m17_10_qualification.py::test_real_cli_session_contract_and_negative_adapters
+  - tests/system/test_m17_10_qualification.py::test_qualification_invalidates_on_version_change
+  - tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery
+  design_baseline_status: not_implemented
+- id: HC07
+  evidence_level: historical_observation
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.4'
+  tasks:
+  - M17-04
+  - M17-09
+  - M17-10
+  - M17-08
+  tests:
+  - plan/evidence/m17/repro/test_execution.py::test_e05_fetch_retry_reuses_known_external_task
+  - tests/system/test_m17_10_qualification.py::test_service_relative_absolute_redirect_and_integrity
+  - tests/system/test_m17_08_continuity_e2e.py::test_unknown_submit_outcome_never_blindly_retries
+  design_baseline_status: not_implemented
+- id: HC08
+  evidence_level: static
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.4'
+  tasks:
+  - M17-10
+  - M17-08
+  tests:
+  - tests/system/test_m17_10_qualification.py::test_machine_identity_cannot_be_replaced_by_stub
+  - tests/system/test_m17_10_qualification.py::test_sync_and_async_nonmedia_operations
+  - tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery
+  design_baseline_status: not_implemented
+- id: HC09
+  evidence_level: static
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.5'
+  tasks:
+  - M17-11
+  tests:
+  - tests/system/test_m17_11_deployment.py::test_missing_docker_or_qualification_blocks_resident
+  design_baseline_status: not_implemented
+- id: HC10
+  evidence_level: static
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.5'
+  tasks:
+  - M17-03
+  - M17-06
+  - M17-11
+  - M17-08
+  tests:
+  - tests/system/test_m17_11_deployment.py::test_rollout_minimums_and_truthful_zero_evidence
+  - tests/system/test_m17_08_continuity_e2e.py::test_change_governance_keeps_scope_and_safe_mode
+  design_baseline_status: not_implemented
+- id: HC11
+  evidence_level: historical_observation
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '3.4'
+  tasks:
+  - M17-11
+  tests:
+  - tests/system/test_m17_11_deployment.py::test_external_cli_cannot_impersonate_human_or_open_database
+  - tests/system/test_m17_11_deployment.py::test_operator_credential_expiry_revoke_and_dedup
+  design_baseline_status: not_implemented
+- id: HC12
+  evidence_level: static
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.5'
+  tasks:
+  - M17-11
+  tests:
+  - tests/system/test_m17_11_deployment.py::test_doctor_and_plan_are_read_only
+  - tests/system/test_m17_11_deployment.py::test_init_repeat_preserves_registry_assets_secrets_and_runs
+  - tests/system/test_m17_11_deployment.py::test_apply_crash_and_state_conflict_recover
+  - tests/system/test_m17_11_deployment.py::test_missing_docker_or_qualification_blocks_resident
+  design_baseline_status: not_implemented
+- id: HC13
+  evidence_level: contract_gap
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.6'
+  tasks:
+  - M17-07
+  - M17-08
+  tests:
+  - tests/system/test_m17_08_continuity_e2e.py::test_macro_objective_drives_multiple_cycles
+  - tests/system/test_m17_08_continuity_e2e.py::test_results_return_once_and_drive_next_cycle
+  - tests/system/test_m17_08_continuity_e2e.py::test_live_docker_real_cli_produces_evidence
+  - tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery
+  design_baseline_status: not_implemented
+- id: HC14
+  evidence_level: reproduced
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.6'
+  tasks:
+  - M17-12
+  - M17-08
+  tests:
+  - tests/system/test_m17_12_cli_usage.py::test_public_help_discovers_complete_lifecycle
+  - tests/system/test_m17_12_cli_usage.py::test_capabilities_examples_match_installed_parser
+  - tests/system/test_m17_12_cli_usage.py::test_error_recovery_handles_pending_unknown_and_permission
+  - tests/system/test_m17_12_cli_usage.py::test_skill_packaging_version_and_truthful_capabilities
+  - tests/system/test_m17_12_cli_usage.py::test_help_only_operator_hands_goal_to_factory
+  - tests/system/test_m17_12_cli_usage.py::test_skill_operator_hands_goal_to_factory
+  - tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery
+  design_baseline_status: not_implemented
+- id: U01
+  evidence_level: contract_gap
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '3.5'
+  tasks:
+  - M17-12
+  tests:
+  - tests/system/test_m17_12_cli_usage.py::test_public_help_discovers_complete_lifecycle
+  - tests/system/test_m17_12_cli_usage.py::test_help_only_operator_hands_goal_to_factory
+  design_baseline_status: not_implemented
+- id: U02
+  evidence_level: contract_gap
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.6'
+  tasks:
+  - M17-12
+  - M17-08
+  tests:
+  - tests/system/test_m17_12_cli_usage.py::test_skill_operator_hands_goal_to_factory
+  - tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery
+  design_baseline_status: not_implemented
+- id: U03
+  evidence_level: contract_gap
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.6'
+  tasks:
+  - M17-10
+  - M17-08
+  tests:
+  - tests/system/test_m17_10_qualification.py::test_two_runtime_adapters_share_protocol
+  - tests/system/test_m17_10_qualification.py::test_sync_and_async_nonmedia_operations
+  - tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery
+  design_baseline_status: not_implemented
+- id: U04
+  evidence_level: contract_gap
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '5.5'
+  tasks:
+  - M17-09
+  - M17-11
+  - M17-12
+  tests:
+  - tests/system/test_m17_11_deployment.py::test_init_repeat_preserves_registry_assets_secrets_and_runs
+  - tests/system/test_m17_11_deployment.py::test_apply_crash_and_state_conflict_recover
+  - tests/system/test_m17_12_cli_usage.py::test_error_recovery_handles_pending_unknown_and_permission
+  - tests/system/test_m17_09_transport.py::test_timeout_unknown_keeps_cost_and_prevents_resubmit
+  design_baseline_status: not_implemented
+- id: U05
+  evidence_level: contract_gap
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '3.4'
+  tasks:
+  - M17-11
+  tests:
+  - tests/system/test_m17_11_deployment.py::test_external_cli_cannot_impersonate_human_or_open_database
+  - tests/system/test_m17_11_deployment.py::test_operator_credential_expiry_revoke_and_dedup
+  design_baseline_status: not_implemented
+- id: U06
+  evidence_level: contract_gap
+  evidence:
+  - plan/evidence/m17/historical-coverage.md
+  - plan/evidence/m17/external-agent-usage.md
+  spec_refs:
+  - path: spec/system/operability.md
+    section: '3.5'
+  tasks:
+  - M17-10
+  - M17-12
+  tests:
+  - tests/system/test_m17_10_qualification.py::test_qualification_invalidates_on_version_change
+  - tests/system/test_m17_12_cli_usage.py::test_capabilities_examples_match_installed_parser
+  - tests/system/test_m17_12_cli_usage.py::test_skill_packaging_version_and_truthful_capabilities
+  design_baseline_status: not_implemented
+- id: R01
+  evidence_level: contract_conflict
+  evidence:
+  - plan/evidence/m17/baseline-regression.md
+  spec_refs:
+  - path: spec/system/continuity.md
+    section: '5.9'
+  tasks:
+  - M17-04
+  tests:
+  - tests/acceptance/m4/test_m4_03_gateway.py::test_pooled_reset_between_jobs
+  - tests/system/test_m17_04_pool_isolation.py::test_pooled_jobs_isolate_outputs_and_reset_failures
+  design_baseline_status: not_implemented
+  note: Verified old assertion failure on pristine baseline; path-name reuse alone does not prove production leakage.
+    Freeze stronger actual job/content/lease/reset checks without weakening isolation.
+test_groups:
+- id: M17-01
+  task: M17-01
+  mode: offline
+  nodes:
+  - plan/evidence/m17/repro/test_host.py::test_taken_wake_survives_mailbox_write_failure
+  - plan/evidence/m17/repro/test_host.py::test_schedule_post_is_not_duplicated_across_interruption
+  - plan/evidence/m17/repro/test_host.py::test_lost_agents_lease_stops_host
+  - plan/evidence/m17/repro/test_host.py::test_wake_claim_is_exclusive_under_concurrency
+  - plan/evidence/m17/repro/test_host.py::test_batch_order_matches_chronological_prompt
+  minimum_cases: 5
+- id: M17-02
+  task: M17-02
+  mode: offline
+  nodes:
+  - plan/evidence/m17/repro/test_host.py::test_cli_serve_starts_configured_resident_host
+  - plan/evidence/m17/repro/test_host.py::test_cli_launch_error_does_not_strand_delivered_mail
+  - plan/evidence/m17/repro/test_host.py::test_empty_successful_cli_output_is_not_completed_work
+  - plan/evidence/m17/repro/test_host.py::test_local_agent_diagnostic_fixture_can_complete_mail
+  minimum_cases: 4
+- id: M17-03
+  task: M17-03
+  mode: offline
+  nodes:
+  - plan/evidence/m17/repro/test_governance.py::test_safe_mode_stops_existing_t2_shadow
+  - plan/evidence/m17/repro/test_governance.py::test_safe_mode_stops_existing_t2_canary_promotion
+  - plan/evidence/m17/repro/test_governance.py::test_failed_promotion_keeps_database_and_git_pointers_atomic
+  - plan/evidence/m17/repro/test_governance.py::test_rebuild_failure_preserves_promotion_and_wakes_foreman
+  - plan/evidence/m17/repro/test_governance.py::test_existing_shadow_blocks_second_changeset
+  - plan/evidence/m17/repro/test_governance.py::test_undeclared_new_agent_cannot_hide_in_changeset
+  - plan/evidence/m17/repro/test_governance.py::test_verifying_resumes_after_transient_epoch_failure
+  minimum_cases: 7
+- id: M17-04
+  task: M17-04
+  mode: offline
+  nodes:
+  - plan/evidence/m17/repro/test_execution.py::test_e01_real_factoryctl_runs_service_job
+  - plan/evidence/m17/repro/test_execution.py::test_e02_openapi_default_does_not_export_unrelated_operations
+  - plan/evidence/m17/repro/test_execution.py::test_e03_agent_operator_runs_for_service_station
+  - plan/evidence/m17/repro/test_execution.py::test_e05_fetch_retry_reuses_known_external_task
+  - plan/evidence/m17/deployment/test_host_paths.py::test_mapped_host_script_and_virtual_argument
+  - tests/acceptance/m4/test_m4_03_gateway.py::test_pooled_reset_between_jobs
+  - tests/system/test_m17_04_pool_isolation.py::test_pooled_jobs_isolate_outputs_and_reset_failures
+  minimum_cases: 8
+- id: M17-05
+  task: M17-05
+  mode: offline
+  nodes:
+  - plan/evidence/m17/repro/test_execution.py::test_e04_model_proxy_restart_keeps_job_budget
+  - plan/evidence/m17/repro/test_execution.py::test_e06_factoryctl_budget_reports_live_balance
+  minimum_cases: 2
+- id: M17-06
+  task: M17-06
+  mode: offline
+  nodes:
+  - plan/evidence/m17/repro/test_feedback.py::test_terminal_run_returns_to_initiating_agent
+  - plan/evidence/m17/repro/test_feedback.py::test_metrics_query_returns_evidence_not_only_echoed_arguments
+  minimum_cases: 3
+- id: M17-07
+  task: M17-07
+  mode: offline
+  nodes:
+  - plan/evidence/m17/acceptance/test_objectives.py::test_enable_requires_existing_assets_agents_and_resident_foreman
+  - plan/evidence/m17/acceptance/test_objectives.py::test_human_authorizes_one_fixed_version_and_roles_are_scoped
+  - plan/evidence/m17/acceptance/test_objectives.py::test_due_cycle_and_mail_are_unique_after_context_restart
+  - plan/evidence/m17/acceptance/test_objectives.py::test_idle_cycle_reobserves_only_after_review_interval
+  - plan/evidence/m17/acceptance/test_objectives.py::test_commit_plan_requires_real_observation_and_selected_candidate
+  - plan/evidence/m17/acceptance/test_objectives.py::test_scope_is_enforced_for_plan_worker_and_legacy_run
+  - plan/evidence/m17/acceptance/test_objectives.py::test_revoke_stops_new_tasks_but_preserves_existing_state
+  - plan/evidence/m17/acceptance/test_objectives.py::test_expiry_stops_an_undispatched_task
+  - plan/evidence/m17/acceptance/test_objectives.py::test_real_task_evidence_satisfies_frozen_contract_once
+  - plan/evidence/m17/acceptance/test_objectives.py::test_evaluate_rejects_old_job_and_self_report
+  - plan/evidence/m17/acceptance/test_objectives.py::test_real_foreman_turn_budget_pauses_and_daily_reset_is_bounded
+  - plan/evidence/m17/acceptance/test_objectives.py::test_foreman_write_requires_live_cycle_turn_and_lease
+  minimum_cases: 13
+- id: M17-08
+  task: M17-08
+  mode: offline
+  nodes:
+  - tests/system/test_m17_08_continuity_e2e.py::test_macro_objective_drives_multiple_cycles
+  - tests/system/test_m17_08_continuity_e2e.py::test_host_restart_and_lease_fencing
+  - tests/system/test_m17_08_continuity_e2e.py::test_known_external_task_resumes_fetch
+  - tests/system/test_m17_08_continuity_e2e.py::test_unknown_submit_outcome_never_blindly_retries
+  - tests/system/test_m17_08_continuity_e2e.py::test_budget_survives_restart_and_stops_authorized_work
+  - tests/system/test_m17_08_continuity_e2e.py::test_revoke_and_expiry_stop_new_actions
+  - tests/system/test_m17_08_continuity_e2e.py::test_real_factoryctl_and_declared_operator_run
+  - tests/system/test_m17_08_continuity_e2e.py::test_results_return_once_and_drive_next_cycle
+  - tests/system/test_m17_08_continuity_e2e.py::test_change_governance_keeps_scope_and_safe_mode
+  minimum_cases: 9
+- id: M17-09
+  task: M17-09
+  mode: offline
+  nodes:
+  - tests/system/test_m17_09_transport.py::test_model_deadlines_and_partial_response
+  - tests/system/test_m17_09_transport.py::test_total_deadline_not_extended_by_progress
+  - tests/system/test_m17_09_transport.py::test_timeout_unknown_keeps_cost_and_prevents_resubmit
+  - tests/system/test_m17_09_transport.py::test_connect_buffered_fragmented_and_empty_payload
+  - tests/system/test_m17_09_transport.py::test_connect_tls_method_and_authority_enforcement
+  - tests/system/test_m17_09_transport.py::test_tunnel_cancel_and_capacity_release
+  minimum_cases: 6
+- id: M17-10
+  task: M17-10
+  mode: offline
+  nodes:
+  - tests/system/test_m17_10_qualification.py::test_real_cli_session_contract_and_negative_adapters
+  - tests/system/test_m17_10_qualification.py::test_tool_ids_duplicates_errors_and_turn_limit
+  - tests/system/test_m17_10_qualification.py::test_two_runtime_adapters_share_protocol
+  - tests/system/test_m17_10_qualification.py::test_machine_identity_cannot_be_replaced_by_stub
+  - tests/system/test_m17_10_qualification.py::test_service_relative_absolute_redirect_and_integrity
+  - tests/system/test_m17_10_qualification.py::test_sync_and_async_nonmedia_operations
+  - tests/system/test_m17_10_qualification.py::test_qualification_invalidates_on_version_change
+  minimum_cases: 7
+- id: M17-11
+  task: M17-11
+  mode: offline
+  nodes:
+  - tests/system/test_m17_11_deployment.py::test_doctor_and_plan_are_read_only
+  - tests/system/test_m17_11_deployment.py::test_init_repeat_preserves_registry_assets_secrets_and_runs
+  - tests/system/test_m17_11_deployment.py::test_apply_crash_and_state_conflict_recover
+  - tests/system/test_m17_11_deployment.py::test_missing_docker_or_qualification_blocks_resident
+  - tests/system/test_m17_11_deployment.py::test_external_cli_cannot_impersonate_human_or_open_database
+  - tests/system/test_m17_11_deployment.py::test_operator_credential_expiry_revoke_and_dedup
+  - tests/system/test_m17_11_deployment.py::test_rollout_minimums_and_truthful_zero_evidence
+  minimum_cases: 7
+- id: M17-12
+  task: M17-12
+  mode: offline
+  nodes:
+  - tests/system/test_m17_12_cli_usage.py::test_public_help_discovers_complete_lifecycle
+  - tests/system/test_m17_12_cli_usage.py::test_capabilities_examples_match_installed_parser
+  - tests/system/test_m17_12_cli_usage.py::test_error_recovery_handles_pending_unknown_and_permission
+  - tests/system/test_m17_12_cli_usage.py::test_skill_packaging_version_and_truthful_capabilities
+  - tests/system/test_m17_12_cli_usage.py::test_help_only_operator_hands_goal_to_factory
+  - tests/system/test_m17_12_cli_usage.py::test_skill_operator_hands_goal_to_factory
+  minimum_cases: 6
+- id: core-live
+  task: M17-08
+  mode: live
+  nodes:
+  - tests/system/test_m17_08_continuity_e2e.py::test_live_docker_real_cli_produces_evidence
+  minimum_cases: 1
+- id: operability-live
+  task: M17-08
+  mode: live
+  nodes:
+  - tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery
+  minimum_cases: 1
+required_live_products:
+- machine_key: Machine:openmontage@1
+  evidence_origin: PR1 6f108f4 deployment inventory
+  required_status: passed
+- machine_key: Machine:minimax-h3@1
+  evidence_origin: PR1 6f108f4 deployment inventory
+  required_status: passed
+- machine_key: Machine:minimax-dance@1
+  evidence_origin: PR1 6f108f4 deployment inventory
+  required_status: passed
+- machine_key: Machine:grok-dance@1
+  evidence_origin: PR1 6f108f4 deployment inventory
+  required_status: passed
+live_index:
+  schema_version: mao-operability-live-1
+  path: .factory/m17-repro/operability-live/index.json
+  required_cells: 4
+  minimum_distinct_domains: 2
+  minimum_distinct_runtimes: 2
+  minimum_cycles_each: 4
+  minimum_unplanned_business_interventions: 0
+closure_rule: Design mapping is validated now; implementation closure requires all exact offline nodes, both independent
+  live witnesses, every cell report and required product live receipt. No skip/xfail or documented unsupported waiver
+  for these required entries.
