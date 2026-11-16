@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("mao.sandbox")
@@ -50,3 +53,31 @@ def test_egress_rejected_without_switch(tmp_path) -> None:
     with pytest.raises(FactoryError) as ei:
         DockerProvider(tmp_path, allow_unproxied_egress=False).build_run_argv(_spec(network="egress"))
     assert ei.value.code == "EGRESS_UNSUPPORTED"
+
+
+def test_mapped_host_paths_skip_virtual_rewrite(tmp_path: Path) -> None:
+    """解释器和脚本保持宿主路径，虚拟参数仍按挂载替换。"""
+    script = tmp_path / "tools" / "factory" / "bin" / "factoryctl"
+    script.parent.mkdir(parents=True)
+    script.write_text("import sys\nprint('ok')\nprint(sys.argv[1])\n", encoding="utf-8")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("hi", encoding="utf-8")
+    provider = LocalProvider(
+        tmp_path,
+        commands={"tool": [sys.executable, str(script)]},
+    )
+    spec = SandboxSpec(
+        name="keep-host",
+        image="sha256:" + "ab" * 32,
+        mounts=(Mount(source=str(workspace), target="/workspace", readonly=False),),
+        command=(),
+    )
+    sandbox = provider.open(spec)
+    out, err = tmp_path / "out.txt", tmp_path / "err.txt"
+    try:
+        result = sandbox.exec(["tool", "/workspace/note.txt"], timeout_s=30, stdout=out, stderr=err)
+    finally:
+        sandbox.close()
+    assert result.exit_code == 0, err.read_text(encoding="utf-8", errors="replace")
+    assert out.read_text(encoding="utf-8").splitlines() == ["ok", str(workspace / "note.txt")]

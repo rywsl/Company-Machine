@@ -487,7 +487,7 @@ class _LocalSandbox:
     def start_command(self) -> None:
         if self._attached or not self.spec.command:
             return
-        command = [self._rewrite(arg) for arg in self._map_argv(self.spec.command)]
+        command = self._host_command(self.spec.command)
         folder = self.provider.root / "tmp" / "sandboxes" / self.spec.name
         folder.mkdir(parents=True, exist_ok=True)
         self._log = (folder / "main.log").open("ab")
@@ -517,7 +517,7 @@ class _LocalSandbox:
         if self._closed:
             raise FactoryError("SANDBOX_CLOSED", "沙箱已关闭", name=self.name)
         start = self.provider.clock.monotonic()
-        command = [self._rewrite(arg) for arg in self._map_argv(argv)]
+        command = self._host_command(argv)
         child_env = self._child_env(env)
         cwd = self._cwd(workdir)
         try:
@@ -551,9 +551,19 @@ class _LocalSandbox:
             self._log.close()
             self._log = None
 
-    def _map_argv(self, argv: Sequence[str]) -> list[str]:
+    def _host_command(self, argv: Sequence[str]) -> list[str]:
+        """映射容器命令后，只替换原来的参数。
+
+        映射进去的解释器和脚本已经是宿主路径。它们常常落在 ``/tmp``（pytest）
+        或 ``/workspace``（检出目录）下，而这两个前缀同时也是挂载点。再做路径
+        替换会把宿主程序改写成沙箱目录，进程无法启动。
+        """
+        mapped, host_len = self._map_argv(argv)
+        return [*mapped[:host_len], *[self._rewrite(arg) for arg in mapped[host_len:]]]
+
+    def _map_argv(self, argv: Sequence[str]) -> tuple[list[str], int]:
         if not argv:
-            return []
+            return [], 0
         head = argv[0]
         mapped = self.provider.commands.get(head)
         if mapped is None and head == "python3":
@@ -562,8 +572,9 @@ class _LocalSandbox:
             script = self.provider.root / "tools" / "factory" / "bin" / "factoryctl"
             mapped = [sys.executable, str(script)]
         if mapped is None:
-            return list(argv)
-        return [str(item) for item in mapped] + list(argv[1:])
+            return list(argv), 0
+        host = [str(item) for item in mapped]
+        return host + list(argv[1:]), len(host)
 
     def _child_env(self, extra: Mapping[str, str] | None) -> dict[str, str]:
         merged: dict[str, str] = {}
