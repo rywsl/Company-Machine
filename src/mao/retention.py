@@ -91,8 +91,17 @@ def _collect(ctx: Any, config: RetentionConfig, *, dry_run: bool, by: str) -> Gc
     now = ctx.clock.now()
     chosen, kept = _select(ctx, config, now)
     if not dry_run:
+        expired_now: list[str] = []
         for bean_id in chosen:
-            ctx.warehouse.expire(bean_id, by=by, reason="retention")
+            try:
+                ctx.warehouse.expire(bean_id, by=by, reason="retention")
+            except FactoryError as exc:
+                if exc.code != "ASSET_IN_USE":
+                    raise
+                kept["in_use"] = kept.get("in_use", 0) + 1
+                continue
+            expired_now.append(bean_id)
+        chosen = expired_now
     extra = set(chosen) if dry_run else set()
     blobs_deleted, bytes_freed = _sweep_blobs(ctx, extra, dry_run=dry_run)
     workspaces, logs, sessions = _sweep_dirs(ctx, config, now, dry_run=dry_run)
@@ -120,7 +129,9 @@ def _collect(ctx: Any, config: RetentionConfig, *, dry_run: bool, by: str) -> Gc
 
 def _select(ctx: Any, config: RetentionConfig, now: Any) -> tuple[list[str], dict[str, int]]:
     kept = {"pinned": 0, "in_use": 0, "quarantined": 0}
-    used = _referenced(ctx)
+    from mao.assets import protected_bean_ids
+
+    used = _referenced(ctx) | protected_bean_ids(ctx)
     quarantined = {str(row["bean_id"]) for row in ctx.db.query("SELECT bean_id FROM quarantines")}
     expired: list[str] = []
     for bean in ctx.warehouse.list(sealed_only=True, include_expired=False):

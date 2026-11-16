@@ -222,6 +222,11 @@ class Warehouse:
             return bean
         now = utc_iso(self.clock.now())
         with self.db.tx() as conn:
+            from mao.assets import roots_holding_bean
+
+            roots = roots_holding_bean(conn, bean_id)
+            if roots:
+                raise FactoryError("ASSET_IN_USE", "过期会破坏活跃资产闭包", id=bean_id, roots=roots)
             conn.execute(
                 "UPDATE beans SET expired_at = ? WHERE id = ? AND expired_at IS NULL",
                 (now, bean_id),

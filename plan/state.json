@@ -7518,6 +7518,75 @@
       "status": "done",
       "updated_at": "2026-11-15T10:51:55Z"
     },
+    "M16-01": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        ".venv.broken-1068957243/pyvenv.cfg": "89f28bcca6bcfdd70576bfbd96ef07053fa33abaf228c99ac3b659b136178758"
+      },
+      "commit": "c538768",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_01_catalog.py",
+          "seconds": 16.7,
+          "stdout_sha256": "d7068990764ce47ec0e39f6065981af391a1a47ca6aca84d93a7a8996beadd91",
+          "tail": "{\"exit\": 0, \"total\": 9, \"passed\": 9, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........                                                                [100%]\n9 passed in 16.10s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m16/test_m16_02_learning.py --ignore=tests/acceptance/m16/test_m16_03_handoff.py --ignore=tests/acceptance/m16/test_m16_04_checkpoint.py --ignore=tests/acceptance/m16/test_m16_05_package.py --ignore=tests/acceptance/m16/test_m16_06_surface.py",
+          "seconds": 1009.1,
+          "stdout_sha256": "6a8bb87ea4ff1522fd614f57a0b13bb599311079f8940620b6abc3b0a53fb633",
+          "tail": "........................................................................ [ 57%]\n........................................................................ [ 61%]\n........................................................................ [ 65%]\n........................................................................ [ 70%]\n........................................................................ [ 74%]\n........................................................................ [ 79%]\n........................................................................ [ 83%]\n........................................................................ [ 87%]\n........................................................................ [ 92%]\n........................................................................ [ 96%]\n.......................................................                  [100%]\n1639 passed in 1008.09s (0:16:48)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.2,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "a72cc25a200f7c7d18ce510728921d25e6b7457b729b20a7d3eb2b7b0f8f03b2",
+          "tail": "261 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 2.2,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [
+        "lan/state.json"
+      ],
+      "status": "done",
+      "updated_at": "2026-11-16T08:05:01Z"
+    },
     "M2-01": {
       "baseline": {
         "lan/protected.lock": "(deleted)",
