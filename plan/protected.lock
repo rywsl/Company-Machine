@@ -38,7 +38,7 @@
   "files": {
     ".claude/settings.json": "16082cc15572e6c08bd5585486de64cb88593492e5b8554f8ccf97fc6b74f926",
     ".gitattributes": "7efd37a230b09cd8bc8eabdd14ad0a52d67c97af6ee8745548084acae44a87c7",
-    "AGENTS.md": "9a5c3815813eee97150885dca358f9272c891e47f2e9e2efc967c6130afc4180",
+    "AGENTS.md": "094246b44e4cc0a2a847c74a3460014854bd81b52bc15165d70a3f1cde3f3e68",
     "CLAUDE.md": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49",
     "docs/architecture.md": "6d1869b8bd6ed26474e6c97b92c62427c40aba78a47fe9549432b27be908c041",
     "plan/README.md": "1fbf4a74aad9bf5783794140d7a1a062899ad93cb8e9d6a9f1d0ee5b11ce0153",
