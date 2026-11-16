@@ -1,0 +1,16 @@
+apiVersion: mao/v1
+kind: Line
+metadata: {name: fluffy-jumpstyle, version: 1}
+spec:
+  interface:
+    inputs:
+      sheet: {type: image.png@1}
+      audio: {type: dance.audio.mp3@1}
+      brief: {type: brief.still@1}
+    outputs:
+      video: {from: dance.video, type: clip.mp4@1}
+  budget: {cap_usd: 10.0}
+  steps:
+    dance:
+      station: jumpstyle-dance@1
+      in: {sheet: $inputs.sheet, audio: $inputs.audio, brief: $inputs.brief}

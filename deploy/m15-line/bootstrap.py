@@ -110,7 +110,7 @@ def _factory_json(root: Path, registry: Path) -> None:
             "models": {},
             "image": image,
             "network": "egress",
-            "session_timeout_s": 300,
+            "session_timeout_s": 1200,
             "session_budget_usd": 1.0,
             "daily_budget_usd": 5.0,
             "max_turns": 8,
@@ -120,6 +120,10 @@ def _factory_json(root: Path, registry: Path) -> None:
             "mode": "resident",
         },
         "agents": {"image": image, "network": "egress", "poll_s": 2},
+        "autonomy": {
+            "mode": "standard",
+            "changesets": {"T0": "human", "T1": "human", "T2": "human", "T3": "review"},
+        },
     }
     (root / "factory.json").write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (root / "scheduler.json").write_text(

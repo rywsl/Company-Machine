@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -30,26 +31,30 @@ def main() -> int:
 
 def _run() -> None:
     root_in = Path(os.environ.get("FACTORY_IN", "/factory/in"))
-    image_path = root_in / "image" / "image.png"
-    brief_path = root_in / "brief" / "brief.json"
-    if not image_path.is_file():
-        raise RuntimeError(f"找不到参考图 {image_path}")
-    prompt = "the subject shifts slightly, camera holds still"
-    if brief_path.is_file():
-        body = json.loads(brief_path.read_text(encoding="utf-8"))
-        if isinstance(body, dict) and str(body.get("motion") or "").strip():
-            prompt = str(body["motion"]).strip()
+    image_path = _first(root_in, (".png", ".jpg", ".jpeg", ".webp"))
+    if image_path is None:
+        raise RuntimeError("找不到参考图")
+    brief = _brief(root_in / "brief" / "brief.json")
+    prompt = os.environ.get("DANCE_PROMPT") or str(brief.get("motion") or brief.get("prompt") or "").strip()
+    if not prompt:
+        prompt = "the subject shifts slightly, camera holds still"
+    duration = _duration(brief.get("duration"))
+    resolution = str(brief.get("resolution") or "768p竖")
     token = os.environ.get("AUTODL_AK", "")
     if not token:
         raise RuntimeError("没有 AUTODL_AK")
-    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-    payload = {
+    payload: dict[str, object] = {
         "prompt": prompt,
-        "duration": 1,
-        "resolution": "480p竖",
-        "ref_image_0": "data:image/png;base64," + encoded,
+        "duration": duration,
+        "resolution": resolution,
     }
-    created = _json("POST", f"{ORIGIN}/{WORKFLOW}", payload, token)
+    for index, uri in enumerate(_image_uris(image_path)):
+        payload[f"ref_image_{index}"] = uri
+    audio = _first(root_in, (".mp3", ".wav", ".flac"))
+    if audio is not None:
+        kind = "mpeg" if audio.suffix.lower() == ".mp3" else audio.suffix.lower().lstrip(".")
+        payload["ref_audio_0"] = f"data:audio/{kind};base64," + base64.b64encode(audio.read_bytes()).decode("ascii")
+    created = _submit(payload, token)
     data = _data(created)
     task_id = str(data.get("task_id") or "")
     if not task_id:
@@ -65,13 +70,122 @@ def _run() -> None:
             url = _result_url(current.get("results"))
             dest = Path(os.environ.get("FACTORY_OUT", "/factory/out")) / "video" / "video.mp4"
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(_bytes(url))
+            raw = _bytes(url)
+            if audio is None:
+                dest.write_bytes(raw)
+            else:
+                _mux(raw, audio, dest)
             return
         if status in {"FAILED", "ERROR", "CANCELED", "CANCELLED"}:
             raise RuntimeError("视频任务失败：" + json.dumps(current, ensure_ascii=False)[:500])
         if time.monotonic() > deadline:
             raise RuntimeError(f"视频任务仍未完成：{task_id}")
         time.sleep(5)
+
+
+def _brief(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        return {}
+    body = json.loads(path.read_text(encoding="utf-8"))
+    return body if isinstance(body, dict) else {}
+
+
+def _duration(value: object) -> int:
+    try:
+        number = int(value) if value is not None else 15
+    except (TypeError, ValueError):
+        number = 15
+    if number < 1:
+        return 1
+    if number > 15:
+        print(f"duration {number} 超过接口上限，按 15 秒提交", file=sys.stderr)
+        return 15
+    return number
+
+
+def _first(folder: Path, suffixes: tuple[str, ...]) -> Path | None:
+    if not folder.is_dir():
+        return None
+    files = [
+        path
+        for path in sorted(folder.rglob("*"))
+        if path.is_file() and path.suffix.lower() in suffixes
+    ]
+    return files[0] if files else None
+
+
+def _image_uris(path: Path) -> list[str]:
+    crops = _crops(path)
+    uris = []
+    for item in crops:
+        uris.append("data:image/jpeg;base64," + base64.b64encode(item).decode("ascii"))
+    return uris
+
+
+def _crops(path: Path) -> list[bytes]:
+    probed = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    parts = (probed.stdout or "").strip().split(",")
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return [path.read_bytes()]
+    width, height = int(parts[0]), int(parts[1])
+    boxes = [(0, 0, width, height)]
+    if width > int(height * 1.3):
+        top = max(1, int(height * 0.68))
+        third = max(1, width // 3)
+        boxes = [(8, 8, third - 16, top), (third, 8, third, top), (third * 2, 8, width - third * 2 - 8, top)]
+    found = []
+    for index, (x, y, w, h) in enumerate(boxes):
+        dest = Path(os.environ.get("FACTORY_TMP", "/tmp")) / f"ref-{index}.jpg"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-vf", f"crop={w}:{h}:{x}:{y},scale=512:-1", "-frames:v", "1", "-q:v", "4", str(dest)],
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode == 0 and dest.is_file():
+            found.append(dest.read_bytes())
+    if found:
+        return found
+    whole = Path(os.environ.get("FACTORY_TMP", "/tmp")) / "ref-whole.jpg"
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-i", str(path), "-vf", "scale=512:-1", "-frames:v", "1", "-q:v", "4", str(whole)],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode == 0 and whole.is_file():
+        return [whole.read_bytes()]
+    return [path.read_bytes()]
+
+
+def _submit(payload: dict[str, object], token: str) -> dict[str, object]:
+    try:
+        return _json("POST", f"{ORIGIN}/{WORKFLOW}", payload, token)
+    except RuntimeError as exc:
+        if "duration" not in str(exc) or payload.get("duration") == 15:
+            raise
+        print("时长被拒绝，改用 15 秒重试", file=sys.stderr)
+        payload = dict(payload)
+        payload["duration"] = 15
+        return _json("POST", f"{ORIGIN}/{WORKFLOW}", payload, token)
+
+
+def _mux(video: bytes, audio: Path, dest: Path) -> None:
+    folder = dest.parent
+    raw = folder / "video.src.mp4"
+    raw.write_bytes(video)
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-i", str(raw), "-i", str(audio), "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-c:v", "copy", "-c:a", "aac", str(dest)],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
+        raise RuntimeError("原声合成失败：" + proc.stderr.decode("utf-8", errors="replace")[-300:])
+    raw.unlink(missing_ok=True)
 
 
 def _data(body: dict[str, object]) -> dict[str, object]:

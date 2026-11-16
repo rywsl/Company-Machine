@@ -835,6 +835,14 @@ class EgressProxy:
             return
         handler.send_response(200, "Connection Established")
         handler.end_headers()
+        try:
+            handler.wfile.flush()
+        except OSError:
+            upstream.close()
+            return
+        # 请求头解析会把后续字节提前读进缓冲区。大请求的 TLS 握手常常就在这
+        # 些字节里，不先交出去，上游会在没有 HTTP 响应时关掉连接。
+        _drain_buffered(handler, upstream)
         _tunnel(handler.connection, upstream)
 
     def _admit(self, handler: BaseHTTPRequestHandler, method: str, host: str) -> bool:
@@ -1395,6 +1403,25 @@ def _send_status(
     handler.send_header("Content-Length", str(len(payload)))
     handler.end_headers()
     handler.wfile.write(payload)
+
+
+def _drain_buffered(handler: BaseHTTPRequestHandler, upstream: socket.socket) -> None:
+    reader = handler.rfile
+    peek = getattr(reader, "peek", None)
+    if peek is None:
+        return
+    try:
+        pending = peek(8192)
+    except (OSError, ValueError):
+        return
+    if not pending:
+        return
+    try:
+        data = reader.read(len(pending))
+    except (OSError, ValueError):
+        return
+    if data:
+        upstream.sendall(data)
 
 
 def _tunnel(left: socket.socket, right: socket.socket) -> None:

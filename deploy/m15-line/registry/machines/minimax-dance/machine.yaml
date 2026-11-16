@@ -1,0 +1,33 @@
+apiVersion: mao/v1
+kind: Machine
+metadata:
+  name: minimax-dance
+  version: 1
+  description: MiniMax H3 参考图与原声舞蹈合成
+spec:
+  form: tool
+  runtime:
+    image: local/minimax-h3@sha256:2222222222222222222222222222222222222222222222222222222222222222
+    instance: per_job
+    resources: {cpus: 1, memory: 1Gi}
+  needs:
+    secrets: [AUTODL_AK]
+    egress:
+      providers: [autodl.art, www.autodl.art]
+  recipes:
+    dance:
+      inputs:
+        sheet: {type: image.png@1}
+        audio: {type: dance.audio.mp3@1}
+        brief: {type: brief.still@1}
+      outputs:
+        video: {type: clip.mp4@1, harvest: /factory/out/video/video.mp4}
+      task_template: |
+        读取 sheet 三视图、audio 原声音频与 brief。与 MiniMax 机器协作制作竖屏 768p 舞蹈视频，最长 15 秒。
+        人物严格保持参考图：白色毛茸茸的可爱小人，蓝蝴蝶结、蓝披风、白色小鸟发卡，长尾巴尖为黑色。
+        舞蹈参考 B 站 BV1PpNr6TEjZ《What a Day》10–30 秒的宗主 jumpstyle，突出可爱外形与坤坤感的反差。
+        参考窗口为 20 秒但接口上限为 15 秒：选取其中连续最多 15 秒并使用对应原声，不能请求 20 秒、不能加速原声或用替代音乐。
+        若 audio 已裁成对应原声则直接使用；确保音画节拍一致。背景选夜蓝霓虹小舞台，完整展示脚步、全身和尾巴。
+        将具体动作、节拍、角色一致性、背景、768p 竖屏和不超过 15 秒等要求写进 DANCE_PROMPT，交由 minimax-h3 命令读取。
+        命令读取参考图、原声音频和 brief，由机器将输入原声合成进 MP4；不得只交无声视频。检查 /factory/out/video/video.mp4 后交付。
+      run: [minimax-h3]

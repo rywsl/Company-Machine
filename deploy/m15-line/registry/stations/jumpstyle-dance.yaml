@@ -1,0 +1,16 @@
+apiVersion: mao/v1
+kind: Station
+metadata: {name: jumpstyle-dance, version: 1}
+spec:
+  role: transform
+  machine: minimax-dance@1
+  recipe: dance
+  operator: {runtime: openai-sol@1, model: gpt-6.1-sol, max_turns: 8}
+  inputs:
+    sheet: {type: image.png@1}
+    audio: {type: dance.audio.mp3@1}
+    brief: {type: brief.still@1}
+  outputs:
+    video: {type: clip.mp4@1}
+  limits: {timeout: 1200s, budget_usd: 8.0, retries: {rejected: 0, failed: 0, mode: fresh}}
+  policy: clip-net@1

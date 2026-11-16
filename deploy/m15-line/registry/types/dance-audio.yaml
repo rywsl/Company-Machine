@@ -1,0 +1,6 @@
+apiVersion: mao/v1
+kind: Type
+metadata: {name: dance.audio.mp3, version: "1.0", description: What a Day 原声片段，输入须包含舞蹈所用原声}
+spec:
+  payload:
+    - {path: audio.mp3, required: true}
