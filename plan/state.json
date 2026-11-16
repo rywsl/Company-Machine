@@ -7587,6 +7587,79 @@
       "status": "done",
       "updated_at": "2026-11-16T08:05:01Z"
     },
+    "M16-02": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "rc/mao/agents.py": "(deleted)",
+        "src/mao/assets.py": "5b8e476667b68a6ff1a5ac9095f2665e456397c9777cfa6d2cdd15a950fe5657",
+        "src/mao/learning.py": "b8363cc5d397c8dc71aabb62531cfe8c1e6a142f973e55f2c1d8b28c3af87e5a",
+        "src/mao/runner.py": "bbe90823e291fe45059365ebec1cf55fa542ab75c54c43d9fbf5efdf81440f31",
+        "tests/system/test_assets_learning.py": "da59cf807873498e1057d11a33810271fec7bb0c6096f8be612c30984677c732"
+      },
+      "commit": "0f06cc8",
+      "dirty": true,
+      "evidence": [
+        {
+          "exit": 0,
+          "id": "acceptance",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_02_learning.py",
+          "seconds": 15.7,
+          "stdout_sha256": "920e3cd8f3b40714c57f10f0d59d5f8a4f08752006fd6212eaa55e354669b10c",
+          "tail": "{\"exit\": 0, \"total\": 9, \"passed\": 9, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........                                                                [100%]\n9 passed in 15.20s"
+        },
+        {
+          "exit": 0,
+          "id": "regress",
+          "ok": true,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m16/test_m16_03_handoff.py --ignore=tests/acceptance/m16/test_m16_04_checkpoint.py --ignore=tests/acceptance/m16/test_m16_05_package.py --ignore=tests/acceptance/m16/test_m16_06_surface.py",
+          "seconds": 923.6,
+          "stdout_sha256": "93ca5acd98e7454019a4157b479d3dfb9943ad14e1c6bfa4557f8a7f90d916ed",
+          "tail": "........................................................................ [ 56%]\n........................................................................ [ 61%]\n........................................................................ [ 65%]\n........................................................................ [ 69%]\n........................................................................ [ 74%]\n........................................................................ [ 78%]\n........................................................................ [ 82%]\n........................................................................ [ 87%]\n........................................................................ [ 91%]\n........................................................................ [ 95%]\n....................................................................     [100%]\n1652 passed in 922.75s (0:15:22)"
+        },
+        {
+          "exit": 0,
+          "id": "lint",
+          "ok": true,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.2,
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!"
+        },
+        {
+          "exit": 0,
+          "id": "format",
+          "ok": true,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stdout_sha256": "470a54b66de0446ff41dcdcc53cdc8e6be293f9b5fbba828819ad67bec97fc81",
+          "tail": "263 files already formatted"
+        },
+        {
+          "exit": 0,
+          "id": "doccheck",
+          "ok": true,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 2.1,
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致"
+        },
+        {
+          "exit": 0,
+          "id": "lock",
+          "ok": true,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致"
+        }
+      ],
+      "outside_paths": [
+        "lan/state.json"
+      ],
+      "status": "done",
+      "updated_at": "2026-11-16T08:30:30Z"
+    },
     "M2-01": {
       "baseline": {
         "lan/protected.lock": "(deleted)",

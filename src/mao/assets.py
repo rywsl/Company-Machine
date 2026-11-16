@@ -590,6 +590,115 @@ def _closure_beans_only(conn: Any, root: str) -> set[str]:
     return _upstream_beans(conn, beans)
 
 
+def capture_handoff(
+    ctx: Any, agent: str, document: Mapping[str, Any], *, expected: str | None, by: str
+) -> dict[str, Any]:
+    """验证并保存 handoff 资产，CAS 更新 handoff:<agent> 指针。"""
+    require_enabled(ctx)
+    _actor(by)
+    if not isinstance(agent, str) or not agent:
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接岗位不合法", agent=agent, field="agent")
+    normalized = normalize_document(document)
+    data = normalized.get("data") or {}
+    if normalized.get("kind") != "handoff" or data.get("agent") != agent:
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接文档与岗位不符", agent=agent, field="kind")
+    if normalized.get("scope", {}).get("subject") != f"agent:{agent}":
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接范围不符", agent=agent, field="scope")
+    if normalized.get("key") != f"handoff.{agent}":
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接键不符", agent=agent, field="key")
+    _check_handoff_data(ctx, agent, data)
+    record = AssetStore(ctx).put(normalized, by=by)
+    slot = f"handoff:{agent}"
+    with ctx.db.tx() as conn:
+        _cas_head(ctx, conn, slot, record["id"], expected, proof=record["id"])
+        _event(
+            ctx,
+            conn,
+            "knowledge.handoff",
+            {"id": record["id"], "subject": f"agent:{agent}", "state": "captured"},
+        )
+    return record
+
+
+def _check_handoff_data(ctx: Any, agent: str, data: Mapping[str, Any]) -> None:
+    required = ("agent", "tasks", "decisions", "uncertainties", "knowledge", "workspace", "external")
+    if not isinstance(data, Mapping) or any(field not in data for field in required):
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接数据不完整", agent=agent, field="data")
+    if data.get("agent") != agent:
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接岗位不符", agent=agent, field="agent")
+    for field in ("decisions", "uncertainties", "knowledge"):
+        values = data.get(field)
+        if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+            raise FactoryError("ASSET_HANDOFF_INVALID", "交接列表不合法", agent=agent, field=field)
+    tasks = data.get("tasks")
+    if not isinstance(tasks, list):
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接任务不合法", agent=agent, field="tasks")
+    for task in tasks:
+        if not isinstance(task, dict) or set(task) < {"kind", "id", "state", "next"}:
+            raise FactoryError("ASSET_HANDOFF_INVALID", "交接任务不合法", agent=agent, field="tasks")
+        if (
+            task.get("kind") not in ("job", "run")
+            or not isinstance(task.get("next"), str)
+            or not task["next"]
+        ):
+            raise FactoryError("ASSET_HANDOFF_INVALID", "交接任务不合法", agent=agent, field="tasks")
+        _task_state(ctx, agent, str(task["kind"]), str(task["id"]), str(task["state"]))
+    workspace = data.get("workspace")
+    if not isinstance(workspace, list):
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接工作区不合法", agent=agent, field="workspace")
+    for item in workspace:
+        if not isinstance(item, dict):
+            raise FactoryError("ASSET_HANDOFF_INVALID", "交接工作区不合法", agent=agent, field="workspace")
+        path = str(item.get("path") or "")
+        if _unsafe_workspace_path(path):
+            raise FactoryError("ASSET_HANDOFF_INVALID", "交接路径不安全", agent=agent, field="workspace")
+    external = data.get("external")
+    if not isinstance(external, list):
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接外部事项不合法", agent=agent, field="external")
+
+
+def _task_state(ctx: Any, agent: str, kind: str, ref: str, state: str) -> None:
+    if kind == "job":
+        row = ctx.db.query("SELECT state FROM jobs WHERE id = ?", (ref,))
+    else:
+        row = ctx.db.query("SELECT state FROM runs WHERE id = ?", (ref,))
+    if not row or str(row[0]["state"]) != state:
+        raise FactoryError("ASSET_HANDOFF_INVALID", "交接任务状态与库中不符", agent=agent, field="tasks")
+
+
+def _unsafe_workspace_path(path: str) -> bool:
+    text = path.replace("\\", "/")
+    if not text or text.startswith("/") or ".." in text.split("/") or ":" in text:
+        return True
+    blocked = (".git", ".codex", ".claude", ".home", ".runtime")
+    parts = [part for part in text.split("/") if part]
+    return any(part in blocked or part.startswith(".") and part in blocked for part in parts)
+
+
+def _cas_head(
+    ctx: Any, conn: Any, slot: str, asset_id: str, expected: str | None, *, proof: str
+) -> dict[str, Any]:
+    row = conn.execute("SELECT asset_id, generation FROM asset_heads WHERE slot = ?", (slot,)).fetchone()
+    actual = None if row is None else str(row["asset_id"])
+    if actual != expected:
+        raise FactoryError(
+            "ASSET_HEAD_CONFLICT", "正式指针与预期不符", slot=slot, expected=expected, actual=actual
+        )
+    generation = 1 if row is None else int(row["generation"]) + 1
+    now = utc_iso(ctx.clock.now())
+    if row is None:
+        conn.execute(
+            "INSERT INTO asset_heads (slot, asset_id, generation, proof, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (slot, asset_id, generation, proof, now),
+        )
+    else:
+        conn.execute(
+            "UPDATE asset_heads SET asset_id = ?, generation = ?, proof = ?, updated_at = ? WHERE slot = ?",
+            (asset_id, generation, proof, now, slot),
+        )
+    return {"slot": slot, "asset_id": asset_id, "generation": generation, "proof": proof, "stale": False}
+
+
 def protected_bean_ids(ctx: Any) -> set[str]:
     with ctx.db.tx() as conn:
         found: set[str] = set()

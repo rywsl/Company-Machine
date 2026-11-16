@@ -640,7 +640,12 @@ class AgentHost:
         _clear(incoming)
         payload = [item.to_json() for item in pending]
         (incoming / "messages.json").write_text(canonical_json(payload), encoding="utf-8")
+        from mao.learning import mount_turn_context, record_use
+
+        extra, mounted, handoff = mount_turn_context(self.ctx, self.epochs, name, incoming)
         task = _task_text(cfg, pending, session, workspace)
+        if extra:
+            task = task + "\n\n" + extra
         with self.ctx.db.tx() as conn:
             conn.execute(
                 """INSERT INTO agent_turns (
@@ -665,6 +670,16 @@ class AgentHost:
                     "UPDATE agent_messages SET state = 'delivered', turn = ?, updated_at = ? WHERE id = ?",
                     (turn_id, now, item.id),
                 )
+            record_use(
+                self.ctx,
+                snapshot,
+                "turn",
+                turn_id,
+                subject=f"agent:{name}",
+                fresh=session is None,
+                handoff=handoff,
+                assets=mounted,
+            )
         self._event(
             "agent.turn.started",
             {

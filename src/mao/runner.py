@@ -1312,6 +1312,10 @@ class Runner:
             )
             for kind, data in extra or []:
                 _insert_event(conn, self.ctx, kind, job.id, data)
+            if to == JobState.RUNNING:
+                from mao.learning import note_job_running
+
+                note_job_running(self.ctx, conn, job)
         return load_job(self.ctx.db, job.id)
 
 
