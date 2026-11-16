@@ -445,3 +445,11 @@ shutil.copyfile(src, tmp)
 - **并发**：短事务 + WAL。不要在 `tx()` 里 `copyfile` 大文件；先把 Blob 落到 CAS，再开事务写索引。`put_file` 的文件复制在事务外。
 - **不回收**：M1 不删除 Blob，也不把 `sealed` 改回 0。隔离、过期是后续里程碑的事。
 - **`media_type_of` 与类型 Spec 可能不一致**：例如 Spec 要求 `video/mp4` 而文件名是 `clip.bin`。仓库仍按后缀记录 `application/octet-stream`。拒绝是 `Gate` 的结构检查，不是 `add` 的错误。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+启用 M16 时，expire 与资产登记在同一事务边界重检保留闭包；活跃证据不能被人工或 GC 过期。Bean 内容、封存、CAS 和血缘接口不变。见 assets.md 4.1、5.1。

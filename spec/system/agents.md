@@ -554,3 +554,11 @@ CREATE TABLE agent_schedule (
 常驻厂长启动 MCP 时，把 `wake_id` 从 `None` 改成轮次 id，`session_id` 保持为轮次 id（5.8，`talk.md` 3.4）。留着 `None` 才会在轮次里得到 `TALK_NOT_IN_TURN`。把轮次 id 从 `session_id` 挪走才会拆掉 `changeset_propose`。
 
 冲突时以 `talk.md` 为准。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+仅已启用 assets 的工厂：每轮固定本岗位 asset-context.json；HANDOFF.next.json 成功固化后才轮换，失败保留会话并暂停，替代本文件 5.6 的无条件清会话；显式接管使用全新 workspace/private home，同一岗位消费原邮箱，失败不重新派发已完成消息。未启用保持 M13 行为。见 assets.md 4.5、5.2、5.5–5.6。

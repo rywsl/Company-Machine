@@ -601,3 +601,13 @@ wake_queue.reopen(wake.id, not_before=None, failed=True, by="supervisor")
 复核者仍是一次性会话，不使用 `talk_reply`，不写工厂线程。常驻厂长的任务书按 `talk.md` 5.4 增加必须 `talk_reply` 的那句。`run_once` 在常驻模式下仍只取复核票。
 
 冲突时以 `talk.md` 为准。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+厂长可以跨岗位组织资产、选择正常工作验证候选、按已授权契约晋升知识，并提交自己的 pending 接管。不能授权自己的标准、覆盖操作员私有记忆或绕过结构治理/M15 确认。常驻厂长的路径与新工作区解析共用 AgentHost；交接失败先保留旧会话。见 assets.md 3.4、5.2–5.6。
+
+已启用 M16 的常驻厂长另可复用现有 agent_send/remind，固定发送身份为 foreman；会话式厂长、reviewer 和未启用工厂不改变。未增加 foreman.run_start 或放宽 worker.lines。详见 assets.md 3.4。

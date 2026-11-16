@@ -230,3 +230,11 @@ uv run python tools/harness.py pytest tests/acceptance/m7/test_m7_04_backup.py
 - **大小**：CAS 是全量复制。增量方案（硬链接、rsync）由人在备份目录之外实现。
 - **版本**：恢复到更新的代码时，第 6 步会补跑新增迁移；恢复到更旧的代码（`schema_version` 高于现有迁移）不受支持，`Database.migrate` 报 `DB_TOO_NEW`。
 - **租约**：备份持有 `gc` 租约的时间与 CAS 大小成正比，期间回收会报 `GC_BUSY` 并在下一轮重试。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+旧 mao-backup/1 和三个公开签名保持不变。完整业务冷检查点由 mao.packages 在写屏障下复用底层备份能力，额外固定业务目录和资源清单；公开移交包从审核闭包重建，不复制原备份 DB/Git 历史。见 assets.md 4.6–4.7、5.7–5.8。

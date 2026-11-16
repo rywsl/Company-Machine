@@ -268,3 +268,11 @@ blacklist.add(key)
 | ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
 |---|---|---|---|---|---|---|
 | M2-05 | 缓存键、查找、失效，以及与 LineRunner、`factory run` 的集成 | M2-03 | 全部 | `src/mao/cache.py`、`src/mao/migrations/011_cache.sql`、`src/mao/runs.py`（只改第 5.3 节第 4.3 步的缓存调用）、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_cache_*.py` | `test_m2_05_cache.py`（≥ 10 通过） | M |
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+M16 不改变 KeyMaterial：实际材料的 Bean id 已是输入键。能力验收必须看到 watermark 后新的真实 primary 执行，旧 job/cache_hit 不算；未变化的昂贵上游材料可复用。见 assets.md 5.2–5.3。

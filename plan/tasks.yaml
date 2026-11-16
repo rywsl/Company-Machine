@@ -1887,3 +1887,198 @@ tasks:
       - *doccheck
       - id: lock
         run: uv run python tools/harness.py lock --verify
+
+  # ------------------------------------------------------------------ M16 工厂资产与可替代性
+  - id: M16-01
+    milestone: M16
+    title: 资产目录与证据保留
+    card: plan/tasks/M16-01.md
+    deps: [M15-03]
+    spec:
+      - spec/system/assets.md
+      - plan/design-assets.md
+      - spec/system/warehouse.md
+      - spec/system/retention.md
+    paths:
+      - src/mao/assets.py
+      - src/mao/migrations/042_assets.sql
+      - src/mao/warehouse.py
+      - src/mao/retention.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_01_catalog.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m16/test_m16_02_learning.py --ignore=tests/acceptance/m16/test_m16_03_handoff.py --ignore=tests/acceptance/m16/test_m16_04_checkpoint.py --ignore=tests/acceptance/m16/test_m16_05_package.py --ignore=tests/acceptance/m16/test_m16_06_surface.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M16-02
+    milestone: M16
+    title: 正式知识与真实执行证据
+    card: plan/tasks/M16-02.md
+    deps: [M16-01]
+    spec:
+      - spec/system/assets.md
+      - plan/design-assets.md
+      - spec/system/runner.md
+      - spec/system/agents.md
+      - spec/system/cache.md
+      - spec/system/operator.md
+    paths:
+      - src/mao/learning.py
+      - src/mao/assets.py
+      - src/mao/runner.py
+      - src/mao/agents.py
+      - src/mao/mcp.py
+      - src/mao/governance/epochs.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_02_learning.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m16/test_m16_03_handoff.py --ignore=tests/acceptance/m16/test_m16_04_checkpoint.py --ignore=tests/acceptance/m16/test_m16_05_package.py --ignore=tests/acceptance/m16/test_m16_06_surface.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M16-03
+    milestone: M16
+    title: 可靠交接与单岗位接管
+    card: plan/tasks/M16-03.md
+    deps: [M16-02]
+    spec:
+      - spec/system/assets.md
+      - plan/design-assets.md
+      - spec/system/agents.md
+      - spec/system/supervisor.md
+      - spec/system/retention.md
+    paths:
+      - src/mao/assets.py
+      - src/mao/learning.py
+      - src/mao/agents.py
+      - src/mao/supervisor.py
+      - src/mao/mcp.py
+      - src/mao/retention.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_03_handoff.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m16/test_m16_04_checkpoint.py --ignore=tests/acceptance/m16/test_m16_05_package.py --ignore=tests/acceptance/m16/test_m16_06_surface.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M16-04
+    milestone: M16
+    title: 完整冷检查点与恢复
+    card: plan/tasks/M16-04.md
+    deps: [M16-03]
+    spec:
+      - spec/system/assets.md
+      - plan/design-assets.md
+      - spec/system/backup.md
+      - spec/system/retention.md
+    paths:
+      - src/mao/packages.py
+      - src/mao/backup.py
+      - src/mao/db.py
+      - src/mao/assets.py
+      - src/mao/retention.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_04_checkpoint.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 6
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m16/test_m16_05_package.py --ignore=tests/acceptance/m16/test_m16_06_surface.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M16-05
+    milestone: M16
+    title: 脱敏移交包与买家绑定
+    card: plan/tasks/M16-05.md
+    deps: [M16-04]
+    spec:
+      - spec/system/assets.md
+      - plan/design-assets.md
+      - spec/system/backup.md
+    paths:
+      - src/mao/packages.py
+      - src/mao/assets.py
+      - src/mao/learning.py
+      - src/mao/backup.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_05_package.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 8
+      - id: regress
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance/m16/test_m16_06_surface.py
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+  - id: M16-06
+    milestone: M16
+    title: 厂长操作面与闭环验收
+    card: plan/tasks/M16-06.md
+    deps: [M16-05]
+    spec:
+      - spec/system/assets.md
+      - plan/design-assets.md
+      - spec/system/commands.md
+      - spec/system/mcp.md
+      - spec/system/agents.md
+      - spec/system/supervisor.md
+    paths:
+      - src/mao/cli.py
+      - src/mao/commands/**
+      - src/mao/mcp.py
+      - src/mao/agents.py
+      - src/mao/supervisor.py
+      - src/mao/assets.py
+      - src/mao/learning.py
+      - src/mao/packages.py
+      - src/mao/errors.py
+      - tests/system/**
+    accept:
+      - id: acceptance
+        run: uv run python tools/harness.py pytest tests/acceptance/m16/test_m16_06_surface.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
+      - id: regress
+        run: uv run python tools/harness.py pytest tests
+        assert: out.failed == 0 && out.errors == 0
+        timeout: 5400
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify

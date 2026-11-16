@@ -357,3 +357,11 @@ urllib.request.urlopen("https://api.anthropic.com/v1/messages", ...)
 - **整秒超时。** 模板类型环境里 `timeout_s` 是 int。夹具都是 `60s`、`120s`。写出 `250ms` 的工位在 M1 会 `TIMEOUT_NOT_INTEGRAL`，不要默默截断成 0。
 - **float 渲染。** `1.0` 渲染成 `1.0` 不是 `1`。测试锁的是 `"1.0"`。不要为了好看改成 `:.2f`，那会和 MRL 的 `to_string` 分叉。
 - **script 与 agent 的 argv[0]。** 本组件不做命令映射。`upper-text` 和 `/opt/operator/bin/fake-agent` 原样放进 argv，由 `LocalProvider` 或镜像里的 PATH 解决。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+正式知识用于工位时必须作为显式的 Bean 输入；摘要不隐式注入任务、不能扩大权限。render_brief 签名与输出不变；常驻 Agent 的上下文索引在 AgentHost 接线，见 assets.md 5.2。

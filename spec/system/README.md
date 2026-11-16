@@ -49,6 +49,7 @@
 | `agents.md` | 常驻 Agent：`Agent` kind、邮箱与订阅、续接对话的轮次、预算、上下文轮换、厂长常驻模式 | `mao.agents` | M13 | M13-01 至 M13-05 |
 | `admit.md` | 工位的跨端口来料约束（`admit`）：表达式位置、`W-ADMIT-META`、来料检验时求值（对应 `plan/design-admit.md`） | `mrl.factory`、`mao.gate`、`mao.runner` | M14 | M14-01、M14-02 |
 | `talk.md` | 人与厂长的持久对话：线程、回复、卡片、运行确认 | `mao.talk` | M15 | M15-01 至 M15-03 |
+| `assets.md` | 工厂资产、正式知识、单岗位接管、完整检查点与移交包 | `mao.assets`、`mao.learning`、`mao.packages` | M16 | M16-01 至 M16-06 |
 
 每份组件规范都必须按第 7 节的模板组织。
 

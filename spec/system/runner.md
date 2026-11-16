@@ -463,3 +463,11 @@ if "propose" in phases:
 - **Windows。** attempt 目录用 `pathlib`。给 Docker 的 source 用 `Path.resolve()` 的字符串，并且不含逗号。
 - **崩溃恢复。** `run` 对中间态会重做该阶段。`GATING` 重做可能再次 `warehouse.add`。`add` 对相同内容是幂等的（README 4.4）。`seal_many` 也必须能对已经封存的同一 Bean 再调用而不产生第二套血缘；若仓库做不到，Runner 在封存前先看 `warehouse.get(id).sealed`，已封存的跳过 `seal_many` 但仍写事件（事件不重复：先查 `events` 里是否已有该 job 的 `bean.sealed`）。
 - **角色扩展。** M2 在 `run` 里按角色分派，不改 `submit` 的位置参数。`ROLE_UNSUPPORTED` 的分支会被 Sink/Source 分支替换，错误码留给 `judge`/`planner` 继续用。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+启用 M16 的新实际 job 在执行前由宿主记录 asset_uses，固定真实环境/依赖与直接输入的试验目标，不能给缓存命中补造新执行。材料仍经正常端口，Runner/Brief 的既有公开签名不改。见 assets.md 5.2–5.3。

@@ -301,3 +301,13 @@ return {"jsonrpc": "2.0", "id": i, "result": {"content": [...], "isError": True}
 常驻厂长正在跑的轮次里，不论该轮是否已经消费 human talk，`changeset_propose`、`escalate`、`secret_request` 成功后按 `talk.md` 5.5 追加卡片。成功的 `talk_reply` 把 `outcome["talk_replied"]` 置为 `True`。`talk_reply` 的 `by` 用会话 actor，允许 `@`。
 
 冲突时以 `talk.md` 为准。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+新增 shared 目录查询、Agent 的本岗位 asset_put、厂长的试验/评估/晋升/接管工具，精确清单与参数见 assets.md 3.4。身份取 Session；人授权验收标准、释放证据和包磁盘操作不进入 MCP。成功业务工具只记录名与持久引用作为事实，不保存原始 arguments。
+
+已启用 M16 的常驻厂长另可复用现有 agent_send/remind，固定发送身份为 foreman；会话式厂长、reviewer 和未启用工厂不改变。未增加 foreman.run_start 或放宽 worker.lines。详见 assets.md 3.4。

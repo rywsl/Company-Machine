@@ -288,3 +288,11 @@ snapshot = epochs.materialize(EpochRouter(ctx, epochs).choose(key))
 | `talk answer ID --by NAME [--confirm]` | `answer`；没有 `--confirm` 时 `confirm=False` |
 
 命令不写表，不调用 `LineRunner`、`ChangePipeline` 或 `Inbox`。M15 不加控制台路由。语义以 `talk.md` 为准。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+新增 factory asset、knowledge、agent takeover、package 命令族；参数、JSON、退出码以 assets.md 3.4 为准。全部调用同一服务层，不在命令处理器复制状态机。旧 backup 命令不改变。

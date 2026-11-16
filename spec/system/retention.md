@@ -274,3 +274,11 @@ uv run python tools/harness.py pytest tests/acceptance/m7/test_m7_03_retention.p
 - **时钟**：“超龄”按 `ctx.clock`。时钟被拨快会让大量 Bean 一次过期；这是人的配置责任。
 - **大表**：5.2 的查询是全表聚合。数据量大时由人加索引或分批，修改本文件。
 - **未封存 Bean 的字节**：它们的 `payload_files` 行引用的 digest 不会被判死（引用者未过期），所以失败 job 的候选产物字节一直保留，直到人处理。这是有意的保守。
+
+---
+
+## M16 增补
+
+本增补与旧条款冲突时，仅在 assets.md 明确的 M16 范围内以 `assets.md` 为准。
+
+所有未释放目录、正式指针、open 试验、交接和接管工作区是证据保留根。GC 展开统一闭包，保留 Blob/报告/epoch/所需日志与工作区，删除时事务内重检；不能靠摘要压缩自动释放原件。见 assets.md 5.1。
