@@ -51,7 +51,7 @@
       "closure": "Real Runner/Instances job-content isolation and failure controls; bounded old-fixture design maintenance, with original node retained."
     }
   },
-  "status": "live_witness_design_corrected_implementation_and_live_acceptance_pending",
+  "status": "independent_preparation_task_designed_final_live_still_pending",
   "prior_audit_checks": {
     "doccheck": "passed",
     "ruff_default_src_tests_tools": "passed",
@@ -154,33 +154,33 @@
       "issues": []
     },
     "all_executable_design_tools": {
-      "total": 84,
-      "passed": 84,
+      "total": 85,
+      "passed": 85,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
       "breakdown": {
         "risk_inputs": 7,
         "synthetic_live_validator": 25,
-        "design_index_integrity": 52
+        "design_index_integrity": 53
       },
-      "meaning": "Design and protocol/index tool checks only; no M17 production behavior or real live acceptance.",
       "platforms": {
         "linux_design_worktree": {
-          "total": 84,
-          "passed": 84,
+          "total": 85,
+          "passed": 85,
           "failed": 0,
           "errors": 0,
           "skipped": 0
         },
         "windows_active_worktree": {
-          "total": 84,
-          "passed": 84,
+          "total": 85,
+          "passed": 85,
           "failed": 0,
           "errors": 0,
           "skipped": 0
         }
-      }
+      },
+      "meaning": "Design/validator/scheduling tests only. The new real-harness regression changes fixture state, never the active task state."
     },
     "exact_execution_plan": {
       "scope": "execution_plan_only",
@@ -188,14 +188,15 @@
       "minimum_behavior_cases": 81,
       "future_live_readiness_nodes": 4,
       "live_included": false,
-      "behavior_suite_executed_to_pass": false
+      "behavior_suite_executed_to_pass": false,
+      "preparation_owner": "M17-13"
     },
     "contract_gate": {
-      "minimum_cases": 97,
+      "minimum_cases": 98,
       "original_contract_cases": 45,
-      "design_index_tool_cases": 52,
+      "design_index_tool_cases": 53,
       "fully_executed": false,
-      "reason": "13 objective contracts require M16 assets absent on the design audit baseline."
+      "reason": "M16 objective modules remain absent on the frozen audit baseline; design tools are not production behavior or live acceptance."
     },
     "ruff_src_tests_tools_and_evidence": "passed",
     "ruff_format": {
@@ -204,12 +205,30 @@
     },
     "doccheck": "passed",
     "git_diff_check": "passed",
-    "earlier_tasks_gates_and_dag_preserved": true,
+    "task_graph_revision": {
+      "tasks": 13,
+      "new_offline_task": "M17-13",
+      "final_live_task": "M17-08",
+      "final_requires_preparation": true,
+      "preparation_requires_final": false,
+      "pre_m17_tasks_gates_preserved": true,
+      "existing_m17_implementation_tasks_01_07_09_12_preserved": true,
+      "behavior_nodes_removed": 0,
+      "real_witness_checks_preserved": true
+    },
+    "active_worktree_sync": {
+      "design_paths": 19,
+      "protected_paths": 18,
+      "source_tests_state_preserved": 205,
+      "task_next": "M17-13",
+      "final_task_status": "blocked",
+      "preparation_task_status": "todo",
+      "real_task_start_accept_gate_performed": false
+    },
     "protected_lock": {
       "status": "passed",
-      "mode": "Only 18 reviewed design/evidence paths synchronized, preserving metadata, unrelated hashes and conformance cases; no full refresh.",
-      "unrelated_hashes_preserved": true,
-      "case_hashes_preserved": true
+      "mode": "Selective reviewed hashes only; metadata, unrelated hashes and 715 case hashes retained. No full lock update.",
+      "protected_paths": 18
     },
     "fast_checks": {
       "status": "passed",
@@ -234,13 +253,7 @@
         "total": 4,
         "passed": 4
       },
-      "scope": "Design fast checks only; no production behavior or live acceptance."
-    },
-    "active_worktree_sync": {
-      "reviewed_design_paths": 19,
-      "source_tests_state_files_unchanged": 205,
-      "prior_error_code_formatting_preserved": 14,
-      "no_task_acceptance": true
+      "scope": "Design fast checks only, not final live acceptance."
     }
   },
   "delivery_request": {
@@ -403,5 +416,111 @@
         "verified": true
       }
     }
+  },
+  "prior_live_readiness_checks_2026_11_17": {
+    "design_coverage": {
+      "ok": true,
+      "scope": "design_coverage",
+      "registered_entries": 46,
+      "issues": []
+    },
+    "all_executable_design_tools": {
+      "total": 84,
+      "passed": 84,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "breakdown": {
+        "risk_inputs": 7,
+        "synthetic_live_validator": 25,
+        "design_index_integrity": 52
+      },
+      "meaning": "Design and protocol/index tool checks only; no M17 production behavior or real live acceptance.",
+      "platforms": {
+        "linux_design_worktree": {
+          "total": 84,
+          "passed": 84,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "windows_active_worktree": {
+          "total": 84,
+          "passed": 84,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      }
+    },
+    "exact_execution_plan": {
+      "scope": "execution_plan_only",
+      "exact_offline_nodes": 78,
+      "minimum_behavior_cases": 81,
+      "future_live_readiness_nodes": 4,
+      "live_included": false,
+      "behavior_suite_executed_to_pass": false
+    },
+    "contract_gate": {
+      "minimum_cases": 97,
+      "original_contract_cases": 45,
+      "design_index_tool_cases": 52,
+      "fully_executed": false,
+      "reason": "13 objective contracts require M16 assets absent on the design audit baseline."
+    },
+    "ruff_src_tests_tools_and_evidence": "passed",
+    "ruff_format": {
+      "status": "passed",
+      "files": 276
+    },
+    "doccheck": "passed",
+    "git_diff_check": "passed",
+    "earlier_tasks_gates_and_dag_preserved": true,
+    "protected_lock": {
+      "status": "passed",
+      "mode": "Only 18 reviewed design/evidence paths synchronized, preserving metadata, unrelated hashes and conformance cases; no full refresh.",
+      "unrelated_hashes_preserved": true,
+      "case_hashes_preserved": true
+    },
+    "fast_checks": {
+      "status": "passed",
+      "exit": 0,
+      "lint": true,
+      "format": true,
+      "lock": true,
+      "doccheck": true,
+      "conformance": {
+        "total": 715,
+        "failures": 0
+      },
+      "coverage": {
+        "unexercised_codes": 0,
+        "unfired_rules": 0
+      },
+      "strict_registry": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "scenarios": {
+        "total": 4,
+        "passed": 4
+      },
+      "scope": "Design fast checks only; no production behavior or live acceptance."
+    },
+    "active_worktree_sync": {
+      "reviewed_design_paths": 19,
+      "source_tests_state_files_unchanged": 205,
+      "prior_error_code_formatting_preserved": 14,
+      "no_task_acceptance": true
+    }
+  },
+  "task_split_revision": {
+    "date": "2026-11-17",
+    "evidence": "plan/evidence/m17/task-split-observation.json",
+    "journal": "plan/journal/2026-11-17-M17-preparation-split.md",
+    "root_cause": "The blocked final witness owned unimplemented offline preparation, leaving task next with no runnable work. Updated files alone did not change scheduling.",
+    "new_task_card": "plan/tasks/M17-13.md",
+    "required_resources_for_offline_preparation": "Local counted subprocess/protocol fixtures; no real paid account, historical products or monetary authorization required.",
+    "scope": "Move four previously frozen readiness nodes to an independent implementation task; retain all 81 required cases, both real witnesses and product inventory."
   }
 }

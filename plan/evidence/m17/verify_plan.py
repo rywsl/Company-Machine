@@ -28,7 +28,7 @@ EXPECTED_IDS = frozenset(
     + [f"U{i:02}" for i in range(1, 7)]
     + ["R01"]
 )
-TASK_IDS = frozenset(f"M17-{i:02}" for i in range(1, 13))
+TASK_IDS = frozenset(f"M17-{i:02}" for i in range(1, 14))
 GROUP_MINIMA = {
     "M17-01": 5,
     "M17-02": 4,
@@ -37,11 +37,12 @@ GROUP_MINIMA = {
     "M17-05": 2,
     "M17-06": 3,
     "M17-07": 13,
-    "M17-08": 13,
+    "M17-08": 9,
     "M17-09": 6,
     "M17-10": 7,
     "M17-11": 7,
     "M17-12": 6,
+    "M17-13": 4,
     "core-live": 1,
     "operability-live": 1,
 }
@@ -177,7 +178,7 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
                     and task in {"M17-09", "M17-10", "M17-11", "M17-12"}
                 ):
                     issues.append(name + ":CARD_NOT_LINKED")
-        if not WITNESS_READINESS_NODES.issubset(set(by_group.get("M17-08", {}).get("nodes", []))):
+        if not WITNESS_READINESS_NODES.issubset(set(by_group.get("M17-13", {}).get("nodes", []))):
             issues.append("WITNESS_READINESS_NODES_MISSING")
         for row in rows:
             key = row["id"]
@@ -229,6 +230,15 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
             issues.append("FINAL_TASK_DOES_NOT_REQUIRE_ALL_WORK")
         if "M17-07" not in by_task["M17-09"].get("deps", []):
             issues.append("OPERABILITY_MIGRATION_PRECEDES_OBJECTIVES")
+        preparation = by_task["M17-13"]
+        if set(preparation.get("deps", [])) != {"M17-07", "M17-09", "M17-10", "M17-11", "M17-12"}:
+            issues.append("WITNESS_PREPARATION_MUST_NOT_WAIT_FOR_LIVE")
+        if not {"live-readiness", "contracts", "core-regress", "design-coverage"}.issubset(
+            {c["id"] for c in preparation["accept"]}
+        ):
+            issues.append("WITNESS_PREPARATION_ACCEPTANCE_MISSING")
+        if any(c["id"] in {"live-witness", "operability-live-witness"} for c in preparation["accept"]):
+            issues.append("WITNESS_PREPARATION_REQUIRES_PAID_LIVE")
         final = by_task["M17-08"]
         expected_checks = {
             "all-known-issues",
@@ -241,7 +251,7 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
         }
         if not expected_checks.issubset({c["id"] for c in final["accept"]}):
             issues.append("FINAL_ACCEPTANCE_MISSING_CHECK")
-        for name in ("M17-09", "M17-10", "M17-11", "M17-12"):
+        for name in ("M17-09", "M17-10", "M17-11", "M17-12", "M17-13"):
             checks = by_task[name]["accept"]
             if not any(
                 "run_contracts.py --task " + name in c["run"] and "out.skipped == 0" in c.get("assert", "")
@@ -268,7 +278,7 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
         }
         if not required_gate.issubset({c["id"] for c in gate["checks"]}):
             issues.append("MILESTONE_GATE_MISSING_CHECK")
-        for check in gate["checks"] + final["accept"]:
+        for check in gate["checks"] + final["accept"] + preparation["accept"]:
             if check["id"] in {"m17-all-known-issues", "all-known-issues"}:
                 if "run_contracts.py --all" not in check["run"] or any(
                     clause not in check.get("assert", "")

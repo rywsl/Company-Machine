@@ -1,6 +1,6 @@
 # operability：M17 通用接入、部署与可操作性
 
-> 规范性设计输入；未实施。对应 M17-09、10、11、12，M17-08 作最终验收。与 continuity.md 共同组成 M17；本文件只在明确列出的增补处优先于旧规范，不修改 M16 契约。证据基线 c538768；HC01–HC14/U01–U06 的覆盖入口为 plan/evidence/m17/closure.yaml。
+> 规范性设计输入；未实施。对应 M17-09、10、11、12、13，M17-08 作最终验收。与 continuity.md 共同组成 M17；本文件只在明确列出的增补处优先于旧规范，不修改 M16 契约。证据基线 c538768；HC01–HC14/U01–U06 的覆盖入口为 plan/evidence/m17/closure.yaml。
 
 ## 1. 目的与范围
 
@@ -223,6 +223,8 @@ A/B是witness开始前固定的实际领域和真实native runtime标签。help_
 
 ### 5.7 基础跑单、资源解析与见证可执行性
 
+见证执行器及原四项离线准备测试由独立M17-13实施/验收，只依赖已完成的M17-07/09/10/11/12，不得依赖真实资源受阻的M17-08。M17-08为最终真实验收，反向依赖13并保留原C10、四格及历史产品资格全部要求。13通过不代表08通过；付费资源缺失只阻断对应真实调用，不能阻断13的本地协议开发/离线验收。新增的是任务拆分，不是用离线结果替代真实标准。
+
 基础script订单只需要实际所选工位/机器/产线，允许无模型、零费用；其成功不依赖四个历史视频产品，也不关闭完整M17真实门。C10只核对当前单格的实际依赖闭包；四格仍按closure.yaml检查全部历史产品，二者不可混作所有操作的全局前置。
 
 测试资源入口与生成/解析顺序、无secret的固定schema、实施步骤及四个离线正反例以plan/m17-live-readiness.md为冻结补充契约。优先复用现有部署/Registry、SecretStore和原生CLI认证；两个vendor key变量不是唯一认证来源，MAO_BUDGET_USD不是唯一批准预算来源。付费仍须当前可信grant/部署授权和可强制上界，不把离线常数或配置存在性当批准。
@@ -265,9 +267,9 @@ A/B是witness开始前固定的实际领域和真实native runtime标签。help_
 | `tests/system/test_m17_08_operability_live.py` | `test_live_cross_domain_onboarding_and_recovery` | 真实四格领域/运行时矩阵、实际产品、历史补偿闭合、介入账本；见 operability-cases.yaml |
 | `tests/system/test_m17_08_live_readiness.py` | `test_ready_resources_execute_witness_not_permanent_blocker`、`test_native_auth_and_grant_without_vendor_env_are_accepted`、`test_resource_blockers_are_scoped_and_recoverable`、`test_live_reports_require_current_observed_execution` | 同一见证链就绪后执行、原生认证/已有grant无vendor env、按格资源阻塞恢复、本次执行证据；本地协议夹具不冒充live |
 
-`plan/evidence/m17/acceptance/test_plan_coverage.py`的8个顶层测试、52个参数化用例验证设计/校验工具：漏项与错引用、依赖/门绕过、专项场景漏组、隔离目录内真实harness对缺节点的失败、四格合成索引和缺证据拒绝。它们不依赖生产功能尚未实现，实施后仍有效；合成报告仅证明完整性工具，不能证明模型行为或真实来源。最终`m17-contracts`要求原45用例加本组52用例，至少97用例零失败/错误/跳过。
+`plan/evidence/m17/acceptance/test_plan_coverage.py`的9个顶层测试、53个参数化用例验证设计/校验工具：漏项与错引用、依赖/门绕过、专项场景漏组、隔离目录内真实harness对缺节点的失败、四格合成索引和缺证据拒绝。它们不依赖生产功能尚未实现，实施后仍有效；合成报告仅证明完整性工具，不能证明模型行为或真实来源。最终`m17-contracts`要求原45用例加本组53用例，至少98用例零失败/错误/跳过。
 
-固定设计覆盖验证 `plan/evidence/m17/verify_plan.py` 校验所有已登记问题都有规范/任务/精确测试/验收门；它不能证明行为通过。任务 `run_contracts.py --task M17-09|10|11|12` 与最终 `--all` 真正调用 harness pytest 对精确节点执行断言。M17-08还需运行独立 live witness 和报告完整性校验，不得由报告存在性代替。
+固定设计覆盖验证 `plan/evidence/m17/verify_plan.py` 校验所有已登记问题都有规范/任务/精确测试/验收门；它不能证明行为通过。任务 `run_contracts.py --task M17-09|10|11|12|13` 与最终 `--all` 真正调用 harness pytest 对精确节点执行断言。M17-08还需运行独立 live witness 和报告完整性校验，不得由报告存在性代替。
 
 ## 8. 错误示范与正确示范
 

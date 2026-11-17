@@ -2373,7 +2373,7 @@ tasks:
     milestone: M17
     title: 跨进程多周期与真实能力总验收
     card: plan/tasks/M17-08.md
-    deps: [M17-07, M17-09, M17-10, M17-11, M17-12]
+    deps: [M17-07, M17-09, M17-10, M17-11, M17-12, M17-13]
     spec:
       - spec/system/continuity.md
       - spec/system/operability.md
@@ -2610,6 +2610,44 @@ tasks:
         run: uv run python tools/harness.py pytest tests
         assert: out.failed == 0 && out.errors == 0
         timeout: 6000
+      - *lint
+      - *format
+      - *doccheck
+      - id: lock
+        run: uv run python tools/harness.py lock --verify
+
+  - id: M17-13
+    milestone: M17
+    title: 见证执行器与资源解析（离线交付）
+    card: plan/tasks/M17-13.md
+    deps: [M17-07, M17-09, M17-10, M17-11, M17-12]
+    spec:
+      - spec/system/continuity.md
+      - spec/system/operability.md
+      - plan/m17-live-readiness.md
+      - plan/m17-implementation.md
+    paths:
+      - tests/system/m17_08_live.py
+      - tests/system/m17_08_live/**
+      - tests/system/test_m17_08_live_readiness.py
+      - tests/system/test_m17_08_continuity_e2e.py
+      - tests/system/test_m17_08_operability_live.py
+    accept:
+      - id: live-readiness
+        run: uv run python tools/harness.py pytest tests/system/test_m17_08_live_readiness.py::test_ready_resources_execute_witness_not_permanent_blocker tests/system/test_m17_08_live_readiness.py::test_native_auth_and_grant_without_vendor_env_are_accepted tests/system/test_m17_08_live_readiness.py::test_resource_blockers_are_scoped_and_recoverable tests/system/test_m17_08_live_readiness.py::test_live_reports_require_current_observed_execution --basetemp=.factory/m17-repro/accept-M17-13
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+        timeout: 600
+      - id: contracts
+        run: uv run python plan/evidence/m17/run_contracts.py --task M17-13
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+        timeout: 600
+      - id: core-regress
+        run: uv run python plan/evidence/m17/run_contracts.py --task M17-08
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
+        timeout: 6000
+      - id: design-coverage
+        run: uv run python plan/evidence/m17/verify_plan.py
+        assert: out.ok && out.issue_count == 46
       - *lint
       - *format
       - *doccheck

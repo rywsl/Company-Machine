@@ -1,0 +1,69 @@
+{
+  "schema_version": "mao-m17-task-split-observation-1",
+  "date": "2026-11-17",
+  "scope": "Read-only workflow diagnosis and frozen task-graph correction; no live run or task-state editing.",
+  "active_commit": "e45144e0faf66a1c4255632b330c7915c39f67de",
+  "before": {
+    "M17-08": "blocked",
+    "state_updated_at": "2026-11-17T08:38:25Z",
+    "task_next": {
+      "exit": 1,
+      "stdout": "没有可以开始的任务"
+    },
+    "readiness_test": {
+      "path": "tests/system/test_m17_08_live_readiness.py",
+      "exists": false,
+      "harness_exit": 4,
+      "total": 0,
+      "passed": 0
+    },
+    "new_design_present": true,
+    "required_offline_cases": 81,
+    "reported_old_offline_cases": 77,
+    "witness_sources": {
+      "tests/system/test_m17_08_continuity_e2e.py": "cedc9187f853fc934cf5e35b8a604af3064ddead0b5e7fabc7d856a02181b3d7",
+      "tests/system/test_m17_08_operability_live.py": "6e2900e42dac2e98a875273d3c107a2bd33416b5cb820baa20c585510477cb74"
+    },
+    "resource_rechecks_do_not_execute_unimplemented_witness": true
+  },
+  "correction": {
+    "preparation_task": "M17-13",
+    "final_live_task": "M17-08",
+    "preparation_deps": [
+      "M17-07",
+      "M17-09",
+      "M17-10",
+      "M17-11",
+      "M17-12"
+    ],
+    "preparation_depends_on_final_live": false,
+    "moved_offline_nodes": 4,
+    "removed_behavior_nodes": 0,
+    "exact_offline_nodes": 78,
+    "minimum_cases": 81,
+    "real_requirements_preserved": true
+  },
+  "limits": [
+    "The executable live witness and its four preparation tests remain implementation work.",
+    "Authentication configuration presence is not proof of account access or paid authorization.",
+    "No paid calls, product invocation or final milestone acceptance was performed."
+  ],
+  "after": {
+    "task_next": {
+      "exit": 0,
+      "stdout": "M17-13 见证执行器与资源解析（离线交付）\n任务卡：plan/tasks/M17-13.md\n"
+    },
+    "M17-08": "blocked",
+    "M17-13": "todo",
+    "active_task_state_edited": false,
+    "active_source_and_system_tests_edited": false,
+    "isolated_harness_regression": "With blocked M17-08 and the three vendor/budget variables removed, actual next and start M17-13 succeed; reverse dependency rejected.",
+    "design_tool_tests": {
+      "linux_passed": 85,
+      "windows_passed": 85,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  }
+}

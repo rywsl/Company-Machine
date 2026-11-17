@@ -2,7 +2,7 @@
 
 先读本页，再读对应规范和完整任务卡。当前分支交付的是设计与证据，尚无 M17 生产修复；不能将设计检查通过写成任务完成。完整规范为 `spec/system/continuity.md` 与 `spec/system/operability.md`，问题追踪为 `plan/evidence/m17/closure.yaml`。
 
-基础跑单及当前live占位问题先读 [基础订单与真实见证交接](m17-live-readiness.md)；基础script订单无需四个视频产品，完整M17真实门另行证明。
+基础跑单及当前live占位问题先读 [基础订单与真实见证交接](m17-live-readiness.md)；基础script订单无需四个视频产品，完整M17真实门另行证明。当前续作先执行M17-13（见完整卡片），不要等待M17-08的付费资源；活动工作区M16门和07/09/10/11/12已通过，核对harness后直接进入13。
 
 ## 1. 开工条件与目标
 
@@ -14,7 +14,7 @@ M16 正在其他工作区实现。只有 M16-06 已完成、M16 阶段门实际�
 
 ## 2. 固定实施顺序与入口
 
-推荐单线程顺序：**01 → 02 → 03 → 04 → 05 → 06 → 07 → 09 → 10 → 11 → 12 → 08**。08 是最终总验收；编号小不意味着提前做。完整依赖和允许写入的文件由 `plan/tasks.yaml` 决定，表中源码路径是阅读入口，不扩大任务 paths。
+推荐单线程顺序：**01 → 02 → 03 → 04 → 05 → 06 → 07 → 09 → 10 → 11 → 12 → 13 → 08**。08 是最终总验收；编号小不意味着提前做。完整依赖和允许写入的文件由 `plan/tasks.yaml` 决定，表中源码路径是阅读入口，不扩大任务 paths。
 
 | 任务 | 先看的实际入口 | 本项交付边界 |
 |---|---|---|
@@ -29,6 +29,7 @@ M16 正在其他工作区实现。只有 M16-06 已完成、M16 阶段门实际�
 | 10 | 新增 qualification.py/commands/qualification.py；operator/AgentHost/serve、gateway/Runner | 两种原生 CLI 的真实会话/任务书/工具协议资格、产品身份和通用服务地址恢复；收据变更失效 |
 | 11 | 新增 deployment.py/operations.py、commands/deployment.py/access.py；base/context、serve/daemon | 只读预检、幂等非破坏 plan/apply、管理/operate 文件邮箱隔离、可信凭据、治理最低证据 |
 | 12 | cli.py 的真实注册树、commands/；新增 command_help.py、skills/mao-factory；对应使用文档 | help/guide/capabilities/错误恢复一致、可发现且版本匹配的 skill；外部只交接目标，厂内做业务 |
+| 13 | 两个既有live占位入口、`plan/m17-live-readiness.md`、四项准备节点 | 独立于blocked的08完成资源解析/共享见证执行器和本地真实子进程协议验收；不调用收费账户，不关闭真实门 |
 | 08 | `cases.yaml`、`operability-cases.yaml`、所有实现任务结果 | 全离线精确节点、原 C10 真实 witness、额外两领域×两运行时四格真实 witness 和完整性校验 |
 
 以上源码路径均相对于 `src/mao/`。治理实现位于 `governance/` 包，不是 `governance.py`。真实 `ctl/factoryctl.py` 是供工位安装使用的标准库客户端，不能要求工位为修客户端额外安装宿主 mao 包。新模块接口严格按 spec 第3章；兼容现有公开接口和调用方，不自行设计替代 API。
@@ -73,7 +74,7 @@ uv run python tools/harness.py accept M17-01
 四类证据须分别报告：
 
 - **基线红测**：原25例在 c538768 上24失败/1通过；两条宿主路径专项另计。实现后需逐项真实转绿，不改红测定义。
-- **设计/完整性工具**：verify_plan 检查46个登记项的规范/任务/精确节点；52个工具用例和原风险/合成live校验可在尚未实现生产功能时通过，不能充抵业务行为。
+- **设计/完整性工具**：verify_plan 检查46个登记项的规范/任务/精确节点；53个工具用例和原风险/合成live校验可在尚未实现生产功能时通过，不能充抵业务行为。
 - **未来离线行为**：`run_contracts.py --all` 必须逐节点执行78个精确节点、至少81个参数化用例；缺模块/节点、skip/xfail或空收集均失败。协议子进程夹具必须明确标记，只证明接线，不证明真实模型能力。
 - **真实能力**：原C10独立 witness和额外四格 witness 均实际运行，再校验报告/一致性快照；缺 CLI、模型、Docker、产品或预算即 blocked，不能用离线结果代替。
 
@@ -86,7 +87,7 @@ uv run python plan/evidence/m17/run_contracts.py --task M17-09
 uv run python plan/evidence/m17/run_contracts.py --all
 ```
 
-前两条只验证映射/展示计划。后两条才执行行为测试；第3条示例仅用于09实现后，本卡其他验收和旧回归仍需运行。只有12项任务均done、完整旧回归与所有真实门实际通过后才能 `uv run python tools/harness.py gate M17`。
+前两条只验证映射/展示计划。后两条才执行行为测试；第3条示例仅用于09实现后，本卡其他验收和旧回归仍需运行。只有13项任务均done、完整旧回归与所有真实门实际通过后才能 `uv run python tools/harness.py gate M17`。
 
 ## 5. 部署与真实验收顺序
 

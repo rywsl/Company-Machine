@@ -1113,7 +1113,7 @@ gates:
         timeout: 60
       - id: m17-contracts
         run: uv run python tools/harness.py pytest plan/evidence/m17/acceptance --basetemp=.factory/m17-repro/gate-contracts
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 97
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 98
         timeout: 6000
       - id: m17-e2e
         run: uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_macro_objective_drives_multiple_cycles tests/system/test_m17_08_continuity_e2e.py::test_host_restart_and_lease_fencing tests/system/test_m17_08_continuity_e2e.py::test_known_external_task_resumes_fetch tests/system/test_m17_08_continuity_e2e.py::test_unknown_submit_outcome_never_blindly_retries tests/system/test_m17_08_continuity_e2e.py::test_budget_survives_restart_and_stops_authorized_work tests/system/test_m17_08_continuity_e2e.py::test_revoke_and_expiry_stop_new_actions tests/system/test_m17_08_continuity_e2e.py::test_real_factoryctl_and_declared_operator_run tests/system/test_m17_08_continuity_e2e.py::test_results_return_once_and_drive_next_cycle tests/system/test_m17_08_continuity_e2e.py::test_change_governance_keeps_scope_and_safe_mode --basetemp=.factory/m17-repro/gate-e2e
