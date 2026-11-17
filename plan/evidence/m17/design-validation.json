@@ -522,5 +522,62 @@
     "new_task_card": "plan/tasks/M17-13.md",
     "required_resources_for_offline_preparation": "Local counted subprocess/protocol fixtures; no real paid account, historical products or monetary authorization required.",
     "scope": "Move four previously frozen readiness nodes to an independent implementation task; retain all 81 required cases, both real witnesses and product inventory."
+  },
+  "environment_handoff_correction_2026_11_17": {
+    "scope": "design_and_host_handoff_only",
+    "observation": "plan/evidence/m17/environment-handoff-observation.json",
+    "root_causes": [
+      "Existing Grok process/tools never loaded the private env file.",
+      "Saved goal plan omitted M17-13 and retained the old 77-case threshold."
+    ],
+    "correction": [
+      "Use uv run --env-file on every command needing the local resources.",
+      "Reread current AGENTS/tasks/readiness and refresh the worker goal plan before independent M17-13."
+    ],
+    "clean_parent_windows_reproduction": {
+      "inputs_removed": 37,
+      "provider_preflight_exit": 0,
+      "missing_required": [],
+      "task_next_exit": 0,
+      "task_next": "M17-13",
+      "paid_requests": 0
+    },
+    "tool_validation": {
+      "linux": {
+        "passed": 85,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "exit": 0
+      },
+      "windows": {
+        "passed": 85,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "exit": 0
+      },
+      "design_coverage": {
+        "ok": true,
+        "issue_count": 46
+      },
+      "design_fast_check": {
+        "exit": 0,
+        "conformance_cases": 715,
+        "failures": 0,
+        "unexercised_codes": 0,
+        "unfired_rules": 0,
+        "scenarios_passed": 4
+      },
+      "protected_lock": "verified in both workspaces; only reviewed hashes updated"
+    },
+    "source_tests_and_real_state_preserved": true,
+    "paid_live_or_M17_acceptance_claimed": false,
+    "grok_goal_state_modified": false,
+    "future_offline_inventory": {
+      "exact_nodes": 78,
+      "minimum_cases": 81,
+      "new_preparation_implementation_still_required": true
+    }
   }
 }

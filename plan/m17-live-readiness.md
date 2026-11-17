@@ -10,6 +10,29 @@
 
 现在读取plan/tasks/M17-13.md，执行harness的doctor/status/task next/task show M17-13/task start M17-13，完成共享执行链和四项准备测试，再accept M17-13。不要为了继续13先解封/accept08，不要反复只查三个环境变量后停止。当前77/9的旧结果不覆盖新增四项准备要求，也不是M17验收通过。
 
+## 0.1 当前本机入口与旧goal纠正
+
+2026-11-17再次复核：活动Grok目录就是D:/Desktop/machine_agent_org，私有`.env.m17.local`及`.factory/m17-local/README.md`已存在，后者记录凭据引用、两岗位模型、用户本轮20美元总授权和预检报告。这是本次本机授权，不是产品默认预算，也不能拿env中的数字代替可强制的工厂预算账本。密钥仅在私有文件，不写本页或公开证据。
+
+仅写文件不会改已运行Grok进程的环境。其工具每次可能新开PowerShell；不能只在上一次工具调用点加载脚本。直接在本次实际命令上使用uv现有的env-file功能，旧进程无需重启即可让该子进程读取文件：
+
+```powershell
+# 在活动Windows checkout根目录；使用本机已安装的Windows uv。
+uv run --env-file .env.m17.local python .factory/m17-local/provider_preflight.py --from-process --network
+uv run --env-file .env.m17.local python tools/harness.py doctor
+uv run --env-file .env.m17.local python tools/harness.py status
+uv run --env-file .env.m17.local python tools/harness.py task next
+uv run --env-file .env.m17.local python tools/harness.py task show M17-13
+# 阅读本卡和必读章节后，执行者再start并开发M17-13。
+uv run --env-file .env.m17.local python tools/harness.py task start M17-13
+```
+
+第一条只做模型目录/工作流参数/鉴权边界的只读预检，不提交收费生成，不证明工厂订单、产品资格或自治。已实测将父进程的37项本机输入全部移除，再用同一env-file入口启动真实Windows uv/Python：凭据/预算已加载，预检通过，task next返回M17-13。无需把秘密写到User/Machine全局环境。该本机文件/预检助手不存在的其他checkout仍按规范发现资源；不能因此阻断无费用的13。
+
+当前Grok保存的goal/plan.md没有13，仍写passed>=77；它在新资源预检后六次只重查三级环境，零次env-file加载和task next调用。恢复时由执行者重新读取当前AGENTS、tasks.yaml、本页和13卡，刷新自己的goal工作计划，再按harness推进。不要把旧goal快照当作现行验收设计，也不要改真实plan/state.json或Grok的goal/state.json伪造进度。脱敏观察与边界见`plan/evidence/m17/environment-handoff-observation.json`。
+
+13仍需交付共享执行链及四项准备测试，不能以预检通过直接accept。13完成后，08再按实际所选C10依赖与原四格历史库存装配当前资格、预算/grant和真实运行；新的具体执行失败如实归类。原C10/四格门槛和缺资源不能记passed的规则全部保留。
+
 ## 1. 基础使用与完整验收
 
 基础订单通过公开CLI走输入Bean→Line→Runner/Operator→Gate→封存产物/血缘；所选工位是script时可以没有模型凭据和付费预算，也不依赖四个视频产品。普通line run不因为M17-08尚未完成而失去使用资格；它也不被当作常驻自主能力证明。

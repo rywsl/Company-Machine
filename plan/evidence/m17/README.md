@@ -6,6 +6,8 @@
 
 当前优先执行独立M17-13，见`plan/tasks/M17-13.md`；原08 blocked不阻断本地执行器开发。调度缺口证据见`task-split-observation.json`。
 
+旧Grok进程和旧goal再次导致续作误阻塞的脱敏证据见`environment-handoff-observation.json`：实际Windows uv在父进程凭据全空时按每条命令加载私有env后，接入预检通过且task next返回13；Grok旧goal仍为77项且没有13。先按`plan/m17-live-readiness.md`第0.1节刷新工作计划和命令入口，不能将这项预检当成真实见证通过。
+
 当前基础使用与live资源/占位修正：`plan/m17-live-readiness.md`；基础两单实测见`basic-order-observation.json`。完整M17门仍保留原真实要求。
 
 ## 全部已登记问题的设计闭合

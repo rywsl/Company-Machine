@@ -8,6 +8,10 @@
 
 旧文档中“只负责实现、设计文件只能由人修改”的分工，以本文件为准；其余工程约束继续有效。
 
+M17续作先以当前文件和`task next`为准：旧goal计划中的77项和“只等M17-08资源”已经过时，先读`plan/m17-live-readiness.md`及`plan/tasks/M17-13.md`。M17-13不依赖08，不需要付费凭据即可开发和离线验收。
+
+本机若有私有`.env.m17.local`，需要本机资源的每条命令使用`uv run --env-file .env.m17.local python ...`；这会给该命令及子进程加载变量，不依赖旧Grok进程继承环境。不要在一个临时shell加载后假定下次工具调用仍保留，也不要仅凭Process/User/Machine为空就否定文件中的接入。实际命令、资源引用和费用边界见上述交接文档；密钥不得输出或提交。Windows checkout用现有Windows uv/Python。
+
 实现前依次阅读：
 
 1. `plan/README.md` 第 6 节禁止事项（授权设计或维护的受保护文件按下文处理）
