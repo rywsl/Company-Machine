@@ -108,4 +108,4 @@ Registry 实际差异必须覆盖所有可加载 kind，未声明或不认识的
 
 ## 设计与实现的关闭区分
 
-verify_plan.py检查所有已登记问题的规范/任务/精确测试和门。run_contracts.py --all实际运行至少77个离线用例，缺文件/缺节点/skip失败。原live完整性校验不能替代真实witness；最终另运行四格operability witness和index校验。详细命令与边界见design-operability.md，不由实现者随意调整清单或以通用C10名称关闭专项。
+verify_plan.py检查所有已登记问题的规范/任务/精确测试和门。run_contracts.py --all实际运行至少81个离线用例，缺文件/缺节点/skip失败。原live完整性校验不能替代真实witness；最终另运行四格operability witness和index校验。详细命令与边界见design-operability.md，不由实现者随意调整清单或以通用C10名称关闭专项。

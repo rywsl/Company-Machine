@@ -33,7 +33,7 @@ M17-12含使用文档设计维护，只允许与本次新增CLI/skill事实一�
 
 ## 可执行关闭链
 
-`plan/evidence/m17/closure.yaml`固定46个问题/别名/使用要求，包括H/G/E/F、HC01–HC14、U01–U06及R01旧验收冲突；别名不是独立bug数。每项含证据级别、规范章节、责任任务和精确pytest节点。design_baseline_status仅记录冻结审计基线，后续实现状态由harness及实际验收报告证明，不能改映射自报已修复。原25个诊断、独立两条路径、新目标协议及26个专项节点均有任务归属；R01另外明确原池节点的限定设计维护与新增真实池正反例，实际执行77用例，不改变原25项基线统计。
+`plan/evidence/m17/closure.yaml`固定46个问题/别名/使用要求，包括H/G/E/F、HC01–HC14、U01–U06及R01旧验收冲突；别名不是独立bug数。每项含证据级别、规范章节、责任任务和精确pytest节点。design_baseline_status仅记录冻结审计基线，后续实现状态由harness及实际验收报告证明，不能改映射自报已修复。原25个诊断、独立两条路径、新目标协议及26个专项节点均有任务归属；R01另外明确原池节点的限定设计维护与新增真实池正反例，实际执行81用例，不改变原25项基线统计。
 
 ```bash
 uv run python plan/evidence/m17/verify_plan.py
@@ -42,7 +42,7 @@ uv run python plan/evidence/m17/run_contracts.py --task M17-09
 uv run python plan/evidence/m17/run_contracts.py --all
 ```
 
-第一条只校验设计可追踪性；第二条只列精确执行计划；后两条实际调用harness pytest。缺模块/节点或skip/xfail都不能通过，不能靠回显YAML/调整passed数量关闭。最终离线至少77个参数化行为用例，按每个节点执行，且保持原有回归。设计/证据工具另有49个覆盖正反例，连同原45项契约使m17-contracts门至少94用例，不能用工具测试充抵这77个行为用例。设计阶段新未来节点不存在是预期未实施，不能报告行为通过。
+第一条只校验设计可追踪性；第二条只列精确执行计划；后两条实际调用harness pytest。缺模块/节点或skip/xfail都不能通过，不能靠回显YAML/调整passed数量关闭。最终离线至少81个参数化行为用例，按每个节点执行，且保持原有回归。设计/证据工具另有52个覆盖正反例，连同原45项契约使m17-contracts门至少97用例，不能用工具测试充抵这81个行为用例。设计阶段新未来节点不存在是预期未实施，不能报告行为通过。
 
 M17-08实际运行原C10和新增operability live witness，再完整性校验。新增witness执行两个不同领域×两个native runtime的四格，均固定同一平台源码且至少四周期；原C01–C10没有被删减。必须有原始输入差异、idle、新机会、失败调整和零外部业务接续。历史PR1四个Machine的实际产品资格需全部live通过；缺资源blocked，不能用“未支持”豁免必选库存。
 

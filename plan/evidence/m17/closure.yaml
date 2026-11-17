@@ -779,7 +779,11 @@ test_groups:
   - tests/system/test_m17_08_continuity_e2e.py::test_real_factoryctl_and_declared_operator_run
   - tests/system/test_m17_08_continuity_e2e.py::test_results_return_once_and_drive_next_cycle
   - tests/system/test_m17_08_continuity_e2e.py::test_change_governance_keeps_scope_and_safe_mode
-  minimum_cases: 9
+  - tests/system/test_m17_08_live_readiness.py::test_ready_resources_execute_witness_not_permanent_blocker
+  - tests/system/test_m17_08_live_readiness.py::test_native_auth_and_grant_without_vendor_env_are_accepted
+  - tests/system/test_m17_08_live_readiness.py::test_resource_blockers_are_scoped_and_recoverable
+  - tests/system/test_m17_08_live_readiness.py::test_live_reports_require_current_observed_execution
+  minimum_cases: 13
 - id: M17-09
   task: M17-09
   mode: offline

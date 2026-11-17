@@ -1,0 +1,105 @@
+{
+  "schema_version": "mao-basic-orders-observation-1",
+  "date": "2026-11-17",
+  "status": "passed",
+  "scope": "deterministic_script_orders_only",
+  "source_checkout": "active Windows implementation; uncommitted source preserved",
+  "platform_commit": "e45144e0faf66a1c4255632b330c7915c39f67de",
+  "artifact_directory": ".factory/m17-repro/basic-orders-9200ae6d",
+  "artifacts": {
+    "report.json": "d801ac592e01bcfd47da8f75df2900842c7f17e6ab8137ea800492f32f8ddf83",
+    "cli-log.json": "faa5ed1db555b4ea57950c2d2da8e97bcaedb8b05641041de1d649662077434d"
+  },
+  "registry": "tests/fixtures/registry-m2",
+  "line": "Line:note-trigger@1",
+  "station": "Station:upper@1",
+  "provider": "LocalProvider",
+  "script": "tests/fakes/tools/upper_text.py",
+  "local_commands": "existing tests.fakes.fakelib.local_commands, with FAKE_AGENT_COMMAND removed",
+  "actual_public_cli": true,
+  "all_cli_exit_zero": true,
+  "cli_invocations": 11,
+  "orders": [
+    {
+      "run_id": "r-i6ubtsykbm",
+      "job_id": "j-6j4m5yuaz4",
+      "created_at": "2026-11-17T07:27:47.395Z",
+      "run_state": "SUCCEEDED",
+      "node_state": "DONE",
+      "job_state": "SEALED",
+      "input_bean": "sha256:4ef06b4524f34233eb36942e8b926bd7ed02afed4044b7253ed8a987d9f3a4d5",
+      "output_bean": "sha256:c1dbc42f593e7797042995d89f3208f624c4f3083bac285bf2a330acf07fb8e3",
+      "input_text": "order 001: prepare inventory report\n",
+      "output_text": "ORDER 001: PREPARE INVENTORY REPORT\n",
+      "output_payload_sha256": "614562d88b25a33eab38cba767ef61b400ed40e6005032b398269f3a5a82c4dd",
+      "cas_payload_matches_output": true,
+      "lineage_job_id": "j-6j4m5yuaz4",
+      "spent_usd": 0.0,
+      "cache_hit": false
+    },
+    {
+      "run_id": "r-klled6pyse",
+      "job_id": "j-fvzxs2pibt",
+      "created_at": "2026-11-17T07:31:03.392Z",
+      "run_state": "SUCCEEDED",
+      "node_state": "DONE",
+      "job_state": "SEALED",
+      "input_bean": "sha256:87fb312fc56d222565824c7208f9bc35b658d7a306d7a24f76c2d383991cdf71",
+      "output_bean": "sha256:a0246eb827a80fb3e460ee1623c88f7d735306d68908b9b2f4f01e0afe3cd366",
+      "input_text": "order 002: check delivery notes\n",
+      "output_text": "ORDER 002: CHECK DELIVERY NOTES\n",
+      "output_payload_sha256": "75e3eccba428fc244c1f663281cacbe5d74390139a2826cb94d3da4349c6da5c",
+      "cas_payload_matches_output": true,
+      "lineage_job_id": "j-fvzxs2pibt",
+      "spent_usd": 0.0,
+      "cache_hit": false
+    }
+  ],
+  "model_usage_rows": 0,
+  "fake_agent_installed": false,
+  "live_witness": false,
+  "limits": [
+    "Existing fixture script and local command mapping; not production Docker isolation.",
+    "Script reads text with universal newline normalization; payload SHA-256 is over actual CAS output bytes.",
+    "No native model CLI or paid upstream call.",
+    "No resident autonomous goal, C10, cross-domain matrix or milestone acceptance."
+  ],
+  "witness_source_observations": [
+    {
+      "path": "tests/system/test_m17_08_continuity_e2e.py",
+      "sha256": "cedc9187f853fc934cf5e35b8a604af3064ddead0b5e7fabc7d856a02181b3d7",
+      "evidence_lines": [
+        {
+          "line": 658,
+          "text": "def test_live_docker_real_cli_produces_evidence(tmp_path: Path) -> None:"
+        },
+        {
+          "line": 673,
+          "text": "blocked.append(\"required live products are not configured\")"
+        },
+        {
+          "line": 691,
+          "text": "raise AssertionError(\"live witness blocked:\\n\" + observed + \"\\n\" + \"\\n\".join(blocked))"
+        }
+      ]
+    },
+    {
+      "path": "tests/system/test_m17_08_operability_live.py",
+      "sha256": "6e2900e42dac2e98a875273d3c107a2bd33416b5cb820baa20c585510477cb74",
+      "evidence_lines": [
+        {
+          "line": 44,
+          "text": "blocked.append(\"required live product is not configured: \" + product)"
+        },
+        {
+          "line": 48,
+          "text": "def test_live_cross_domain_onboarding_and_recovery(tmp_path: Path) -> None:"
+        },
+        {
+          "line": 66,
+          "text": "raise AssertionError(\"operability live witness blocked:\\n\" + observed + \"\\n\" + \"\\n\".join(blocked))"
+        }
+      ]
+    }
+  ]
+}

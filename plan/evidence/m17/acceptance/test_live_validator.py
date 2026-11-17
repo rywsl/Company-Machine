@@ -276,6 +276,11 @@ def test_rejects_unverifiable_or_unsafe_evidence(synthetic, kind: str) -> None:
     code, result = invoke(root, path, report)
     assert code == 1 and not result["ok"]
     assert issue_codes(result) & {"UNSAFE_OR_MISSING_EVIDENCE_FILE", "EVIDENCE_HASH_MISMATCH"}
+    if kind == "absolute":
+        for location in ("C:/evidence.txt", "C:evidence.txt", "evidence.txt:stream"):
+            entry["sanitized_location"] = location
+            code, result = invoke(root, path, report)
+            assert code == 1 and "UNSAFE_OR_MISSING_EVIDENCE_FILE" in issue_codes(result)
 
 
 def test_missing_database_id_cannot_pass(synthetic) -> None:

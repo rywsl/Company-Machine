@@ -138,13 +138,94 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _windows_evidence_file(base: Path, parts: tuple[str, ...]) -> bytes:
+    """Pin the entire path with handles that deny write/delete sharing.
+
+    OPEN_REPARSE_POINT inspects each component itself; holding every ancestor
+    prevents a checked directory from being renamed or changed into a junction
+    before its child is opened. Never fall back to a check-then-read path.
+    """
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class FileInfo(ctypes.Structure):
+        _fields_ = [
+            ("attributes", wintypes.DWORD),
+            ("created", wintypes.FILETIME),
+            ("accessed", wintypes.FILETIME),
+            ("written", wintypes.FILETIME),
+            ("volume", wintypes.DWORD),
+            ("size_high", wintypes.DWORD),
+            ("size_low", wintypes.DWORD),
+            ("links", wintypes.DWORD),
+            ("index_high", wintypes.DWORD),
+            ("index_low", wintypes.DWORD),
+        ]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    create.restype = wintypes.HANDLE
+    information = kernel.GetFileInformationByHandle
+    information.argtypes = (wintypes.HANDLE, ctypes.POINTER(FileInfo))
+    information.restype = wintypes.BOOL
+    file_type = kernel.GetFileType
+    file_type.argtypes = (wintypes.HANDLE,)
+    file_type.restype = wintypes.DWORD
+    close = kernel.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    close.restype = wintypes.BOOL
+    invalid = ctypes.c_void_p(-1).value
+    target = base.absolute().joinpath(*parts)
+    cursor = Path(target.anchor)
+    components = [cursor]
+    for part in target.parts[1:]:
+        cursor = cursor / part
+        components.append(cursor)
+    handles: list[int] = []
+    try:
+        for index, component in enumerate(components):
+            # GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, BACKUP_SEMANTICS |
+            # OPEN_REPARSE_POINT. No write/delete sharing, including ancestors.
+            native = str(component)
+            native = "\\\\?\\UNC\\" + native[2:] if native.startswith("\\\\") else "\\\\?\\" + native
+            handle = create(native, 0x80000000, 0x1, None, 3, 0x02200000, None)
+            if handle == invalid:
+                raise ctypes.WinError(ctypes.get_last_error())
+            handles.append(handle)
+            info = FileInfo()
+            if not information(handle, ctypes.byref(info)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            directory = index < len(components) - 1
+            if info.attributes & 0x400 or bool(info.attributes & 0x10) != directory or file_type(handle) != 1:
+                raise ValueError("reparse point or unexpected file type")
+        descriptor = msvcrt.open_osfhandle(handles[-1], os.O_RDONLY | os.O_BINARY)
+        handles.pop()  # Ownership moves to the CRT descriptor.
+        with os.fdopen(descriptor, "rb") as stream:
+            return stream.read()
+    finally:
+        for handle in reversed(handles):
+            close(handle)
+
+
 def _evidence_file(base: Path, value: str) -> bytes:
     """Open only descendants using no-follow at every directory component."""
-    if "\\" in value or "\x00" in value:
+    if "\\" in value or "\x00" in value or ":" in value:
         raise ValueError("invalid path")
     rel = PurePosixPath(value)
     if rel.is_absolute() or not rel.parts or any(part in {".", ".."} for part in rel.parts):
         raise ValueError("invalid path")
+    if os.name == "nt":
+        return _windows_evidence_file(base, rel.parts)
     if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
         raise OSError("no safe no-follow support")
     flags_dir = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW

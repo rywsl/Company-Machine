@@ -2388,6 +2388,10 @@ tasks:
         run: uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_macro_objective_drives_multiple_cycles tests/system/test_m17_08_continuity_e2e.py::test_host_restart_and_lease_fencing tests/system/test_m17_08_continuity_e2e.py::test_known_external_task_resumes_fetch tests/system/test_m17_08_continuity_e2e.py::test_unknown_submit_outcome_never_blindly_retries tests/system/test_m17_08_continuity_e2e.py::test_budget_survives_restart_and_stops_authorized_work tests/system/test_m17_08_continuity_e2e.py::test_revoke_and_expiry_stop_new_actions tests/system/test_m17_08_continuity_e2e.py::test_real_factoryctl_and_declared_operator_run tests/system/test_m17_08_continuity_e2e.py::test_results_return_once_and_drive_next_cycle tests/system/test_m17_08_continuity_e2e.py::test_change_governance_keeps_scope_and_safe_mode --basetemp=.factory/m17-repro/accept-M17-08
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 9
         timeout: 6000
+      - id: live-readiness
+        run: uv run python tools/harness.py pytest tests/system/test_m17_08_live_readiness.py::test_ready_resources_execute_witness_not_permanent_blocker tests/system/test_m17_08_live_readiness.py::test_native_auth_and_grant_without_vendor_env_are_accepted tests/system/test_m17_08_live_readiness.py::test_resource_blockers_are_scoped_and_recoverable tests/system/test_m17_08_live_readiness.py::test_live_reports_require_current_observed_execution --basetemp=.factory/m17-repro/accept-M17-08-live-readiness
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
+        timeout: 600
       - id: repro-regress
         run: uv run python tools/harness.py pytest plan/evidence/m17/repro --basetemp=.factory/m17-repro/regress-M17-08
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 25
@@ -2401,7 +2405,7 @@ tasks:
         assert: out.ok && out.status == "passed"
       - id: all-known-issues
         run: uv run python plan/evidence/m17/run_contracts.py --all
-        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 77
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 81
         timeout: 9000
       - id: operability-live-witness
         run: uv run python tools/harness.py pytest tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery --basetemp=.factory/m17-repro/operability-live-witness
