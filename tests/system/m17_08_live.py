@@ -380,7 +380,15 @@ def _docker_ok(manifest: dict[str, Any], work: Path) -> None:
     if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
         raise WitnessFailure("configuration", "docker_command", "expected argv list")
     try:
-        proc = subprocess.run(command, cwd=work, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            command,
+            cwd=work,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise WitnessFailure("resource", "docker", str(exc)) from exc
     if proc.returncode != 0:
@@ -499,6 +507,15 @@ def diagnosis(result: dict[str, Any]) -> str:
 
 HISTORICAL_COMMIT = "6f108f4d4ad7657b32ee41f67028eae835b90d72"
 HISTORICAL_MACHINES = ("openmontage", "minimax-h3", "minimax-dance", "grok-dance")
+
+
+def _live_cycle_timeout_s() -> float:
+    """Give Windows/Docker cold starts room without allowing a zero timeout."""
+    raw = os.environ.get("MAO_M17_LIVE_CYCLE_TIMEOUT_S", "120")
+    try:
+        return max(45.0, float(raw))
+    except ValueError:
+        return 120.0
 
 
 def _historical_registry(dest: Path, project: Path) -> str:
@@ -620,6 +637,8 @@ def _mao(project: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
         cwd=project,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
     )
 
@@ -676,7 +695,7 @@ def _assemble_c10_cycles(work_dir: Path, *, domain_id: str = "domain-notes") -> 
     started_at = datetime.now(UTC)
     factory = Factory(Path(work_dir).resolve() / "cycles", live=True, domain_id=domain_id)
 
-    def wait_for_terminal(number: int, timeout_s: float = 45.0) -> None:
+    def wait_for_terminal(number: int, timeout_s: float | None = None) -> None:
         """Allow the real ProcessExecutor child to finish before the next tick.
 
         The live witness intentionally uses the factory's normal asynchronous
@@ -686,6 +705,7 @@ def _assemble_c10_cycles(work_dir: Path, *, domain_id: str = "domain-notes") -> 
         process boundary; it does not advance the factory clock or inject a
         result.
         """
+        timeout_s = _live_cycle_timeout_s() if timeout_s is None else timeout_s
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             rows = factory.cycles()
@@ -1514,7 +1534,14 @@ def _docker_codex_session(work_dir: Path, states: list[tuple[int, str]]) -> dict
         for item in config:
             argv.extend(["-c", item])
         argv.append(prompt)
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=180)
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+        )
     finally:
         proxy.close()
     spent = proxy.spent(job_id)
@@ -1568,6 +1595,8 @@ def _c10_line_observation(
         ["docker", "version", "--format", "{{.Server.Version}}"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     cli_path = shutil.which("codex") or discovered.get("grok_cli", {}).get("path")
@@ -1592,7 +1621,14 @@ def _c10_line_observation(
             detail="multi-cycle observation is not assembled: selected C10 runtime CLI was not found",
             stages=["resolve", "preflight"],
         )
-    cli = subprocess.run([cli_path, "--version"], capture_output=True, text=True, timeout=30)
+    cli = subprocess.run(
+        [cli_path, "--version"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
     cli_version = (cli.stdout or cli.stderr or "").strip().splitlines()[:1]
     cli_text = cli_version[0] if cli_version else ""
     if cli.returncode != 0 or not cli_text:

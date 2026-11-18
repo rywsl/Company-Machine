@@ -36,7 +36,7 @@ class World(agent_world.World):
             (repo / "types" / "org-files.yaml").write_text(FILES_TYPE, encoding="utf-8")
             scout = repo / "agents" / "scout.yaml"
             scout.write_text(
-                scout.read_text()
+                scout.read_text(encoding="utf-8")
                 .replace("rotate_turns: 3", "rotate_turns: 100")
                 .replace("rotate_tokens: 1000", "rotate_tokens: 100000"),
                 encoding="utf-8",
