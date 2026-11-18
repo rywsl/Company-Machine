@@ -225,7 +225,7 @@ def test_e06_factoryctl_budget_reports_live_balance(tmp_path: Path) -> None:
     (ctl / "budget.json").write_text(
         json.dumps({"cap_usd": 1.0, "spent_usd": 0.6, "remaining_usd": 0.4}), encoding="utf-8"
     )
-    factoryctl = Path(__file__).resolve().parents[3] / "src" / "mao" / "ctl" / "factoryctl.py"
+    factoryctl = Path(__file__).resolve().parents[4] / "src" / "mao" / "ctl" / "factoryctl.py"
     proc = subprocess.run(
         [sys.executable, str(factoryctl), "budget", "--json"],
         env={**os.environ, "FACTORY_CTL": str(ctl)},

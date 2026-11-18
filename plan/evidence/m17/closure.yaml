@@ -826,6 +826,15 @@ test_groups:
   - tests/system/test_m17_12_cli_usage.py::test_help_only_operator_hands_goal_to_factory
   - tests/system/test_m17_12_cli_usage.py::test_skill_operator_hands_goal_to_factory
   minimum_cases: 6
+- id: M17-13
+  task: M17-13
+  mode: offline
+  nodes:
+  - tests/system/test_m17_08_live_readiness.py::test_ready_resources_execute_witness_not_permanent_blocker
+  - tests/system/test_m17_08_live_readiness.py::test_native_auth_and_grant_without_vendor_env_are_accepted
+  - tests/system/test_m17_08_live_readiness.py::test_resource_blockers_are_scoped_and_recoverable
+  - tests/system/test_m17_08_live_readiness.py::test_live_reports_require_current_observed_execution
+  minimum_cases: 4
 - id: core-live
   task: M17-08
   mode: live

@@ -30,6 +30,7 @@ _SHARED = (
     "drift_list",
     "invariant_report",
     "metrics_query",
+    "run_get",
     "approval_list",
     "conversion_list",
     "changeset_status",
@@ -80,6 +81,12 @@ class Session:
     session_id: str | None = None
     source_repo: Path | None = None
     agent: str | None = None
+    turn_id: str | None = None
+    lease_owner: str | None = None
+    lease_generation: int | None = None
+    objective_id: str | None = None
+    cycle_id: str | None = None
+    task_id: str | None = None
 
 
 class McpServer:
@@ -136,6 +143,19 @@ class McpServer:
             names.extend(_AGENT)
             if enabled:
                 names.append("asset_put")
+        from mao.objectives import continuity_enabled
+
+        if continuity_enabled(self.ctx):
+            names.extend(("objective_get", "objective_list"))
+            if self.session.role == "foreman":
+                names.extend(
+                    (
+                        "objective_commit_plan",
+                        "objective_dispatch",
+                        "objective_evaluate",
+                        "objective_pause",
+                    )
+                )
         return [_tool(name) for name in sorted(set(names))]
 
     def handle(self, message: Any) -> dict[str, Any] | None:
@@ -202,6 +222,8 @@ class McpServer:
         if not _matches(schema, arguments):
             raise _Proto(-32602, "invalid params")
         try:
+            if name not in _SHARED and name not in _ASSET_SHARED:
+                self._fence()
             value = self._invoke(name, arguments)
             if hasattr(value, "to_json") and callable(value.to_json):
                 value = value.to_json()
@@ -214,6 +236,57 @@ class McpServer:
             "structuredContent": {"result": clean},
             "isError": False,
         }
+
+    def _fence(self) -> None:
+        session = self.session
+        if session.lease_owner is None or session.lease_generation is None:
+            return
+        from mao.durable import LeaseStore
+
+        LeaseStore(self.ctx).guard(
+            "agents",
+            owner=session.lease_owner,
+            generation=int(session.lease_generation),
+        )
+
+    def _objective_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        from mao.objectives import ObjectiveStore
+
+        store = ObjectiveStore(self.ctx, self.epochs)
+        actor = str(self.session.actor)
+        turn_id = self.session.turn_id
+        if name == "objective_get":
+            return store.get(str(arguments["objective_id"]))
+        if name == "objective_list":
+            return store.list()
+        if name == "objective_commit_plan":
+            return store.commit_plan(
+                str(arguments["cycle_id"]),
+                str(arguments["plan"]),
+                by=actor,
+                turn_id=turn_id,
+            )
+        if name == "objective_dispatch":
+            return store.dispatch(
+                str(arguments["cycle_id"]),
+                str(arguments["task_id"]),
+                by=actor,
+                turn_id=turn_id,
+            )
+        if name == "objective_evaluate":
+            return store.evaluate(
+                str(arguments["cycle_id"]),
+                arguments["evidence"],
+                by=actor,
+                turn_id=turn_id,
+            )
+        if name == "objective_pause":
+            return store.pause(
+                str(arguments["objective_id"]),
+                reason=str(arguments["reason"]),
+                by=actor,
+            )
+        raise FactoryError("OBJECTIVE_FORBIDDEN", "工具不存在", id=name, reason="tool")
 
     def _asset_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         from mao.assets import AssetStore, assets_config
@@ -308,20 +381,51 @@ class McpServer:
         if name == "invariant_report":
             return query.invariant_report()
         if name == "metrics_query":
-            return query.metrics_query(str(arguments["station"]), str(arguments["metric"]))
+            return query.metrics_query(
+                str(arguments["station"]),
+                str(arguments["metric"]),
+                since=arguments.get("since"),
+                until=arguments.get("until"),
+            )
+        if name == "run_get":
+            from mao.results import ResultStore
+
+            return ResultStore(self.ctx, self.epochs).get(str(arguments["run_id"]))
         if name == "approval_list":
             return query.approval_list()
         if name == "conversion_list":
             return ConversionStore(self.ctx).list(status=arguments.get("status"))
         if name == "changeset_status":
             return submit.status(str(arguments["changeset_id"]))
+        if name == "run_start" and (
+            arguments.get("cycle_id")
+            or arguments.get("task_id")
+            or self.session.cycle_id
+            or self.session.task_id
+        ):
+            from mao.objectives import ObjectiveStore
+
+            value = ObjectiveStore(self.ctx, self.epochs).start_task(self.session, arguments)
+            self.actions.append({"tool": name, "refs": _action_refs(value)})
+            return value
+        if name.startswith("objective_"):
+            return self._objective_tool(name, arguments)
         if name in _AGENT or name in ("agent_send", "remind"):
             from mao.agents import agent_tool
 
             actor = str(self.session.agent or "")
             if self.session.role == "foreman" and not actor:
                 actor = "foreman"
-            value = agent_tool(self.ctx, self.epochs, actor, name, arguments)
+            origin = None
+            if self.session.objective_id and self.session.cycle_id and self.session.turn_id:
+                origin = {
+                    "objective_id": self.session.objective_id,
+                    "cycle_id": self.session.cycle_id,
+                    "task_id": self.session.task_id,
+                    "parent_kind": "turn",
+                    "parent_id": self.session.turn_id,
+                }
+            value = agent_tool(self.ctx, self.epochs, actor, name, arguments, origin=origin)
             self.actions.append({"tool": name, "refs": _action_refs(value)})
             return value
         asset_value = self._asset_tool(name, arguments)
@@ -745,6 +849,25 @@ _SCHEMAS: dict[str, tuple[dict[str, Any], list[str]]] = {
     "drift_list": ({}, []),
     "invariant_report": ({}, []),
     "metrics_query": ({"station": {"type": "string"}, "metric": {"type": "string"}}, ["station", "metric"]),
+    "run_get": ({"run_id": {"type": "string"}}, ["run_id"]),
+    "objective_get": ({"objective_id": {"type": "string"}}, ["objective_id"]),
+    "objective_list": ({}, []),
+    "objective_commit_plan": (
+        {"cycle_id": {"type": "string"}, "plan": {"type": "string"}},
+        ["cycle_id", "plan"],
+    ),
+    "objective_dispatch": (
+        {"cycle_id": {"type": "string"}, "task_id": {"type": "string"}},
+        ["cycle_id", "task_id"],
+    ),
+    "objective_evaluate": (
+        {"cycle_id": {"type": "string"}, "evidence": {"type": "object"}},
+        ["cycle_id", "evidence"],
+    ),
+    "objective_pause": (
+        {"objective_id": {"type": "string"}, "reason": {"type": "string"}},
+        ["objective_id", "reason"],
+    ),
     "approval_list": ({}, []),
     "conversion_list": ({"status": {"type": "string"}}, []),
     "changeset_status": ({"changeset_id": {"type": "string"}}, ["changeset_id"]),
@@ -813,7 +936,13 @@ _SCHEMAS: dict[str, tuple[dict[str, Any], list[str]]] = {
         ["line", "inputs"],
     ),
     "run_start": (
-        {"line": {"type": "string"}, "inputs": {"type": "object"}},
+        {
+            "line": {"type": "string"},
+            "inputs": {"type": "object"},
+            "request_key": {"type": "string"},
+            "cycle_id": {"type": "string"},
+            "task_id": {"type": "string"},
+        },
         ["line", "inputs"],
     ),
     "ask_human": (

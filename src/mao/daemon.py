@@ -171,6 +171,17 @@ class ProcessExecutor:
 
     def reap(self) -> list[str]:
         done = sorted(job_id for job_id, proc in self._procs.items() if proc.poll() is not None)
+        if not done and self._procs:
+            # A short-lived cross-process job can finish between dispatch and
+            # the next deterministic tick.  Observe that boundary here so a
+            # resident pump does not leave a completed cycle executing merely
+            # because process startup took a little longer than one tick.
+            for proc in self._procs.values():
+                try:
+                    proc.wait(timeout=0.05)
+                except subprocess.TimeoutExpired:
+                    pass
+            done = sorted(job_id for job_id, proc in self._procs.items() if proc.poll() is not None)
         for job_id in done:
             handle = self._logs.pop(job_id, None)
             if handle is not None:
@@ -200,6 +211,7 @@ class Daemon:
         registry: Path | None = None,
         epochs: Any | None = None,
         pipeline: Any | None = None,
+        lazy_instances: bool = False,
     ) -> None:
         from mao.commands.common import governance_registry
 
@@ -230,8 +242,18 @@ class Daemon:
         self._started_at = ""
         self._egress: Any = None
         self._model: Any = None
-        self.instances = self._make_instances()
+        # Registry materialization can be expensive on mounted workspaces.
+        # Keep construction before the resident agent loop cheap; the daemon
+        # creates its instance pool on first use in ``start`` or another
+        # caller that actually needs it.
+        self._instances: Any | None = None if lazy_instances else self._make_instances()
         self.ingress = None
+
+    @property
+    def instances(self) -> Any:
+        if self._instances is None:
+            self._instances = self._make_instances()
+        return self._instances
 
     def start(self) -> Any:
         store = LeaseStore(self.ctx)
@@ -312,6 +334,7 @@ class Daemon:
             audited = True
         canaries = self._canaries(commits, at)
         wakes = self._pump()
+        self._objectives()
         self._maybe_gc(at)
         self._heartbeat(commits)
         report = TickReport(
@@ -511,6 +534,15 @@ class Daemon:
             if changeset.state in {"rejected", "withdrawn", "rolled-back"}:
                 store.reopen(request.id)
 
+    def _objectives(self) -> None:
+        if self.epochs is None:
+            return
+        from mao.objectives import ObjectiveStore, continuity_enabled
+
+        if not continuity_enabled(self.ctx):
+            return
+        ObjectiveStore(self.ctx, self.epochs).collect()
+
     def _pump(self) -> list[str]:
         from mao.foreman import ConversionStore, WakeQueue
 
@@ -683,8 +715,21 @@ def run_serve(
     registry: Path | None = None,
     epochs: Any | None = None,
     pipeline: Any | None = None,
+    lazy_instances: bool = False,
 ) -> None:
-    daemon = Daemon(ctx, config, executor=executor, registry=registry, epochs=epochs, pipeline=pipeline)
+    daemon = Daemon(
+        ctx,
+        config,
+        executor=executor,
+        registry=registry,
+        epochs=epochs,
+        pipeline=pipeline,
+        lazy_instances=lazy_instances,
+    )
+    if epochs is None:
+        epochs = daemon.epochs
+    if pipeline is None:
+        pipeline = daemon.pipeline
     thread: threading.Thread | None = None
     agent_thread: threading.Thread | None = None
     agent_timeout = 60.0

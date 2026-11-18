@@ -1,6 +1,6 @@
 # operability：M17 通用接入、部署与可操作性
 
-> 规范性设计输入；未实施。对应 M17-09、10、11、12，M17-08 作最终验收。与 continuity.md 共同组成 M17；本文件只在明确列出的增补处优先于旧规范，不修改 M16 契约。证据基线 c538768；HC01–HC14/U01–U06 的覆盖入口为 plan/evidence/m17/closure.yaml。
+> 规范性设计输入；未实施。对应 M17-09、10、11、12、13，M17-08 作最终验收。与 continuity.md 共同组成 M17；本文件只在明确列出的增补处优先于旧规范，不修改 M16 契约。证据基线 c538768；HC01–HC14/U01–U06 的覆盖入口为 plan/evidence/m17/closure.yaml。
 
 ## 1. 目的与范围
 
@@ -221,26 +221,36 @@ A/B是witness开始前固定的实际领域和真实native runtime标签。help_
 
 普通日常使用不主动制造故障或强制等待验收窗口；上述是独立资格/阶段验收场景，不能强加所有用户操作。真实能力与离线协议各自报告。
 
+### 5.7 基础跑单、资源解析与见证可执行性
+
+见证执行器及原四项离线准备测试由独立M17-13实施/验收，只依赖已完成的M17-07/09/10/11/12，不得依赖真实资源受阻的M17-08。M17-08为最终真实验收，反向依赖13并保留原C10、四格及历史产品资格全部要求。13通过不代表08通过；付费资源缺失只阻断对应真实调用，不能阻断13的本地协议开发/离线验收。新增的是任务拆分，不是用离线结果替代真实标准。
+
+基础script订单只需要实际所选工位/机器/产线，允许无模型、零费用；其成功不依赖四个历史视频产品，也不关闭完整M17真实门。C10只核对当前单格的实际依赖闭包；四格仍按closure.yaml检查全部历史产品，二者不可混作所有操作的全局前置。
+
+测试资源入口与生成/解析顺序、无secret的固定schema、实施步骤及四个离线正反例以plan/m17-live-readiness.md为冻结补充契约。优先复用现有部署/Registry、SecretStore和原生CLI认证；两个vendor key变量不是唯一认证来源，MAO_BUDGET_USD不是唯一批准预算来源。付费仍须当前可信grant/部署授权和可强制上界，不把离线常数或配置存在性当批准。
+
+两个live节点必须在资源就绪时实际执行并观察本次工厂/CLI/周期、生成有水位和一致快照的证据，再校验；无条件追加缺失、固定抛blocked或只写报告都不算已实现。未实现报failed/implementation；实际资源/授权缺口报blocked并列可核对依据；执行/证据失败报failed，保留原真实门槛。无真实资源时可先完成执行链的离线协议准备，不能停留在占位器后无限要求用户补env。
+
 ## 6. 错误
 
 新增错误在对应任务登记 CODES，本次不改源码。沿用旧错误码时保留原语义和退出码；以下为新增固定码：
 
 | 码 | 触发/分类 | 退出码 |
 |---|---|---|
-| TRANSPORT_CONFIG_INVALID | 时限/inspection 配置不合法；configuration | 2 |
-| TRANSPORT_TIMEOUT | 时限到，phase 和 outcome 必填；dependency/outcome_unknown | 4 |
-| TRANSPORT_CANCELLED | 取消/失租后保留请求结果与费用；outcome_unknown | 1 |
-| SERVICE_LOCATION_DENIED | 地址/跳转越界；permission | 1 |
-| RUNTIME_UNQUALIFIED | 运行时挑战、版本或真实资格未通过；dependency | 4 |
-| MACHINE_IDENTITY_MISMATCH | 声明与实际产品不一致；dependency | 4 |
-| DEPLOY_MANIFEST_INVALID | manifest 不合法；configuration | 2 |
-| DEPLOY_CONFLICT | state/manifest/Registry 与 plan 不符；configuration | 1 |
-| DEPLOY_BUSY | 有效运行 owner 未移交；dependency | 4 |
-| DEPLOY_INCOMPLETE | journal 未完成，需原计划恢复；configuration | 4 |
-| OPERATION_FORBIDDEN | 缺失/错 scope/root/身份或禁止命令；permission | 1 |
-| OPERATION_CREDENTIAL_EXPIRED | 已过期/撤销；permission | 1 |
-| OPERATION_CONFLICT | 同请求键异参；usage | 1 |
-| ROLLOUT_EVIDENCE_REQUIRED | 自主提议低于生效最低样本/观察；business | 1 |
+| `TRANSPORT_CONFIG_INVALID` | 时限/inspection 配置不合法；configuration | 2 |
+| `TRANSPORT_TIMEOUT` | 时限到，phase 和 outcome 必填；dependency/outcome_unknown | 4 |
+| `TRANSPORT_CANCELLED` | 取消/失租后保留请求结果与费用；outcome_unknown | 1 |
+| `SERVICE_LOCATION_DENIED` | 地址/跳转越界；permission | 1 |
+| `RUNTIME_UNQUALIFIED` | 运行时挑战、版本或真实资格未通过；dependency | 4 |
+| `MACHINE_IDENTITY_MISMATCH` | 声明与实际产品不一致；dependency | 4 |
+| `DEPLOY_MANIFEST_INVALID` | manifest 不合法；configuration | 2 |
+| `DEPLOY_CONFLICT` | state/manifest/Registry 与 plan 不符；configuration | 1 |
+| `DEPLOY_BUSY` | 有效运行 owner 未移交；dependency | 4 |
+| `DEPLOY_INCOMPLETE` | journal 未完成，需原计划恢复；configuration | 4 |
+| `OPERATION_FORBIDDEN` | 缺失/错 scope/root/身份或禁止命令；permission | 1 |
+| `OPERATION_CREDENTIAL_EXPIRED` | 已过期/撤销；permission | 1 |
+| `OPERATION_CONFLICT` | 同请求键异参；usage | 1 |
+| `ROLLOUT_EVIDENCE_REQUIRED` | 自主提议低于生效最低样本/观察；business | 1 |
 
 结构化错误不包含 secret 文件路径以外的值、令牌、TLS 私钥或完整认证响应。操作邮箱错误响应使用同一 code/detail/recovery；CLI映射回上表/旧 FactoryError，不把所有失败当内部异常5。未认证请求不给出敏感对象状态或凭据存在性。
 
@@ -255,10 +265,11 @@ A/B是witness开始前固定的实际领域和真实native runtime标签。help_
 | `tests/system/test_m17_11_deployment.py` | `test_doctor_and_plan_are_read_only`、`test_init_repeat_preserves_registry_assets_secrets_and_runs`、`test_apply_crash_and_state_conflict_recover`、`test_missing_docker_or_qualification_blocks_resident`、`test_external_cli_cannot_impersonate_human_or_open_database`、`test_operator_credential_expiry_revoke_and_dedup`、`test_rollout_minimums_and_truthful_zero_evidence` | 非破坏幂等部署、故障边界、配置/资源/资格预检、真实管理/operate隔离、零样本语义 |
 | `tests/system/test_m17_12_cli_usage.py` | `test_public_help_discovers_complete_lifecycle`、`test_capabilities_examples_match_installed_parser`、`test_error_recovery_handles_pending_unknown_and_permission`、`test_skill_packaging_version_and_truthful_capabilities`、`test_help_only_operator_hands_goal_to_factory`、`test_skill_operator_hands_goal_to_factory` | 真子进程help/错误/状态/文档skill链；离线操作者探索不能代厂内业务，不是预置业务脚本证明智能 |
 | `tests/system/test_m17_08_operability_live.py` | `test_live_cross_domain_onboarding_and_recovery` | 真实四格领域/运行时矩阵、实际产品、历史补偿闭合、介入账本；见 operability-cases.yaml |
+| `tests/system/test_m17_08_live_readiness.py` | `test_ready_resources_execute_witness_not_permanent_blocker`、`test_native_auth_and_grant_without_vendor_env_are_accepted`、`test_resource_blockers_are_scoped_and_recoverable`、`test_live_reports_require_current_observed_execution` | 同一见证链就绪后执行、原生认证/已有grant无vendor env、按格资源阻塞恢复、本次执行证据；本地协议夹具不冒充live |
 
-`plan/evidence/m17/acceptance/test_plan_coverage.py`的8个顶层测试、49个参数化用例验证设计/校验工具：漏项与错引用、依赖/门绕过、专项场景漏组、隔离目录内真实harness对缺节点的失败、四格合成索引和缺证据拒绝。它们不依赖生产功能尚未实现，实施后仍有效；合成报告仅证明完整性工具，不能证明模型行为或真实来源。最终`m17-contracts`要求原45用例加本组49用例，至少94用例零失败/错误/跳过。
+`plan/evidence/m17/acceptance/test_plan_coverage.py`的9个顶层测试、53个参数化用例验证设计/校验工具：漏项与错引用、依赖/门绕过、专项场景漏组、隔离目录内真实harness对缺节点的失败、四格合成索引和缺证据拒绝。它们不依赖生产功能尚未实现，实施后仍有效；合成报告仅证明完整性工具，不能证明模型行为或真实来源。最终`m17-contracts`要求原45用例加本组53用例，至少98用例零失败/错误/跳过。
 
-固定设计覆盖验证 `plan/evidence/m17/verify_plan.py` 校验所有已登记问题都有规范/任务/精确测试/验收门；它不能证明行为通过。任务 `run_contracts.py --task M17-09|10|11|12` 与最终 `--all` 真正调用 harness pytest 对精确节点执行断言。M17-08还需运行独立 live witness 和报告完整性校验，不得由报告存在性代替。
+固定设计覆盖验证 `plan/evidence/m17/verify_plan.py` 校验所有已登记问题都有规范/任务/精确测试/验收门；它不能证明行为通过。任务 `run_contracts.py --task M17-09|10|11|12|13` 与最终 `--all` 真正调用 harness pytest 对精确节点执行断言。M17-08还需运行独立 live witness 和报告完整性校验，不得由报告存在性代替。
 
 ## 8. 错误示范与正确示范
 

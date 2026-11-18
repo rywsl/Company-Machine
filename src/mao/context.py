@@ -29,6 +29,7 @@ class Context:
     provider: Any
     proxies: Any = None
     owner: str = ""
+    tokens: Any = None
 
     @classmethod
     def open(
@@ -39,6 +40,7 @@ class Context:
         clock: Any = None,
         ids: Any = None,
         proxies: Any = None,
+        tokens: Any = None,
     ) -> Context:
         from mao.egress import SecretStore
 
@@ -61,6 +63,7 @@ class Context:
             provider,
             proxies,
             owner,
+            tokens,
         )
         _remember(ctx)
         return ctx

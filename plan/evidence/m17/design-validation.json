@@ -1,20 +1,24 @@
 {
   "schema": "mao-m17-design-validation/1",
-  "date": "2026-11-16",
-  "scope": "User-authorized M17 investigation/design handoff, lock refresh and Git delivery; no production implementation or milestone acceptance.",
+  "date": "2026-11-17",
+  "scope": "User-authorized design maintenance and isolated basic script-order observation; no production implementation, paid calls or task acceptance.",
   "limitations": [
-    "No production M17 implementation was performed and no task was started, accepted or gated.",
-    "The 77 required behavior cases have not passed; missing future nodes are deliberately rejected.",
-    "No real live autonomy witness or cross-domain matrix was run.",
-    "The frozen 13 objective contracts remain unexecutable until M16/M17 modules exist; prior skips are not passes.",
-    "The old pooled-reset assertion remains unchanged and failing on the audit baseline; its design conflict and stronger closure are frozen as R01.",
-    "Historical network/runtime/product observations retain their evidence limits; design completeness does not establish every historical root cause or exclude undiscovered defects."
+    "This design worktree retains its frozen baseline. Grok implementation exists separately in the active Windows checkout and is not overwritten.",
+    "The expanded 81 behavior cases include four future witness-readiness nodes that have not been implemented or accepted by this design delivery.",
+    "No real live autonomy witness, paid model call or cross-domain matrix was run.",
+    "The 13 objective contracts require absent M16 modules on this design baseline; historical skips are not passes.",
+    "Basic public-CLI script orders used LocalProvider and existing fixture tools; they do not establish native CLI, Docker isolation or resident autonomy.",
+    "Native authentication configuration was located safely; account validity, factory integration, current prices and approved paid budget remain unverified.",
+    "Historical audit statistics and delivery checks are retained separately; design completeness does not prove unknown defects absent."
   ],
   "invariants": {
-    "source_src_changed": false,
-    "state_json_changed": false,
+    "source_src_changed_by_this_delivery": false,
+    "state_json_changed_by_this_delivery": false,
     "m16_docs_or_tests_changed": false,
-    "original_worktree_written": false
+    "active_worktree_design_sync_only": true,
+    "active_worktree_isolated_factory_artifacts": true,
+    "active_implementation_changes_preserved": true,
+    "paid_model_requests": 0
   },
   "supplemental_audit": {
     "date": "2026-11-16",
@@ -47,7 +51,7 @@
       "closure": "Real Runner/Instances job-content isolation and failure controls; bounded old-fixture design maintenance, with original node retained."
     }
   },
-  "status": "known_issue_design_complete_implementation_not_started",
+  "status": "independent_preparation_task_designed_final_live_still_pending",
   "prior_audit_checks": {
     "doccheck": "passed",
     "ruff_default_src_tests_tools": "passed",
@@ -143,6 +147,126 @@
     }
   },
   "checks": {
+    "design_coverage": {
+      "ok": true,
+      "scope": "design_coverage",
+      "registered_entries": 46,
+      "issues": []
+    },
+    "all_executable_design_tools": {
+      "total": 85,
+      "passed": 85,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "breakdown": {
+        "risk_inputs": 7,
+        "synthetic_live_validator": 25,
+        "design_index_integrity": 53
+      },
+      "platforms": {
+        "linux_design_worktree": {
+          "total": 85,
+          "passed": 85,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "windows_active_worktree": {
+          "total": 85,
+          "passed": 85,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "meaning": "Design/validator/scheduling tests only. The new real-harness regression changes fixture state, never the active task state."
+    },
+    "exact_execution_plan": {
+      "scope": "execution_plan_only",
+      "exact_offline_nodes": 78,
+      "minimum_behavior_cases": 81,
+      "future_live_readiness_nodes": 4,
+      "live_included": false,
+      "behavior_suite_executed_to_pass": false,
+      "preparation_owner": "M17-13"
+    },
+    "contract_gate": {
+      "minimum_cases": 98,
+      "original_contract_cases": 45,
+      "design_index_tool_cases": 53,
+      "fully_executed": false,
+      "reason": "M16 objective modules remain absent on the frozen audit baseline; design tools are not production behavior or live acceptance."
+    },
+    "ruff_src_tests_tools_and_evidence": "passed",
+    "ruff_format": {
+      "status": "passed",
+      "files": 276
+    },
+    "doccheck": "passed",
+    "git_diff_check": "passed",
+    "task_graph_revision": {
+      "tasks": 13,
+      "new_offline_task": "M17-13",
+      "final_live_task": "M17-08",
+      "final_requires_preparation": true,
+      "preparation_requires_final": false,
+      "pre_m17_tasks_gates_preserved": true,
+      "existing_m17_implementation_tasks_01_07_09_12_preserved": true,
+      "behavior_nodes_removed": 0,
+      "real_witness_checks_preserved": true
+    },
+    "active_worktree_sync": {
+      "design_paths": 19,
+      "protected_paths": 18,
+      "source_tests_state_preserved": 205,
+      "task_next": "M17-13",
+      "final_task_status": "blocked",
+      "preparation_task_status": "todo",
+      "real_task_start_accept_gate_performed": false
+    },
+    "protected_lock": {
+      "status": "passed",
+      "mode": "Selective reviewed hashes only; metadata, unrelated hashes and 715 case hashes retained. No full lock update.",
+      "protected_paths": 18
+    },
+    "fast_checks": {
+      "status": "passed",
+      "exit": 0,
+      "lint": true,
+      "format": true,
+      "lock": true,
+      "doccheck": true,
+      "conformance": {
+        "total": 715,
+        "failures": 0
+      },
+      "coverage": {
+        "unexercised_codes": 0,
+        "unfired_rules": 0
+      },
+      "strict_registry": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "scenarios": {
+        "total": 4,
+        "passed": 4
+      },
+      "scope": "Design fast checks only, not final live acceptance."
+    }
+  },
+  "delivery_request": {
+    "authorized": [
+      "review and clarify M17 spec/plan",
+      "uv run python tools/harness.py lock --update",
+      "commit M17 design",
+      "push codex/m17-autonomy-audit"
+    ],
+    "scope": "This design correction delivery only: selective reviewed design hashes and Git push on codex/m17-autonomy-audit; narrow active design sync and isolated basic-order validation. No production implementation, task acceptance, main push or force push.",
+    "git_receipt": "The resulting commit/upstream are verified after this source snapshot is committed; inspect Git for the final delivery receipt."
+  },
+  "prior_delivery_checks_2026_11_16": {
     "design_coverage": {
       "ok": true,
       "scope": "design_coverage",
@@ -261,14 +385,199 @@
       ]
     }
   },
-  "delivery_request": {
-    "authorized": [
-      "review and clarify M17 spec/plan",
-      "uv run python tools/harness.py lock --update",
-      "commit M17 design",
-      "push codex/m17-autonomy-audit"
+  "live_readiness_revision": {
+    "guide": "plan/m17-live-readiness.md",
+    "task": "M17-08",
+    "witness_implementation_gap": "Both active live test entrypoints unconditionally raise after declaring missing resources; no runnable factory witness branch.",
+    "basic_order_evidence": "plan/evidence/m17/basic-order-observation.json",
+    "basic_orders": {
+      "passed": 2,
+      "run_state": "SUCCEEDED",
+      "node_state": "DONE",
+      "job_state": "SEALED",
+      "model_usage_rows": 0,
+      "live_witness": false
+    },
+    "authorization": "No secret values copied or committed, and no monetary allowance inferred from fixture constants.",
+    "execution_readiness": "Four counted subprocess/protocol acceptance nodes required before real live execution; still future implementation.",
+    "original_live_requirements_preserved": true,
+    "historical_product_requirements_preserved": true,
+    "task_state_not_manually_changed": true,
+    "tool_portability": {
+      "utf8_reading": {
+        "baseline": "Standalone Windows and forced non-UTF-8 locale fail with UnicodeDecodeError; -X utf8 control passes.",
+        "fix": "Explicit UTF-8 reads; existing positive regression also launches a non-UTF-8 subprocess.",
+        "verified": true
+      },
+      "safe_evidence_windows": {
+        "baseline": "Windows suite: 81 passed, 3 failed because POSIX-only no-follow rejects every legal evidence file.",
+        "fix": "Pinned Windows handles, per-component reparse/type validation and denied write/delete sharing; POSIX no-follow retained.",
+        "unsafe_paths": "Existing symlink/directory-symlink/escape/hash/secret checks retained; absolute-path case also rejects drive paths and NTFS streams.",
+        "verified": true
+      }
+    }
+  },
+  "prior_live_readiness_checks_2026_11_17": {
+    "design_coverage": {
+      "ok": true,
+      "scope": "design_coverage",
+      "registered_entries": 46,
+      "issues": []
+    },
+    "all_executable_design_tools": {
+      "total": 84,
+      "passed": 84,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "breakdown": {
+        "risk_inputs": 7,
+        "synthetic_live_validator": 25,
+        "design_index_integrity": 52
+      },
+      "meaning": "Design and protocol/index tool checks only; no M17 production behavior or real live acceptance.",
+      "platforms": {
+        "linux_design_worktree": {
+          "total": 84,
+          "passed": 84,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "windows_active_worktree": {
+          "total": 84,
+          "passed": 84,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      }
+    },
+    "exact_execution_plan": {
+      "scope": "execution_plan_only",
+      "exact_offline_nodes": 78,
+      "minimum_behavior_cases": 81,
+      "future_live_readiness_nodes": 4,
+      "live_included": false,
+      "behavior_suite_executed_to_pass": false
+    },
+    "contract_gate": {
+      "minimum_cases": 97,
+      "original_contract_cases": 45,
+      "design_index_tool_cases": 52,
+      "fully_executed": false,
+      "reason": "13 objective contracts require M16 assets absent on the design audit baseline."
+    },
+    "ruff_src_tests_tools_and_evidence": "passed",
+    "ruff_format": {
+      "status": "passed",
+      "files": 276
+    },
+    "doccheck": "passed",
+    "git_diff_check": "passed",
+    "earlier_tasks_gates_and_dag_preserved": true,
+    "protected_lock": {
+      "status": "passed",
+      "mode": "Only 18 reviewed design/evidence paths synchronized, preserving metadata, unrelated hashes and conformance cases; no full refresh.",
+      "unrelated_hashes_preserved": true,
+      "case_hashes_preserved": true
+    },
+    "fast_checks": {
+      "status": "passed",
+      "exit": 0,
+      "lint": true,
+      "format": true,
+      "lock": true,
+      "doccheck": true,
+      "conformance": {
+        "total": 715,
+        "failures": 0
+      },
+      "coverage": {
+        "unexercised_codes": 0,
+        "unfired_rules": 0
+      },
+      "strict_registry": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "scenarios": {
+        "total": 4,
+        "passed": 4
+      },
+      "scope": "Design fast checks only; no production behavior or live acceptance."
+    },
+    "active_worktree_sync": {
+      "reviewed_design_paths": 19,
+      "source_tests_state_files_unchanged": 205,
+      "prior_error_code_formatting_preserved": 14,
+      "no_task_acceptance": true
+    }
+  },
+  "task_split_revision": {
+    "date": "2026-11-17",
+    "evidence": "plan/evidence/m17/task-split-observation.json",
+    "journal": "plan/journal/2026-11-17-M17-preparation-split.md",
+    "root_cause": "The blocked final witness owned unimplemented offline preparation, leaving task next with no runnable work. Updated files alone did not change scheduling.",
+    "new_task_card": "plan/tasks/M17-13.md",
+    "required_resources_for_offline_preparation": "Local counted subprocess/protocol fixtures; no real paid account, historical products or monetary authorization required.",
+    "scope": "Move four previously frozen readiness nodes to an independent implementation task; retain all 81 required cases, both real witnesses and product inventory."
+  },
+  "environment_handoff_correction_2026_11_17": {
+    "scope": "design_and_host_handoff_only",
+    "observation": "plan/evidence/m17/environment-handoff-observation.json",
+    "root_causes": [
+      "Existing Grok process/tools never loaded the private env file.",
+      "Saved goal plan omitted M17-13 and retained the old 77-case threshold."
     ],
-    "scope": "This delivery only; no production implementation, M16 merge, task start/accept/gate, main push or force push.",
-    "git_receipt": "The resulting commit/upstream are verified after this source snapshot is committed; inspect Git for the final delivery receipt."
+    "correction": [
+      "Use uv run --env-file on every command needing the local resources.",
+      "Reread current AGENTS/tasks/readiness and refresh the worker goal plan before independent M17-13."
+    ],
+    "clean_parent_windows_reproduction": {
+      "inputs_removed": 37,
+      "provider_preflight_exit": 0,
+      "missing_required": [],
+      "task_next_exit": 0,
+      "task_next": "M17-13",
+      "paid_requests": 0
+    },
+    "tool_validation": {
+      "linux": {
+        "passed": 85,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "exit": 0
+      },
+      "windows": {
+        "passed": 85,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "exit": 0
+      },
+      "design_coverage": {
+        "ok": true,
+        "issue_count": 46
+      },
+      "design_fast_check": {
+        "exit": 0,
+        "conformance_cases": 715,
+        "failures": 0,
+        "unexercised_codes": 0,
+        "unfired_rules": 0,
+        "scenarios_passed": 4
+      },
+      "protected_lock": "verified in both workspaces; only reviewed hashes updated"
+    },
+    "source_tests_and_real_state_preserved": true,
+    "paid_live_or_M17_acceptance_claimed": false,
+    "grok_goal_state_modified": false,
+    "future_offline_inventory": {
+      "exact_nodes": 78,
+      "minimum_cases": 81,
+      "new_preparation_implementation_still_required": true
+    }
   }
 }

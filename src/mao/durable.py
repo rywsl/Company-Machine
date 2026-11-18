@@ -11,9 +11,40 @@ from datetime import timedelta
 from typing import Any
 
 from mao.base import canonical_json, utc_iso
+from mao.errors import FactoryError
 from mao.jobs import JobState, ensure_edge, load_job
 
 LEASE_TTL_S = 60.0
+
+
+def _current_generation(conn: Any, resource: str) -> int:
+    row = conn.execute(
+        "SELECT generation FROM lease_generations WHERE resource = ?",
+        (resource,),
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(row["generation"])
+
+
+def _bump_generation(conn: Any, resource: str) -> int:
+    generation = _current_generation(conn, resource) + 1
+    conn.execute(
+        "INSERT INTO lease_generations (resource, generation) VALUES (?, ?) "
+        "ON CONFLICT(resource) DO UPDATE SET generation = excluded.generation",
+        (resource, generation),
+    )
+    return generation
+
+
+def _token_current(conn: Any, token: Lease, now: str) -> bool:
+    row = conn.execute(
+        "SELECT owner, expires_at FROM leases WHERE resource = ?",
+        (token.resource,),
+    ).fetchone()
+    if row is None or str(row["owner"]) != token.owner or str(row["expires_at"]) <= now:
+        return False
+    return _current_generation(conn, token.resource) == int(token.generation)
 
 
 @dataclass(frozen=True)
@@ -22,6 +53,7 @@ class Lease:
     owner: str
     acquired_at: str
     expires_at: str
+    generation: int = 0
 
 
 class LeaseStore:
@@ -41,6 +73,7 @@ class LeaseStore:
                     "INSERT INTO leases (resource, owner, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
                     (resource, owner, now, expires),
                 )
+                _bump_generation(conn, resource)
                 return True
             expired = str(row["expires_at"]) <= now
             if not expired and str(row["owner"]) != owner:
@@ -49,6 +82,8 @@ class LeaseStore:
                 "UPDATE leases SET owner = ?, acquired_at = ?, expires_at = ? WHERE resource = ?",
                 (owner, now, expires, resource),
             )
+            if expired:
+                _bump_generation(conn, resource)
             if expired and str(row["owner"]) != owner:
                 conn.execute(
                     "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'lease.taken_over', NULL, ?)",
@@ -80,6 +115,110 @@ class LeaseStore:
             )
             return cur.rowcount > 0
 
+    def acquire_fenced(self, resource: str, *, owner: str, ttl_s: float = LEASE_TTL_S) -> Lease | None:
+        now_dt = self.ctx.clock.now()
+        now = utc_iso(now_dt)
+        expires = utc_iso(now_dt + timedelta(seconds=ttl_s))
+        with self.ctx.db.tx() as conn:
+            row = conn.execute(
+                "SELECT owner, expires_at FROM leases WHERE resource = ?",
+                (resource,),
+            ).fetchone()
+            if row is None:
+                generation = _bump_generation(conn, resource)
+                conn.execute(
+                    "INSERT INTO leases (resource, owner, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+                    (resource, owner, now, expires),
+                )
+                return Lease(resource, owner, now, expires, generation)
+            expired = str(row["expires_at"]) <= now
+            if not expired and str(row["owner"]) != owner:
+                return None
+            generation = _current_generation(conn, resource)
+            if expired:
+                generation = _bump_generation(conn, resource)
+                if str(row["owner"]) != owner:
+                    conn.execute(
+                        "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'lease.taken_over', NULL, ?)",
+                        (
+                            self.ctx.ids.new("ev"),
+                            now,
+                            canonical_json({"resource": resource, "from": str(row["owner"]), "to": owner}),
+                        ),
+                    )
+            conn.execute(
+                "UPDATE leases SET owner = ?, acquired_at = ?, expires_at = ? WHERE resource = ?",
+                (owner, now, expires, resource),
+            )
+            return Lease(resource, owner, now, expires, generation)
+
+    def renew_fenced(self, token: Lease, *, ttl_s: float = LEASE_TTL_S) -> bool:
+        now = utc_iso(self.ctx.clock.now())
+        expires = utc_iso(self.ctx.clock.now() + timedelta(seconds=ttl_s))
+        with self.ctx.db.tx() as conn:
+            if not _token_current(conn, token, now):
+                return False
+            conn.execute(
+                "UPDATE leases SET expires_at = ? WHERE resource = ? AND owner = ?",
+                (expires, token.resource, token.owner),
+            )
+            return True
+
+    def release_fenced(self, token: Lease) -> bool:
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            if not _token_current(conn, token, now):
+                return False
+            cur = conn.execute(
+                "DELETE FROM leases WHERE resource = ? AND owner = ?",
+                (token.resource, token.owner),
+            )
+            return cur.rowcount > 0
+
+    def guard(
+        self,
+        resource: str,
+        *,
+        owner: str,
+        generation: int,
+        conn: Any | None = None,
+    ) -> None:
+        def check(active: Any) -> None:
+            now = utc_iso(self.ctx.clock.now())
+            token = Lease(resource, owner, "", now, generation)
+            row = active.execute(
+                "SELECT owner, expires_at FROM leases WHERE resource = ?",
+                (resource,),
+            ).fetchone()
+            current = _current_generation(active, resource)
+            if (
+                row is None
+                or str(row["owner"]) != owner
+                or current != generation
+                or str(row["expires_at"]) <= now
+            ):
+                raise FactoryError(
+                    "LEASE_LOST",
+                    "租约已丢失",
+                    resource=resource,
+                    owner=owner,
+                    generation=generation,
+                )
+            if token.generation != generation:
+                raise FactoryError(
+                    "LEASE_LOST",
+                    "租约已丢失",
+                    resource=resource,
+                    owner=owner,
+                    generation=generation,
+                )
+
+        if conn is not None:
+            check(conn)
+            return
+        with self.ctx.db.tx() as active:
+            check(active)
+
     def holder(self, resource: str) -> Lease | None:
         rows = self.ctx.db.query(
             "SELECT resource, owner, acquired_at, expires_at FROM leases WHERE resource = ?",
@@ -88,7 +227,20 @@ class LeaseStore:
         if not rows:
             return None
         row = rows[0]
-        return Lease(str(row["resource"]), str(row["owner"]), str(row["acquired_at"]), str(row["expires_at"]))
+        generation = 0
+        gens = self.ctx.db.query(
+            "SELECT generation FROM lease_generations WHERE resource = ?",
+            (resource,),
+        )
+        if gens:
+            generation = int(gens[0]["generation"])
+        return Lease(
+            str(row["resource"]),
+            str(row["owner"]),
+            str(row["acquired_at"]),
+            str(row["expires_at"]),
+            generation,
+        )
 
     def valid(self, resource: str) -> Lease | None:
         found = self.holder(resource)
@@ -113,6 +265,7 @@ class LeaseKeeper:
         self.resource = resource
         self.owner = owner
         self.ttl_s = ttl_s
+        self.token: Lease | None = None
         self.lost = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -132,7 +285,11 @@ class LeaseKeeper:
             if self._stop.wait(self.ttl_s / 3):
                 return
             try:
-                ok = self.store.renew(self.resource, owner=self.owner, ttl_s=self.ttl_s)
+                token = self.token
+                if token is not None:
+                    ok = self.store.renew_fenced(token, ttl_s=self.ttl_s)
+                else:
+                    ok = self.store.renew(self.resource, owner=self.owner, ttl_s=self.ttl_s)
             except Exception:
                 logging.getLogger("mao").error("租约续约失败 resource=%s", self.resource)
                 self.lost.set()

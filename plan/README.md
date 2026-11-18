@@ -178,6 +178,19 @@ tasks:
 | `timeout` | 秒 | 900 |
 | `slow` | `check --fast` 时跳过 | false |
 | `env` | 额外的环境变量，例如 `{MAO_REQUIRE_DOCKER: "1"}` | 无 |
+| `parallel_group` | 并行组名称；只有同组且资源不冲突的离线检查才会并行 | 无（串行） |
+| `exclusive_resources` | 互斥资源名称列表；共享工作区、状态、端口、数据库、Docker 或上游时必须声明 | `workspace`, `state` |
+| `cacheable` | 是否允许开发恢复模式缓存成功结果；必须与 `live: false` 同时满足 | false |
+| `cache_inputs` | 该检查额外依赖的文件 glob 或 `env:NAME`，参与输入指纹 | 无 |
+| `live` | 是否涉及真实模型、Docker、机器资格、预算或 live evidence | false |
+| `requires` | 本任务内必须先通过的检查项 id | 无 |
+
+调度规则：默认串行、未声明的检查不可缓存。只有 `live: false`、明确声明
+`parallel_group` 且 `exclusive_resources` 不冲突的检查可以由 `accept --jobs N`
+并行；每个并行分片会获得独立临时目录。`live` 检查、模型调用、Docker/机器资格、预算凭据、
+operability witness 和 live evidence 完整性不得缓存。正式 M17 阶段门仍会执行完整规范集合，
+包括 live witness、operability witness、all-known-issues 和一次全量 `pytest tests`；任务级验收
+只运行该任务的精确节点，避免重复执行全量回归。
 
 ### 7.2 `harness pytest` 的输出
 

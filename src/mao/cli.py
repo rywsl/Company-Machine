@@ -3,99 +3,71 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 from typing import Any
 
 import mao
-from mao.commands import (
-    agent,
-    approval,
-    asset,
-    audit,
-    autonomy,
-    backend,
-    backup,
-    bean,
-    cache,
-    changeset,
-    check,
-    console,
-    contract,
-    drift,
-    egress,
-    epoch,
-    foreman,
-    gateway,
-    gc,
-    governance,
-    image,
-    inbox,
-    instance,
-    job,
-    knowledge,
-    line,
-    maintain,
-    mcp,
-    package,
-    receipt,
-    schedule,
-    secret,
-    serve,
-    source,
-    status,
-    talk,
-    trigger,
-)
 from mao.commands.common import GLOBAL, GLOBAL_DEFAULTS, report_error
 from mao.errors import FactoryError
 
-_REGISTRARS = (
-    check.register,
-    bean.register,
-    job.register,
-    line.register,
-    receipt.register,
-    trigger.register,
-    cache.register,
-    agent.register,
-    asset.register,
-    approval.register,
-    autonomy.register,
-    secret.register,
-    source.register,
-    egress.register,
-    console.register,
-    contract.register,
-    schedule.register,
-    epoch.register,
-    changeset.register,
-    governance.register,
-    image.register,
-    inbox.register,
-    knowledge.register,
-    instance.register,
-    audit.register,
-    drift.register,
-    foreman.register,
-    maintain.register,
-    gateway.register,
-    gc.register,
-    backend.register,
-    backup.register,
-    mcp.register,
-    package.register,
-    serve.register,
-    status.register,
-    talk.register,
+_COMMAND_MODULES = (
+    "access",
+    "check",
+    "bean",
+    "job",
+    "line",
+    "receipt",
+    "trigger",
+    "cache",
+    "agent",
+    "asset",
+    "approval",
+    "autonomy",
+    "secret",
+    "source",
+    "egress",
+    "console",
+    "contract",
+    "deployment",
+    "schedule",
+    "epoch",
+    "changeset",
+    "governance",
+    "guide",
+    "image",
+    "inbox",
+    "knowledge",
+    "objective",
+    "instance",
+    "audit",
+    "drift",
+    "foreman",
+    "maintain",
+    "gateway",
+    "gc",
+    "backend",
+    "backup",
+    "mcp",
+    "package",
+    "qualification",
+    "serve",
+    "status",
+    "talk",
 )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def _registrars(commands: tuple[str, ...] | None = None) -> tuple[Any, ...]:
+    names = _COMMAND_MODULES if commands is None else commands
+    return tuple(importlib.import_module(f"mao.commands.{name}").register for name in names)
+
+
+def build_parser(commands: tuple[str, ...] | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="factory", parents=[GLOBAL])
     parser.set_defaults(**GLOBAL_DEFAULTS)
     parser.add_argument("--version", action="version", version=mao.__version__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for register in _REGISTRARS:
+    for register in _registrars(commands):
         register(sub)
     return parser
 
@@ -129,7 +101,16 @@ def main(argv: list[str] | None = None) -> int:
         code = exc.code
         return 0 if code is None else int(code)
     try:
-        args = build_parser().parse_args(rest)
+        command = next((item for item in rest if item in _COMMAND_MODULES), None)
+        # `serve` is the resident path and only needs its own parser.  Keeping
+        # the other command modules lazy removes a large import cost before the
+        # daemon can acquire its lease and wake agents.  The public parser with
+        # no argument still registers every command for help and library users.
+        # Cross-process job execution also only needs the job parser.  Loading
+        # every command module in each short-lived worker adds enough startup
+        # latency to miss the resident pump's first observation window.
+        selected = (command,) if command in {"job", "serve"} else None
+        args = build_parser(selected).parse_args(rest)
     except SystemExit as exc:
         code = exc.code
         return 0 if code is None else int(code)

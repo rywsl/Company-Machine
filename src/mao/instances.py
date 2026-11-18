@@ -152,11 +152,18 @@ class Lease:
     sandbox: Any
     job_env: Mapping[str, str]
     host_dir: Path
+    token: Any = None
+    guard: Any = None
 
     def ctl_dir(self) -> Path:
         return self.host_dir / "job" / "ctl"
 
+    def _check(self) -> None:
+        if self.guard is not None:
+            self.guard()
+
     def stage_in(self, attempt_dir: Path) -> None:
+        self._check()
         attempt = Path(attempt_dir)
         _copy_tree(attempt / "in", self.host_dir / "job" / "in", replace=True)
         _copy_tree(attempt / "ctl", self.host_dir / "job" / "ctl", replace=True)
@@ -166,24 +173,36 @@ class Lease:
             bind(attempt / "ctl")
 
     def stage_out(self, attempt_dir: Path) -> None:
+        self._check()
         attempt = Path(attempt_dir)
-        _copy_tree(self.host_dir / "job" / "out", attempt / "out", replace=True)
+        source = getattr(self.sandbox, "output_root", None) or (self.host_dir / "job" / "out")
+        _copy_tree(source, attempt / "out", replace=True)
         _copy_tree(self.host_dir / "job" / "ctl", attempt / "ctl", replace=False)
 
 
 class _JobSandbox:
     """exec 时并入 job_env（调用方的键优先），并把 ctl 新文件同步回 attempt。"""
 
-    def __init__(self, inner: Any, job_env: Mapping[str, str], job_ctl: Path) -> None:
+    def __init__(self, inner: Any, job_env: Mapping[str, str], job_ctl: Path, guard: Any = None) -> None:
         self._inner = inner
         self._job_env = {str(key): str(value) for key, value in job_env.items()}
         self._job_ctl = job_ctl
+        self._guard = guard
         self._attempt_ctl: Path | None = None
         self.spec = inner.spec
         self.name = inner.name
 
     def bind_attempt(self, ctl: Path) -> None:
         self._attempt_ctl = Path(ctl)
+
+    def bind_job_output(self, job_id: str) -> None:
+        bind = getattr(self._inner, "bind_job_output", None)
+        if callable(bind):
+            bind(job_id)
+
+    @property
+    def output_root(self) -> Path | None:
+        return getattr(self._inner, "output_root", None)
 
     def exec(
         self,
@@ -195,6 +214,8 @@ class _JobSandbox:
         env: Mapping[str, str] | None = None,
         workdir: str | None = None,
     ) -> Any:
+        if self._guard is not None:
+            self._guard()
         merged = dict(self._job_env)
         if env:
             merged.update({str(key): str(value) for key, value in env.items()})
@@ -287,8 +308,14 @@ class Instances:
                 raise
 
     def release(self, lease: Lease, *, destroy: bool = False) -> None:
+        if lease.guard is not None:
+            lease.guard()
         try:
             self._release(lease, destroy=destroy)
+            if lease.token is not None:
+                from mao.durable import LeaseStore
+
+                LeaseStore(self.ctx).release_fenced(lease.token)
         except Exception:
             _LOG.exception("释放实例失败")
 
@@ -797,8 +824,27 @@ class Instances:
         self._event("instance.leased", {"instance": instance_id, "job": job.id}, job_id=job.id)
         record = self._load(instance_id)
         job_env = {str(key): str(value) for key, value in spec.env.items()}
-        wrapped = _JobSandbox(sandbox, job_env, host / "job" / "ctl")
-        return Lease(record, wrapped, job_env, host)
+        from mao.durable import LeaseStore
+
+        store = LeaseStore(self.ctx)
+        token = store.acquire_fenced(
+            f"instance:{instance_id}",
+            owner=f"job:{job.id}:{job.attempt}",
+        )
+        if token is None:
+            raise FactoryError(
+                "LEASE_LOST",
+                "实例租约已被占用",
+                resource=f"instance:{instance_id}",
+                owner=f"job:{job.id}:{job.attempt}",
+                generation=0,
+            )
+
+        def _guard() -> None:
+            store.guard(token.resource, owner=token.owner, generation=token.generation)
+
+        wrapped = _JobSandbox(sandbox, job_env, host / "job" / "ctl", guard=_guard)
+        return Lease(record, wrapped, job_env, host, token=token, guard=_guard)
 
     def _release(self, lease: Lease, *, destroy: bool) -> None:
         instance_id = lease.instance.id

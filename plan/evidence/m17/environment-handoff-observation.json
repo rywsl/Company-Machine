@@ -1,0 +1,128 @@
+{
+  "schema_version": "mao-m17-environment-handoff-observation-1",
+  "observed_at": "2026-11-17T10:23:26Z",
+  "scope": "host_resource_handoff_only",
+  "active_checkout": "D:/Desktop/machine_agent_org",
+  "inputs": {
+    "private_env_file": ".env.m17.local",
+    "configured_name_count": 37,
+    "supplied_credential_groups": 4,
+    "budget_authorization_usd": 20,
+    "foreman_model": "gpt-6.1-sol",
+    "operator_model": "gpt-6.1-sol",
+    "secrets_in_artifact": false
+  },
+  "grok_observation": {
+    "session_id": "01a1e529-feb0-79e0-944d-e5860c532877",
+    "source_refs": [
+      "$GROK_HOME/sessions/<encoded-project>/<session-id>/updates.jsonl",
+      "$GROK_HOME/sessions/<encoded-project>/<session-id>/goal/plan.md"
+    ],
+    "window_start_utc": "2026-11-17T10:08:33Z",
+    "visible_tool_calls": 18,
+    "process_user_machine_env_rechecks": 6,
+    "env_file_or_loader_calls": 0,
+    "task_next_calls": 0,
+    "M17_13_references_in_tool_inputs": 0,
+    "old_goal_plan": {
+      "contains_M17_13": false,
+      "contains_env_file": false,
+      "contracts_min_passed": 77
+    },
+    "recheck_times_utc": [
+      "2026-11-17T10:10:18Z",
+      "2026-11-17T10:11:02Z",
+      "2026-11-17T10:11:29Z",
+      "2026-11-17T10:12:11Z",
+      "2026-11-17T10:12:44Z",
+      "2026-11-17T10:13:31Z"
+    ],
+    "thought_content_read_or_exported": false,
+    "agent_goal_state_edited": false
+  },
+  "clean_parent_reproduction": {
+    "platform": "Windows",
+    "parent_local_inputs_removed": 37,
+    "parent_OPENAI_API_KEY_unset": true,
+    "parent_XAI_API_KEY_unset": true,
+    "parent_MAO_BUDGET_USD_unset": true,
+    "commands": [
+      {
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--env-file",
+          ".env.m17.local",
+          "python",
+          ".factory/m17-local/provider_preflight.py",
+          "--from-process",
+          "--network"
+        ],
+        "exit": 0,
+        "observed": {
+          "status": "preflight_ready",
+          "missing_required": [],
+          "legacy_aliases_match": true,
+          "text_models_http": 200,
+          "grok_models_http": 200,
+          "image_models_http": 200,
+          "video_workflow_http": 200,
+          "video_auth_query_http": 200,
+          "video_unauth_query_http": 401,
+          "generation_submitted": false
+        }
+      },
+      {
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--env-file",
+          ".env.m17.local",
+          "python",
+          "tools/harness.py",
+          "task",
+          "next"
+        ],
+        "exit": 0,
+        "next_task": "M17-13"
+      }
+    ],
+    "dependency_installation_performed": false,
+    "user_or_machine_environment_written": false
+  },
+  "implementation_observed": {
+    "M17_13_shared_helper_exists": false,
+    "M17_13_readiness_test_exists": false,
+    "M17_08_status": "blocked",
+    "live_placeholders": [
+      {
+        "path": "tests/system/test_m17_08_operability_live.py",
+        "unconditional_missing_product_line": 44,
+        "fixed_raise_line": 66
+      },
+      {
+        "path": "tests/system/test_m17_08_continuity_e2e.py",
+        "unconditional_missing_product_line": 673,
+        "fixed_raise_line": 691
+      }
+    ]
+  },
+  "conclusions": [
+    "The configured private inputs were not loaded by the old Grok command path. Global absence alone does not show missing local resources.",
+    "The saved Grok goal plan is stale. Current task next returns independent M17-13 and the current contract inventory requires at least 81 cases.",
+    "Providing env inputs does not implement the witness executor or qualify the four historical products."
+  ],
+  "not_proven": [
+    "paid_generation",
+    "model_through_factory_proxy",
+    "native_runtime_live_qualification",
+    "historical_product_live_qualification",
+    "C10",
+    "four_cell_live_witness",
+    "resident_autonomy",
+    "M17_acceptance"
+  ],
+  "task_state_modified": false
+}

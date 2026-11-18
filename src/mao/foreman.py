@@ -89,13 +89,22 @@ class WakeQueue:
         rows = self.ctx.db.query(sql, tuple(args))
         if not rows:
             return None
+        wake_id = str(rows[0]["id"])
         now = utc_iso(self.ctx.clock.now())
         with self.ctx.db.tx() as conn:
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE wakes SET status = 'taken', by = ?, updated_at = ? WHERE id = ? AND status = 'open'",
-                (by, now, rows[0]["id"]),
+                (by, now, wake_id),
             )
-        return _wake(self.ctx.db.query("SELECT * FROM wakes WHERE id = ?", (rows[0]["id"],))[0])
+            changed = cur.rowcount
+            if changed < 0:
+                changed = int(conn.execute("SELECT changes()").fetchone()[0])
+            if changed != 1:
+                return None
+        found = self.ctx.db.query("SELECT * FROM wakes WHERE id = ?", (wake_id,))
+        if not found or str(found[0]["status"]) != "taken" or str(found[0]["by"] or "") != by:
+            return None
+        return _wake(found[0])
 
     def done(self, wake_id: str, *, by: str) -> Wake:
         rows = self.ctx.db.query("SELECT * FROM wakes WHERE id = ?", (wake_id,))
@@ -261,10 +270,67 @@ class ForemanQuery:
     def invariant_report(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.ctx.db.query("SELECT * FROM audit_findings")]
 
-    def metrics_query(self, station: str, metric: str) -> dict[str, Any]:
+    def metrics_query(
+        self,
+        station: str,
+        metric: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> dict[str, Any]:
         if metric not in {"success_rate", "gate_reject_rate", "cost_per_run_usd"}:
             raise FactoryError("QUERY_DENIED", "不认识的指标", reason="metric", key=metric)
-        return {"station": station, "metric": metric}
+        snapshot = self.epochs.materialize(self.epochs.current())
+        station_key = station if station.startswith("Station:") else snapshot.key("Station", station)
+        rows = self.ctx.db.query(
+            "SELECT id, state, plan, spent_usd, created_at FROM runs "
+            "WHERE state IN ('SUCCEEDED', 'FAILED', 'CANCELLED') ORDER BY id"
+        )
+        matched = []
+        for row in rows:
+            created = str(row["created_at"])
+            if since is not None and created < since:
+                continue
+            if until is not None and created >= until:
+                continue
+            plan = json.loads(row["plan"])
+            stations = {
+                str(node.get("station")) for node in (plan.get("nodes") or []) if isinstance(node, dict)
+            }
+            if station_key not in stations:
+                continue
+            matched.append(row)
+        count = len(matched)
+        succeeded = sum(1 for row in matched if str(row["state"]) == "SUCCEEDED")
+        seq = self.ctx.db.query("SELECT COALESCE(MAX(seq), 0) AS n FROM events")
+        as_of = int(seq[0]["n"]) if seq else 0
+        value: float | None
+        if count == 0:
+            value = None
+        elif metric == "success_rate":
+            value = succeeded / count
+        elif metric == "cost_per_run_usd":
+            value = sum(float(row["spent_usd"] or 0) for row in matched) / count
+        else:
+            rejected = 0
+            for row in matched:
+                hits = self.ctx.db.query(
+                    "SELECT 1 FROM events WHERE run_id = ? AND kind LIKE 'gate%' AND data LIKE '%reject%' LIMIT 1",
+                    (row["id"],),
+                )
+                if hits:
+                    rejected += 1
+            value = rejected / count
+        return {
+            "station": station_key,
+            "metric": metric,
+            "value": value,
+            "sample_count": count,
+            "since": since,
+            "until": until,
+            "run_ids": [str(row["id"]) for row in matched],
+            "as_of_seq": as_of,
+        }
 
     def approval_list(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.ctx.db.query("SELECT id, job_id, status FROM approvals")]

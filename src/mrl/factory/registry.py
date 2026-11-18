@@ -107,11 +107,17 @@ def is_constitution(rel: str) -> bool:
 
 def spec_files(root: Path) -> list[tuple[Path, str]]:
     seen: dict[Path, str] = {}
-    for pattern, kind in LAYOUT:
-        for ext in (".yaml", ".yml"):
-            for p in root.glob(pattern.replace(".yaml", ext)):
-                if p.is_file():
-                    seen.setdefault(p, kind)
+    # Walk each YAML extension once and classify the relative path.  Repeating
+    # a separate glob for every layout pattern multiplies directory scans and
+    # is very slow on mounted Windows/WSL worktrees during resident startup.
+    for ext in ("*.yaml", "*.yml"):
+        for p in root.rglob(ext):
+            if not p.is_file():
+                continue
+            rel = p.relative_to(root).as_posix()
+            kind = layout_kind(rel)
+            if kind is not None:
+                seen.setdefault(p, kind)
     return sorted(seen.items(), key=lambda kv: kv[0].relative_to(root).as_posix())
 
 

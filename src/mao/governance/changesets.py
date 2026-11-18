@@ -288,12 +288,13 @@ class ChangePipeline:
 
     def advance(self, cs_id: str) -> ChangeSet:
         current = self.get(cs_id)
-        if current.state != "draft":
+        if current.state not in ("draft", "verifying"):
             from mao.governance.rollout import advance_open
 
             return advance_open(self, current)
-        self._write_state(current, "verifying", None, {})
-        current = self.get(cs_id)
+        if current.state == "draft":
+            self._write_state(current, "verifying", None, {})
+            current = self.get(cs_id)
         try:
             candidate = self.epochs.materialize(current.commit)
             missing = [item.to_json() for item in candidate.result.diags if item.code == "E-NO-CONVERTER"]

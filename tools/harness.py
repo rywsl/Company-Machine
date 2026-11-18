@@ -10,7 +10,10 @@
     uv run python tools/harness.py task start M1-01       标记为进行中（依赖必须都已完成）
     uv run python tools/harness.py task block M1-01 --reason "..."
     uv run python tools/harness.py accept M1-01           运行任务的验收项，全部通过才标记为完成
+    uv run python tools/harness.py accept M1-01 --only check-id  开发诊断单项检查（不完成任务）
+    uv run python tools/harness.py accept M1-01 --resume       复用未变化的离线成功项，live 仍重跑
     uv run python tools/harness.py gate M1                运行阶段门（任务全部完成 + 门检查全部通过）
+    uv run python tools/harness.py review audit M1-01      只读分析越界改动与 reviewer 状态
     uv run python tools/harness.py check [--fast]         提交前检查
     uv run python tools/harness.py scenario list | run NAME | run --all
     uv run python tools/harness.py lock --verify          校验受保护文件与一致性用例（只增不改）
@@ -24,15 +27,20 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as dt
 import hashlib
 import json
 import os
+import platform
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,6 +60,10 @@ STATE_FILE = PLAN / "state.json"
 LOCK_FILE = PLAN / "protected.lock"
 SCENARIO_DIR = PLAN / "scenarios"
 CONFORMANCE_DIR = ROOT / "spec" / "mrl" / "conformance"
+FACTORY_DIR = ROOT / ".factory"
+HARNESS_RUNS_DIR = FACTORY_DIR / "harness-runs"
+HARNESS_CACHE_DIR = FACTORY_DIR / "harness-cache"
+HARNESS_REVIEWS_DIR = FACTORY_DIR / "reviews"
 
 # 受保护的文件（lock 文件中的 patterns 优先；这里是 lock 文件不存在时的默认值）。
 # 匹配语义与 pathlib.Path.glob 相同；tools/hooks/protect_paths.py 用同样的语义拦截编辑。
@@ -137,9 +149,37 @@ def load_state() -> dict[str, Any]:
     return data
 
 
+def _atomic_write_text(path: Path, text: str, retries: int = 5) -> None:
+    """用短暂退避完成 Windows 文件替换，避免 WinError 5 迫使整轮验收重跑。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    last: OSError | None = None
+    for attempt in range(retries):
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+            return
+        except OSError as exc:
+            last = exc
+            if not (os.name == "nt" and getattr(exc, "winerror", None) in (5, 32)):
+                raise
+            time.sleep(0.05 * (2**attempt))
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                # 下一次替换仍可能成功；最终失败时保留原始异常。
+                pass
+    if last is not None:
+        raise last
+
+
 def save_state(state: dict[str, Any]) -> None:
-    STATE_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    _atomic_write_text(
+        STATE_FILE,
+        json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
 
 
@@ -155,6 +195,12 @@ class Check:
     timeout: int = 900
     slow: bool = False
     env: dict[str, str] = field(default_factory=dict)
+    parallel_group: str | None = None
+    exclusive_resources: tuple[str, ...] = ("workspace", "state")
+    cacheable: bool = False
+    cache_inputs: tuple[str, ...] = ()
+    live: bool = False
+    requires: tuple[str, ...] = ()
 
     @classmethod
     def parse(cls, d: Any, where: str, index: int) -> Check:
@@ -162,9 +208,40 @@ class Check:
             d = {"run": d}
         if not isinstance(d, dict) or "run" not in d:
             raise UsageError(f"{where} 的第 {index + 1} 个检查项必须有 run")
-        unknown = set(d) - {"id", "run", "expect_exit", "assert", "timeout", "slow", "env"}
+        unknown = set(d) - {
+            "id",
+            "run",
+            "expect_exit",
+            "assert",
+            "timeout",
+            "slow",
+            "env",
+            "parallel_group",
+            "exclusive_resources",
+            "cacheable",
+            "cache_inputs",
+            "live",
+            "requires",
+        }
         if unknown:
             raise UsageError(f"{where} 的检查项有未知字段：{', '.join(sorted(unknown))}")
+        live = bool(d.get("live", False))
+        cacheable = bool(d.get("cacheable", False))
+        if live and cacheable:
+            raise UsageError(
+                f"{where} 的检查项 {d.get('id') or index + 1} 不能同时 live=true 和 cacheable=true"
+            )
+        resources = d.get("exclusive_resources", ("workspace", "state"))
+        if resources is None:
+            resources = ()
+        if isinstance(resources, str):
+            resources = (resources,)
+        cache_inputs = d.get("cache_inputs", ()) or ()
+        requires = d.get("requires", ()) or ()
+        if isinstance(cache_inputs, str):
+            cache_inputs = (cache_inputs,)
+        if isinstance(requires, str):
+            requires = (requires,)
         return cls(
             str(d.get("id") or f"check-{index + 1}"),
             str(d["run"]),
@@ -173,6 +250,12 @@ class Check:
             int(d.get("timeout", 900)),
             bool(d.get("slow", False)),
             {str(k): str(v) for k, v in (d.get("env") or {}).items()},
+            str(d["parallel_group"]) if d.get("parallel_group") else None,
+            tuple(str(x) for x in resources),
+            cacheable,
+            tuple(str(x) for x in cache_inputs),
+            live,
+            tuple(str(x) for x in requires),
         )
 
 
@@ -239,6 +322,15 @@ class Outcome:
     seconds: float
     detail: str
     stdout: str = ""
+    stderr: str = ""
+    executed: bool = True
+    reused: bool = False
+    fingerprint: str = ""
+    temp_dir: str = ""
+    resources: tuple[str, ...] = ()
+    cleanup: dict[str, Any] = field(default_factory=dict)
+    blocker: str | None = None
+    evidence_path: str = ""
 
     def evidence(self) -> dict[str, Any]:
         tail = "\n".join((self.stdout or self.detail).strip().splitlines()[-12:])
@@ -249,7 +341,16 @@ class Outcome:
             "exit": self.exit,
             "seconds": round(self.seconds, 1),
             "stdout_sha256": hashlib.sha256(self.stdout.encode("utf-8")).hexdigest(),
+            "stderr_sha256": hashlib.sha256(self.stderr.encode("utf-8")).hexdigest(),
             "tail": tail,
+            "executed": self.executed,
+            "reused": self.reused,
+            "fingerprint": self.fingerprint,
+            "temp_dir": self.temp_dir,
+            "exclusive_resources": list(self.resources),
+            "cleanup": self.cleanup,
+            "blocker": self.blocker,
+            "evidence_path": self.evidence_path,
         }
 
 
@@ -269,35 +370,275 @@ def _assert(expr: str, stdout: str, code: int) -> tuple[bool, str]:
     return value is True, "" if value is True else f"断言不成立：{expr}"
 
 
-def run_check(check: Check) -> Outcome:
+_LAST_RUN_MANIFEST: Path | None = None
+
+
+def _safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "check"
+
+
+def _command_version(argv: list[str]) -> str:
+    try:
+        p = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=8)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unavailable"
+    return (p.stdout or p.stderr).strip().splitlines()[0] if (p.stdout or p.stderr).strip() else "unknown"
+
+
+def _environment_fingerprint(check: Check) -> dict[str, Any]:
+    names = set(check.env)
+    names.update({"PYTHONIOENCODING", "PYTHONUTF8", "MAO_HARNESS_TEMP_DIR"})
+    names.update(item[4:] for item in check.cache_inputs if item.startswith("env:") and item[4:])
+    values = {}
+    for name in sorted(names):
+        value = check.env.get(name, os.environ.get(name, ""))
+        values[name] = {
+            "set": bool(value),
+            "sha256": hashlib.sha256(value.encode("utf-8")).hexdigest() if value else "",
+        }
+    return values
+
+
+def _input_files_for_fingerprint(check: Check, *, include_cache_inputs: bool = True) -> dict[str, str]:
+    files: set[Path] = set()
+    for base in (ROOT / "spec", ROOT / "plan", ROOT / "tests"):
+        if not base.exists():
+            continue
+        for p in base.rglob("*"):
+            if p.is_file() and (p.suffix.lower() in {".py", ".yaml", ".yml", ".md", ".json", ".toml"}):
+                files.add(p)
+    for item in check.cache_inputs if include_cache_inputs else ():
+        if item.startswith("env:"):
+            continue
+        candidate = ROOT / item
+        if any(ch in item for ch in "*?["):
+            files.update(p for p in ROOT.glob(item) if p.is_file())
+        elif candidate.is_file():
+            files.add(candidate)
+    result = {}
+    for p in sorted(files):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(ROOT).as_posix()
+        # state.json is a harness output. Including it would invalidate every
+        # cache entry immediately after accept writes the latest run evidence.
+        if rel == "plan/state.json":
+            continue
+        result[rel] = _digest_text(p)
+    return result
+
+
+def _fingerprint_base() -> dict[str, Any]:
+    changed = [rel for rel in _changed_files() if rel != "plan/state.json"]
+    return {
+        "source": {
+            "commit": _git("rev-parse", "HEAD"),
+            "changed_digests": {rel: _file_digest(rel) for rel in changed},
+        },
+        "inputs": _input_files_for_fingerprint(Check(id="__base__", run=""), include_cache_inputs=False),
+        "tools": {
+            "python": sys.version,
+            "uv": _command_version(["uv", "--version"]),
+            "pytest": _command_version([sys.executable, "-m", "pytest", "--version"]),
+        },
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+    }
+
+
+def _cache_fingerprint(check: Check, base: dict[str, Any] | None = None) -> str:
+    payload = {
+        **(base or _fingerprint_base()),
+        "environment": _environment_fingerprint(check),
+        "cache_inputs": _input_files_for_fingerprint(check, include_cache_inputs=True),
+        "check": {
+            "id": check.id,
+            "run": check.run,
+            "expect_exit": check.expect_exit,
+            "assert": check.assertion,
+            "timeout": check.timeout,
+            "cache_inputs": list(check.cache_inputs),
+        },
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _evidence_path(check: Check) -> str:
+    candidates = []
+    for token in shlex.split(check.run):
+        p = ROOT / token
+        if p.exists() and (p.is_file() or p.suffix in {".json", ".yaml", ".yml"}):
+            candidates.append(p.relative_to(ROOT).as_posix())
+    return ",".join(candidates[:4])
+
+
+def _cache_allowed(check: Check) -> bool:
+    if not check.cacheable or check.live:
+        return False
+    # 保守兜底：即使任务作者误标元数据，live/资格/模型/证据语义也不能进入缓存。
+    forbidden = (
+        "live",
+        "docker",
+        "model",
+        "qualification",
+        "runtime.command",
+        "verify_live",
+        "operability",
+        "budget",
+        "credential",
+    )
+    return not any(word in check.run.lower() for word in forbidden)
+
+
+def _terminate_process_tree(pid: int | None) -> dict[str, Any]:
+    if not pid:
+        return {"attempted": False, "ok": True, "method": "none"}
+    if os.name == "nt":
+        try:
+            p = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=10,
+            )
+            # 128 means the root exited between communicate() and cleanup; no live tree remains.
+            return {
+                "attempted": True,
+                "ok": p.returncode in (0, 128),
+                "method": "taskkill",
+                "exit": p.returncode,
+            }
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"attempted": True, "ok": False, "method": "taskkill", "error": str(exc)}
+    try:
+        os.killpg(pid, signal.SIGTERM)
+        return {"attempted": True, "ok": True, "method": "killpg"}
+    except ProcessLookupError:
+        return {"attempted": True, "ok": True, "method": "killpg", "already_exited": True}
+    except OSError as exc:
+        return {"attempted": True, "ok": False, "method": "killpg", "error": str(exc)}
+
+
+def run_check(
+    check: Check,
+    *,
+    temp_dir: Path | None = None,
+    fingerprint: str = "",
+) -> Outcome:
     argv = shlex.split(check.run)
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", **check.env}
-    start = time.monotonic()
-    try:
-        p = subprocess.run(
-            argv,
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=check.timeout,
-            env=env,
+    if temp_dir is not None:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        env.update(
+            {
+                "MAO_HARNESS_TEMP_DIR": str(temp_dir),
+                "MAO_HARNESS_CHECK_ID": check.id,
+                "TMPDIR": str(temp_dir),
+                "TEMP": str(temp_dir),
+                "TMP": str(temp_dir),
+            }
         )
+    start = time.monotonic()
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
+    kwargs: dict[str, Any] = {
+        "cwd": ROOT,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "env": env,
+        "creationflags": creationflags,
+    }
+    if os.name != "nt":
+        kwargs["start_new_session"] = True
+    try:
+        p = subprocess.Popen(argv, **kwargs)
     except FileNotFoundError:
-        return Outcome(check, False, None, time.monotonic() - start, f"命令不存在：{argv[0]}")
-    except subprocess.TimeoutExpired:
-        return Outcome(check, False, None, time.monotonic() - start, f"超时（{check.timeout} 秒）")
+        return Outcome(
+            check,
+            False,
+            None,
+            time.monotonic() - start,
+            f"命令不存在：{argv[0] if argv else check.run}",
+            fingerprint=fingerprint,
+            temp_dir=str(temp_dir or ""),
+            resources=check.exclusive_resources,
+            evidence_path=_evidence_path(check),
+        )
+    except OSError as exc:
+        return Outcome(
+            check,
+            False,
+            None,
+            time.monotonic() - start,
+            f"进程启动失败：{exc}",
+            fingerprint=fingerprint,
+            temp_dir=str(temp_dir or ""),
+            resources=check.exclusive_resources,
+            blocker="process_start",
+            evidence_path=_evidence_path(check),
+        )
+    cleanup = {"attempted": False, "ok": True, "pid": p.pid}
+    try:
+        try:
+            stdout, stderr = p.communicate(timeout=check.timeout)
+        except subprocess.TimeoutExpired:
+            cleanup = _terminate_process_tree(p.pid)
+            try:
+                stdout, stderr = p.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                stdout, stderr = p.communicate()
+            return Outcome(
+                check,
+                False,
+                None,
+                time.monotonic() - start,
+                f"超时（{check.timeout} 秒）",
+                stdout or "",
+                stderr or "",
+                fingerprint=fingerprint,
+                temp_dir=str(temp_dir or ""),
+                resources=check.exclusive_resources,
+                cleanup=cleanup,
+                blocker="timeout" if cleanup.get("ok") else "process_cleanup",
+                evidence_path=_evidence_path(check),
+            )
+    finally:
+        if p.poll() is None:
+            cleanup = _terminate_process_tree(p.pid)
     seconds = time.monotonic() - start
-    out = p.stdout + (("\n" + p.stderr) if p.stderr.strip() else "")
+    stdout, stderr = stdout or "", stderr or ""
+    combined = stdout + (("\n" + stderr) if stderr.strip() else "")
+    common = {
+        "fingerprint": fingerprint,
+        "temp_dir": str(temp_dir or ""),
+        "resources": check.exclusive_resources,
+        "cleanup": cleanup,
+        "blocker": "process_cleanup" if not cleanup.get("ok", True) else None,
+        "evidence_path": _evidence_path(check),
+    }
     if p.returncode != check.expect_exit:
         return Outcome(
-            check, False, p.returncode, seconds, f"退出码 {p.returncode}，期望 {check.expect_exit}", out
+            check,
+            False,
+            p.returncode,
+            seconds,
+            f"退出码 {p.returncode}，期望 {check.expect_exit}",
+            combined,
+            stderr,
+            **common,
         )
     if check.assertion:
-        ok, why = _assert(check.assertion, p.stdout, p.returncode)
-        return Outcome(check, ok, p.returncode, seconds, why, out)
-    return Outcome(check, True, p.returncode, seconds, "", out)
+        ok, why = _assert(check.assertion, stdout, p.returncode)
+        return Outcome(check, ok, p.returncode, seconds, why, combined, stderr, **common)
+    return Outcome(check, True, p.returncode, seconds, "", combined, stderr, **common)
 
 
 def _success_note(stdout: str) -> str:
@@ -339,22 +680,254 @@ def _success_note(stdout: str) -> str:
     return (" " + " ".join(bits)) if bits else ""
 
 
-def run_checks(checks: list[Check], label: str) -> list[Outcome]:
-    results = []
-    for c in checks:
-        print(f"… {label} {c.id}: {c.run}", flush=True)
-        r = run_check(c)
-        mark = "✔" if r.ok else "✖"
-        note = _success_note(r.stdout or "") if r.ok else ""
-        print(
-            f"{mark} {label} {c.id}（{r.seconds:.1f}s）{('：' + r.detail) if r.detail else ''}{note}",
-            flush=True,
+def _latest_manifest(label: str) -> Path | None:
+    root = HARNESS_RUNS_DIR / _safe_name(label)
+    manifests = list(root.glob("*/manifest.json")) if root.exists() else []
+    return max(manifests, key=lambda p: p.stat().st_mtime) if manifests else None
+
+
+def _cache_path(label: str, check: Check, fingerprint: str) -> Path:
+    return HARNESS_CACHE_DIR / _safe_name(label) / _safe_name(check.id) / f"{fingerprint}.json"
+
+
+def _load_reusable(
+    label: str, check: Check, fingerprint: str, previous: dict[str, Any] | None
+) -> Outcome | None:
+    if not previous or not _cache_allowed(check):
+        return None
+    prior = next((x for x in previous.get("checks", []) if x.get("id") == check.id), None)
+    if not prior or not prior.get("ok") or prior.get("executed") is not True:
+        return None
+    if prior.get("fingerprint") != fingerprint:
+        return None
+    path = _cache_path(label, check, fingerprint)
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if cached.get("fingerprint") != fingerprint or cached.get("ok") is not True:
+        return None
+    return Outcome(
+        check,
+        True,
+        cached.get("exit"),
+        0.0,
+        "复用同一输入指纹的离线检查结果",
+        cached.get("stdout_tail", ""),
+        cached.get("stderr_tail", ""),
+        executed=False,
+        reused=True,
+        fingerprint=fingerprint,
+        temp_dir=cached.get("temp_dir", ""),
+        resources=check.exclusive_resources,
+        cleanup={"attempted": False, "ok": True, "reused": True},
+        evidence_path=cached.get("evidence_path", ""),
+    )
+
+
+def _write_cache(label: str, outcome: Outcome) -> None:
+    if not outcome.ok or not _cache_allowed(outcome.check) or not outcome.fingerprint:
+        return
+    path = _cache_path(label, outcome.check, outcome.fingerprint)
+    _atomic_write_text(
+        path,
+        json.dumps(
+            {
+                "schema": 1,
+                "created_at": _now(),
+                "id": outcome.check.id,
+                "run": outcome.check.run,
+                "fingerprint": outcome.fingerprint,
+                "ok": outcome.ok,
+                "exit": outcome.exit,
+                "seconds": round(outcome.seconds, 1),
+                "stdout_sha256": hashlib.sha256(outcome.stdout.encode("utf-8")).hexdigest(),
+                "stderr_sha256": hashlib.sha256(outcome.stderr.encode("utf-8")).hexdigest(),
+                "stdout_tail": "\n".join(outcome.stdout.splitlines()[-12:]),
+                "stderr_tail": "\n".join(outcome.stderr.splitlines()[-12:]),
+                "evidence_path": outcome.evidence_path,
+                "temp_dir": outcome.temp_dir,
+            },
+            ensure_ascii=False,
+            indent=2,
         )
-        if not r.ok:
-            tail = "\n".join((r.stdout or "").strip().splitlines()[-25:])
-            if tail:
-                print("    " + tail.replace("\n", "\n    "))
-        results.append(r)
+        + "\n",
+    )
+
+
+def _parallel_safe(check: Check) -> bool:
+    return bool(check.parallel_group) and not check.live
+
+
+def _requirements_ok(check: Check, results: dict[str, Outcome]) -> bool:
+    return all(results.get(req) is not None and results[req].ok for req in check.requires)
+
+
+def _print_outcome(label: str, outcome: Outcome) -> None:
+    if outcome.reused:
+        mark = "↻"
+    else:
+        mark = "✔" if outcome.ok else "✖"
+    note = _success_note(outcome.stdout or "") if outcome.ok else ""
+    suffix = "（reused）" if outcome.reused else f"（{outcome.seconds:.1f}s）"
+    print(
+        f"{mark} {label} {outcome.check.id}{suffix}{('：' + outcome.detail) if outcome.detail else ''}{note}",
+        flush=True,
+    )
+    if not outcome.ok:
+        tail = "\n".join((outcome.stdout or outcome.stderr or "").strip().splitlines()[-25:])
+        if tail:
+            print("    " + tail.replace("\n", "\n    "))
+
+
+def run_checks(
+    checks: list[Check],
+    label: str,
+    *,
+    only: list[str] | None = None,
+    from_id: str | None = None,
+    fail_fast: bool = False,
+    resume: bool = False,
+    jobs: int = 1,
+) -> list[Outcome]:
+    if jobs < 1:
+        raise UsageError("--jobs 必须是大于 0 的整数")
+    all_ids = [c.id for c in checks]
+    if only and from_id:
+        raise UsageError("--only 与 --from 不能同时使用")
+    if only:
+        unknown = [x for x in only if x not in all_ids]
+        if unknown:
+            raise UsageError(f"检查项不存在：{', '.join(unknown)}")
+        selected = [c for c in checks if c.id in set(only)]
+    elif from_id:
+        if from_id not in all_ids:
+            raise UsageError(f"检查项不存在：{from_id}")
+        selected = checks[all_ids.index(from_id) :]
+    else:
+        selected = list(checks)
+    if not selected:
+        raise UsageError("没有可运行的检查项")
+
+    global _LAST_RUN_MANIFEST
+    run_id = f"{dt.datetime.now(dt.UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:10]}"
+    run_dir = HARNESS_RUNS_DIR / _safe_name(label) / run_id
+    tmp_root = run_dir / "tmp"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = run_dir / "manifest.json"
+    _LAST_RUN_MANIFEST = manifest_path
+    previous_path = _latest_manifest(label)
+    previous: dict[str, Any] | None = None
+    if previous_path and previous_path != manifest_path:
+        try:
+            previous = json.loads(previous_path.read_text(encoding="utf-8"))
+            if previous.get("status") == "running":
+                previous["status"] = "stale"
+                previous["blocker"] = "previous_run_left_running"
+                _atomic_write_text(previous_path, json.dumps(previous, ensure_ascii=False, indent=2) + "\n")
+        except (OSError, json.JSONDecodeError):
+            previous = None
+    mode = "diagnostic" if (only or from_id or fail_fast) else ("resume" if resume else "formal")
+    manifest: dict[str, Any] = {
+        "schema": 2,
+        "task": label,
+        "run_id": run_id,
+        "mode": mode,
+        "started_at": _now(),
+        "status": "running",
+        "jobs": jobs,
+        "only": only or [],
+        "from": from_id,
+        "fail_fast": fail_fast,
+        "checks": [],
+    }
+    _atomic_write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    fingerprint_base = _fingerprint_base()
+    results: list[Outcome] = []
+    result_map: dict[str, Outcome] = {}
+    pending = list(selected)
+    while pending:
+        first = pending[0]
+        batch = [first]
+        if jobs > 1 and _parallel_safe(first):
+            used = set(first.exclusive_resources)
+            for candidate in pending[1:]:
+                if len(batch) >= jobs or not _parallel_safe(candidate):
+                    continue
+                if candidate.parallel_group != first.parallel_group:
+                    continue
+                resources = set(candidate.exclusive_resources)
+                if resources & used or not _requirements_ok(candidate, result_map):
+                    continue
+                batch.append(candidate)
+                used.update(resources)
+        pending = [c for c in pending if c not in batch]
+
+        def execute(check: Check) -> Outcome:
+            fingerprint = _cache_fingerprint(check, fingerprint_base)
+            reused = _load_reusable(label, check, fingerprint, previous) if resume else None
+            if reused is not None:
+                return reused
+            if not _requirements_ok(check, result_map):
+                return Outcome(
+                    check,
+                    False,
+                    None,
+                    0.0,
+                    f"依赖未通过：{', '.join(check.requires)}",
+                    executed=False,
+                    fingerprint=fingerprint,
+                    resources=check.exclusive_resources,
+                    blocker="requires",
+                )
+            temp_dir = tmp_root / _safe_name(check.id)
+            return run_check(check, temp_dir=temp_dir, fingerprint=fingerprint)
+
+        if len(batch) == 1:
+            batch_results = [execute(first)]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=len(batch), thread_name_prefix="harness"
+            ) as pool:
+                futures = [pool.submit(execute, c) for c in batch]
+                batch_results = [f.result() for f in futures]
+        for outcome in batch_results:
+            if outcome.temp_dir and not outcome.reused:
+                try:
+                    shutil.rmtree(outcome.temp_dir, ignore_errors=False)
+                    outcome.cleanup["temp_dir_removed"] = True
+                except FileNotFoundError:
+                    outcome.cleanup["temp_dir_removed"] = True
+                except OSError as exc:
+                    outcome.cleanup["temp_dir_removed"] = False
+                    outcome.cleanup["temp_dir_error"] = str(exc)
+                    outcome.blocker = "temp_cleanup"
+                    outcome.ok = False
+                    outcome.detail = (
+                        outcome.detail + "; " if outcome.detail else ""
+                    ) + f"临时目录清理失败：{exc}"
+            _write_cache(label, outcome)
+            result_map[outcome.check.id] = outcome
+            results.append(outcome)
+            manifest["checks"].append(outcome.evidence())
+            _atomic_write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+            _print_outcome(label, outcome)
+        if fail_fast and any(not r.ok for r in batch_results):
+            break
+
+    manifest["status"] = (
+        "passed" if results and len(results) == len(selected) and all(r.ok for r in results) else "failed"
+    )
+    manifest["finished_at"] = _now()
+    manifest["summary"] = {
+        "selected": len(selected),
+        "completed": len(results),
+        "failed": sum(1 for r in results if not r.ok),
+        "executed": sum(1 for r in results if r.executed),
+        "reused": sum(1 for r in results if r.reused),
+    }
+    _atomic_write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return results
 
 
@@ -509,6 +1082,182 @@ def _outside(paths: list[str], changed: list[str]) -> list[str]:
     return [f for f in changed if not matches_any(f, allowed)]
 
 
+def _working_tree_digest() -> str:
+    payload = {rel: _file_digest(rel) for rel in sorted(_changed_files())}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _review_risk(rel: str) -> str:
+    low = rel.lower()
+    high_risk = (
+        "plan/",
+        "spec/",
+        "protected.lock",
+        "state.json",
+        "live",
+        "budget",
+        "credential",
+        "permission",
+        "auth",
+        "governance",
+        "security",
+        ".env",
+        "docker",
+        "runtime",
+        "evidence",
+        "tasks.yaml",
+        "gates.yaml",
+    )
+    return "high" if any(x in low for x in high_risk) else "ordinary"
+
+
+def _task_owners(rel: str, tasks: dict[str, Task]) -> list[str]:
+    return [t.id for t in tasks.values() if matches_any(rel, t.paths)]
+
+
+def _commit_task_hint(subject: str) -> str | None:
+    match = re.search(r"\b(M\d+(?:-\d+)?)\b", subject)
+    return match.group(1) if match else None
+
+
+def _review_artifact_paths(task_id: str) -> list[Path]:
+    root = HARNESS_REVIEWS_DIR / _safe_name(task_id)
+    return sorted(root.glob("*.json")) if root.exists() else []
+
+
+def _implementation_identity() -> str:
+    return (
+        os.environ.get("MAO_IMPLEMENTER_ID")
+        or os.environ.get("HARNESS_AGENT_ID")
+        or os.environ.get("CODEX_AGENT_ID")
+        or "implementation-agent"
+    )
+
+
+def _validate_review_artifact(task: Task, record: dict[str, Any], artifact: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "path": str(artifact.relative_to(ROOT)),
+            "decision": "needs_human",
+            "reason": f"invalid_json:{exc}",
+        }
+    outside = list(record.get("outside_paths") or [])
+    changed = data.get("changed_files")
+    changed_map = changed if isinstance(changed, dict) else {}
+    reasons: list[str] = []
+    if data.get("task_id") != task.id:
+        reasons.append("task_id_mismatch")
+    if data.get("source_commit") != record.get("commit"):
+        reasons.append("source_commit_mismatch")
+    if data.get("working_tree_digest") != _working_tree_digest():
+        reasons.append("working_tree_digest_mismatch")
+    if sorted(data.get("outside_paths") or []) != sorted(outside):
+        reasons.append("outside_paths_mismatch")
+    if not isinstance(changed, dict):
+        reasons.append("changed_files_must_be_digest_map")
+    else:
+        for rel in outside:
+            if changed_map.get(rel) != _file_digest(rel):
+                reasons.append(f"digest_mismatch:{rel}")
+    ownership = data.get("file_ownership")
+    tests = data.get("tests")
+    if not isinstance(ownership, dict) or any(rel not in ownership for rel in outside):
+        reasons.append("missing_file_ownership")
+    if (
+        not isinstance(tests, list)
+        or not tests
+        or not all(isinstance(x, dict) and x.get("passed") is True for x in tests)
+    ):
+        reasons.append("missing_test_evidence")
+    reviewer_id = str(data.get("reviewer_id") or "")
+    if not reviewer_id or reviewer_id == _implementation_identity() or reviewer_id == "implementation-agent":
+        reasons.append("reviewer_not_independent")
+    if (
+        not data.get("reviewer_model")
+        or not data.get("reviewer_context_id")
+        or not data.get("reviewer_input_digest")
+    ):
+        reasons.append("missing_reviewer_identity")
+    if data.get("decision") != "accepted":
+        reasons.append(f"decision:{data.get('decision') or 'missing'}")
+    high_risk = [rel for rel in outside if _review_risk(rel) == "high"]
+    if high_risk:
+        reasons.append("high_risk_requires_human:" + ",".join(high_risk))
+    decision = "accepted" if not reasons else "needs_human"
+    return {
+        "path": artifact.relative_to(ROOT).as_posix(),
+        "decision": decision,
+        "reason": ";".join(reasons),
+        "reviewer_id": reviewer_id,
+        "high_risk": high_risk,
+    }
+
+
+def _review_status(task: Task, state: dict[str, Any]) -> dict[str, Any]:
+    record = state["tasks"].get(task.id, {})
+    outside = list(record.get("outside_paths") or [])
+    artifacts = [_validate_review_artifact(task, record, p) for p in _review_artifact_paths(task.id)]
+    accepted = [x for x in artifacts if x.get("decision") == "accepted"]
+    if not outside:
+        return {"status": "not_required", "outside_paths": [], "artifacts": artifacts, "blockers": []}
+    if accepted:
+        return {"status": "accepted", "outside_paths": outside, "artifacts": artifacts, "blockers": []}
+    return {
+        "status": "needs_human",
+        "outside_paths": outside,
+        "artifacts": artifacts,
+        "blockers": ["outside_paths_require_independent_review"],
+    }
+
+
+def _review_audit(task: Task, state: dict[str, Any]) -> dict[str, Any]:
+    tasks = load_tasks()
+    record = state["tasks"].get(task.id, {})
+    changed_files = set(_changed_files())
+    rows = []
+    for rel in record.get("outside_paths") or []:
+        owners = _task_owners(rel, tasks)
+        last_commit = _git("log", "-1", "--format=%h %ad %s", "--date=short", "--", rel)
+        rows.append(
+            {
+                "path": rel,
+                "exists": (ROOT / rel).exists(),
+                "current_digest": _file_digest(rel),
+                "last_commit": last_commit,
+                "last_commit_task_hint": _commit_task_hint(last_commit),
+                "working_tree_modified": rel in changed_files,
+                "possible_task_owners": owners,
+                "risk": _review_risk(rel),
+                "recommendation": "needs_human"
+                if not (ROOT / rel).exists() or _review_risk(rel) == "high" or not owners
+                else "accepted_after_independent_review",
+            }
+        )
+    return {
+        "schema": 1,
+        "task_id": task.id,
+        "task_status": status_of(state, task.id),
+        "record_commit": record.get("commit"),
+        "working_tree_digest": _working_tree_digest(),
+        "outside_paths": list(record.get("outside_paths") or []),
+        "files": rows,
+        "review": _review_status(task, state),
+    }
+
+
+def cmd_review(a: argparse.Namespace) -> int:
+    if a.review_cmd != "audit":
+        raise UsageError(a.review_cmd)
+    tasks, state = load_tasks(), load_state()
+    task = tasks.get(a.id)
+    if task is None:
+        raise UsageError(f"任务 {a.id} 不存在")
+    print(json.dumps(_review_audit(task, state), ensure_ascii=False, sort_keys=True, indent=2))
+    return EXIT_OK
+
+
 def cmd_accept(a: argparse.Namespace) -> int:
     tasks, state = load_tasks(), load_state()
     t = tasks.get(a.id)
@@ -536,18 +1285,43 @@ def cmd_accept(a: argparse.Namespace) -> int:
         print("⚠ 以下改动不在本任务允许修改的范围内（会记入证据，由阶段门审查）：")
         for f in outside:
             print(f"    {f}")
-    results = run_checks(t.accept, t.id)
-    ok = all(r.ok for r in results)
-    record.update(
-        {
-            "status": "done" if ok else "in_progress",
-            "updated_at": _now(),
-            **_commit(),
-            "evidence": [r.evidence() for r in results],
-            "outside_paths": outside,
-        }
+    only = [x.strip() for x in (a.only or "").split(",") if x.strip()] or None
+    diagnostic = bool(only or a.from_id or a.fail_fast)
+    results = run_checks(
+        t.accept,
+        t.id,
+        only=only,
+        from_id=a.from_id,
+        fail_fast=a.fail_fast,
+        resume=a.resume,
+        jobs=a.jobs,
     )
+    complete_selection = len(results) == len(t.accept) and {r.check.id for r in results} == {
+        c.id for c in t.accept
+    }
+    ok = complete_selection and all(r.ok for r in results)
+    record.update({"updated_at": _now(), **_commit(), "outside_paths": outside})
+    if diagnostic:
+        record.setdefault("diagnostic_runs", []).append(
+            {
+                "manifest": str(_LAST_RUN_MANIFEST.relative_to(ROOT).as_posix())
+                if _LAST_RUN_MANIFEST
+                else "",
+                "mode": "diagnostic",
+                "complete_selection": complete_selection,
+                "evidence": [r.evidence() for r in results],
+            }
+        )
+        # 诊断结果即使全绿也不能改变正式任务状态。
+        record["status"] = "in_progress"
+    else:
+        record.update(
+            {"status": "done" if ok else "in_progress", "evidence": [r.evidence() for r in results]}
+        )
     save_state(state)
+    if diagnostic:
+        print(f"{'✔ 诊断检查通过' if ok else '✖ 诊断检查未通过'}：{t.id} {t.title}（未改变正式任务状态）")
+        return EXIT_OK if ok else EXIT_FAIL
     print(f"{'✔ 验收通过' if ok else '✖ 验收未通过'}：{t.id} {t.title}")
     return EXIT_OK if ok else EXIT_FAIL
 
@@ -570,17 +1344,39 @@ def cmd_gate(a: argparse.Namespace) -> int:
     for t in tasks.values():
         outside = state["tasks"].get(t.id, {}).get("outside_paths") or []
         if t.milestone == a.milestone and outside:
-            print(f"⚠ {t.id} 改动了允许范围以外的文件（需要人审查）：{', '.join(outside)}")
+            review = _review_status(t, state)
+            if review["status"] == "accepted":
+                print(f"✔ {t.id} 越界改动已有独立 reviewer artifact 通过校验")
+            else:
+                print(
+                    f"⚠ {t.id} 改动了允许范围以外的文件（需要独立 reviewer 或人工审查）：{', '.join(outside)}"
+                )
+                for item in review.get("artifacts") or []:
+                    if item.get("decision") != "accepted":
+                        print(f"    review {item.get('path')}: {item.get('reason', 'needs_human')}")
     checks = [Check.parse(c, f"gate {a.milestone}", i) for i, c in enumerate(g.get("checks") or [])]
     results = run_checks(checks, a.milestone)
-    ok = not undone and not violations and all(r.ok for r in results)
+    review_blockers = []
+    for t in tasks.values():
+        if t.milestone != a.milestone:
+            continue
+        review = _review_status(t, state)
+        if review["status"] == "needs_human":
+            review_blockers.append(f"{t.id}: outside_paths")
+    ok = not undone and not violations and not review_blockers and all(r.ok for r in results)
     if undone:
         print(f"✖ 尚未完成：{', '.join(undone)}")
+    if review_blockers:
+        print(f"✖ 越界改动审查未完成：{', '.join(review_blockers)}")
     state["gates"][a.milestone] = {
         "status": "passed" if ok else "failed",
         "updated_at": _now(),
         **_commit(),
         "evidence": [r.evidence() for r in results],
+        "review": {
+            "status": "passed" if not review_blockers else "needs_human",
+            "blockers": review_blockers,
+        },
     }
     save_state(state)
     print(f"{'✔ 阶段门通过' if ok else '✖ 阶段门未通过'}：{a.milestone} {g.get('title', '')}")
@@ -881,7 +1677,7 @@ def cmd_lock(a: argparse.Namespace) -> int:
             "files": _protected_files(patterns),
             "cases": _case_digests(),
         }
-        LOCK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(LOCK_FILE, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
         print(f"已登记 {len(data['files'])} 个受保护文件、{len(data['cases'])} 个一致性用例。")
         return EXIT_OK
     v = lock_violations()
@@ -1059,6 +1855,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     ac = sub.add_parser("accept")
     ac.add_argument("id")
+    ac.add_argument(
+        "--only",
+        help="开发诊断：只运行指定检查项，多个 id 用逗号分隔；结果不会把任务标记为完成",
+    )
+    ac.add_argument(
+        "--from",
+        dest="from_id",
+        help="开发诊断：从指定检查项开始运行后续检查；结果不会把任务标记为完成",
+    )
+    ac.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="开发诊断：第一个失败的检查批次后停止",
+    )
+    ac.add_argument(
+        "--resume",
+        action="store_true",
+        help="恢复上一次同一任务运行；只复用输入指纹未变化的离线成功检查，live 永远重跑",
+    )
+    ac.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="并行进程数；只有声明 parallel_group 且资源不冲突的离线检查会并行（默认 1）",
+    )
     ac.set_defaults(func=cmd_accept)
 
     g = sub.add_parser("gate")
@@ -1082,6 +1903,12 @@ def build_parser() -> argparse.ArgumentParser:
     grp.add_argument("--verify", action="store_true")
     grp.add_argument("--update", action="store_true")
     lk.set_defaults(func=cmd_lock)
+
+    rv = sub.add_parser("review", help="越界改动的只读审查诊断与 reviewer artifact 校验")
+    rvs = rv.add_subparsers(dest="review_cmd", required=True)
+    ra = rvs.add_parser("audit", help="只读分析任务的 outside_paths、历史来源、归属与风险")
+    ra.add_argument("id")
+    rv.set_defaults(func=cmd_review)
 
     sub.add_parser("doccheck").set_defaults(func=cmd_doccheck)
 

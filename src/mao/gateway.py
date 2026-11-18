@@ -55,6 +55,8 @@ def parse_long_task(machine_spec: Mapping[str, Any]) -> LongTask:
 
 
 def openapi_to_tools(document: Mapping[str, Any], *, allow: Sequence[str] | None) -> tuple[ToolSpec, ...]:
+    if allow is None:
+        return ()
     tools: list[ToolSpec] = []
     for path, methods in (document.get("paths") or {}).items():
         if not isinstance(methods, Mapping):
@@ -101,6 +103,9 @@ class ServiceGateway:
         timeout_s: float,
         reset: bool = True,
     ) -> dict[str, Any]:
+        bind_job_output = getattr(sandbox, "bind_job_output", None)
+        if callable(bind_job_output):
+            bind_job_output(job_id)
         station = self.snapshot.spec(station_key)
         machine_key = self.snapshot.key("Machine", station["machine"])
         machine = self.snapshot.spec(machine_key)
@@ -147,26 +152,51 @@ class ServiceGateway:
         body_virtual = "/factory/ctl/service-body.json"
         _write_virtual(sandbox, body_virtual, json.dumps(body, ensure_ascii=False).encode("utf-8"))
         method, path = _split_request(task.submit)
-        submit = self._exec(
-            sandbox,
-            job_id,
-            ["factoryctl", "service", "submit", "--method", method, "--path", path, "--body", body_virtual],
-            timeout_s,
-        )
-        try:
-            submitted = json.loads(submit)
-        except json.JSONDecodeError as exc:
-            raise FactoryError(
-                "SERVICE_FAILED", "submit 响应不是 JSON", job=job_id, reason="submit-json"
-            ) from exc
-        if not isinstance(submitted, dict):
-            raise FactoryError("SERVICE_FAILED", "submit 响应不是对象", job=job_id, reason="submit-shape")
-        task_id = _pointer(submitted, task.task_id)
-        if not isinstance(task_id, str) or not task_id:
-            raise FactoryError("SERVICE_FAILED", "任务号不是字符串", job=job_id, reason="task-id")
-        self._event(
-            job_id, "service.submit", {"job": job_id, "task_id": task_id, "method": method, "path": path}
-        )
+        service_env = {"FACTORY_SERVICE_BASE": f"http://127.0.0.1:{service.get('port')}"}
+        saved = self._operation(job_id)
+        task_id = None if saved is None else saved.get("task_id")
+        if not task_id:
+            submit = self._exec(
+                sandbox,
+                job_id,
+                [
+                    "factoryctl",
+                    "service",
+                    "submit",
+                    "--method",
+                    method,
+                    "--path",
+                    path,
+                    "--body",
+                    body_virtual,
+                ],
+                timeout_s,
+                env=service_env,
+            )
+            try:
+                submitted = json.loads(submit)
+            except json.JSONDecodeError as exc:
+                self._save_operation(
+                    job_id, task_id=None, state="outcome_unknown", base=service_env["FACTORY_SERVICE_BASE"]
+                )
+                raise FactoryError(
+                    "SERVICE_OUTCOME_UNKNOWN", "submit 响应不是 JSON", job=job_id, reason="submit-json"
+                ) from exc
+            if not isinstance(submitted, dict):
+                raise FactoryError("SERVICE_FAILED", "submit 响应不是对象", job=job_id, reason="submit-shape")
+            task_id = _pointer(submitted, task.task_id)
+            if not isinstance(task_id, str) or not task_id:
+                raise FactoryError("SERVICE_FAILED", "任务号不是字符串", job=job_id, reason="task-id")
+            self._event(
+                job_id, "service.submit", {"job": job_id, "task_id": task_id, "method": method, "path": path}
+            )
+            self._save_operation(
+                job_id, task_id=task_id, state="submitted", base=service_env["FACTORY_SERVICE_BASE"]
+            )
+        else:
+            self._save_operation(
+                job_id, task_id=str(task_id), state="polling", base=service_env["FACTORY_SERVICE_BASE"]
+            )
         poll_method, poll_path = _split_request(task.poll)
         poll_path = poll_path.replace("{task_id}", quote(task_id, safe=""))
         self._phase(sandbox, "poll", task_id, 0, [])
@@ -187,6 +217,7 @@ class ServiceGateway:
                 job_id,
                 ["factoryctl", "service", "poll", "--method", poll_method, "--path", poll_path],
                 timeout_s,
+                env=service_env,
             )
             polls += 1
             self._event(job_id, "service.poll", {"job": job_id, "polls": polls})
@@ -229,12 +260,19 @@ class ServiceGateway:
                 dest = f"/factory/out/{port}/{index}/{name}"
             else:
                 dest = f"/factory/out/{port}/{name}"
-            self._exec(
-                sandbox,
-                job_id,
-                ["factoryctl", "service", "fetch", "--url", url, "--dest", dest],
-                timeout_s,
-            )
+            try:
+                self._exec(
+                    sandbox,
+                    job_id,
+                    ["factoryctl", "service", "fetch", "--url", url, "--dest", dest],
+                    timeout_s,
+                    env=service_env,
+                )
+            except FactoryError:
+                self._save_operation(
+                    job_id, task_id=task_id, state="fetching", base=service_env["FACTORY_SERVICE_BASE"]
+                )
+                raise
             dests.append(dest)
         self._event(job_id, "service.fetch", {"job": job_id, "count": len(dests)})
         self._phase(sandbox, "done", task_id, polls, dests)
@@ -302,12 +340,47 @@ class ServiceGateway:
                 ),
             )
 
-    def _exec(self, sandbox: Any, job_id: str, argv: list[str], timeout_s: float) -> str:
+    def _operation(self, job_id: str) -> dict[str, Any] | None:
+        rows = self.ctx.db.query(
+            "SELECT task_id, state, provider_digest FROM service_operations WHERE job_id = ? AND operation_key = 'recipe'",
+            (job_id,),
+        )
+        if not rows:
+            return None
+        task_id = rows[0]["task_id"]
+        return {
+            "task_id": None if task_id is None else str(task_id),
+            "state": str(rows[0]["state"]),
+            "provider_digest": str(rows[0]["provider_digest"]),
+        }
+
+    def _save_operation(self, job_id: str, *, task_id: str | None, state: str, base: str) -> None:
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                """INSERT INTO service_operations (
+                       job_id, operation_key, request_digest, provider_digest, state,
+                       idempotency_key, task_id, outputs, error, updated_at
+                   ) VALUES (?, 'recipe', ?, ?, ?, ?, ?, NULL, NULL, ?)
+                   ON CONFLICT(job_id, operation_key) DO UPDATE SET
+                       state = excluded.state, task_id = excluded.task_id,
+                       provider_digest = excluded.provider_digest, updated_at = excluded.updated_at""",
+                (job_id, job_id, base, state, job_id, task_id, now),
+            )
+
+    def _exec(
+        self,
+        sandbox: Any,
+        job_id: str,
+        argv: list[str],
+        timeout_s: float,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
         folder = self.ctx.root / "tmp" / "gateway"
         folder.mkdir(parents=True, exist_ok=True)
         stdout = folder / f"{job_id}.stdout"
         stderr = folder / f"{job_id}.stderr"
-        result = sandbox.exec(argv, timeout_s=timeout_s, stdout=stdout, stderr=stderr)
+        result = sandbox.exec(argv, timeout_s=timeout_s, stdout=stdout, stderr=stderr, env=env)
         text = stdout.read_text(encoding="utf-8") if stdout.is_file() else ""
         if getattr(result, "timed_out", False) or getattr(result, "exit_code", 1) not in (0, None):
             raise FactoryError("SERVICE_FAILED", "factoryctl 失败", job=job_id, reason="ctl")

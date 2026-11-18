@@ -270,6 +270,7 @@ class Message:
     attempts: int
     not_before: str | None
     created_at: str
+    enqueue_seq: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -283,6 +284,7 @@ class Message:
             "attempts": self.attempts,
             "not_before": self.not_before,
             "created_at": self.created_at,
+            "enqueue_seq": self.enqueue_seq,
         }
 
 
@@ -298,6 +300,10 @@ class Mailbox:
         body: Mapping[str, Any],
         *,
         not_before: str | None = None,
+        delivery_source: str | None = None,
+        delivery_kind: str | None = None,
+        origin: Mapping[str, Any] | None = None,
+        conn: Any | None = None,
     ) -> Message:
         from mao.egress import SecretStore
 
@@ -306,8 +312,50 @@ class Mailbox:
         if len(raw) > 64 * 1024:
             raise FactoryError("AGENT_MESSAGE_TOO_LARGE", "消息过大", agent=agent, bytes=len(raw))
         now = utc_iso(self.ctx.clock.now())
+        key_kind = delivery_kind
+        key_source = delivery_source
+        if kind == "schedule" and source.startswith("schedule:"):
+            key_kind = key_kind or "schedule"
+            if key_source is None:
+                every = str(stored.get("every") or "")
+                key_source = f"{agent}:{every}:{source}:{now}"
+        if conn is None and key_kind and key_source:
+            existing = self.ctx.db.query(
+                "SELECT message_id FROM delivery_keys WHERE kind = ? AND source = ? AND target = ?",
+                (key_kind, key_source, agent),
+            )
+            if existing:
+                return self._load(str(existing[0]["message_id"]))
         message_id = self.ctx.ids.new("am")
+        if conn is not None:
+            return self._insert_message(
+                conn,
+                message_id,
+                agent,
+                kind,
+                source,
+                stored,
+                not_before,
+                now,
+                key_kind,
+                key_source,
+                origin,
+            )
         with self.ctx.db.tx() as conn:
+            if key_kind and key_source:
+                existing = conn.execute(
+                    "SELECT message_id FROM delivery_keys WHERE kind = ? AND source = ? AND target = ?",
+                    (key_kind, key_source, agent),
+                ).fetchone()
+                if existing is not None:
+                    message_id = str(existing["message_id"])
+                    return _message(
+                        conn.execute(
+                            "SELECT * FROM agent_messages WHERE id = ?",
+                            (message_id,),
+                        ).fetchone()
+                    )
+            seq = _alloc_enqueue_seq(conn)
             conn.execute(
                 "INSERT INTO agents (name, state, updated_at) VALUES (?, 'active', ?) "
                 "ON CONFLICT(name) DO NOTHING",
@@ -315,10 +363,23 @@ class Mailbox:
             )
             conn.execute(
                 """INSERT INTO agent_messages (
-                       id, agent, kind, source, body, state, turn, attempts, not_before, created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, 0, ?, ?, ?)""",
-                (message_id, agent, kind, source, canonical_json(stored), not_before, now, now),
+                       id, agent, kind, source, body, state, turn, attempts, not_before,
+                       created_at, updated_at, enqueue_seq
+                   ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, 0, ?, ?, ?, ?)""",
+                (message_id, agent, kind, source, canonical_json(stored), not_before, now, now, seq),
             )
+            if key_kind and key_source:
+                conn.execute(
+                    "INSERT INTO delivery_keys (kind, source, target, message_id) VALUES (?, ?, ?, ?)",
+                    (key_kind, key_source, agent, message_id),
+                )
+            if kind == "schedule" and source.startswith("schedule:"):
+                index = int(source.split(":", 1)[1])
+                conn.execute(
+                    "INSERT INTO agent_schedule (agent, idx, last_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(agent, idx) DO UPDATE SET last_at = excluded.last_at",
+                    (agent, index, now),
+                )
             conn.execute(
                 "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'agent.message', NULL, ?)",
                 (
@@ -327,7 +388,63 @@ class Mailbox:
                     canonical_json({"agent": agent, "id": message_id, "kind": kind, "source": source}),
                 ),
             )
+            _insert_origin(conn, message_id, origin)
         return self._load(message_id)
+
+    def _insert_message(
+        self,
+        conn: Any,
+        message_id: str,
+        agent: str,
+        kind: str,
+        source: str,
+        stored: Mapping[str, Any],
+        not_before: str | None,
+        now: str,
+        key_kind: str | None,
+        key_source: str | None,
+        origin: Mapping[str, Any] | None,
+    ) -> Message:
+        if key_kind and key_source:
+            existing = conn.execute(
+                "SELECT message_id FROM delivery_keys WHERE kind = ? AND source = ? AND target = ?",
+                (key_kind, key_source, agent),
+            ).fetchone()
+            if existing is not None:
+                return _message(
+                    conn.execute(
+                        "SELECT * FROM agent_messages WHERE id = ?",
+                        (str(existing["message_id"]),),
+                    ).fetchone()
+                )
+        seq = _alloc_enqueue_seq(conn)
+        conn.execute(
+            "INSERT INTO agents (name, state, updated_at) VALUES (?, 'active', ?) "
+            "ON CONFLICT(name) DO NOTHING",
+            (agent, now),
+        )
+        conn.execute(
+            """INSERT INTO agent_messages (
+                   id, agent, kind, source, body, state, turn, attempts, not_before,
+                   created_at, updated_at, enqueue_seq
+               ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, 0, ?, ?, ?, ?)""",
+            (message_id, agent, kind, source, canonical_json(stored), not_before, now, now, seq),
+        )
+        if key_kind and key_source:
+            conn.execute(
+                "INSERT INTO delivery_keys (kind, source, target, message_id) VALUES (?, ?, ?, ?)",
+                (key_kind, key_source, agent, message_id),
+            )
+        conn.execute(
+            "INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'agent.message', NULL, ?)",
+            (
+                self.ctx.ids.new("ev"),
+                now,
+                canonical_json({"agent": agent, "id": message_id, "kind": kind, "source": source}),
+            ),
+        )
+        _insert_origin(conn, message_id, origin)
+        return _message(conn.execute("SELECT * FROM agent_messages WHERE id = ?", (message_id,)).fetchone())
 
     def list(self, agent: str, *, state: str | None = None) -> list[Message]:
         sql = "SELECT * FROM agent_messages WHERE agent = ?"
@@ -335,7 +452,7 @@ class Mailbox:
         if state is not None:
             sql += " AND state = ?"
             args.append(state)
-        sql += " ORDER BY id"
+        sql += " ORDER BY enqueue_seq, id"
         return [_message(row) for row in self.ctx.db.query(sql, tuple(args))]
 
     def _load(self, message_id: str) -> Message:
@@ -416,6 +533,7 @@ class AgentHost:
             foreman = None
         self.foreman = foreman
         self._invalid: set[tuple[str, str, str]] = set()
+        self._lease: Any = None
 
     def collect(self) -> list[str]:
         snapshot = self.epochs.materialize(self.epochs.current())
@@ -448,10 +566,23 @@ class AgentHost:
         return self._work(snapshot, cfg, row, pending)
 
     def recover(self) -> list[str]:
-        rows = self.ctx.db.query("SELECT id FROM agent_turns WHERE state = 'running' ORDER BY id")
+        rows = self.ctx.db.query(
+            "SELECT id, owner, lease_generation FROM agent_turns WHERE state = 'running' ORDER BY id"
+        )
         found = []
         now = utc_iso(self.ctx.clock.now())
+        store = None
         for row in rows:
+            owner = None if row["owner"] is None else str(row["owner"])
+            generation = None if row["lease_generation"] is None else int(row["lease_generation"])
+            if owner and generation is not None:
+                if store is None:
+                    from mao.durable import LeaseStore
+
+                    store = LeaseStore(self.ctx)
+                held = store.valid("agents")
+                if held is not None and held.owner == owner and held.generation == generation:
+                    continue
             turn_id = str(row["id"])
             error = canonical_json(
                 {"code": "AGENT_INTERRUPTED", "message": "轮次被中断", "detail": {"turn": turn_id}}
@@ -515,21 +646,47 @@ class AgentHost:
         from mao.durable import LeaseKeeper, LeaseStore
 
         store = LeaseStore(self.ctx)
-        if not store.acquire("agents", owner=self.ctx.owner):
+        token = store.acquire_fenced("agents", owner=self.ctx.owner)
+        if token is None:
             raise FactoryError("AGENTS_ALREADY_RUNNING", "agents 已在运行")
+        self._lease = token
         keeper = LeaseKeeper(store, "agents", owner=self.ctx.owner)
+        keeper.token = token
         keeper.start()
         try:
             self.recover()
-            while not stop.is_set():
+            while not stop.is_set() and not keeper.lost.is_set():
                 try:
                     self.tick()
+                except FactoryError as exc:
+                    if exc.code == "LEASE_LOST":
+                        keeper.lost.set()
+                        break
+                    _LOG.exception("agent tick 失败")
                 except Exception:
                     _LOG.exception("agent tick 失败")
-                stop.wait(self.config.poll_s)
+                if keeper.lost.is_set() or stop.is_set():
+                    break
+                remaining = self.config.poll_s
+                while remaining > 0 and not stop.is_set() and not keeper.lost.is_set():
+                    step = min(0.05, remaining)
+                    if stop.wait(step):
+                        break
+                    remaining -= step
         finally:
+            self._lease = None
             keeper.stop()
-            store.release("agents", owner=self.ctx.owner)
+            if keeper.lost.is_set():
+                self._event(
+                    "agent.lease_lost",
+                    {
+                        "resource": token.resource,
+                        "owner": token.owner,
+                        "generation": token.generation,
+                    },
+                )
+            else:
+                store.release_fenced(token)
 
     def max_turn_timeout_s(self) -> float:
         try:
@@ -564,16 +721,15 @@ class AgentHost:
                 if not due:
                     continue
                 every = _every_text(snapshot, name, index)
-                message = Mailbox(self.ctx).post(
-                    name, "schedule", f"schedule:{index}", {"note": note, "every": every}
-                )
                 stamp = utc_iso(now)
-                with self.ctx.db.tx() as conn:
-                    conn.execute(
-                        "INSERT INTO agent_schedule (agent, idx, last_at) VALUES (?, ?, ?) "
-                        "ON CONFLICT(agent, idx) DO UPDATE SET last_at = excluded.last_at",
-                        (name, index, stamp),
-                    )
+                version = _agent_version(snapshot, name)
+                message = Mailbox(self.ctx).post(
+                    name,
+                    "schedule",
+                    f"schedule:{index}",
+                    {"note": note, "every": every},
+                    delivery_source=f"{name}:{version}:{index}:{stamp}",
+                )
                 found.append(message.id)
         return found
 
@@ -670,10 +826,13 @@ class AgentHost:
         if extra:
             task = task + "\n\n" + extra
         with self.ctx.db.tx() as conn:
+            self._guard_lease(conn)
+            lease = getattr(self, "_lease", None)
             conn.execute(
                 """INSERT INTO agent_turns (
-                       id, agent, conversation, number, kind, session, state, messages, started_at
-                   ) VALUES (?, ?, ?, ?, 'work', ?, 'running', ?, ?)""",
+                       id, agent, conversation, number, kind, session, state, messages, started_at,
+                       owner, lease_generation
+                   ) VALUES (?, ?, ?, ?, 'work', ?, 'running', ?, ?, ?, ?)""",
                 (
                     turn_id,
                     name,
@@ -682,6 +841,8 @@ class AgentHost:
                     session,
                     canonical_json([item.id for item in pending]),
                     now,
+                    None if lease is None else lease.owner,
+                    None if lease is None else lease.generation,
                 ),
             )
             conn.execute(
@@ -703,6 +864,7 @@ class AgentHost:
                 handoff=handoff,
                 assets=mounted,
             )
+            _bind_turn_origin(conn, turn_id, pending)
         self._event(
             "agent.turn.started",
             {
@@ -717,6 +879,9 @@ class AgentHost:
         from mao.egress import register_job_cap
 
         register_job_cap(self.ctx.db, turn_id, "agent", cfg.turn_usd)
+        from mao.objectives import note_turn_reserved
+
+        note_turn_reserved(self.ctx, self.epochs, turn_id, cfg.turn_usd)
         runtime_ref = cfg.runtime.split(":", 1)[-1]
         invocation = build_runtime_invocation(
             snapshot,
@@ -732,15 +897,27 @@ class AgentHost:
         sandbox = self._sandbox(snapshot, name, cfg)
         logs = host / "turns" / turn_id
         logs.mkdir(parents=True, exist_ok=True)
-        result, server = self._run_cli(snapshot, cfg, turn_id, number, invocation, sandbox, logs)
+        try:
+            result, server = self._run_cli(snapshot, cfg, turn_id, number, invocation, sandbox, logs)
+        except OSError as exc:
+            return self._fail_open_turn(name, turn_id, "AGENT_RESULT_INVALID", str(exc))
         _store_turn_actions(self.ctx, turn_id, server.actions)
         summary = None
         try:
             summary = parse_transcript(logs / "transcript.raw", invocation.transcript or "stream-json")
         except FactoryError:
             summary = None
+        wait_marker = _waiting_for_result(logs, code="SESSION_FAILED")
         leaked = self._archive(snapshot, logs)
-        state, code, error = _turn_outcome(self.ctx, turn_id, result, summary)
+        state, code, error = _turn_outcome(
+            self.ctx,
+            turn_id,
+            result,
+            summary,
+            resume_required=_runtime_resumes(snapshot, cfg.runtime),
+            agent=name,
+        )
+        defer_message = wait_marker and code == "SESSION_FAILED"
         if leaked and state == "ok":
             state, code = "failed", "SECRET_LEAK"
             error = {"code": "SECRET_LEAK", "message": "打码后仍像密钥", "detail": {}}
@@ -749,6 +926,7 @@ class AgentHost:
         ended = summary.session_id if summary is not None and summary.session_id else session
         finished = utc_iso(self.ctx.clock.now())
         with self.ctx.db.tx() as conn:
+            self._guard_lease(conn)
             conn.execute(
                 """UPDATE agent_turns SET state = ?, session = ?, cost_usd = ?, input_tokens = ?,
                    exit_code = ?, error = ?, finished_at = ? WHERE id = ?""",
@@ -776,18 +954,31 @@ class AgentHost:
                     (ended, tokens, rotate, finished, name),
                 )
             else:
-                conn.execute(
-                    "UPDATE agent_messages SET attempts = attempts + 1, updated_at = ? WHERE turn = ?",
-                    (finished, turn_id),
-                )
-                conn.execute(
-                    "UPDATE agent_messages SET state = 'pending', turn = NULL WHERE turn = ? AND attempts < 3",
-                    (turn_id,),
-                )
-                conn.execute(
-                    "UPDATE agent_messages SET state = 'dropped' WHERE turn = ? AND attempts >= 3",
-                    (turn_id,),
-                )
+                if defer_message:
+                    # A foreman may intentionally yield while a dispatched job is
+                    # still running.  That is a handled delivery, not a failed
+                    # delivery: the run-result message is the durable wake-up
+                    # for the next foreman turn.  Leaving the cycle message
+                    # pending would re-run it before the child can finish and
+                    # eventually consume the retry budget.
+                    conn.execute(
+                        "UPDATE agent_messages SET state = 'done', turn = NULL, "
+                        "updated_at = ? WHERE turn = ?",
+                        (finished, turn_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE agent_messages SET attempts = attempts + 1, updated_at = ? WHERE turn = ?",
+                        (finished, turn_id),
+                    )
+                    conn.execute(
+                        "UPDATE agent_messages SET state = 'pending', turn = NULL WHERE turn = ? AND attempts < 3",
+                        (turn_id,),
+                    )
+                    conn.execute(
+                        "UPDATE agent_messages SET state = 'dropped' WHERE turn = ? AND attempts >= 3",
+                        (turn_id,),
+                    )
         from mao.learning import cancel_pending_takeover, install_pending_takeover
 
         if state == "ok":
@@ -811,6 +1002,9 @@ class AgentHost:
                 "code": code,
             },
         )
+        from mao.objectives import note_turn_settled
+
+        note_turn_settled(self.ctx, turn_id, cost)
         self._settle_wakes(pending, state, error, server)
         if self.foreman is not None and name == _RESIDENT_NAME:
             from mao.talk import settle_foreman_turn
@@ -945,14 +1139,24 @@ class AgentHost:
         sandbox = self._sandbox(snapshot, name, cfg)
         logs = self.ctx.root / "agents" / name / "turns" / turn_id
         logs.mkdir(parents=True, exist_ok=True)
-        result, _server = self._run_cli(snapshot, cfg, turn_id, number, invocation, sandbox, logs)
+        try:
+            result, _server = self._run_cli(snapshot, cfg, turn_id, number, invocation, sandbox, logs)
+        except OSError as exc:
+            return self._fail_open_turn(name, turn_id, "AGENT_RESULT_INVALID", str(exc))
         summary = None
         try:
             summary = parse_transcript(logs / "transcript.raw", invocation.transcript or "stream-json")
         except FactoryError:
             summary = None
         leaked = self._archive(snapshot, logs)
-        state, code, error = _turn_outcome(self.ctx, turn_id, result, summary)
+        state, code, error = _turn_outcome(
+            self.ctx,
+            turn_id,
+            result,
+            summary,
+            resume_required=_runtime_resumes(snapshot, cfg.runtime),
+            agent=name,
+        )
         if leaked and state == "ok":
             state, code = "failed", "SECRET_LEAK"
             error = {"code": "SECRET_LEAK", "message": "打码后仍像密钥", "detail": {}}
@@ -986,22 +1190,48 @@ class AgentHost:
     def _wakes(self) -> list[str]:
         if self.foreman is None:
             return []
-        from mao.foreman import WakeQueue
-
         found: list[str] = []
-        queue = WakeQueue(self.ctx)
         while True:
-            wake = queue.next(by="agents", exclude=("review",))
-            if wake is None:
+            message_id = self._claim_wake()
+            if message_id is None:
                 break
+            found.append(message_id)
+        return found
+
+    def _claim_wake(self) -> str | None:
+        from mao.foreman import _wake
+
+        now = utc_iso(self.ctx.clock.now())
+        with self.ctx.db.tx() as conn:
+            row = conn.execute(
+                "SELECT * FROM wakes WHERE status = 'open' AND signal != 'review' "
+                "AND (not_before IS NULL OR not_before <= ?) ORDER BY at, id LIMIT 1",
+                (now,),
+            ).fetchone()
+            if row is None:
+                return None
+            wake_id = str(row["id"])
+            claimed = conn.execute(
+                "UPDATE wakes SET status = 'taken', by = 'agents', updated_at = ? "
+                "WHERE id = ? AND status = 'open'",
+                (now, wake_id),
+            )
+            changed = claimed.rowcount
+            if changed < 0:
+                changed = int(conn.execute("SELECT changes()").fetchone()[0])
+            if changed != 1:
+                return None
+            fresh = conn.execute("SELECT * FROM wakes WHERE id = ?", (wake_id,)).fetchone()
+            wake = _wake(fresh)
             message = Mailbox(self.ctx).post(
                 _RESIDENT_NAME,
                 "wake",
                 "wake:" + wake.id,
                 {"wake": _wake_fields(wake)},
+                delivery_kind="wake",
+                delivery_source=wake.id,
             )
-            found.append(message.id)
-        return found
+            return message.id
 
     def _run_cli(
         self,
@@ -1058,15 +1288,51 @@ class AgentHost:
 
             docker = getattr(self.ctx.provider, "name", "") == "docker"
             env.update(proxy_env(self.ctx.proxies, docker=docker))
+        lease = getattr(self, "_lease", None)
+        bound = self.ctx.db.query(
+            "SELECT objective_id, cycle_id, task_id FROM agent_turns WHERE id = ?",
+            (turn_id,),
+        )
+        objective_id = (
+            None if not bound or bound[0]["objective_id"] is None else str(bound[0]["objective_id"])
+        )
+        cycle_id = None if not bound or bound[0]["cycle_id"] is None else str(bound[0]["cycle_id"])
+        task_id = None if not bound or bound[0]["task_id"] is None else str(bound[0]["task_id"])
         session = (
-            Session("foreman", runtime_ref, turn_id, turn_id, source)
+            Session(
+                "foreman",
+                runtime_ref,
+                turn_id,
+                turn_id,
+                source,
+                turn_id=turn_id,
+                lease_owner=None if lease is None else lease.owner,
+                lease_generation=None if lease is None else lease.generation,
+                objective_id=objective_id,
+                cycle_id=cycle_id,
+                task_id=task_id,
+            )
             if builtin
-            else Session("agent", runtime_ref, None, turn_id, None, name)
+            else Session(
+                "agent",
+                runtime_ref,
+                None,
+                turn_id,
+                None,
+                name,
+                turn_id=turn_id,
+                lease_owner=None if lease is None else lease.owner,
+                lease_generation=None if lease is None else lease.generation,
+                objective_id=objective_id,
+                cycle_id=cycle_id,
+                task_id=task_id,
+            )
         )
         server = McpServer(self.ctx, self.epochs, session, pipeline=self.pipeline)
         ctl = CtlServer(host / "ctl", McpCtlHandler(server), self.ctx.clock)
         ctl.start(interval_s=0.05)
         try:
+            self._guard_lease()
             result = sandbox.exec(
                 argv,
                 timeout_s=cfg.turn_timeout_s,
@@ -1404,7 +1670,7 @@ class AgentHost:
         now = utc_iso(self.ctx.clock.now())
         rows = self.ctx.db.query(
             "SELECT * FROM agent_messages WHERE agent = ? AND state = 'pending' "
-            "AND (not_before IS NULL OR not_before <= ?) ORDER BY id LIMIT ?",
+            "AND (not_before IS NULL OR not_before <= ?) ORDER BY enqueue_seq LIMIT ?",
             (name, now, batch),
         )
         return [_message(row) for row in rows]
@@ -1443,6 +1709,47 @@ class AgentHost:
     def _turn(self, turn_id: str) -> Any:
         return _turn(self.ctx.db.query("SELECT * FROM agent_turns WHERE id = ?", (turn_id,))[0])
 
+    def _fail_open_turn(self, name: str, turn_id: str, code: str, reason: str) -> Any:
+        finished = utc_iso(self.ctx.clock.now())
+        error = {
+            "code": code,
+            "message": "轮次未能形成有效结果",
+            "detail": {"agent": name, "turn": turn_id, "reason": reason[:120]},
+        }
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE agent_turns SET state = 'failed', error = ?, finished_at = ? "
+                "WHERE id = ? AND state = 'running'",
+                (canonical_json(error), finished, turn_id),
+            )
+            conn.execute(
+                "UPDATE agent_messages SET attempts = attempts + 1, updated_at = ? WHERE turn = ?",
+                (finished, turn_id),
+            )
+            conn.execute(
+                "UPDATE agent_messages SET state = 'pending', turn = NULL WHERE turn = ? AND attempts < 3",
+                (turn_id,),
+            )
+            conn.execute(
+                "UPDATE agent_messages SET state = 'dropped' WHERE turn = ? AND attempts >= 3",
+                (turn_id,),
+            )
+        self._event("agent.turn.finished", {"agent": name, "turn": turn_id, "state": "failed", "code": code})
+        return self._turn(turn_id)
+
+    def _guard_lease(self, conn: Any | None = None) -> None:
+        lease = getattr(self, "_lease", None)
+        if lease is None:
+            return
+        from mao.durable import LeaseStore
+
+        LeaseStore(self.ctx).guard(
+            lease.resource,
+            owner=lease.owner,
+            generation=lease.generation,
+            conn=conn,
+        )
+
     def _event(self, kind: str, data: Mapping[str, Any]) -> None:
         with self.ctx.db.tx() as conn:
             conn.execute(
@@ -1454,7 +1761,15 @@ class AgentHost:
 _CONTRACT = "身份由会话决定。不要冒充别人。只能经 MCP 操作工厂。秘密不进笔记与输出。一轮处理完就结束。"
 
 
-def agent_tool(ctx: Any, epochs: Any, name: str, tool: str, arguments: Mapping[str, Any]) -> Any:
+def agent_tool(
+    ctx: Any,
+    epochs: Any,
+    name: str,
+    tool: str,
+    arguments: Mapping[str, Any],
+    *,
+    origin: Mapping[str, Any] | None = None,
+) -> Any:
     snapshot = epochs.materialize(epochs.current())
     if name not in agent_names(snapshot, ctx.root):
         raise FactoryError("AGENT_NOT_FOUND", "没有这个 Agent", agent=name)
@@ -1465,7 +1780,7 @@ def agent_tool(ctx: Any, epochs: Any, name: str, tool: str, arguments: Mapping[s
     if tool == "remind":
         return _remind(ctx, name, arguments)
     if tool == "agent_send":
-        return _agent_send(ctx, snapshot, name, arguments)
+        return _agent_send(ctx, snapshot, name, arguments, origin=origin)
     raise FactoryError("AGENT_TOOL_INVALID", "工具不存在", tool=tool, reason="tool")
 
 
@@ -1487,10 +1802,14 @@ def _run_start(ctx: Any, snapshot: Any, name: str, arguments: Mapping[str, Any])
         raise FactoryError("AGENT_LINE_FORBIDDEN", "产线不在允许列表", agent=name, line=line)
     from mao.runs import open_line_runner
 
+    trigger: dict[str, Any] = {"on": "agent", "agent": name}
+    if arguments.get("cycle_id") and arguments.get("task_id"):
+        trigger["cycle_id"] = str(arguments["cycle_id"])
+        trigger["task_id"] = str(arguments["task_id"])
     started = open_line_runner(ctx, snapshot).start_run(
         line,
         dict(inputs),
-        trigger={"on": "agent", "agent": name},
+        trigger=trigger,
     )
     return {"id": started.id, "state": started.state.value}
 
@@ -1544,11 +1863,24 @@ def _remind(ctx: Any, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]
     return message.to_json()
 
 
-def _agent_send(ctx: Any, snapshot: Any, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+def _agent_send(
+    ctx: Any,
+    snapshot: Any,
+    name: str,
+    arguments: Mapping[str, Any],
+    *,
+    origin: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     target = str(arguments.get("to") or "")
     if target not in agent_names(snapshot, ctx.root):
         raise FactoryError("AGENT_NOT_FOUND", "没有这个 Agent", agent=target)
-    message = Mailbox(ctx).post(target, "message", "agent:" + name, {"text": arguments.get("text")})
+    message = Mailbox(ctx).post(
+        target,
+        "message",
+        "agent:" + name,
+        {"text": arguments.get("text")},
+        origin=origin,
+    )
     return message.to_json()
 
 
@@ -1695,8 +2027,42 @@ def _redact_file(ctx: Any, snapshot: Any, path: Any) -> str:
     return "".join(redact(ctx, snapshot, line) for line in text.splitlines(keepends=True))
 
 
+def _runtime_resumes(snapshot: Any, runtime: str) -> bool:
+    ref = runtime.split(":", 1)[-1]
+    try:
+        spec = snapshot.spec(snapshot.key("OperatorRuntime", ref))
+    except FactoryError:
+        return False
+    invoke = spec.get("invoke") if isinstance(spec, Mapping) else None
+    return bool(isinstance(invoke, Mapping) and invoke.get("resume"))
+
+
+def _waiting_for_result(logs: Path, *, code: str) -> bool:
+    """Recognize the explicit foreman wait signal without treating it as success.
+
+    The turn remains failed for audit purposes, while its delivery is deferred
+    until the separately delivered run result wakes the foreman.  Only the
+    structured, exact marker emitted by the in-repo witness agent qualifies;
+    arbitrary model prose cannot suppress retry accounting.
+    """
+    if code != "SESSION_FAILED":
+        return False
+    path = logs / "transcript.raw"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return '"result": "wait-for-result"' in text or '"result":"wait-for-result"' in text
+
+
 def _turn_outcome(
-    ctx: Any, turn_id: str, result: Any, summary: Any
+    ctx: Any,
+    turn_id: str,
+    result: Any,
+    summary: Any,
+    *,
+    resume_required: bool = False,
+    agent: str = "",
 ) -> tuple[str, str, dict[str, Any] | None]:
     exit_code = None if result is None else result.exit_code
     if result is not None and result.timed_out:
@@ -1710,6 +2076,16 @@ def _turn_outcome(
     if failed:
         error = {"code": "SESSION_FAILED", "message": "SESSION_FAILED", "detail": {"exit_code": exit_code}}
         return "failed", "SESSION_FAILED", error
+    has_result = summary is not None and bool(getattr(summary, "has_result", False))
+    session_id = None if summary is None else summary.session_id
+    if not has_result or (resume_required and not session_id):
+        reason = "session" if has_result else "result"
+        error = {
+            "code": "AGENT_RESULT_INVALID",
+            "message": "缺少结构化结果或会话",
+            "detail": {"agent": agent, "turn": turn_id, "reason": reason},
+        }
+        return "failed", "AGENT_RESULT_INVALID", error
     return "ok", "", None
 
 
@@ -1849,6 +2225,46 @@ def agent_status(ctx: Any, name: str, *, detail: bool = False) -> dict[str, Any]
     return body
 
 
+def _bind_turn_origin(conn: Any, turn_id: str, pending: list[Message]) -> None:
+    if not pending:
+        return
+    row = conn.execute(
+        """SELECT objective_id, cycle_id, task_id FROM execution_origins
+           WHERE kind = 'agent_message' AND execution_id = ?""",
+        (pending[0].id,),
+    ).fetchone()
+    if row is None or row["objective_id"] is None:
+        return
+    conn.execute(
+        "UPDATE agent_turns SET objective_id = ?, cycle_id = ?, task_id = ? WHERE id = ?",
+        (row["objective_id"], row["cycle_id"], row["task_id"], turn_id),
+    )
+    conn.execute(
+        """INSERT INTO execution_origins
+           (kind, execution_id, objective_id, cycle_id, task_id, parent_kind, parent_id)
+           VALUES ('turn', ?, ?, ?, ?, 'agent_message', ?)""",
+        (turn_id, row["objective_id"], row["cycle_id"], row["task_id"], pending[0].id),
+    )
+
+
+def _insert_origin(conn: Any, message_id: str, origin: Mapping[str, Any] | None) -> None:
+    if not origin:
+        return
+    conn.execute(
+        """INSERT INTO execution_origins
+           (kind, execution_id, objective_id, cycle_id, task_id, parent_kind, parent_id)
+           VALUES ('agent_message', ?, ?, ?, ?, ?, ?)""",
+        (
+            message_id,
+            origin["objective_id"],
+            origin["cycle_id"],
+            origin.get("task_id"),
+            origin["parent_kind"],
+            origin["parent_id"],
+        ),
+    )
+
+
 def _message(row: Any) -> Message:
     return Message(
         str(row["id"]),
@@ -1861,7 +2277,25 @@ def _message(row: Any) -> Message:
         int(row["attempts"]),
         None if row["not_before"] is None else str(row["not_before"]),
         str(row["created_at"]),
+        0 if "enqueue_seq" not in row.keys() or row["enqueue_seq"] is None else int(row["enqueue_seq"]),
     )
+
+
+def _alloc_enqueue_seq(conn: Any) -> int:
+    row = conn.execute("SELECT value FROM delivery_counters WHERE name = 'enqueue_seq'").fetchone()
+    current = 0 if row is None else int(row["value"])
+    nxt = current + 1
+    conn.execute(
+        "INSERT INTO delivery_counters (name, value) VALUES ('enqueue_seq', ?) "
+        "ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+        (nxt,),
+    )
+    return nxt
+
+
+def _agent_version(snapshot: Any, name: str) -> str:
+    keys = [key for key in snapshot.keys("Agent") if key.startswith(f"Agent:{name}@")]
+    return keys[0] if keys else name
 
 
 def _parse(stamp: str) -> Any:

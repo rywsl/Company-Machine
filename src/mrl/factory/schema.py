@@ -70,16 +70,24 @@ def json_path(parts: Any) -> str:
 # 同一份文档在一致性用例里会被反复校验。键含 schema 目录与文件字节，避免换 MRL_SPEC_DIR 后命中旧结果。
 _VALIDATED: dict[tuple[str, str, str, str], tuple[tuple[str, str], ...]] = {}
 _VALIDATED_MAX = 4096
-_SCHEMA_BYTES: dict[str, tuple[tuple[tuple[str, int, int], ...], str]] = {}
+_SCHEMA_BYTES: dict[str, tuple[tuple[int, int], str]] = {}
 
 
 def _schema_bytes(directory: str) -> str:
     root = Path(directory)
-    files = sorted(root.glob("*.schema.json")) if root.is_dir() else []
-    stamp = tuple((path.name, path.stat().st_mtime_ns, path.stat().st_size) for path in files)
+    # Registry loading validates many documents.  Stat'ing every schema file for
+    # every document is disproportionately expensive on a mounted Windows/WSL
+    # worktree.  A directory timestamp changes when schema files are added,
+    # removed, or rewritten, so it is sufficient as the cheap invalidation key;
+    # the file bytes are still hashed whenever that key changes.
+    if not root.is_dir():
+        return ""
+    directory_stat = root.stat()
+    stamp = (directory_stat.st_mtime_ns, directory_stat.st_size)
     cached = _SCHEMA_BYTES.get(directory)
     if cached is not None and cached[0] == stamp:
         return cached[1]
+    files = sorted(root.glob("*.schema.json"))
     hasher = hashlib.sha256()
     hasher.update(directory.encode("utf-8"))
     for path in files:

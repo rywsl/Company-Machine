@@ -658,6 +658,68 @@ class LearningStore:
         }
 
 
+def evaluate_objective_contract(
+    ctx: Any,
+    epochs: Any,
+    *,
+    cycle_id: str,
+    contract: str,
+    plan: str,
+    watermark: int,
+    context: Mapping[str, Any],
+    evidence: Mapping[str, Mapping[str, str]],
+) -> dict[str, Any]:
+    """用已授权契约和真实执行构造目标评价，不打开 knowledge trial。"""
+    contract_record = _load_asset(ctx, contract)
+    _require_authorized(ctx, contract_record)
+    current = canonical_json(_standards(ctx, contract_record))
+    if context.get("standards") and str(context["standards"]) != current:
+        raise FactoryError(
+            "OBJECTIVE_EVIDENCE_INVALID",
+            "授权标准已变化",
+            cycle_id=cycle_id,
+            case="",
+            reason="stale",
+        )
+    _load_asset(ctx, plan)
+    cases = list(contract_record["document"]["data"]["cases"])
+    names = [str(case["name"]) for case in cases]
+    if sorted(evidence) != sorted(names) or len(evidence) != len(names):
+        raise FactoryError(
+            "OBJECTIVE_EVIDENCE_INVALID",
+            "证据没有精确覆盖契约用例",
+            cycle_id=cycle_id,
+            case="",
+            reason="coverage",
+        )
+    store = LearningStore(ctx, epochs)
+    trial = {
+        "watermark": int(watermark),
+        "target": plan,
+        "context_digest": digest_bytes(canonical_bytes(dict(context))),
+        "purpose": "objective",
+    }
+    checks: list[dict[str, Any]] = []
+    passed = True
+    for case in cases:
+        name = str(case["name"])
+        item = evidence[name]
+        try:
+            out = store._execution_out(trial, case, str(item["kind"]), str(item["id"]))
+        except FactoryError as exc:
+            raise FactoryError(
+                "OBJECTIVE_EVIDENCE_INVALID",
+                "证据不能用于本周期",
+                cycle_id=cycle_id,
+                case=name,
+                reason=str(exc.detail.get("reason") or "invalid"),
+            ) from exc
+        ok, reason = _assert_case(str(case["assert"]), out)
+        checks.append({"case": name, "passed": ok, "reason": reason})
+        passed = passed and ok
+    return {"passed": passed, "checks": checks, "evidence": {key: dict(evidence[key]) for key in evidence}}
+
+
 def cancel_pending_takeover(ctx: Any, agent: str) -> None:
     """失败或中断的工作轮取消尚未安装的接管，保留当前挂载。"""
     now = utc_iso(ctx.clock.now())

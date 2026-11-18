@@ -799,7 +799,53 @@ class LineRunner:
         from mao.talk import note_status
 
         note_status(self.ctx, "run", run.id, state.value)
+        if state in RUN_TERMINAL:
+            self._notify_terminal(run, state)
         return self.get(run.id)
+
+    def _notify_terminal(self, run: Run, state: RunState) -> None:
+        agent = str((run.trigger or {}).get("agent") or "")
+        if not agent:
+            return
+        from mao.agents import Mailbox, agent_names
+
+        names = set(agent_names(self.snapshot, self.ctx.root))
+        target = agent if agent in names else "foreman"
+        # Objective runs carry their authoritative cycle binding in
+        # execution_origins.  Copy it onto the durable result message so a
+        # receiving agent's follow-up turn remains bound to the same cycle.
+        # The trigger is deliberately not the source of truth: legacy and
+        # ordinary agent runs may have only an agent field there.
+        origin_row = self.ctx.db.query(
+            """SELECT objective_id, cycle_id, task_id
+               FROM execution_origins
+               WHERE kind = 'run' AND execution_id = ?""",
+            (run.id,),
+        )
+        origin = None
+        if origin_row:
+            origin = {
+                "objective_id": str(origin_row[0]["objective_id"]),
+                "cycle_id": str(origin_row[0]["cycle_id"]),
+                "task_id": None if origin_row[0]["task_id"] is None else str(origin_row[0]["task_id"]),
+                "parent_kind": "run",
+                "parent_id": run.id,
+            }
+        Mailbox(self.ctx).post(
+            target,
+            "run_result",
+            f"run:{run.id}:terminal",
+            {
+                "run_id": run.id,
+                "state": state.value,
+                "epoch": run.epoch,
+                "cycle_id": (run.trigger or {}).get("cycle_id"),
+                "task_id": (run.trigger or {}).get("task_id"),
+            },
+            delivery_kind="run_result",
+            delivery_source=f"run:{run.id}:terminal",
+            origin=origin,
+        )
 
     def _event(self, conn: Any, run_id: str, kind: str, data: Mapping[str, Any]) -> None:
         conn.execute(

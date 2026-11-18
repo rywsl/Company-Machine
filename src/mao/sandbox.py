@@ -478,16 +478,35 @@ class _LocalSandbox:
         self._attached = attached
         self._proc: subprocess.Popen[bytes] | None = None
         self._log: Any = None
+        self.output_root: Path | None = None
         tmp = provider.root / "tmp" / "sandboxes" / spec.name / "tmp"
         (tmp / "home").mkdir(parents=True, exist_ok=True)
         mounts = {mount.target: mount.source for mount in spec.mounts}
         mounts["/tmp"] = str(tmp)
         self._mounts = tuple(sorted(mounts.items(), key=lambda item: len(item[0]), reverse=True))
 
+    def bind_job_output(self, job_id: str) -> None:
+        """Give each local service invocation an isolated host output directory.
+
+        A one-shot Runner sandbox already has an exact ``/factory/out`` mount
+        to its attempt directory.  Keep that mapping so harvested outputs
+        remain in the attempt; only pooled/direct gateway sandboxes that mount
+        the parent ``/factory`` directory need a per-job remap.
+        """
+        if any(mount.target == "/factory/out" for mount in self.spec.mounts):
+            return
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", str(job_id)) or "job"
+        root = self.provider.root / "tmp" / "sandboxes" / self.spec.name / "jobs" / safe / "out"
+        root.mkdir(parents=True, exist_ok=True)
+        self.output_root = root
+        mounts = [(target, source) for target, source in self._mounts if target != "/factory/out"]
+        mounts.append(("/factory/out", str(root)))
+        self._mounts = tuple(sorted(mounts, key=lambda item: len(item[0]), reverse=True))
+
     def start_command(self) -> None:
         if self._attached or not self.spec.command:
             return
-        command = [self._rewrite(arg) for arg in self._map_argv(self.spec.command)]
+        command = self._host_command(self.spec.command)
         folder = self.provider.root / "tmp" / "sandboxes" / self.spec.name
         folder.mkdir(parents=True, exist_ok=True)
         self._log = (folder / "main.log").open("ab")
@@ -517,7 +536,7 @@ class _LocalSandbox:
         if self._closed:
             raise FactoryError("SANDBOX_CLOSED", "沙箱已关闭", name=self.name)
         start = self.provider.clock.monotonic()
-        command = [self._rewrite(arg) for arg in self._map_argv(argv)]
+        command = self._host_command(argv)
         child_env = self._child_env(env)
         cwd = self._cwd(workdir)
         try:
@@ -551,9 +570,21 @@ class _LocalSandbox:
             self._log.close()
             self._log = None
 
-    def _map_argv(self, argv: Sequence[str]) -> list[str]:
+    def _host_command(self, argv: Sequence[str]) -> list[str]:
+        """Map a container command while preserving host command paths.
+
+        LocalProvider runs mapped test commands directly on the host.  Their
+        interpreter and script paths commonly live under ``/tmp`` or
+        ``/workspace``; rewriting those host paths through virtual mounts
+        makes the process unlaunchable.  Only the original virtual arguments
+        are translated.
+        """
+        mapped, host_len = self._map_argv(argv)
+        return [*mapped[:host_len], *[self._rewrite_argv_arg(arg) for arg in mapped[host_len:]]]
+
+    def _map_argv(self, argv: Sequence[str]) -> tuple[list[str], int]:
         if not argv:
-            return []
+            return [], 0
         head = argv[0]
         mapped = self.provider.commands.get(head)
         if mapped is None and head == "python3":
@@ -562,26 +593,47 @@ class _LocalSandbox:
             script = self.provider.root / "tools" / "factory" / "bin" / "factoryctl"
             mapped = [sys.executable, str(script)]
         if mapped is None:
-            return list(argv)
-        return [str(item) for item in mapped] + list(argv[1:])
+            return list(argv), 0
+        host = [str(item) for item in mapped]
+        return host + list(argv[1:]), len(host)
+
+    def _rewrite_argv_arg(self, arg: str) -> str:
+        """Rewrite factory virtual paths while leaving host parameters intact.
+
+        ``/tmp`` is a real host path in LocalProvider fixtures (publish/source
+        parameters and pytest files), so treating every host ``/tmp/...`` as
+        the sandbox's private tmp mount breaks those contracts.  The fixed
+        environment and working directory still use ``_rewrite`` for the
+        sandbox's virtual ``/tmp/home``.
+        """
+        for target, source in self._mounts:
+            if target == "/tmp":
+                continue
+            if arg == target or arg.startswith(target + "/") or arg.startswith(target + "\\"):
+                rest = arg[len(target) :].lstrip("/\\").replace("/", os.sep).replace("\\", os.sep)
+                return str(Path(source) / rest) if rest else str(source)
+        return arg
 
     def _child_env(self, extra: Mapping[str, str] | None) -> dict[str, str]:
         merged: dict[str, str] = {}
         merged.update({key: str(value) for key, value in self.spec.env.items()})
         if extra:
             merged.update({key: str(value) for key, value in extra.items()})
-        merged.update(
+        child = {key: self._rewrite_argv_arg(value) for key, value in merged.items()}
+        # These values are virtual by contract, including the private HOME
+        # mount.  User supplied environment values such as FAKE_AGENT_SCRIPT
+        # may be host paths under /tmp and must remain host paths.
+        child.update(
             {
-                "FACTORY_IN": "/factory/in",
-                "FACTORY_OUT": "/factory/out",
-                "FACTORY_CTL": "/factory/ctl",
-                "FACTORY_WORKSPACE": "/workspace",
-                "FACTORYCTL": "/opt/factory/bin/factoryctl",
-                "HOME": "/tmp/home",
+                "FACTORY_IN": self._rewrite("/factory/in"),
+                "FACTORY_OUT": self._rewrite("/factory/out"),
+                "FACTORY_CTL": self._rewrite("/factory/ctl"),
+                "FACTORY_WORKSPACE": self._rewrite("/workspace"),
+                "FACTORYCTL": self._rewrite("/opt/factory/bin/factoryctl"),
+                "HOME": self._rewrite("/tmp/home"),
                 "PATH": _PATH,
             }
         )
-        child = {key: self._rewrite(value) for key, value in merged.items()}
         if os.name == "nt":
             for name in ("SYSTEMROOT", "WINDIR", "PATHEXT", "COMSPEC"):
                 host = os.environ.get(name)

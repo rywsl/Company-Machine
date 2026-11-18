@@ -10,6 +10,8 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 def _die(code, message):
@@ -105,6 +107,18 @@ def cmd_contract(_args):
 
 def cmd_budget(args):
     job = _job()
+    path = os.path.join(_ctl_dir(), "budget.json")
+    if os.path.isfile(path):
+        body = _read_json(path)
+        if not isinstance(body, dict):
+            _die(1, "budget.json 不是对象")
+        if not args.json:
+            spent = body.get("spent_usd")
+            remaining = body.get("remaining_usd")
+            sys.stdout.write(f"spent_usd={spent} remaining_usd={remaining}\n")
+            return
+        sys.stdout.write(_dump(body) + "\n")
+        return
     if not args.json:
         _die(2, "budget 需要 --json")
     sys.stdout.write(
@@ -112,7 +126,8 @@ def cmd_budget(args):
             {
                 "budget_usd": job.get("budget_usd", 0),
                 "spent_usd": None,
-                "note": "M1 在 job 结束后从 transcript 结算，运行中没有余额",
+                "remaining_usd": None,
+                "note": "余额未知",
             }
         )
         + "\n"
@@ -525,6 +540,49 @@ def cmd_emit(args):
     _die(1, "等待宿主响应超时")
 
 
+def _http(method, url, body=None):
+    request = Request(url, data=body, method=method)
+    if body is not None:
+        request.add_header("Content-Type", "application/json")
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read()
+    except HTTPError as exc:
+        _die(1, f"http {exc.code}")
+    except URLError as exc:
+        _die(1, f"http {exc.reason}")
+
+
+def _write_bytes(path, data):
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(data)
+
+
+def cmd_service(args):
+    op = args.service_cmd
+    if op == "openapi":
+        _write_bytes(args.out, _http("GET", args.url))
+        return
+    if op == "fetch":
+        _write_bytes(args.dest, _http("GET", args.url))
+        return
+    if op in ("submit", "poll"):
+        base = os.environ.get("FACTORY_SERVICE_BASE") or ""
+        if not base:
+            _die(1, "缺少 FACTORY_SERVICE_BASE")
+        path = args.path if args.path.startswith("/") else "/" + args.path
+        body = None
+        if getattr(args, "body", "") and op == "submit":
+            with open(args.body, "rb") as handle:
+                body = handle.read()
+        sys.stdout.buffer.write(_http(args.method, base.rstrip("/") + path, body))
+        return
+    _die(2, "未知服务操作")
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog="factoryctl")
     sub = parser.add_subparsers(dest="cmd")
@@ -572,12 +630,30 @@ def main(argv):
     emit.add_argument("--port", required=True)
     emit.add_argument("--dir", required=True)
     emit.add_argument("--label", action="append")
+    service = sub.add_parser("service")
+    service_sub = service.add_subparsers(dest="service_cmd")
+    openapi = service_sub.add_parser("openapi")
+    openapi.add_argument("--url", required=True)
+    openapi.add_argument("--out", required=True)
+    submit_svc = service_sub.add_parser("submit")
+    submit_svc.add_argument("--method", required=True)
+    submit_svc.add_argument("--path", required=True)
+    submit_svc.add_argument("--body", default="")
+    poll = service_sub.add_parser("poll")
+    poll.add_argument("--method", required=True)
+    poll.add_argument("--path", required=True)
+    fetch = service_sub.add_parser("fetch")
+    fetch.add_argument("--url", required=True)
+    fetch.add_argument("--dest", required=True)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
         raise
     if args.cmd == "emit":
         cmd_emit(args)
+        return
+    if args.cmd == "service":
+        cmd_service(args)
         return
     _ctl_dir()
     if args.cmd == "inputs":

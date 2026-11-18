@@ -4,12 +4,18 @@
 
 实施交接入口：`plan/m17-implementation.md`，包含M16整合前置、逐任务源码入口、迁移所有权、证据层级和真实验收顺序。
 
+当前优先执行独立M17-13，见`plan/tasks/M17-13.md`；原08 blocked不阻断本地执行器开发。调度缺口证据见`task-split-observation.json`。
+
+旧Grok进程和旧goal再次导致续作误阻塞的脱敏证据见`environment-handoff-observation.json`：实际Windows uv在父进程凭据全空时按每条命令加载私有env后，接入预检通过且task next返回13；Grok旧goal仍为77项且没有13。先按`plan/m17-live-readiness.md`第0.1节刷新工作计划和命令入口，不能将这项预检当成真实见证通过。
+
+当前基础使用与live资源/占位修正：`plan/m17-live-readiness.md`；基础两单实测见`basic-order-observation.json`。完整M17门仍保留原真实要求。
+
 ## 全部已登记问题的设计闭合
 
 **已补齐当前登记问题的规范、计划与强制验收，生产修复尚未实施。** 核心闭环与网络、真实adapter语义、产品接入、bootstrap、权限和外部使用均已纳入M17。46个问题/别名/能力要求由`closure.yaml`精确追踪；不能把46称为独立bug数，也不声称未知问题已穷尽。
 
 - 总体：`plan/design-continuity.md`、`plan/design-operability.md`；规范：`spec/system/continuity.md`、`spec/system/operability.md`。
-- 12张任务卡：01–07核心、09–12补充实现，08最终验收依赖全部实现。`verify_plan.py`校验设计闭合；`run_contracts.py --all`运行至少77个离线用例，缺节点/skip/xfail失败。
+- 13张任务卡：01–07核心、09–12补充实现，13离线见证准备，08最终验收依赖全部实现。`verify_plan.py`校验设计闭合；`run_contracts.py --all`运行至少81个离线用例，缺节点/skip/xfail失败。
 - 历史对照：`historical-coverage.md`，使用与PR通用化：`external-agent-usage.md`；26个专项精确节点见`operability-cases.yaml`。
 - 真实门：原C10保持，新增两领域×两runtime四格witness，各至少四周期，历史机器库存真实产品资格、零外部业务接续；缺资源blocked。
 - R01旧池验收冲突已冻结限定维护与真实两job隔离正反例，不以路径名字不同替代内容/权限隔离；本轮未改旧测试。
@@ -17,7 +23,7 @@
 
 ## 基线与隔离
 
-- 原项目：`/mnt/d/Desktop/machine_agent_org`，M16 由 Grok 实现，本次不写入该工作区。
+- 原项目：`/mnt/d/Desktop/machine_agent_org`，M16 由 Grok 实现，2026-11-16调查未写该工作区；2026-11-17经授权维护仅同步审阅的设计/锁，并在独立.factory临时工厂实测基础订单，保留实现者改动。
 - 调查 worktree：`/home/ubuntu/.codex/worktrees/m17-autonomy-audit/machine_agent_org`。
 - 分支：`codex/m17-autonomy-audit`；冻结实现基线：`c538768`，M15 完成、M16 设计在内。
 - 环境：CPython 3.14.2 free-threaded、uv 0.9.4；本次故障复现为 LocalProvider、真实 SQLite/Git/MCP/Runner、本地无收费服务。
@@ -71,11 +77,11 @@ uv run --offline python tools/harness.py pytest plan/evidence/m17/repro --basete
 
 - 总体设计：`plan/design-continuity.md`。
 - 精确契约：`spec/system/continuity.md`，含旧条款覆盖、接口、持久结构、状态、错误与范围。
-- 十二张任务卡：`plan/tasks/M17-01.md`至`M17-12.md`，08为最终任务，已登记完整依赖与tasks/gates，M17依赖M16。
+- 十三张任务卡：`plan/tasks/M17-01.md`至`M17-13.md`，08为最终任务，已登记完整依赖与tasks/gates，M17依赖M16。
 - 新能力协议验收：`acceptance/test_objectives.py`（13用例）；治理输入验收`test_agent_risk.py`（7用例）。
 - 整体验收设计：`cases.yaml`，C01–C09离线、C10真实Docker/CLI/模型；包含空档、多个自主周期、不同目标、失败调整、失租/重启、外部任务、预算与撤销。
 - `verify_live.py`及其25项合成测试只校验真实报告的结构、摘要和数据库引用完整性；合成报告不是live证明，缺报告返回失败。
-- `acceptance/test_plan_coverage.py`本轮交接复核实测49 passed、零失败/错误/跳过：漏项、依赖绕过、原门保留、缺节点硬失败、跨领域索引拒绝反例。它们是设计/工具回归，与未来至少77个行为用例分开。
+- `acceptance/test_plan_coverage.py`本轮53项通过，新增真实harness回归：08 blocked且三个环境变量均为空时，独立13仍可next/start；反向依赖受阻08被拒绝。全工具组在Linux设计worktree和Windows活动worktree各实测85项通过（上次各84项保留为历史结果），不充抵未来81项行为或真实见证。
 
 长期授权包括结构化扩展范围；目标来源贯穿邮件、turn、task、run、job和付费请求，不能省略参数绕过预算。新业务产线有受限候选路由取得金丝雀样本。业务Agent发现具体工作、组织执行与复盘；控制面不替Agent想目标，也不调用额外模型。事务/outbox/fencing/稳定键共同保证恢复，而非对每个案例打特殊补丁。
 
@@ -85,4 +91,4 @@ uv run --offline python tools/harness.py pytest plan/evidence/m17/repro --basete
 
 新目标验收在该冻结基线因M16资产模块不存在而13项跳过，这不是通过；M17实现后必须13passed/0skip。当前可以通过的风险规则和live校验器测试仅证明本次设计输入/证据工具有效。M17阶段门包含真实live报告，缺资源应如实blocked，不允许声明已具有真实自治能力。
 
-当前未运行任何M17 task start/accept/gate，没有改生产src、plan/state.json或M16原工作区。详细设计检查结果在 `design-validation.json`。选跑旧验收另发现1项原基线也失败的服务池用例，归因限度和未削弱原测试的处理见 `baseline-regression.md`；不能报告全套回归通过。
+本设计审计未运行任何M17 task start/accept/gate，没有改生产src或plan/state.json。上述基线记录保留2026-11-16的历史含义；2026-11-17续作另见`plan/journal/2026-11-17-M17-live-readiness.md`，活动工作区的任务进度以其harness为准。详细设计检查结果在 `design-validation.json`。选跑旧验收另发现1项原基线也失败的服务池用例，归因限度和未削弱原测试的处理见 `baseline-regression.md`；不能报告全套回归通过。

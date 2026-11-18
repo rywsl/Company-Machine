@@ -103,6 +103,16 @@ def parse_duration(text: str) -> float:
     return float(match.group(1)) * _UNIT_SECONDS[match.group(2)]
 
 
+class TokenSource:
+    def token_hex(self, nbytes: int = 32) -> str:
+        raise NotImplementedError
+
+
+class SystemTokens(TokenSource):
+    def token_hex(self, nbytes: int = 32) -> str:
+        return secrets.token_hex(nbytes)
+
+
 class SystemClock:
     def now(self) -> datetime:
         return datetime.now(UTC)

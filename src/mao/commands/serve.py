@@ -31,8 +31,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             max_parallel=config.max_parallel_jobs,
             log_dir=ctx.root / "logs" / "jobs",
         )
-        daemon = Daemon(ctx, config, executor=executor, registry=args.registry)
         if args.once:
+            daemon = Daemon(ctx, config, executor=executor, registry=args.registry)
             daemon.start()
             report = daemon.tick()
             session = None
@@ -60,5 +60,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
             return finish(args, report)
         stop = threading.Event()
         install_stop_signals(stop)
-        run_serve(ctx, config, executor=executor, stop=stop, registry=args.registry)
+        run_serve(
+            ctx,
+            config,
+            executor=executor,
+            stop=stop,
+            registry=args.registry,
+            lazy_instances=True,
+        )
     return 0

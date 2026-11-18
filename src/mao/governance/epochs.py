@@ -9,6 +9,7 @@ import shutil
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from mao.base import canonical_json, utc_iso
@@ -62,9 +63,7 @@ class EpochStore:
         except FactoryError:
             shutil.rmtree(part, ignore_errors=True)
             raise
-        if dest.exists():
-            shutil.rmtree(dest)
-        os.replace(part, dest)
+        _replace_tree(part, dest)
         try:
             snapshot = Snapshot.load(dest / "registry", epoch=commit)
         except FactoryError:
@@ -83,6 +82,9 @@ class EpochStore:
         return self._epoch(self.ctx.db.query(f"SELECT * FROM epochs WHERE {_COL} = ?", (commit,))[0])
 
     def materialize(self, commit: str) -> Snapshot:
+        cached = self._cache.get(commit)
+        if cached is not None:
+            return cached
         built = self.build(commit)
         if built.commit not in self._cache:
             self._cache[built.commit] = Snapshot.load(
@@ -163,6 +165,41 @@ class EpochStore:
         else:
             git(self.registry, "update-ref", ref, commit, timeout_s=self.timeout_s)
 
+    def write_pointer(self, conn: Any, name: str, commit: str | None, *, by: str, reason: str) -> None:
+        if name not in _POINTERS:
+            raise ValueError("指针名不合法")
+        if commit is not None:
+            commit = self._verify(commit)
+            if not conn.execute(f"SELECT {_COL} FROM epochs WHERE {_COL} = ?", (commit,)).fetchone():
+                raise FactoryError("EPOCH_NOT_FOUND", "epoch 还没有构建", commit=commit)
+        previous = self.pointers().get(name)
+        if commit is None:
+            conn.execute("DELETE FROM epoch_pointers WHERE name = ?", (name,))
+        else:
+            conn.execute(
+                f"INSERT INTO epoch_pointers (name, {_COL}) VALUES (?, ?) "
+                f"ON CONFLICT(name) DO UPDATE SET {_COL} = excluded.{_COL}",
+                (name, commit),
+            )
+        _event(
+            conn,
+            self.ctx,
+            "epoch.pointer",
+            {"name": name, "from": previous, "to": commit, "by": by, "reason": reason},
+        )
+
+    def sync_refs(self) -> None:
+        for name in _POINTERS:
+            commit = self.pointers().get(name)
+            ref = f"refs/factory/{name}"
+            if commit is None:
+                try:
+                    git(self.registry, "update-ref", "-d", ref, timeout_s=self.timeout_s)
+                except FactoryError:
+                    continue
+            else:
+                git(self.registry, "update-ref", ref, commit, timeout_s=self.timeout_s)
+
     def rollback(self, commit: str | None = None, *, by: str) -> str:
         pointers = self.pointers()
         target = commit or pointers.get("previous")
@@ -238,6 +275,24 @@ class EpochStore:
 
     def _epoch(self, row: Any) -> Epoch:
         return Epoch(row["commit"], row["tree"], row["built_at"], self.retain(row["commit"]))
+
+
+def _replace_tree(src: Path, dest: Path) -> None:
+    """Windows 在归档句柄刚释放时会拒绝目录改名，短暂重试后再失败。"""
+    delay = 0.05
+    last: PermissionError | None = None
+    for _ in range(8):
+        try:
+            if dest.exists():
+                shutil.rmtree(dest)
+            os.replace(src, dest)
+            return
+        except PermissionError as exc:
+            last = exc
+            Event().wait(delay)
+            delay = min(delay * 2, 0.4)
+    if last is not None:
+        raise last
 
 
 def _governance(root: Path) -> dict[str, Any]:

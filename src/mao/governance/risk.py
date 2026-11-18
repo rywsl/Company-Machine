@@ -162,7 +162,17 @@ def _changes(base: Any, candidate: Any) -> list[dict[str, Any]]:
     return found
 
 
-_GOVERNED = {"Type", "Machine", "OperatorRuntime", "Station", "Line", "Policy", "GoldenSet", "Baseline"}
+_GOVERNED = {
+    "Type",
+    "Machine",
+    "OperatorRuntime",
+    "Station",
+    "Line",
+    "Policy",
+    "GoldenSet",
+    "Baseline",
+    "Agent",
+}
 
 
 def _split(key: str) -> tuple[str, str, str]:
@@ -208,6 +218,8 @@ def _lifecycle_op(old: Mapping[str, Any], new: Mapping[str, Any]) -> str | None:
 
 
 def _fields(kind: str, old: Mapping[str, Any], new: Mapping[str, Any]) -> list[str]:
+    if kind == "Agent":
+        return _agent_fields(old, new)
     old_spec = old.get("spec") or {}
     new_spec = new.get("spec") or {}
     found: list[str] = []
@@ -238,6 +250,113 @@ def _fields(kind: str, old: Mapping[str, Any], new: Mapping[str, Any]) -> list[s
     }
     if _norm(old_meta) != _norm(new_meta):
         found.append("metadata")
+    return found
+
+
+def _agent_fields(old: Mapping[str, Any], new: Mapping[str, Any]) -> list[str]:
+    old_spec = old.get("spec") or {}
+    new_spec = new.get("spec") or {}
+    structural = []
+    for field in ("runtime", "model", "charter", "context", "policy"):
+        if _norm(old_spec.get(field)) != _norm(new_spec.get(field)):
+            structural.append(field)
+    for field in sorted(set(old_spec) | set(new_spec)):
+        if field in ("runtime", "model", "charter", "context", "policy", "lines", "subscribe", "budget"):
+            continue
+        if _norm(old_spec.get(field)) != _norm(new_spec.get(field)):
+            structural.append(field)
+    reduced = _agent_scope_reduced(old_spec, new_spec)
+    expanded = _agent_scope_expanded(old_spec, new_spec)
+    if reduced and not expanded and not structural:
+        return ["scope.reduced"]
+    found = list(structural)
+    if expanded:
+        found.append("scope.expanded")
+    elif _norm(old_spec.get("lines")) != _norm(new_spec.get("lines")):
+        found.append("lines")
+    elif _norm(old_spec.get("subscribe")) != _norm(new_spec.get("subscribe")):
+        found.append("subscribe")
+    elif _norm(old_spec.get("budget")) != _norm(new_spec.get("budget")):
+        found.append("budget")
+    return found
+
+
+def _agent_scope_reduced(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
+    old_lines = set(old.get("lines") or [])
+    new_lines = set(new.get("lines") or [])
+    if not new_lines <= old_lines:
+        return False
+    old_sub = old.get("subscribe") or {}
+    new_sub = new.get("subscribe") or {}
+    if set(new_sub.get("ingress") or {}) - set(old_sub.get("ingress") or {}):
+        return False
+    if set(new_sub.get("beans") or []) - set(_as_tuples(old_sub.get("beans"))):
+        return False
+    old_every = _schedule_every(old_sub)
+    new_every = _schedule_every(new_sub)
+    if new_every and old_every and new_every < old_every:
+        return False
+    return _budget_not_raised(old.get("budget") or {}, new.get("budget") or {})
+
+
+def _agent_scope_expanded(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
+    old_lines = set(old.get("lines") or [])
+    new_lines = set(new.get("lines") or [])
+    if new_lines - old_lines:
+        return True
+    old_sub = old.get("subscribe") or {}
+    new_sub = new.get("subscribe") or {}
+    if set(new_sub.get("ingress") or {}) - set(old_sub.get("ingress") or {}):
+        return True
+    old_every = _schedule_every(old_sub)
+    new_every = _schedule_every(new_sub)
+    if old_every and new_every and new_every < old_every:
+        return True
+    old_budget = old.get("budget") or {}
+    new_budget = new.get("budget") or {}
+    return not _budget_not_raised(old_budget, new_budget) and _norm(old_budget) != _norm(new_budget)
+
+
+def _schedule_every(subscribe: Mapping[str, Any]) -> float | None:
+    from mao.base import parse_duration
+
+    items = subscribe.get("schedule") or []
+    if not items or not isinstance(items, list):
+        return None
+    first = items[0] if isinstance(items[0], Mapping) else {}
+    raw = first.get("every")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return float(parse_duration(raw))
+    except FactoryError:
+        return None
+
+
+def _budget_not_raised(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
+    for key in ("daily_usd", "turn_usd"):
+        if _num(new.get(key)) > _num(old.get(key)):
+            return False
+    if _num(new.get("turn_timeout_s")) > _num(old.get("turn_timeout_s")):
+        return False
+    return True
+
+
+def _num(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
+def _as_tuples(value: Any) -> list[tuple[str, ...]]:
+    if not isinstance(value, list):
+        return []
+    found = []
+    for item in value:
+        if isinstance(item, Mapping):
+            found.append(tuple(sorted((str(key), str(val)) for key, val in item.items())))
+        else:
+            found.append((str(item),))
     return found
 
 

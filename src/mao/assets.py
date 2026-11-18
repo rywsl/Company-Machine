@@ -368,6 +368,18 @@ def _release_blockers(conn: Any, asset_id: str) -> list[str]:
         (asset_id, asset_id),
     ):
         holders.add(str(row["id"]))
+    for row in conn.execute(
+        """SELECT id FROM objectives
+           WHERE asset_id = ? AND state IN ('active', 'paused')""",
+        (asset_id,),
+    ):
+        holders.add(str(row["id"]))
+    for row in conn.execute(
+        """SELECT id FROM objective_cycles
+           WHERE plan_asset = ? AND state NOT IN ('idle', 'blocked', 'completed', 'failed')""",
+        (asset_id,),
+    ):
+        holders.add(str(row["id"]))
     return sorted(holders)
 
 

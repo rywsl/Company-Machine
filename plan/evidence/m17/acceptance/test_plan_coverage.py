@@ -6,6 +6,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -50,8 +51,9 @@ def design_tree(tmp_path: Path) -> Path:
         "plan/evidence/m17/closure.yaml",
         "plan/evidence/m17/operability-cases.yaml",
         "spec/system/operability.md",
+        "plan/m17-live-readiness.md",
     }
-    files.update(f"plan/tasks/M17-{i:02}.md" for i in range(1, 13))
+    files.update(f"plan/tasks/M17-{i:02}.md" for i in range(1, 14))
     for row in manifest["issues"]:
         files.update(row["evidence"])
         files.update(ref["path"] for ref in row["spec_refs"])
@@ -70,6 +72,27 @@ def test_registered_design_is_complete_but_not_behavior(design_tree: Path) -> No
         "issues": [],
     }
     assert not (design_tree / "tests/system/test_m17_09_transport.py").exists()
+    # Standalone commands must read UTF-8 contracts without relying on the
+    # harness's PYTHONUTF8=1 wrapper or the host's default locale.
+    environment = {
+        **os.environ,
+        "PYTHONUTF8": "0",
+        "PYTHONCOERCECLOCALE": "0",
+        "LC_ALL": "C",
+        "PYTHONIOENCODING": "utf-8",
+    }
+    result = subprocess.run(
+        [sys.executable, str(AUDIT / "verify_plan.py")],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["ok"] is True
 
 
 @pytest.mark.parametrize(
@@ -87,11 +110,12 @@ def test_registered_design_is_complete_but_not_behavior(design_tree: Path) -> No
         "drop_product",
         "weaken_group",
         "broad_selector",
+        "omit_readiness_node",
     ],
 )
 def test_incomplete_or_misleading_mapping_is_rejected(design_tree: Path, change: str) -> None:
     path = design_tree / "plan/evidence/m17/closure.yaml"
-    document = yaml.safe_load(path.read_text())
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
     if change == "omit_issue":
         document["issues"].pop()
     elif change == "duplicate_issue":
@@ -116,6 +140,9 @@ def test_incomplete_or_misleading_mapping_is_rejected(design_tree: Path, change:
         document["test_groups"][0]["minimum_cases"] = 0
     elif change == "broad_selector":
         document["test_groups"][0]["nodes"] = ["tests/system -k success"]
+    elif change == "omit_readiness_node":
+        group = next(g for g in document["test_groups"] if g["id"] == "M17-13")
+        group["nodes"].remove(sorted(CHECK.WITNESS_READINESS_NODES)[0])
     write_yaml(path, document)
     assert CHECK.validate_design(design_tree)["ok"] is False
 
@@ -128,6 +155,8 @@ def test_incomplete_or_misleading_mapping_is_rejected(design_tree: Path, change:
         "cycle",
         "drop_task_check",
         "drop_core_integrity",
+        "drop_readiness_task",
+        "drop_readiness_gate",
         "drop_gate",
         "drop_core_witness_gate",
         "weaken_gate",
@@ -136,14 +165,18 @@ def test_incomplete_or_misleading_mapping_is_rejected(design_tree: Path, change:
 def test_task_and_gate_cannot_bypass_closure(design_tree: Path, change: str) -> None:
     path = design_tree / (
         "plan/gates.yaml"
-        if change in {"drop_gate", "drop_core_witness_gate", "weaken_gate"}
+        if change in {"drop_gate", "drop_core_witness_gate", "drop_readiness_gate", "weaken_gate"}
         else "plan/tasks.yaml"
     )
-    data = yaml.safe_load(path.read_text())
-    if change in {"drop_gate", "drop_core_witness_gate", "weaken_gate"}:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if change in {"drop_gate", "drop_core_witness_gate", "drop_readiness_gate", "weaken_gate"}:
         checks = data["gates"]["M17"]["checks"]
-        if change in {"drop_gate", "drop_core_witness_gate"}:
-            removed = "m17-operability-live" if change == "drop_gate" else "m17-live-witness"
+        if change in {"drop_gate", "drop_core_witness_gate", "drop_readiness_gate"}:
+            removed = {
+                "drop_gate": "m17-operability-live",
+                "drop_core_witness_gate": "m17-live-witness",
+                "drop_readiness_gate": "m17-live-readiness",
+            }[change]
             checks[:] = [c for c in checks if c["id"] != removed]
         else:
             next(c for c in checks if c["id"] == "m17-all-known-issues")["assert"] = "out.passed >= 1"
@@ -157,7 +190,10 @@ def test_task_and_gate_cannot_bypass_closure(design_tree: Path, change: str) -> 
         elif change == "cycle":
             task["deps"].append("M17-08")
         else:
-            removed = "live-evidence-integrity" if change == "drop_core_integrity" else "all-known-issues"
+            removed = {
+                "drop_core_integrity": "live-evidence-integrity",
+                "drop_readiness_task": "live-readiness",
+            }.get(change, "all-known-issues")
             task["accept"] = [c for c in task["accept"] if c["id"] != removed]
     write_yaml(path, data)
     assert CHECK.validate_design(design_tree)["ok"] is False
@@ -168,7 +204,7 @@ def test_task_and_gate_cannot_bypass_closure(design_tree: Path, change: str) -> 
 )
 def test_supplemental_contract_cannot_lose_requirements(design_tree: Path, change: str) -> None:
     path = design_tree / "plan/evidence/m17/operability-cases.yaml"
-    document = yaml.safe_load(path.read_text())
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
     if change == "omit_group":
         document["groups"].pop()
     elif change == "duplicate_group":
@@ -183,20 +219,61 @@ def test_supplemental_contract_cannot_lose_requirements(design_tree: Path, chang
     assert CHECK.validate_design(design_tree)["ok"] is False
 
 
-def test_missing_behavior_nodes_fail_execution(design_tree: Path) -> None:
-    # The isolated tree deliberately omits behavior nodes even after implementation.
-    # Run the real runner and harness, with their actual mrl dependency, not a stub.
+def install_harness(tree: Path) -> None:
     for relative in (
         "plan/evidence/m17/run_contracts.py",
         "plan/evidence/m17/verify_plan.py",
         "tools/harness.py",
     ):
-        target = design_tree / relative
+        target = tree / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, target)
-    shutil.copytree(
-        ROOT / "src/mrl", design_tree / "src/mrl", ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
-    )
+    shutil.copytree(ROOT / "src/mrl", tree / "src/mrl", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+
+def test_blocked_live_witness_leaves_preparation_runnable(design_tree: Path) -> None:
+    install_harness(design_tree)
+    tasks = yaml.safe_load((design_tree / "plan/tasks.yaml").read_text(encoding="utf-8"))["tasks"]
+    state = {
+        "tasks": {task["id"]: {"status": "done"} for task in tasks if task["id"] != "M17-13"},
+        "gates": {"M16": {"status": "passed"}},
+    }
+    state["tasks"]["M17-08"] = {"status": "blocked", "reason": "live resources unavailable"}
+    state_path = design_tree / "plan/state.json"
+    write_json(state_path, state)
+    environment = dict(os.environ)
+    for name in ("XAI_API_KEY", "OPENAI_API_KEY", "MAO_BUDGET_USD"):
+        environment.pop(name, None)
+    for arguments in (("task", "next"), ("task", "start", "M17-13")):
+        result = subprocess.run(
+            [sys.executable, str(design_tree / "tools/harness.py"), *arguments],
+            cwd=design_tree,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.startswith("M17-13 ")
+    updated = json.loads(state_path.read_text(encoding="utf-8"))
+    assert updated["tasks"]["M17-13"]["status"] == "in_progress"
+    assert updated["tasks"]["M17-08"] == state["tasks"]["M17-08"]
+    assert CHECK.validate_design(design_tree)["ok"] is True
+    # Reintroducing the original wait on blocked live acceptance is a cycle.
+    preparation = next(task for task in tasks if task["id"] == "M17-13")
+    preparation["deps"].append("M17-08")
+    path = design_tree / "plan/tasks.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    next(task for task in document["tasks"] if task["id"] == "M17-13")["deps"] = preparation["deps"]
+    write_yaml(path, document)
+    assert CHECK.validate_design(design_tree)["ok"] is False
+
+
+def test_missing_behavior_nodes_fail_execution(design_tree: Path) -> None:
+    # Run the actual runner/harness in an isolated tree without behavior nodes.
+    install_harness(design_tree)
     result = subprocess.run(
         [sys.executable, str(design_tree / "plan/evidence/m17/run_contracts.py"), "--task", "M17-09"],
         cwd=design_tree,
@@ -335,7 +412,7 @@ def test_live_matrix_requires_all_real_evidence_shapes(live_index, change: str) 
     elif change in {"offline_product", "unresolved_product_ref", "stale_product"}:
         ref = data["product_receipts"][0]
         receipt_path = path.parent / ref["path"]
-        receipt = json.loads(receipt_path.read_text())
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         if change == "offline_product":
             receipt["profile"] = "offline"
         elif change == "unresolved_product_ref":
@@ -346,7 +423,7 @@ def test_live_matrix_requires_all_real_evidence_shapes(live_index, change: str) 
     elif change in {"changed_source", "stale_cell_witness", "same_domain_contract", "skipped_core_case"}:
         ref = data["cells"][-1]
         report_path = path.parent / ref["report"]
-        report = json.loads(report_path.read_text())
+        report = json.loads(report_path.read_text(encoding="utf-8"))
         if change == "changed_source":
             report["baseline"]["platform_source_digest"] = "d" * 64
         elif change == "stale_cell_witness":
@@ -375,13 +452,13 @@ def test_live_matrix_requires_all_real_evidence_shapes(live_index, change: str) 
                 mode = "skill"
             cell["entry_mode"] = mode
             report_path = path.parent / cell["report"]
-            report = json.loads(report_path.read_text())
+            report = json.loads(report_path.read_text(encoding="utf-8"))
             report["entry_mode"] = mode
             cell["report_sha256"] = write_json(report_path, report)
     elif change == "entry_mode_report_mismatch":
         cell = data["cells"][0]
         report_path = path.parent / cell["report"]
-        report = json.loads(report_path.read_text())
+        report = json.loads(report_path.read_text(encoding="utf-8"))
         report["entry_mode"] = "skill"
         cell["report_sha256"] = write_json(report_path, report)
     write_json(path, data)

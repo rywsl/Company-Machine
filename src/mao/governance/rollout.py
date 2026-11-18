@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Any
 
 from mao.base import parse_duration, utc_iso
+from mao.delivery import register_effect
 from mao.errors import FactoryError
 from mao.governance.risk import governance_limits
 
@@ -246,7 +247,7 @@ def _from_verified(pipeline: Any, current: Any) -> Any:
             return _stay(pipeline, current, "signoff", signoff=mode)
         if record["decision"] == "deny":
             return pipeline.reject_changeset(current, "SIGNOFF_DENIED", {"by": record["by"]})
-    if _queued(pipeline):
+    if _slot_taken(pipeline, current):
         return _stay(pipeline, current, "queued")
     if pipeline.epochs.current() != current.base_epoch:
         pipeline.epochs.set_pointer("candidate", None, by="governance", reason="stale")
@@ -265,6 +266,9 @@ def _from_verified(pipeline: Any, current: Any) -> Any:
 def _from_shadow(pipeline: Any, current: Any) -> Any:
     if in_freeze(pipeline.ctx):
         return _stay(pipeline, current, "freeze")
+    blocked = _blocked_by_safe_mode(pipeline, current)
+    if blocked is not None:
+        return blocked
     stages = (current.report or {}).get("stages") or []
     if "canary" in stages:
         return _move(pipeline, current, "canary", {}, stamp="stage")
@@ -284,6 +288,9 @@ def _from_canary(pipeline: Any, current: Any) -> Any:
         return _rollback(pipeline, current, violation)
     if in_freeze(pipeline.ctx):
         return _stay(pipeline, current, "freeze")
+    blocked = _blocked_by_safe_mode(pipeline, current)
+    if blocked is not None:
+        return blocked
     return _promote(pipeline, current)
 
 
@@ -324,6 +331,9 @@ def _shadow(pipeline: Any, current: Any) -> ShadowReport:
 
 
 def _promote(pipeline: Any, current: Any) -> Any:
+    blocked = _blocked_by_safe_mode(pipeline, current)
+    if blocked is not None:
+        return blocked
     if pipeline.epochs.current() != current.base_epoch:
         pipeline.epochs.set_pointer("candidate", None, by="governance", reason="stale")
         return pipeline.reject_changeset(
@@ -333,10 +343,15 @@ def _promote(pipeline: Any, current: Any) -> Any:
         )
     previous = pipeline.epochs.current()
     now = utc_iso(pipeline.ctx.clock.now())
-    pipeline.epochs.set_pointer("previous", previous, by="governance", reason="promote")
-    pipeline.epochs.set_pointer("active", current.commit, by="governance", reason="promote")
-    pipeline.epochs.set_pointer("candidate", None, by="governance", reason="promote")
     with pipeline.ctx.db.tx() as conn:
+        pipeline.epochs.write_pointer(conn, "previous", previous, by="governance", reason="promote")
+        pipeline.epochs.write_pointer(conn, "active", current.commit, by="governance", reason="promote")
+        pipeline.epochs.write_pointer(conn, "candidate", None, by="governance", reason="promote")
+        conn.execute(
+            "INSERT INTO rollout_owner (slot, changeset_id) VALUES (1, ?) "
+            "ON CONFLICT(slot) DO UPDATE SET changeset_id = excluded.changeset_id",
+            (current.id,),
+        )
         conn.execute(
             """UPDATE changesets
                SET state = 'active', activated_at = ?, stage_started_at = ?, report = ?, updated_at = ?
@@ -357,8 +372,28 @@ def _promote(pipeline: Any, current: Any) -> Any:
                 json.dumps({"id": current.id, "from": current.state, "to": "active", "code": None}),
             ),
         )
+        from mao.delivery import DeliveryStore
+
+        DeliveryStore(pipeline.ctx).enqueue(
+            conn,
+            kind="epoch_refs",
+            effect_key=f"promotion/{current.id}",
+            body={"changeset": current.id, "revision": now},
+        )
         _note_talk(pipeline.ctx, current.id, "active")
-    _rebuild(pipeline, current)
+    pipeline.epochs.sync_refs()
+    try:
+        _rebuild(pipeline, current)
+    except Exception as exc:
+        from mao.foreman import WakeQueue
+
+        WakeQueue(pipeline.ctx).file(
+            "rebuild",
+            current.id,
+            {"id": current.id, "error": type(exc).__name__},
+        )
+    with pipeline.ctx.db.tx() as conn:
+        conn.execute("DELETE FROM rollout_owner WHERE slot = 1 AND changeset_id = ?", (current.id,))
     return pipeline.get(current.id)
 
 
@@ -497,6 +532,34 @@ def _report_only(pipeline: Any, current: Any, report: dict[str, Any]) -> Any:
             (json.dumps(report), now, current.id),
         )
     return pipeline.get(current.id)
+
+
+def _replay_epoch_refs(ctx: Any, body: dict[str, Any]) -> None:
+    del body
+    from mao.governance.epochs import EpochStore
+
+    EpochStore(ctx).sync_refs()
+
+
+register_effect("epoch_refs", _replay_epoch_refs)
+
+
+def _blocked_by_safe_mode(pipeline: Any, current: Any) -> Any | None:
+    tier = current.risk_tier or "T1"
+    if evaluate_safe_mode(pipeline.ctx)["on"] and tier >= "T2":
+        return _stay(pipeline, current, "safe-mode")
+    return None
+
+
+def _slot_taken(pipeline: Any, current: Any) -> bool:
+    candidate = pipeline.epochs.pointers().get("candidate")
+    if candidate and candidate != current.commit:
+        return True
+    busy = pipeline.ctx.db.query(
+        "SELECT id FROM changesets WHERE state IN ('shadow', 'canary') AND id != ?",
+        (current.id,),
+    )
+    return bool(busy) or _queued(pipeline)
 
 
 def _queued(pipeline: Any) -> bool:

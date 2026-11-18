@@ -390,6 +390,10 @@ class Runner:
 
     def _execute(self, job: Job, sandbox: Any, prepared: _Prepared, *, lease: Any = None) -> Job:
         if prepared.machine.get("form") == "service" and self.gateway is not None:
+            if prepared.runtime.get("kind") == "agent-cli":
+                failed = self._launch_declared_operator(job, sandbox, prepared)
+                if failed is not None:
+                    return failed
             return self._execute_service(job, sandbox, prepared, lease=lease)
         brief = prepared.brief
         invocation = build_invocation(
@@ -485,6 +489,30 @@ class Runner:
             return self._fail(job, "APPROVAL_TIMEOUT", "审批超时", {"approval_id": timed})
         job = self._transition(job, JobState.GATING, "inspect")
         return self._finish(job, sandbox, prepared)
+
+    def _launch_declared_operator(self, job: Job, sandbox: Any, prepared: _Prepared) -> Job | None:
+        brief = prepared.brief
+        invocation = build_invocation(
+            self.snapshot, job.station, brief, inputs=prepared.beans, params=job.params
+        )
+        try:
+            invocation = expand_control_vars(invocation, self._control_values(job))
+        except FactoryError as exc:
+            return self._fail(job, exc.code, exc.message, dict(exc.detail))
+        logs = prepared.attempt_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        result = sandbox.exec(
+            list(invocation.argv),
+            timeout_s=invocation.timeout_s,
+            stdout=logs / "stdout.txt",
+            stderr=logs / "stderr.txt",
+            env=invocation.env,
+        )
+        if result.timed_out:
+            return self._fail(job, "OPERATOR_TIMEOUT", "操作工超时", {"timeout_s": invocation.timeout_s})
+        if result.exit_code != 0:
+            return self._fail(job, "OPERATOR_FAILED", "操作工退出码不是 0", {"exit_code": result.exit_code})
+        return None
 
     def _execute_service(self, job: Job, sandbox: Any, prepared: _Prepared, *, lease: Any = None) -> Job:
         timeout = (prepared.station.get("limits") or {}).get("timeout")

@@ -49,6 +49,7 @@ class TranscriptSummary:
     malformed: int
     session_id: str | None = None
     input_tokens: int = 0
+    has_result: bool = False
 
 
 def build_invocation(
@@ -182,15 +183,17 @@ def parse_transcript(path: Path, fmt: str) -> TranscriptSummary:
                 input_tokens = tokens
     if result_event is None:
         return TranscriptSummary(0.0, None, events + malformed > 0, None, events, malformed, session_id, 0)
+    errored = _is_error(result_event)
     return TranscriptSummary(
         _cost(result_event),
         _turns(result_event),
-        _is_error(result_event),
+        errored,
         result_event.get("result") if isinstance(result_event.get("result"), str) else None,
         events,
         malformed,
         session_id,
         input_tokens,
+        not errored,
     )
 
 
@@ -386,7 +389,8 @@ def _parse_codex(path: Path) -> TranscriptSummary:
                 and isinstance(item.get("text"), str)
             ):
                 result = item["text"]
-    return TranscriptSummary(0.0, turns, failed or turns == 0, result, events, malformed)
+    errored = failed or turns == 0
+    return TranscriptSummary(0.0, turns, errored, result, events, malformed, has_result=not errored)
 
 
 def _render_item(snapshot: Any, item: Any, subject: str, env: Mapping[str, Any]) -> str:

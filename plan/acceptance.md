@@ -61,7 +61,7 @@
 | 格式 | `ruff format --check src tests tools` | 零差异 |
 | 静态规则 | `tests/test_codebase_policy.py` | 通过。规则包括：不用 `shell=True`、`eval`；只在 `base.py` 里接触真实时间与随机数；不新增依赖；不吞异常；显式指定编码；factoryctl 兼容 Python 3.8 |
 | 单元测试 | `harness pytest tests/system` | `failed == 0 && errors == 0` |
-| 越界改动 | `state.json` 中任务的 `outside_paths` | 为空，或由人在阶段门审查后接受 |
+| 越界改动 | `state.json` 中任务的 `outside_paths` | 为空，或由独立 reviewer artifact 通过机器校验；高风险路径必须升级人工 |
 
 ### 2.5 确定性：同样的输入，逐字节相同的输出
 
@@ -103,6 +103,14 @@
 - **记录**：`harness accept` / `harness gate` 把每个检查项的命令、退出码、耗时、stdout 的 SHA-256 和末尾 12 行写进 `plan/state.json`，同时记下当时的 commit 和工作区是否有未提交改动（`dirty`）。
 - **复核**：人复核时，在干净的检出上重新运行 `harness gate <M>`。证据只是线索，**能重现才算数**。
 - **审查越界改动**：阶段门会列出每个任务的 `outside_paths`。
+
+越界改动不能由实现任务的同一 agent 自行批准。只读命令
+`uv run python tools/harness.py review audit <TASK>` 会输出当前文件、内容摘要、最近提交、可能归属任务、测试/lock 线索和风险级别。
+独立 reviewer 可以在 `.factory/reviews/<TASK>/<REVIEW_ID>.json` 写入审查结果；artifact 至少要包含
+`task_id`、任务记录中的 `source_commit`、当前 `working_tree_digest`、每个越界文件的 digest、`file_ownership`、通过的测试证据、规范影响、`reviewer_id`、`reviewer_model`、`reviewer_context_id`、`reviewer_input_digest`、`decision` 和 `created_at`。
+`harness gate` 只接受 digest 完全匹配、reviewer 身份不同于实现 agent、决策为 `accepted` 且没有高风险路径的 artifact。
+缺失、过期、身份相同、digest 不匹配或涉及规范、计划、预算、凭据、权限、治理、live/evidence、Docker/runtime 的变更都保持 `needs_human`，不会让阶段门通过。
+reviewer 不能修改源码、`plan/state.json`、live report 或 `plan/protected.lock`；artifact 也不替代正式验收检查。
 
 ## 5. 防作弊设计
 
@@ -146,4 +154,4 @@
 
 诊断与未来红测位于 `plan/evidence/m17/`，只由显式 M17 命令收集；不改变 M16 的测试、跳过语义或门槛。实现任务仅运行自己的验收与已经交付任务的累计回归；最终 M17 gate 必须全量运行证据测试、已有 tests 及 live 证据校验。
 
-M17补充关闭门：M17-09–12分别交付网络、真实接入资格、幂等部署/权限、CLI/help/skill；08依赖它们。verify_plan只证明46个登记项的设计映射，run_contracts --all实际执行至少77个离线用例。原C10保留，另运行2领域×2native runtime四格独立真实witness，每格四周期，index逐格复用旧verify_live校验。必选历史机器库存全部提供真实产品资格；未知副作用/费用保留，外部只观察/交接而不代编排，help/skill不能靠静态关键词通过。缺节点/skip/xfail/证据或资源一律不可关闭M17。
+M17补充关闭门：M17-09–12分别交付网络、真实接入资格、幂等部署/权限、CLI/help/skill；13独立完成见证执行器及四项准备协议，08依赖所有这些实施任务，真实资源不阻断13。verify_plan只证明46个登记项的设计映射，run_contracts --all实际执行至少81个离线用例。原C10保留，另运行2领域×2native runtime四格独立真实witness，每格四周期，index逐格复用旧verify_live校验。必选历史机器库存全部提供真实产品资格；未知副作用/费用保留，外部只观察/交接而不代编排，help/skill不能靠静态关键词通过。缺节点/skip/xfail/证据或资源一律不可关闭M17。

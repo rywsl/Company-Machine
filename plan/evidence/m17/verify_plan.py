@@ -28,7 +28,7 @@ EXPECTED_IDS = frozenset(
     + [f"U{i:02}" for i in range(1, 7)]
     + ["R01"]
 )
-TASK_IDS = frozenset(f"M17-{i:02}" for i in range(1, 13))
+TASK_IDS = frozenset(f"M17-{i:02}" for i in range(1, 14))
 GROUP_MINIMA = {
     "M17-01": 5,
     "M17-02": 4,
@@ -42,9 +42,18 @@ GROUP_MINIMA = {
     "M17-10": 7,
     "M17-11": 7,
     "M17-12": 6,
+    "M17-13": 4,
     "core-live": 1,
     "operability-live": 1,
 }
+WITNESS_READINESS_NODES = frozenset(
+    [
+        "tests/system/test_m17_08_live_readiness.py::test_ready_resources_execute_witness_not_permanent_blocker",
+        "tests/system/test_m17_08_live_readiness.py::test_native_auth_and_grant_without_vendor_env_are_accepted",
+        "tests/system/test_m17_08_live_readiness.py::test_resource_blockers_are_scoped_and_recoverable",
+        "tests/system/test_m17_08_live_readiness.py::test_live_reports_require_current_observed_execution",
+    ]
+)
 NODE = re.compile(
     r"(?:plan/evidence/m17|tests/system|tests/acceptance/m4)/[A-Za-z0-9_/]+\.py::test_[A-Za-z0-9_]+$"
 )
@@ -80,7 +89,9 @@ def _json_unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def load_manifest(root: Path = ROOT) -> dict[str, Any]:
-    return _mapping(yaml.safe_load(_file(root, "plan/evidence/m17/closure.yaml").read_text()), "closure")
+    return _mapping(
+        yaml.safe_load(_file(root, "plan/evidence/m17/closure.yaml").read_text(encoding="utf-8")), "closure"
+    )
 
 
 def selected_groups(manifest: dict[str, Any], task: str | None = None) -> list[dict[str, Any]]:
@@ -109,7 +120,7 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
             manifest["mandatory_issue_ids"]
         ) != len(EXPECTED_IDS):
             issues.append("MANDATORY_ISSUE_SET_CHANGED")
-        tasks = _mapping(yaml.safe_load(_file(root, "plan/tasks.yaml").read_text()), "tasks")
+        tasks = _mapping(yaml.safe_load(_file(root, "plan/tasks.yaml").read_text(encoding="utf-8")), "tasks")
         by_task = {t["id"]: t for t in tasks["tasks"]}
         if not TASK_IDS.issubset(by_task):
             issues.append("M17_TASK_MISSING")
@@ -160,13 +171,15 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
                 issues.append(name + ":NORMATIVE_NODE_COUNT_CHANGED")
             all_nodes.update(nodes)
             if task in by_task:
-                card = _file(root, by_task[task]["card"]).read_text()
+                card = _file(root, by_task[task]["card"]).read_text(encoding="utf-8")
                 if (
                     task not in card
                     or "operability.md" not in card
                     and task in {"M17-09", "M17-10", "M17-11", "M17-12"}
                 ):
                     issues.append(name + ":CARD_NOT_LINKED")
+        if not WITNESS_READINESS_NODES.issubset(set(by_group.get("M17-13", {}).get("nodes", []))):
+            issues.append("WITNESS_READINESS_NODES_MISSING")
         for row in rows:
             key = row["id"]
             if not row["tasks"] or any(t not in TASK_IDS for t in row["tasks"]):
@@ -176,7 +189,7 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
             if not row["spec_refs"] or not row["evidence"]:
                 issues.append(key + ":MISSING_CONTRACT_OR_EVIDENCE")
             for ref in row["spec_refs"]:
-                text = _file(root, ref["path"]).read_text()
+                text = _file(root, ref["path"]).read_text(encoding="utf-8")
                 if not re.search(r"^#{2,3}\s+" + re.escape(ref["section"]) + r"(?:\s|$)", text, re.M):
                     issues.append(key + ":SPEC_SECTION_MISSING")
             for evidence in row["evidence"]:
@@ -184,13 +197,18 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
             if row.get("design_baseline_status") != "not_implemented":
                 issues.append(key + ":DESIGN_IS_NOT_IMPLEMENTATION_PROOF")
         # Every new frozen node must appear in the normative acceptance chapter.
-        spec = _file(root, "spec/system/operability.md").read_text()
+        spec = _file(root, "spec/system/operability.md").read_text(encoding="utf-8")
         acceptance = spec.split("## 7. 验收测试", 1)[1].split("## 8.", 1)[0]
         for name in ("M17-09", "M17-10", "M17-11", "M17-12", "operability-live"):
             for node in by_group.get(name, {}).get("nodes", []):
                 path, function = node.split("::")
                 if path not in acceptance or function not in acceptance:
                     issues.append(node + ":NORMATIVE_ACCEPTANCE_MISSING")
+        for node in WITNESS_READINESS_NODES:
+            path, function = node.split("::")
+            if path not in acceptance or function not in acceptance:
+                issues.append(node + ":NORMATIVE_ACCEPTANCE_MISSING")
+        _file(root, "plan/m17-live-readiness.md")
         dependencies: set[str] = set()
         visiting: set[str] = set()
 
@@ -212,9 +230,19 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
             issues.append("FINAL_TASK_DOES_NOT_REQUIRE_ALL_WORK")
         if "M17-07" not in by_task["M17-09"].get("deps", []):
             issues.append("OPERABILITY_MIGRATION_PRECEDES_OBJECTIVES")
+        preparation = by_task["M17-13"]
+        if set(preparation.get("deps", [])) != {"M17-07", "M17-09", "M17-10", "M17-11", "M17-12"}:
+            issues.append("WITNESS_PREPARATION_MUST_NOT_WAIT_FOR_LIVE")
+        if not {"live-readiness", "contracts", "core-regress", "design-coverage"}.issubset(
+            {c["id"] for c in preparation["accept"]}
+        ):
+            issues.append("WITNESS_PREPARATION_ACCEPTANCE_MISSING")
+        if any(c["id"] in {"live-witness", "operability-live-witness"} for c in preparation["accept"]):
+            issues.append("WITNESS_PREPARATION_REQUIRES_PAID_LIVE")
         final = by_task["M17-08"]
         expected_checks = {
             "all-known-issues",
+            "live-readiness",
             "live-witness",
             "live-evidence-integrity",
             "operability-live-witness",
@@ -223,18 +251,21 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
         }
         if not expected_checks.issubset({c["id"] for c in final["accept"]}):
             issues.append("FINAL_ACCEPTANCE_MISSING_CHECK")
-        for name in ("M17-09", "M17-10", "M17-11", "M17-12"):
+        for name in ("M17-09", "M17-10", "M17-11", "M17-12", "M17-13"):
             checks = by_task[name]["accept"]
             if not any(
                 "run_contracts.py --task " + name in c["run"] and "out.skipped == 0" in c.get("assert", "")
                 for c in checks
             ):
                 issues.append(name + ":TASK_CONTRACT_NOT_ENFORCED")
-        gate = _mapping(yaml.safe_load(_file(root, "plan/gates.yaml").read_text()), "gates")["gates"]["M17"]
+        gate = _mapping(yaml.safe_load(_file(root, "plan/gates.yaml").read_text(encoding="utf-8")), "gates")[
+            "gates"
+        ]["M17"]
         if "M16" not in gate.get("requires_gates", []):
             issues.append("M16_GATE_REMOVED")
         required_gate = {
             "m17-all-known-issues",
+            "m17-live-readiness",
             "m17-design-coverage",
             "m17-operability-live",
             "m17-operability-integrity",
@@ -247,7 +278,7 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
         }
         if not required_gate.issubset({c["id"] for c in gate["checks"]}):
             issues.append("MILESTONE_GATE_MISSING_CHECK")
-        for check in gate["checks"] + final["accept"]:
+        for check in gate["checks"] + final["accept"] + preparation["accept"]:
             if check["id"] in {"m17-all-known-issues", "all-known-issues"}:
                 if "run_contracts.py --all" not in check["run"] or any(
                     clause not in check.get("assert", "")
@@ -255,10 +286,21 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
                         "out.failed == 0",
                         "out.errors == 0",
                         "out.skipped == 0",
-                        "out.passed >= 77",
+                        "out.passed >= 81",
                     )
                 ):
                     issues.append("EXACT_CLOSURE_GATE_WEAKENED")
+            if check["id"] in {"m17-live-readiness", "live-readiness"}:
+                if not WITNESS_READINESS_NODES.issubset(set(check["run"].split())) or any(
+                    clause not in check.get("assert", "")
+                    for clause in (
+                        "out.failed == 0",
+                        "out.errors == 0",
+                        "out.skipped == 0",
+                        "out.passed >= 4",
+                    )
+                ):
+                    issues.append("WITNESS_READINESS_GATE_WEAKENED")
             if check["id"] in {"m17-operability-live", "operability-live-witness"}:
                 if (
                     "tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery"
@@ -270,7 +312,10 @@ def validate_design(root: Path = ROOT) -> dict[str, Any]:
                 ):
                     issues.append("LIVE_WITNESS_GATE_WEAKENED")
         contracts = _mapping(
-            yaml.safe_load(_file(root, "plan/evidence/m17/operability-cases.yaml").read_text()), "cases"
+            yaml.safe_load(
+                _file(root, "plan/evidence/m17/operability-cases.yaml").read_text(encoding="utf-8")
+            ),
+            "cases",
         )
         contract_groups = contracts["groups"]
         if len(contract_groups) != 4 or {g["id"] for g in contract_groups} != {
@@ -310,7 +355,9 @@ def validate_live_index(index_path: Path, root: Path = ROOT) -> dict[str, Any]:
         if index_path.is_symlink() or not index_path.is_file():
             raise ValueError("index missing/unsafe")
         directory = index_path.resolve().parent
-        index = _mapping(json.loads(index_path.read_text(), object_pairs_hook=_json_unique), "index")
+        index = _mapping(
+            json.loads(index_path.read_text(encoding="utf-8"), object_pairs_hook=_json_unique), "index"
+        )
         if index["schema_version"] != "mao-operability-live-1" or index["status"] != "passed":
             raise ValueError("index not passed or wrong version")
         if (
@@ -365,7 +412,7 @@ def validate_live_index(index_path: Path, root: Path = ROOT) -> dict[str, Any]:
             checked = validator.validate(report_path, factory)
             if not checked["ok"]:
                 problems.append(cell["domain_id"] + ":CORE_LIVE_EVIDENCE_INVALID")
-            report = json.loads(report_path.read_text(), object_pairs_hook=_json_unique)
+            report = json.loads(report_path.read_text(encoding="utf-8"), object_pairs_hook=_json_unique)
             if (
                 report.get("witness_run_id") != witness
                 or report.get("entry_mode") != mode
@@ -398,7 +445,7 @@ def validate_live_index(index_path: Path, root: Path = ROOT) -> dict[str, Any]:
             receipt_path = _file(directory, receipt_ref["path"])
             if hashlib.sha256(receipt_path.read_bytes()).hexdigest() != receipt_ref["sha256"]:
                 raise ValueError("product digest mismatch")
-            receipt = json.loads(receipt_path.read_text(), object_pairs_hook=_json_unique)
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"), object_pairs_hook=_json_unique)
             if (
                 receipt["schema_version"] != "mao-qualification-1"
                 or receipt["kind"] != "machine"

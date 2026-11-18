@@ -63,6 +63,7 @@ live_witness:
   - M17-10
   - M17-11
   - M17-12
+  - M17-13
   cells: Cartesian product of two distinct actual domains and two qualified native CLI adapters; four fresh isolated
     factories, same platform source digest.
   minimum_cycles_per_cell: 4

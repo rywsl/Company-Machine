@@ -14,7 +14,7 @@ from verify_plan import ROOT, load_manifest, selected_groups, validate_design
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     choice = parser.add_mutually_exclusive_group(required=True)
-    choice.add_argument("--task", choices=[f"M17-{i:02}" for i in range(1, 13)])
+    choice.add_argument("--task", choices=[f"M17-{i:02}" for i in range(1, 14)])
     choice.add_argument("--all", action="store_true")
     choice.add_argument("--plan", action="store_true", help="show exact offline nodes without running them")
     args = parser.parse_args()

@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
-from urllib.request import Request, urlopen
 
 from mao.base import canonical_json, utc_iso
 from mao.errors import FactoryError
@@ -770,6 +769,11 @@ class EgressProxy:
         self._server: ThreadingHTTPServer | None = None
         self._event_seq = 0
         self._event_lock = threading.Lock()
+        from mao.transport import TunnelSlots, egress_limits
+
+        _deadline, limit, _inspection = egress_limits(self.root)
+        self._tunnels = TunnelSlots(limit)
+        self._tunnel_cancel = threading.Event()
 
     def start(self, host: str = "127.0.0.1", port: int = 0) -> int:
         global LIVE_EGRESS
@@ -781,6 +785,7 @@ class EgressProxy:
 
     def close(self) -> None:
         global LIVE_EGRESS
+        self._tunnel_cancel.set()
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -828,14 +833,94 @@ class EgressProxy:
         host, port = parsed
         if not self._admit(handler, "CONNECT", host):
             return
+        if not self._tunnels.acquire():
+            _send_status(
+                handler,
+                503,
+                b'{"code":"TRANSPORT_CANCELLED","phase":"capacity","outcome":"rejected","retryable":true}',
+            )
+            return
         try:
-            upstream = socket.create_connection((host, port), timeout=30)
+            self._open_tunnel(handler, host, port)
+        finally:
+            self._tunnels.release()
+
+    def _inspection_cert(self, host: str) -> tuple[str, str] | None:
+        from mao.transport import egress_limits, inspection_cert
+
+        _deadline, _limit, inspection = egress_limits(self.root)
+        return inspection_cert(inspection, host)
+
+    def _open_tunnel(self, handler: BaseHTTPRequestHandler, host: str, port: int) -> None:
+        from mao.transport import egress_limits, relay_until, take_buffered
+
+        deadline, _limit, _inspection = egress_limits(self.root)
+        cert = self._inspection_cert(host)
+        if cert is not None:
+            self._inspect_and_relay(handler, host, port, deadline, cert)
+            return
+        try:
+            upstream = socket.create_connection((host, port), timeout=deadline.connect_s)
         except OSError:
             _send_status(handler, 502, b"")
             return
         handler.send_response(200, "Connection Established")
         handler.end_headers()
-        _tunnel(handler.connection, upstream)
+        pending = take_buffered(handler.rfile, handler.connection)
+        if pending:
+            upstream.sendall(pending)
+        relay_until(handler.connection, upstream, deadline, self.clock, self._tunnel_cancel)
+
+    def _inspect_and_relay(
+        self,
+        handler: BaseHTTPRequestHandler,
+        host: str,
+        port: int,
+        deadline: Any,
+        cert: tuple[str, str],
+    ) -> None:
+        import ssl
+
+        from mao.transport import read_tls_request, relay_until
+
+        handler.send_response(200, "Connection Established")
+        handler.end_headers()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        try:
+            context.load_cert_chain(cert[0], cert[1])
+            tls = context.wrap_socket(handler.connection, server_side=True)
+        except (OSError, ssl.SSLError):
+            return
+        try:
+            method, path, headers = read_tls_request(tls, deadline, self.clock)
+        except FactoryError:
+            tls.close()
+            return
+        inner_host = headers.get("host", "").split(":")[0].lower()
+        if inner_host != host or method == "CONNECT" or not self._inner_allowed(handler, host, method):
+            tls.close()
+            return
+        try:
+            upstream = socket.create_connection((host, port), timeout=deadline.connect_s)
+        except OSError:
+            tls.close()
+            return
+        request = f"{method} {path} HTTP/1.1\r\nHost: {inner_host}\r\nConnection: close\r\n\r\n".encode()
+        try:
+            upstream.sendall(request)
+        except OSError:
+            tls.close()
+            upstream.close()
+            return
+        relay_until(tls, upstream, deadline, self.clock, self._tunnel_cancel)
+
+    def _inner_allowed(self, handler: BaseHTTPRequestHandler, host: str, method: str) -> bool:
+        ident = self._identify(handler)
+        if isinstance(ident, _Reject):
+            return False
+        _principal, plan, _kind, _token = ident
+        rules = [rule for rule in plan.allow if host_matches(rule.host, host)]
+        return bool(rules) and _method_allowed(rules, method)
 
     def _admit(self, handler: BaseHTTPRequestHandler, method: str, host: str) -> bool:
         ident = self._identify(handler)
@@ -896,7 +981,9 @@ class EgressProxy:
     ) -> str | _Reject:
         rules = [rule for rule in plan.allow if host_matches(rule.host, host)]
         if rules and method == "CONNECT" and not any("*" in rule.methods for rule in rules):
-            return _Reject(403, "EGRESS_METHOD_OPAQUE", principal, False)
+            if self._inspection_cert(host) is None:
+                return _Reject(403, "EGRESS_METHOD_OPAQUE", principal, False)
+            return "allow"
         if rules and not _method_allowed(rules, method):
             return _Reject(403, "EGRESS_DENIED", principal, False)
         listed = bool(rules)
@@ -1022,6 +1109,18 @@ class ModelProxy:
             self._server = None
 
     def spent(self, job_id: str) -> float:
+        db = self.root / "factory.db"
+        if db.is_file() and job_id:
+            conn = sqlite3.connect(db)
+            try:
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(cost_usd), 0) FROM model_usage WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+            if row is not None:
+                return round(float(row[0] or 0), 6)
         return round(self._spent.get(job_id, 0.0), 6)
 
     def _handler(self) -> type[BaseHTTPRequestHandler]:
@@ -1068,8 +1167,33 @@ class ModelProxy:
             self._stop(job_id, "BUDGET_PRICE_MISSING")
             self._send(handler, 402, {"code": "BUDGET_PRICE_MISSING"})
             return
+        operation_id = handler.headers.get("X-Factory-Operation") or ""
+        from mao.transport import unknown_blocks
+
+        if operation_id and unknown_blocks(self.root / "factory.db", operation_id):
+            self._send(
+                handler,
+                409,
+                {
+                    "code": "TRANSPORT_TIMEOUT",
+                    "message": "未知结果不能重发",
+                    "detail": {
+                        "request_id": operation_id,
+                        "phase": "resubmit",
+                        "outcome": "outcome_unknown",
+                        "retryable": False,
+                    },
+                },
+            )
+            return
         try:
-            status, payload, content_type = self._forward(upstream, raw, path)
+            status, payload, content_type = self._forward(upstream, raw, path, operation_id, job_id)
+        except FactoryError as exc:
+            if exc.code == "TRANSPORT_TIMEOUT":
+                self._remember_timeout(job_id, operation_id, exc)
+                self._send(handler, 504, _transport_body(operation_id, exc))
+                return
+            raise
         except (OSError, URLError, HTTPError):
             self._send(handler, 502, {"code": "MODEL_UPSTREAM_UNKNOWN"})
             return
@@ -1174,16 +1298,79 @@ class ModelProxy:
         found = body.get(model) or body.get("*")
         return found if isinstance(found, dict) else None
 
-    def _forward(self, upstream: Mapping[str, Any], raw: bytes, path: str) -> tuple[int, bytes, str]:
+    def _forward(
+        self,
+        upstream: Mapping[str, Any],
+        raw: bytes,
+        path: str,
+        operation_id: str = "",
+        job_id: str = "",
+    ) -> tuple[int, bytes, str]:
+        from mao.transport import http_exchange, model_deadline
+
         secret = self.store._read(str(upstream["secret"]))
-        req = Request(_join_upstream(str(upstream["url"]), path), data=raw, method="POST")
-        req.add_header(str(upstream["header"]), secret)
-        req.add_header("Content-Type", "application/json")
-        with urlopen(req, timeout=5) as resp:
-            payload = resp.read()
-            status = int(resp.status)
-            content_type = resp.headers.get("Content-Type") or "application/json"
-        return status, payload, content_type
+        url = _join_upstream(str(upstream["url"]), path)
+        deadline = model_deadline(self.root)
+        try:
+            return http_exchange(
+                url,
+                raw,
+                {str(upstream["header"]): secret, "Content-Type": "application/json"},
+                deadline,
+                clock=self.clock,
+            )
+        except FactoryError as exc:
+            if exc.code == "TRANSPORT_TIMEOUT" and operation_id:
+                exc.detail["request_id"] = operation_id
+                exc.detail["job_id"] = job_id
+            raise
+
+    def _remember_timeout(self, job_id: str, operation_id: str, exc: FactoryError) -> None:
+        from mao.transport import deadline_at, model_deadline, record_attempt
+
+        request_id = operation_id or self.ids_fallback(job_id)
+        usage_ref = None
+        if str(exc.detail.get("outcome")) == "outcome_unknown":
+            usage_ref = self._hold_unknown_cost(job_id, request_id)
+        deadline = model_deadline(self.root)
+        record_attempt(
+            self.root / "factory.db",
+            request_id=request_id,
+            operation_id=operation_id or request_id,
+            principal_kind="job",
+            principal_id=job_id,
+            phase=str(exc.detail.get("phase") or "response"),
+            outcome=str(exc.detail.get("outcome") or "outcome_unknown"),
+            bytes_sent=int(exc.detail.get("bytes_sent") or 0),
+            deadline_at=deadline_at(self.clock, deadline.total_s),
+            error_code=exc.code,
+            usage_ref=usage_ref,
+            at=utc_iso(self.clock.now()),
+        )
+
+    def ids_fallback(self, job_id: str) -> str:
+        return "tr-" + hashlib.sha256(job_id.encode("utf-8")).hexdigest()[:16]
+
+    def _hold_unknown_cost(self, job_id: str, request_id: str) -> str:
+        found, cap = self._registered_cap(job_id)
+        amount = 0.0 if not found or cap is None else float(cap)
+        db = self.root / "factory.db"
+        if not db.is_file():
+            return request_id
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute(
+                """INSERT INTO budget_entries (id, operation_id, scope, kind, amount_usd, at)
+                   VALUES (?, ?, ?, 'reserve', ?, ?)
+                   ON CONFLICT(operation_id, scope, kind) DO NOTHING""",
+                (request_id, request_id, f"job:{job_id}", amount, utc_iso(self.clock.now())),
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            return request_id
+        finally:
+            conn.close()
+        return request_id
 
     def _record(
         self, job_id: str, model: str, cost: float, tokens_in: float | None, tokens_out: float | None
@@ -1221,6 +1408,12 @@ class ModelProxy:
         finally:
             conn.close()
         return row is not None
+
+
+def _transport_body(operation_id: str, exc: FactoryError) -> dict[str, Any]:
+    detail = dict(exc.detail)
+    detail.setdefault("request_id", operation_id)
+    return {"code": exc.code, "message": exc.message, "detail": detail}
 
 
 def _plan_at(db: Any, job_id: str) -> str:

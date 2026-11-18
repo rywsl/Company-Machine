@@ -44,7 +44,7 @@ class Snapshot:
                 diags=[diag.to_json() for diag in errors],
             )
         epoch = epoch if epoch is not None else _tree_epoch(root)
-        registry = load_registry(root)
+        registry = result.registry or load_registry(root)
         docs: dict[str, Any] = {}
         for doc in registry.docs:
             key = doc.key

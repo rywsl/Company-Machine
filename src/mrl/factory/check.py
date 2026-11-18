@@ -73,6 +73,10 @@ class CheckResult:
     stats: dict[str, int] = field(default_factory=dict)
     model: Model | None = None
     extraction: Extraction | None = None
+    # Keep the parsed registry alongside the result so callers that need both
+    # diagnostics and documents (for example Snapshot.load) do not reread the
+    # same mounted tree immediately after check_registry returns.
+    registry: Registry | None = None
 
     def count(self, severity: str) -> int:
         return sum(1 for d in self.diags if d.severity == severity)
@@ -317,7 +321,7 @@ def _collect(
         stats[f"kind:{kind}"] = stats.get(f"kind:{kind}", 0) + 1
     stats["edges"] = len(resolutions)
     stats["conversions"] = sum(1 for r in resolutions if r.get("status") == "convert")
-    return CheckResult(reg.root, out, resolutions, facts, stats, model, x)
+    return CheckResult(reg.root, out, resolutions, facts, stats, model, x, reg)
 
 
 def check_registry(

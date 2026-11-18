@@ -259,10 +259,14 @@ def report_error(args: argparse.Namespace, exc: FactoryError) -> int:
     root = Path(args.root or os.environ.get("FACTORY_ROOT") or ".")
     store = SecretStore(root)
     body = store.redact_obj(exc.to_json())
+    from mao.command_help import recovery_for
+
+    found = recovery_for(exc.code)
     if getattr(args, "json", False):
-        print(canonical_json({"error": body}))
+        print(canonical_json({"error": body, "recovery": found}))
     else:
         print(f"{exc.code}: {store.redact(exc.message)}", file=sys.stderr)
+        print(found["actions"][0]["reason"], file=sys.stderr)
     return exit_code(exc)
 
 
