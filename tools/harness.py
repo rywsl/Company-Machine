@@ -123,14 +123,18 @@ def _now() -> str:
     return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _git(*args: str) -> str:
+def _git_raw(*args: str) -> str:
     try:
         p = subprocess.run(
             ["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
-    return p.stdout.strip() if p.returncode == 0 else ""
+    return p.stdout.rstrip("\r\n") if p.returncode == 0 else ""
+
+
+def _git(*args: str) -> str:
+    return _git_raw(*args).strip()
 
 
 def _commit() -> dict[str, Any]:
@@ -1031,7 +1035,7 @@ def cmd_task(a: argparse.Namespace) -> int:
 
 def _changed_files() -> list[str]:
     """工作区中与 HEAD 不同的文件（含未跟踪文件，逐个列出）。"""
-    out = _git("status", "--porcelain", "--untracked-files=all")
+    out = _git_raw("status", "--porcelain", "--untracked-files=all")
     files = []
     for line in out.splitlines():
         path = line[3:].strip()
@@ -1183,8 +1187,48 @@ def _validate_review_artifact(task: Task, record: dict[str, Any], artifact: Path
     if data.get("decision") != "accepted":
         reasons.append(f"decision:{data.get('decision') or 'missing'}")
     high_risk = [rel for rel in outside if _review_risk(rel) == "high"]
+    human_approved: list[str] = []
     if high_risk:
-        reasons.append("high_risk_requires_human:" + ",".join(high_risk))
+        approval = data.get("human_approval")
+        approval_reasons: list[str] = []
+        if not isinstance(approval, dict):
+            approval_reasons.append("human_approval_missing")
+        else:
+            approver_id = str(approval.get("approver_id") or "").strip()
+            approver_subject = approver_id.removeprefix("human:")
+            approved_paths = approval.get("approved_paths")
+            approved_path_set = set(approved_paths) if isinstance(approved_paths, list) else set()
+            if approval.get("approved") is not True:
+                approval_reasons.append("human_approval_not_confirmed")
+            if not approver_id.startswith("human:"):
+                approval_reasons.append("human_approver_identity_required")
+            if approver_id == reviewer_id or approver_subject in {
+                _implementation_identity(),
+                "implementation-agent",
+            }:
+                approval_reasons.append("human_approval_not_independent")
+            if approval.get("approved_source_commit") != record.get("commit"):
+                approval_reasons.append("human_approval_source_commit_mismatch")
+            if approval.get("approved_working_tree_digest") != _working_tree_digest():
+                approval_reasons.append("human_approval_working_tree_digest_mismatch")
+            if not isinstance(approved_paths, list) or not approved_paths:
+                approval_reasons.append("human_approval_paths_missing")
+            elif not approved_path_set.issubset(set(outside)):
+                approval_reasons.append("human_approval_paths_outside_record")
+            missing_paths = sorted(set(high_risk) - approved_path_set)
+            if missing_paths:
+                approval_reasons.append("human_approval_paths_incomplete:" + ",".join(missing_paths))
+            if not str(approval.get("approval_context_id") or "").strip():
+                approval_reasons.append("human_approval_context_missing")
+            if not str(approval.get("approved_at") or "").strip():
+                approval_reasons.append("human_approval_timestamp_missing")
+            if not str(approval.get("reason") or "").strip():
+                approval_reasons.append("human_approval_reason_missing")
+            if not approval_reasons:
+                human_approved = sorted(approved_path_set)
+        if approval_reasons:
+            reasons.append("high_risk_requires_human:" + ",".join(high_risk))
+            reasons.extend(approval_reasons)
     decision = "accepted" if not reasons else "needs_human"
     return {
         "path": artifact.relative_to(ROOT).as_posix(),
@@ -1192,6 +1236,7 @@ def _validate_review_artifact(task: Task, record: dict[str, Any], artifact: Path
         "reason": ";".join(reasons),
         "reviewer_id": reviewer_id,
         "high_risk": high_risk,
+        "human_approved_high_risk": human_approved,
     }
 
 
@@ -1203,7 +1248,25 @@ def _review_status(task: Task, state: dict[str, Any]) -> dict[str, Any]:
     if not outside:
         return {"status": "not_required", "outside_paths": [], "artifacts": artifacts, "blockers": []}
     if accepted:
-        return {"status": "accepted", "outside_paths": outside, "artifacts": artifacts, "blockers": []}
+        independent_paths = sorted(
+            {
+                rel
+                for item in accepted
+                for rel in outside
+                if rel not in set(item.get("human_approved_high_risk") or [])
+            }
+        )
+        human_paths = sorted({rel for item in accepted for rel in item.get("human_approved_high_risk") or []})
+        return {
+            "status": "accepted",
+            "outside_paths": outside,
+            "artifacts": artifacts,
+            "blockers": [],
+            "accepted_by": {
+                "independent_reviewer": independent_paths,
+                "human_approval": human_paths,
+            },
+        }
     return {
         "status": "needs_human",
         "outside_paths": outside,
@@ -1216,6 +1279,10 @@ def _review_audit(task: Task, state: dict[str, Any]) -> dict[str, Any]:
     tasks = load_tasks()
     record = state["tasks"].get(task.id, {})
     changed_files = set(_changed_files())
+    review = _review_status(task, state)
+    accepted_by = review.get("accepted_by") or {}
+    independent_paths = set(accepted_by.get("independent_reviewer") or [])
+    human_paths = set(accepted_by.get("human_approval") or [])
     rows = []
     for rel in record.get("outside_paths") or []:
         owners = _task_owners(rel, tasks)
@@ -1230,9 +1297,15 @@ def _review_audit(task: Task, state: dict[str, Any]) -> dict[str, Any]:
                 "working_tree_modified": rel in changed_files,
                 "possible_task_owners": owners,
                 "risk": _review_risk(rel),
-                "recommendation": "needs_human"
-                if not (ROOT / rel).exists() or _review_risk(rel) == "high" or not owners
-                else "accepted_after_independent_review",
+                "recommendation": (
+                    "needs_human"
+                    if not (ROOT / rel).exists() or not owners
+                    else "accepted_after_human_approval"
+                    if rel in human_paths
+                    else "accepted_after_independent_review"
+                    if rel in independent_paths
+                    else "needs_human"
+                ),
             }
         )
     return {
@@ -1243,7 +1316,7 @@ def _review_audit(task: Task, state: dict[str, Any]) -> dict[str, Any]:
         "working_tree_digest": _working_tree_digest(),
         "outside_paths": list(record.get("outside_paths") or []),
         "files": rows,
-        "review": _review_status(task, state),
+        "review": review,
     }
 
 

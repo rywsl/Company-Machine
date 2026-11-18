@@ -103,6 +103,16 @@ def test_fingerprint_excludes_harness_state_output(monkeypatch: pytest.MonkeyPat
     assert base["source"]["changed_digests"] == {"src/feature.py": "source"}
 
 
+def test_changed_files_preserves_first_porcelain_path(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        harness,
+        "_git_raw",
+        lambda *args: " M plan/acceptance.md\n M tools/harness.py",
+    )
+
+    assert harness._changed_files() == ["plan/acceptance.md", "tools/harness.py"]
+
+
 def test_live_never_reuses_cache(isolated_harness: Path):
     live = _check("live", "print('live')", cacheable=False, live=True)
     assert harness.run_checks([live], "live", resume=True)[0].executed is True
@@ -278,3 +288,146 @@ def test_high_risk_review_is_escalated_even_with_ai_acceptance(
     result = harness._validate_review_artifact(task, record, artifact)
     assert result["decision"] == "needs_human"
     assert "high_risk_requires_human" in result["reason"]
+
+
+def test_high_risk_review_accepts_matching_human_approval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    task = harness.Task("T", "M", "title", "plan/tasks/T.md", paths=[])
+    record = {"commit": "abc", "outside_paths": ["src/mao/governance/epochs.py"]}
+    monkeypatch.setattr(harness, "ROOT", tmp_path)
+    monkeypatch.setattr(harness, "HARNESS_REVIEWS_DIR", tmp_path / "reviews")
+    monkeypatch.setattr(harness, "_working_tree_digest", lambda: "tree")
+    path = tmp_path / "src" / "mao" / "governance" / "epochs.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(harness, "_file_digest", lambda rel: "digest")
+    artifact_dir = harness.HARNESS_REVIEWS_DIR / "T"
+    artifact_dir.mkdir(parents=True)
+    payload = {
+        "task_id": "T",
+        "source_commit": "abc",
+        "working_tree_digest": "tree",
+        "changed_files": {"src/mao/governance/epochs.py": "digest"},
+        "outside_paths": ["src/mao/governance/epochs.py"],
+        "file_ownership": {"src/mao/governance/epochs.py": {"task_id": "T"}},
+        "tests": [{"passed": True}],
+        "reviewer_id": "agent-b",
+        "reviewer_model": "reviewer",
+        "reviewer_context_id": "ctx",
+        "reviewer_input_digest": "input",
+        "decision": "accepted",
+        "human_approval": {
+            "approved": True,
+            "approver_id": "human:user",
+            "approval_context_id": "m17-08-review",
+            "approved_paths": ["src/mao/governance/epochs.py"],
+            "approved_source_commit": "abc",
+            "approved_working_tree_digest": "tree",
+            "approved_at": "2026-11-18T14:00:00Z",
+            "reason": "Explicit approval of the historical governance change.",
+        },
+    }
+    artifact = artifact_dir / "human-approved.json"
+    artifact.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = harness._validate_review_artifact(task, record, artifact)
+
+    assert result["decision"] == "accepted"
+    assert result["human_approved_high_risk"] == ["src/mao/governance/epochs.py"]
+
+
+def test_human_approval_requires_independent_identity_and_complete_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    task = harness.Task("T", "M", "title", "plan/tasks/T.md", paths=[])
+    outside = ["src/mao/governance/epochs.py", "src/mao/security.py"]
+    record = {"commit": "abc", "outside_paths": outside}
+    monkeypatch.setattr(harness, "ROOT", tmp_path)
+    monkeypatch.setattr(harness, "HARNESS_REVIEWS_DIR", tmp_path / "reviews")
+    monkeypatch.setattr(harness, "_working_tree_digest", lambda: "tree")
+    monkeypatch.setattr(harness, "_file_digest", lambda rel: "digest")
+    for rel in outside:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+    artifact_dir = harness.HARNESS_REVIEWS_DIR / "T"
+    artifact_dir.mkdir(parents=True)
+    payload = {
+        "task_id": "T",
+        "source_commit": "abc",
+        "working_tree_digest": "tree",
+        "changed_files": {rel: "digest" for rel in outside},
+        "outside_paths": outside,
+        "file_ownership": {rel: {"task_id": "T"} for rel in outside},
+        "tests": [{"passed": True}],
+        "reviewer_id": "reviewer",
+        "reviewer_model": "reviewer",
+        "reviewer_context_id": "ctx",
+        "reviewer_input_digest": "input",
+        "decision": "accepted",
+        "human_approval": {
+            "approved": True,
+            "approver_id": "reviewer",
+            "approval_context_id": "ctx",
+            "approved_paths": [outside[0]],
+            "approved_source_commit": "stale",
+            "approved_working_tree_digest": "stale",
+            "approved_at": "2026-11-18T14:00:00Z",
+            "reason": "approval",
+        },
+    }
+    artifact = artifact_dir / "invalid-human-approval.json"
+    artifact.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = harness._validate_review_artifact(task, record, artifact)
+
+    assert result["decision"] == "needs_human"
+    assert "human_approver_identity_required" in result["reason"]
+    assert "human_approval_not_independent" in result["reason"]
+    assert "human_approval_source_commit_mismatch" in result["reason"]
+    assert "human_approval_working_tree_digest_mismatch" in result["reason"]
+    assert "human_approval_paths_incomplete" in result["reason"]
+
+
+def test_human_approval_cannot_use_implementation_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    task = harness.Task("T", "M", "title", "plan/tasks/T.md", paths=[])
+    record = {"commit": "abc", "outside_paths": ["src/mao/governance/epochs.py"]}
+    monkeypatch.setattr(harness, "ROOT", tmp_path)
+    monkeypatch.setattr(harness, "HARNESS_REVIEWS_DIR", tmp_path / "reviews")
+    monkeypatch.setattr(harness, "_working_tree_digest", lambda: "tree")
+    monkeypatch.setattr(harness, "_file_digest", lambda rel: "digest")
+    path = tmp_path / "src" / "mao" / "governance" / "epochs.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("x", encoding="utf-8")
+    artifact_dir = harness.HARNESS_REVIEWS_DIR / "T"
+    artifact_dir.mkdir(parents=True)
+    payload = {
+        "task_id": "T",
+        "source_commit": "abc",
+        "working_tree_digest": "tree",
+        "changed_files": {"src/mao/governance/epochs.py": "digest"},
+        "outside_paths": ["src/mao/governance/epochs.py"],
+        "file_ownership": {"src/mao/governance/epochs.py": {"task_id": "T"}},
+        "tests": [{"passed": True}],
+        "reviewer_id": "reviewer",
+        "reviewer_model": "reviewer",
+        "reviewer_context_id": "ctx",
+        "reviewer_input_digest": "input",
+        "decision": "accepted",
+        "human_approval": {
+            "approved": True,
+            "approver_id": "human:implementation-agent",
+            "approval_context_id": "ctx",
+            "approved_paths": ["src/mao/governance/epochs.py"],
+            "approved_source_commit": "abc",
+            "approved_working_tree_digest": "tree",
+            "approved_at": "2026-11-18T14:00:00Z",
+            "reason": "self approval",
+        },
+    }
+    artifact = artifact_dir / "self-approved.json"
+    artifact.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = harness._validate_review_artifact(task, record, artifact)
+
+    assert result["decision"] == "needs_human"
+    assert "human_approval_not_independent" in result["reason"]

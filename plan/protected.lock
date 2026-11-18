@@ -1,7 +1,7 @@
 {
   "version": 1,
   "note": "受保护文件与一致性用例的基准。只能由人用 `uv run python tools/harness.py lock --update` 更新。",
-  "updated_at": "2026-11-18T04:58:39Z",
+  "updated_at": "2026-11-18T06:51:45Z",
   "updated_by": "whereslow",
   "patterns": [
     "spec/**/*.md",
@@ -44,7 +44,7 @@
     "CLAUDE.md": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49",
     "docs/architecture.md": "142eaac53e9d32af6d0b58bfa7b6e6fdb7af45d6ccbd8dc50e8d29fb5194ae16",
     "plan/README.md": "5d36e917ee4357685e5f555fadb3aedf421cbc07324fe5a4c8a9cabd5e7dae6d",
-    "plan/acceptance.md": "509fd86634186494d3e015dbc5981876374639e0f6cce5284a733ebece07457a",
+    "plan/acceptance.md": "bf02f0aaaadef43c66fe183c3f9a44b17e5ef55581f879587a68f5aaa1782555",
     "plan/design-admit.md": "382ee6e2618cec3267f83719caa71ff530200c1d14576f0c7fe4bc4fe173880a",
     "plan/design-assets.md": "f97d9aa3299f82c3e5773c94e8324d7ec859214b0624f7fc0cf9a11a03c63140",
     "plan/design-continuity.md": "82fb595de3e308fdf1adb036c10d1008ce7ec7c6c3ec1d48bb7b3ee6226457a6",
@@ -343,7 +343,7 @@
     "tests/acceptance/m15/test_m15_01_thread.py": "4cdef2f96e95d15f8d6021eca77d41973e19e5acdfb9d4d36a2e59e7e9fd20c1",
     "tests/acceptance/m15/test_m15_02_cards.py": "4e17ad519a2fec92142bd188fe334ec2c5edb8c367985fa1afc0c2cfd6ad3562",
     "tests/acceptance/m15/test_m15_03_confirm.py": "e4702283d41f13ab376372e8ec1925ffb17098dd080a90b5c2879668218f9981",
-    "tests/acceptance/m16/asset_world.py": "4ab2c184562d616431396cc2a215c23f1afe47d9be7ba0df0f40ac4e659f9d41",
+    "tests/acceptance/m16/asset_world.py": "52390e0a7acc870b1cd17e27b8a0dabb88e37c5dab90af2b34d9a236c0cd80c2",
     "tests/acceptance/m16/test_m16_01_catalog.py": "f99889b0c029ddf4cd8a378dd5d8d354216251bec62b71f4819789f392c2d599",
     "tests/acceptance/m16/test_m16_02_learning.py": "01a8ec48c6b3f9fefa08450d777588037bc33218caa3f39399ca46c73bfee2ec",
     "tests/acceptance/m16/test_m16_03_handoff.py": "2a4fa1cd250a0fe6ccc3f7543eacc14da6383bf575cf2c7ff0e5dc3b11800ab8",
@@ -479,7 +479,7 @@
     "tests/test_codebase_policy.py": "2be0a5bb8c5478eebf67793f434645b11bf9302522c5c3d42ac84f329070b927",
     "tests/test_hooks.py": "256afbd4ce2a6cbad69222cde8df026cab077c8635556f1fafd748f6c471913f",
     "tools/build_test_images.py": "8edf51536c38ead32e6737c68fdf56d299dbde988988b7a62d64b8276ed234e4",
-    "tools/harness.py": "4eb264ae24c32e2ee74e15f2ffa44a32e810664c26ab7e646e50e0c8c0d7352c",
+    "tools/harness.py": "ecac6e558492c018d09f8a23644a7f22569ed0c71ab829bc50f22f6d445b9a6c",
     "tools/hooks/protect_paths.py": "f0010e8ff1d4b91d54ed33b09016a3a26f436c168981c80e72c4f70a7364f2b1"
   },
   "cases": {

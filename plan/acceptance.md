@@ -108,9 +108,9 @@
 `uv run python tools/harness.py review audit <TASK>` 会输出当前文件、内容摘要、最近提交、可能归属任务、测试/lock 线索和风险级别。
 独立 reviewer 可以在 `.factory/reviews/<TASK>/<REVIEW_ID>.json` 写入审查结果；artifact 至少要包含
 `task_id`、任务记录中的 `source_commit`、当前 `working_tree_digest`、每个越界文件的 digest、`file_ownership`、通过的测试证据、规范影响、`reviewer_id`、`reviewer_model`、`reviewer_context_id`、`reviewer_input_digest`、`decision` 和 `created_at`。
-`harness gate` 只接受 digest 完全匹配、reviewer 身份不同于实现 agent、决策为 `accepted` 且没有高风险路径的 artifact。
-缺失、过期、身份相同、digest 不匹配或涉及规范、计划、预算、凭据、权限、治理、live/evidence、Docker/runtime 的变更都保持 `needs_human`，不会让阶段门通过。
-reviewer 不能修改源码、`plan/state.json`、live report 或 `plan/protected.lock`；artifact 也不替代正式验收检查。
+`harness gate` 只接受 digest 完全匹配、reviewer 身份不同于实现 agent 且决策为 `accepted` 的 artifact。普通越界文件由独立 reviewer 接受；高风险文件还必须有同一 artifact 中机器可验证的人工批准块：
+`human_approval.approved == true`、`approver_id` 以 `human:` 开头且不同于 reviewer/实现者、`approved_source_commit` 匹配任务记录、`approved_working_tree_digest` 匹配当前摘要、`approved_paths` 覆盖全部高风险越界文件，并提供 `approval_context_id`、`approved_at` 和 `reason`。该块只解除对应高风险路径的人工升级，不改变正式验收检查。
+缺失、过期、身份相同、digest 不匹配、只批准部分高风险路径，或涉及规范、计划、预算、凭据、权限、live/evidence、Docker/runtime 的变更仍保持 `needs_human`，不会让阶段门通过。reviewer 不能代填人工批准，也不能修改源码、`plan/state.json`、live report 或 `plan/protected.lock`；artifact 也不替代正式验收检查。
 
 ## 5. 防作弊设计
 
