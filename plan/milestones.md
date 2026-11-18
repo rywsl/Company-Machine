@@ -365,3 +365,17 @@ M1-01 基础设施 ──┬─▶ M1-02 快照与求值环境 ──┐
 **规范与证据**：`spec/system/continuity.md`、`spec/system/operability.md`、两个M17 design文档、`closure.yaml`、`plan/evidence/m17/README.md`及分域报告。
 
 **退出条件**：M17-01至M17-13共13任务全部完成（08为最终任务，依赖07/09/10/11/12/13；13离线准备不依赖08）；46个已登记问题/别名/要求的设计映射完整、至少81个精确离线用例零失败/错误/跳过，旧阶段门保持。原C10与新增两领域×两native runtime四格真实witness均通过，各格至少四周期、两个自主工作、idle与失败调整，历史机器库存实际产品资格、权限和介入账本完整。缺任何必选真实资源/节点/证据不能通过，完整性校验不替代真实能力。当前仅完成设计维护，不标记已修复或done。
+
+## M18 本地 Web App 与自治编排入口
+
+**目标**：把现有工厂控制面收敛为一个独立本地 Web App 用户入口。用户通过看板、编排、资产和日志四个入口管理工厂与 Foreman。Foreman 作为工厂创造者，自主创建厂区、装配 Operator 与 Machine、运行、验证、修复和继续推进。
+
+**产品边界**：不做登录、账号、租户、多用户和远程 SaaS。工厂层只显示厂区节点，厂区层只显示 Operator 与 Machine。Machine 的交付或 sink 语义由 Foreman 根据项目配置判断。Foreman 与 Operator 都支持本地 Harness CLI 的能力发现、选择和替换，示例清单不构成封闭枚举。
+
+**范围**：本地 Web App 壳、MAO 可拖动侧边栏、四入口、两层执行图聚合、稳定画布、Foreman 对话、Harness 选择、资源请求上下文、看板、资产、日志和宪法上下文。所有配置从画布或上下文抽屉进入，不新增 Factory、Workarea、Operator、Machine 后端实体。
+
+**规范与设计**：`spec/system/web-app.md`、`plan/design-m18-ui.md`。
+
+**任务**：M18-01 至 M18-05，顺序实施，依赖 M17 阶段门通过。纯 UI demo 用于交互确认和浏览器验收，不替代后端能力证据。
+
+**退出条件**：本地 Web App 无登录即可进入看板，四入口和 MAO 停靠行为通过，工厂层和厂区层节点边界通过，画布交互稳定，Foreman 与 Operator Harness 选择可用，Foreman 能自动应用 mock 拓扑并表达资源请求与异常处理，浏览器回归无未处理错误，项目根目录无临时截图和 Playwright 输出。M18 完成不改变 M17 阶段门状态。

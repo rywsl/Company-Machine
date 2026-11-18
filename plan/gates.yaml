@@ -174,9 +174,13 @@ gates:
       - *coverage
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -219,9 +223,13 @@ gates:
       - *coverage
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -269,9 +277,13 @@ gates:
       - *coverage
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -324,9 +336,13 @@ gates:
       - *coverage
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -384,9 +400,13 @@ gates:
       - *coverage
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -447,9 +467,13 @@ gates:
       - *coverage
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -514,9 +538,13 @@ gates:
       - *coverage
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -747,9 +775,13 @@ gates:
         assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 85
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -836,9 +868,13 @@ gates:
         assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 85
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -928,9 +964,13 @@ gates:
         assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 85
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -1024,9 +1064,13 @@ gates:
         assert: size(out.unexercised_codes) == 0 && size(out.unfired_rules) == 0 && out.kernel_diag_rules >= 85
       - *example
       - *scenarios
-      - *pytest
+      - id: pytest
+        run: uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system
+        assert: out.failed == 0 && out.errors == 0 && out.total >= 726
+        slow: true
+        timeout: 6000
       - id: unit-m1
-        run: uv run python tools/harness.py pytest tests/system
+        run: uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py
         assert: out.failed == 0 && out.errors == 0 && out.passed >= 50
       - id: policy
         run: uv run python tools/harness.py pytest tests/test_codebase_policy.py
@@ -1124,7 +1168,8 @@ gates:
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 4
         timeout: 600
       - id: m17-live-witness
-        run: uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_live_docker_real_cli_produces_evidence --basetemp=.factory/m17-repro/gate-live-witness
+        run: uv run python .factory/m17-local/run_m17.py --env-file .env.m17.local -- uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_live_docker_real_cli_produces_evidence --basetemp=.factory/m17-repro/gate-live-witness
+        env: {MAO_M17_LIVE_GRANT: .factory/m17-local/authorization.json}
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
         timeout: 14400
       - id: m17-live-evidence-integrity
@@ -1138,9 +1183,21 @@ gates:
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 81
         timeout: 9000
       - id: m17-operability-live
-        run: uv run python tools/harness.py pytest tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery --basetemp=.factory/m17-repro/gate-operability-live
+        run: uv run python .factory/m17-local/run_m17.py --env-file .env.m17.local -- uv run python tools/harness.py pytest tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery --basetemp=.factory/m17-repro/gate-operability-live
+        env: {MAO_M17_LIVE_GRANT: .factory/m17-local/authorization.json}
         assert: out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 1
         timeout: 28800
       - id: m17-operability-integrity
         run: uv run python plan/evidence/m17/verify_plan.py --live-index .factory/m17-repro/operability-live/index.json
         assert: out.ok && out.scope == "evidence_integrity"
+
+  M18:
+    title: 本地 Web App 与自治编排入口
+    requires_gates: [M17]
+    checks:
+      - *doccheck
+      - *lock
+      - id: m18-ui-syntax
+        run: node --check tmp/m18-ui-demo/app.js
+      - id: m18-ui-files
+        run: uv run python -c "from pathlib import Path; required = [Path('tmp/m18-ui-demo/index.html'), Path('tmp/m18-ui-demo/app.js'), Path('tmp/m18-ui-demo/styles.css')]; assert all(path.is_file() for path in required)"

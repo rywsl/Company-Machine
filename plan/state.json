@@ -1773,6 +1773,1006 @@
       "status": "passed",
       "updated_at": "2026-11-16T14:47:44Z"
     },
+    "M17": {
+      "commit": "d22e4a0",
+      "dirty": true,
+      "evidence": [
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 9632,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "91ee3059e01705294498fefdc280d1eaa3003c8f8e59f24f762ab2d8f2bcd30e",
+          "id": "lint",
+          "ok": true,
+          "reused": false,
+          "run": "uv run ruff check src tests tools",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+          "tail": "All checks passed!",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\lint"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 23344,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "6bafc6a65eb38f0dada60134e386e9a73a08b3a71068d943d6c54963e55e8bbc",
+          "id": "format",
+          "ok": true,
+          "reused": false,
+          "run": "uv run ruff format --check src tests tools",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "fbbc30ac0095c60c34675bd4a163d13d1542cfb4c02c46b8874519b2cc85cf28",
+          "tail": "301 files already formatted",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\format"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 44556,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "19109b69b65402d8aa33736e0503031b93ef9e464e1cbbe6da5039e2baa3093d",
+          "id": "lock",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.6,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\lock"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 34344,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "f2393739048216b6cf9e1a3439fbe809dda3e06fd42eafc5828dae3b2d7f9870",
+          "id": "doccheck",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 2.3,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\doccheck"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 10568,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "ce9040ce4bd66c1064860468267cd087b49e1cfccd412049e36faac299a128e5",
+          "id": "conformance",
+          "ok": true,
+          "reused": false,
+          "run": "uv run mrl conformance --json",
+          "seconds": 11.0,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "bd99beeec7b50c51955740eeabe2574c1489acf3e3e188e90f60a7509102a547",
+          "tail": "{\n  \"total\": 715,\n  \"passed\": 715,\n  \"failures\": []\n}",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\conformance"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 23760,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "97c6d881920346f9a664c8f49428d379d3ffca90260ebd60b9d1fe9e6d4ee71d",
+          "id": "coverage",
+          "ok": true,
+          "reused": false,
+          "run": "uv run mrl coverage --json",
+          "seconds": 11.2,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "2a56f9ffebab105243863b391fd47e5f919f5b379e8e523d3c0ac01a7e48eeb7",
+          "tail": "    \"W-NO-BUDGET\": [\n      \"factory.lines/line-without-budget-warns\",\n      \"factory.stations/agent-without-budget-warns\"\n    ],\n    \"W-PROPERTY-META\": [\n      \"factory.host/expr-property-on-meta-warns\"\n    ]\n  },\n  \"unexercised_codes\": [],\n  \"kernel_diag_rules\": 85,\n  \"unfired_rules\": []\n}",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\coverage"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 32268,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "1496235cb2f5ad727fc5e7d3281c380c96c5f459df04eaa10731bda5e24401ed",
+          "id": "example",
+          "ok": true,
+          "reused": false,
+          "run": "uv run mrl registry check spec/examples/registry --strict --json",
+          "seconds": 0.4,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "6d8bae26a6de1671d784765af2663d46fe380327f208f5bde93329d18bcfd5c9",
+          "tail": "      \"lossless\": true,\n      \"missing\": [],\n      \"props\": [\n        \"has_audio\",\n        \"hd\",\n        \"not_silent\"\n      ],\n      \"status\": \"direct\",\n      \"type\": \"video.mp4@1\"\n    }\n  ]\n}",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\example"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 39616,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "d1ab7005d49308ba219a885b745e8afda1c15404c16a29bb40cf8e8f1e875d93",
+          "id": "scenarios",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py scenario run --all",
+          "seconds": 1.3,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "dcfa9faa29233f0b618f833531380eb0d485125efa1e45fbc08a54d8965cd89d",
+          "tail": "  ✔ 第 1 步 起点：示例 Registry 完全通过\n  ✔ 第 2 步 升级草稿：explainer 的字幕改为 VTT，转换库里还没有 VTT → SRT\n  ✔ 第 3 步 厂长编写 subs-convert@1（新增转换，不改变现有边的解析 → T1）\n  ✔ 第 4 步 产线源文件不需要任何修改；其余的边仍然直接连接\n场景 foreman-mistakes-13-4\n  ✔ 第 1 步 删掉 vertical 的 has_audio、not_silent 两个保证 → E-CONTRACT（publish-shorts 依赖它们）\n  ✔ 第 2 步 让 explainer 直接上传成品（绑定带 publish 出网的策略）→ I6 拒绝\n  ✔ 第 3 步 删掉 validator 的反样例来“放水” → I8 拒绝（删除反样例属于宪法级操作）\n  ✔ 第 4 步 把单个工位的预算提到宪法上限之上 → E-INVARIANT\n  ✔ 第 5 步 试图在宪法目录里写一个放松检查的模块 → 归属规则拒绝（E-CONSTITUTION），内核的错误照样报告\n  ✔ 第 6 步 删除宪法本身 → E-CONSTITUTION（删掉宪法不是绕过检查的办法）\n✔ 场景全部通过",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\scenarios"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 31468,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "70b4455024c484260d39ffd57b0bb7917979c671b293df907a234b8e5313aa4e",
+          "id": "pytest",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests --ignore=tests/acceptance --ignore=tests/system",
+          "seconds": 33.3,
+          "stderr_sha256": "3e3405892cb9c045ae45e657a03b1cf6077900f782797cf3db7d7e9fe4b5d3ae",
+          "stdout_sha256": "5a21c7a888516977542677a579c10d663e56cece5c07d6a17a8c6032484944ea",
+          "tail": "........................................................................ [ 23%]\n........................................................................ [ 31%]\n........................................................................ [ 39%]\n........................................................................ [ 47%]\n........................................................................ [ 55%]\n........................................................................ [ 63%]\n........................................................................ [ 71%]\n........................................................................ [ 79%]\n........................................................................ [ 87%]\n........................................................................ [ 95%]\n...........................................                              [100%]\n907 passed in 32.48s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\pytest"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 34796,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "1622690500f8c2db3bdd34ce653dde13f753cf642e81a3f6fc47e22dacb23854",
+          "id": "unit-m1",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/system --ignore=tests/system/test_m17_08_continuity_e2e.py --ignore=tests/system/test_m17_08_operability_live.py",
+          "seconds": 122.0,
+          "stderr_sha256": "c8d4a7ac13282d683aef2c1ac0f734744b17750b859bc09f606ffdbde8d679e8",
+          "stdout_sha256": "f3c08aac11b5a04edd993984f52f8498cd2612f2e89143c15bf1fe3447bb43ee",
+          "tail": "{\"exit\": 0, \"total\": 142, \"passed\": 142, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 50%]\n......................................................................   [100%]\n142 passed in 121.28s (0:02:01)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\unit-m1"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 42404,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py,tests/test_codebase_policy.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "6f0847c653db17c31c377016624dbbbcd37226bed8f40e28b34f98cdbd19c094",
+          "id": "policy",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/test_codebase_policy.py",
+          "seconds": 2.2,
+          "stderr_sha256": "360f9ee22f9ce1ac8804d87c95115beedfeb875ebf9540ec5dee4160eb540e63",
+          "stdout_sha256": "4e6ad99cde5af143d04eb7dcd1aa36ccede3375bb8da0b9e65dcfeac1945690d",
+          "tail": "{\"exit\": 0, \"total\": 117, \"passed\": 117, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 61%]\n.............................................                            [100%]\n117 passed in 1.64s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\policy"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 41264,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "11042b39d3e6252402fbe63da17d0d7ca2a88b0032e48c7c5e68a95a22899a9b",
+          "id": "acceptance-m1",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m1",
+          "seconds": 22.1,
+          "stderr_sha256": "ea3c8e0b91a301d9e3560f7e601d7c45f0b55e76fc4741f8f6cdabd06378b95f",
+          "stdout_sha256": "ba03be2a4feb4b75b2a8dbd4b2c7bbd6c1dad8a8793a7b1d166c3140cd33de2a",
+          "tail": "{\"exit\": 0, \"total\": 98, \"passed\": 98, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 73%]\n..........................                                               [100%]\n98 passed in 21.37s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m1"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 31036,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "5da7ca4862ac308a092612c1a87293b69ea598c71228ed9d135c20a229ad4c16",
+          "id": "acceptance-m2",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m2",
+          "seconds": 77.3,
+          "stderr_sha256": "3f499a7a47547fd66717adc5558ab1bc31a8715b472b7685a1cb9b24f779202c",
+          "stdout_sha256": "5fe1c5d3bca6151f83fddc5200303c22243c65951c72face74aff0f9f1070f30",
+          "tail": "{\"exit\": 0, \"total\": 111, \"passed\": 111, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 64%]\n.......................................                                  [100%]\n111 passed in 76.30s (0:01:16)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m2"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 40720,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "eff3f7dc7701f7822fd7de448f98cbe3617cf15884409576594d6af71f25d3b7",
+          "id": "acceptance-m3",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m3",
+          "seconds": 117.0,
+          "stderr_sha256": "0c20d28cd6fda15f066bdfcc7cb363b1754b920b997dfc77aee7ff52628fd5ee",
+          "stdout_sha256": "9ebac4c5d3d3ffc995997b3aebe3eaae85aa0f046f962c823a78248a995b12c6",
+          "tail": "{\"exit\": 0, \"total\": 58, \"passed\": 58, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..........................................................               [100%]\n58 passed in 116.33s (0:01:56)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m3"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 44604,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "39711ca6a650d9fee187a47c4b604bc01711b3703920f0c7a33671e9622dbff2",
+          "id": "acceptance-m4",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m4",
+          "seconds": 12.7,
+          "stderr_sha256": "ce25da82a89ee78a536b2c3b0fd4fb6aeed0b4e2abd00d0bc1af662f48c5ec8b",
+          "stdout_sha256": "7a0e3e8ebbe721bd367d2231fb838e5b4a3e849b8df12cdf7538f14d1cf62540",
+          "tail": "{\"exit\": 0, \"total\": 40, \"passed\": 40, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................                                 [100%]\n40 passed in 12.01s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m4"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 26584,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "98effc846eb1e6a3c58bccda00f8e4b7ae8796f4b36f5b8b93b24d4889db1ae9",
+          "id": "acceptance-m5",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m5",
+          "seconds": 105.4,
+          "stderr_sha256": "fd72a590b91bee98cc34a47de32d60eecff246e04d2f38f91cf53a519836578c",
+          "stdout_sha256": "7676104ee22b01a8b1f182fb43459bb9c9766e849d9376b5594d6a7f07e388de",
+          "tail": "{\"exit\": 0, \"total\": 130, \"passed\": 130, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 55%]\n..........................................................               [100%]\n130 passed in 104.70s (0:01:44)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m5"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 3580,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "9a72df569d5091e396dc3c5d86e9b79a11de6182b2c948143762819718a66bfe",
+          "id": "acceptance-m6",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m6",
+          "seconds": 99.4,
+          "stderr_sha256": "2dd71e6f2783dca45c2571292133afbc4ab0e537850cce7ea66adb638a55435d",
+          "stdout_sha256": "9144d0a9a71b74917bfa08c6f6ef23ee61dc0670987acf8849b95491bf30e37c",
+          "tail": "{\"exit\": 0, \"total\": 25, \"passed\": 25, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................                                                [100%]\n25 passed in 98.71s (0:01:38)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m6"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 44644,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "73fa2b78211636c05744c51ea28ed16bfc9b53b8422bfdf141f19941dbfc09fc",
+          "id": "acceptance-m7",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m7",
+          "seconds": 41.7,
+          "stderr_sha256": "9688ac2af093e53c2a65fe4d46461b05582890586e491020ffa2a7c26dee1585",
+          "stdout_sha256": "90dc66b8af6ac2ddf0e56bea7baf4c9bce5658c1d8a4493e0c4fc42cddfede56",
+          "tail": "{\"exit\": 0, \"total\": 29, \"passed\": 29, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.............................                                            [100%]\n29 passed in 40.98s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m7"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 34688,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "6de9c784881ff34b669f3b6764d5395cd1b6575d70ca8fe2fbb034d4bf6e9c5e",
+          "id": "acceptance-m8",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m8",
+          "seconds": 20.9,
+          "stderr_sha256": "d40162dcd6b4278daad14f82decdb787788d12d2bd1a4fb4349829cf42383ec7",
+          "stdout_sha256": "a30ee3933937a05bdec7742a85434142b7f590970fd8ef337ca8c92ab09d332e",
+          "tail": "{\"exit\": 0, \"total\": 8, \"passed\": 8, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........                                                                 [100%]\n8 passed in 20.19s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m8"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 16828,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "27f2b5d20054d3a63f8bdcc3f63b6703a17f1c4c6f1e2c7c1b34e2b727a2927b",
+          "id": "acceptance-m9",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m9",
+          "seconds": 25.4,
+          "stderr_sha256": "8d03b306271639f987e895f478a462f8aa2ff8715a5f9db1915644a717731fa2",
+          "stdout_sha256": "81391bd6d7e29e5876ff612c6193d14095926dd41b5455089814d5e28912b0a2",
+          "tail": "{\"exit\": 0, \"total\": 23, \"passed\": 23, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......................                                                  [100%]\n23 passed in 24.83s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m9"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 19272,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "1a819165ce14de1a376d852ee39e9fb1a90cb5631d84929675dc5ac84c81e90f",
+          "id": "acceptance-m10",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m10",
+          "seconds": 27.8,
+          "stderr_sha256": "2adbf74949cfca356d75ad431d15338d20c377062de43e487c554b47d90a8f7b",
+          "stdout_sha256": "646e66f91d64a3ee08012823e51deb2edc299891beb9869c546d97d9632ba803",
+          "tail": "{\"exit\": 0, \"total\": 23, \"passed\": 23, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.......................                                                  [100%]\n23 passed in 27.22s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m10"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 23032,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "fb09c0f1623ce885e7d2980ea40acbbd9e050954425b2a41184563eaca27d1d5",
+          "id": "acceptance-m11",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m11",
+          "seconds": 121.7,
+          "stderr_sha256": "43bb843622df5632cd60556bf5b1a71151e5275124cea1f9e57da83799e71e62",
+          "stdout_sha256": "f7634f8df5331eafd22a375555dfa80770e2a9e398c7a426c4a365d9ccc1855e",
+          "tail": "{\"exit\": 0, \"total\": 41, \"passed\": 41, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................................                                [100%]\n41 passed in 121.04s (0:02:01)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m11"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 32168,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "319cbccf29b4b0a7ae85492ff0d4ef458b322da6806f189d768d2350dea8e139",
+          "id": "acceptance-m12",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m12",
+          "seconds": 53.4,
+          "stderr_sha256": "45d38c061be10bbb1d0c04ae2dc3c1866401789f19c35d06fe675f44ae2e4108",
+          "stdout_sha256": "bef38e290a6390c602d0931371f564f4ed0a69790a0088c4d0e4fda3780dc5b7",
+          "tail": "{\"exit\": 0, \"total\": 29, \"passed\": 29, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.............................                                            [100%]\n29 passed in 52.68s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m12"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 41152,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "b8d021c942a5a021be400ee7dae974ae742b74a4437e34c930d4c55f609f8b9f",
+          "id": "acceptance-m13",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m13",
+          "seconds": 37.6,
+          "stderr_sha256": "9e6c57dfe3cc845f1763e4cb4349e278842139ee2ae62f6d1aa34d5ac7f92a03",
+          "stdout_sha256": "ec696d4c3c67429ec6b46a71409d35cbbc7800efb1d2086d89b54957b610b8b3",
+          "tail": "{\"exit\": 0, \"total\": 22, \"passed\": 22, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n......................                                                   [100%]\n22 passed in 36.98s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m13"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 18484,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "a07fb585b3c4c77a131fe172fab6be2b1a9518bb217fc9565ac0fe335bf30e35",
+          "id": "acceptance-m14",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m14",
+          "seconds": 22.8,
+          "stderr_sha256": "847ae674206ebff6f1d8806898c02e8f582b2b1bf8033487cbccdc68d47819cc",
+          "stdout_sha256": "10a858e65056590de628e85d500683e5f827f18dd98c0db5463c7b666a333b36",
+          "tail": "{\"exit\": 0, \"total\": 17, \"passed\": 17, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.................                                                        [100%]\n17 passed in 22.22s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m14"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 9276,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "f68f2b20fcb6f3f2c5f19340faebac4e6a1244ee5648c39b4906baf43b697db8",
+          "id": "acceptance-m15",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m15",
+          "seconds": 54.6,
+          "stderr_sha256": "f74875022a3290ccb8265d1dfd1fbfb61d1acb2844108153a435b0fef0bdfdf8",
+          "stdout_sha256": "01aa9c696750744d1f51041ad042e80dcd56c57b8eeb91db53dd7175496fa3dd",
+          "tail": "{\"exit\": 0, \"total\": 21, \"passed\": 21, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.....................                                                    [100%]\n21 passed in 53.99s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m15"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 18908,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "dbc74dbf360c7cd71ae34ca4f3054238362a27995447c16dce2c08504b59bf16",
+          "id": "acceptance-m16",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/acceptance/m16",
+          "seconds": 83.7,
+          "stderr_sha256": "edfa325b070ceac957518c8df28e2501ae8de62db3cd7ee25615e9024219efea",
+          "stdout_sha256": "b922fcb3fe4b6f3be7d28aa32647ef8d36d0a6fa1bc56d171b49dceb7d84eaec",
+          "tail": "{\"exit\": 0, \"total\": 49, \"passed\": 49, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.................................................                        [100%]\n49 passed in 82.88s (0:01:22)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\acceptance-m16"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 23096,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "947f064739122ca4b7ae0286cf63728bb46b02ff0f1f1f476249fce04fd05553",
+          "id": "m17-repro",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest plan/evidence/m17/repro --basetemp=.factory/m17-repro/gate-repro",
+          "seconds": 57.4,
+          "stderr_sha256": "68cf0bc5d951590d280a4b4e190404724664b512dbf9e5c6c30f3936289e230f",
+          "stdout_sha256": "b42a9f158d31323a5593e10f0b163ff504f27dc380fd7a658e8539028473ba8f",
+          "tail": "{\"exit\": 0, \"total\": 25, \"passed\": 25, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........................                                                [100%]\n25 passed in 56.80s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-repro"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 27460,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py,plan/evidence/m17/deployment/test_host_paths.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "fcd44a4cfad94960c313c389892bbdc42839bf9af2d6b043b4e16072feded994",
+          "id": "m17-deployment-paths",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest plan/evidence/m17/deployment/test_host_paths.py --basetemp=.factory/m17-repro/gate-deployment-paths",
+          "seconds": 1.0,
+          "stderr_sha256": "713cb745db13ebdb750562e8ee8425b1a4f6a828300a8863d3e4b604a9a1ff73",
+          "stdout_sha256": "cdcc33044d200bfab789f6e3b3741abb267d42f3d8dab91a87b6e05e7012abdb",
+          "tail": "{\"exit\": 0, \"total\": 2, \"passed\": 2, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..                                                                       [100%]\n2 passed in 0.46s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-deployment-paths"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 30136,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "db662f6449a9eb8025c1d826a500054c4c53ddacd3d426c6825876fdcbb9af03",
+          "id": "m17-contracts",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest plan/evidence/m17/acceptance --basetemp=.factory/m17-repro/gate-contracts",
+          "seconds": 76.3,
+          "stderr_sha256": "1a1de5e1f84732d2b26c39b7a2dace97cd3d4a36238c56cb5d076c4070c11f61",
+          "stdout_sha256": "1976366252f16d980577d9a6671fdcbfc571c7534801191a1c1ddd50c80938d1",
+          "tail": "{\"exit\": 0, \"total\": 98, \"passed\": 98, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n........................................................................ [ 73%]\n..........................                                               [100%]\n98 passed in 75.50s (0:01:15)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-contracts"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 34968,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "bdca118284064bb74af25589d9028198575f8ecc8a8af84445c997043adb02a0",
+          "id": "m17-e2e",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_macro_objective_drives_multiple_cycles tests/system/test_m17_08_continuity_e2e.py::test_host_restart_and_lease_fencing tests/system/test_m17_08_continuity_e2e.py::test_known_external_task_resumes_fetch tests/system/test_m17_08_continuity_e2e.py::test_unknown_submit_outcome_never_blindly_retries tests/system/test_m17_08_continuity_e2e.py::test_budget_survives_restart_and_stops_authorized_work tests/system/test_m17_08_continuity_e2e.py::test_revoke_and_expiry_stop_new_actions tests/system/test_m17_08_continuity_e2e.py::test_real_factoryctl_and_declared_operator_run tests/system/test_m17_08_continuity_e2e.py::test_results_return_once_and_drive_next_cycle tests/system/test_m17_08_continuity_e2e.py::test_change_governance_keeps_scope_and_safe_mode --basetemp=.factory/m17-repro/gate-e2e",
+          "seconds": 96.9,
+          "stderr_sha256": "c0d044d12f631e25174a71ed3b0388be4a55dad9abd8510102d1815f6c59a1be",
+          "stdout_sha256": "81e75ed2c5cb00e8efdbc61213237684d36559bfb1e1b69f7fd80c81acc2b9c9",
+          "tail": "{\"exit\": 0, \"total\": 9, \"passed\": 9, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.........                                                                [100%]\n9 passed in 96.19s (0:01:36)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-e2e"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 12832,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "be79480f923bc491c504ee8d424c677ed26f5fd11ac4feca9cd82b3610cdccd4",
+          "id": "m17-live-readiness",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py pytest tests/system/test_m17_08_live_readiness.py::test_ready_resources_execute_witness_not_permanent_blocker tests/system/test_m17_08_live_readiness.py::test_native_auth_and_grant_without_vendor_env_are_accepted tests/system/test_m17_08_live_readiness.py::test_resource_blockers_are_scoped_and_recoverable tests/system/test_m17_08_live_readiness.py::test_live_reports_require_current_observed_execution --basetemp=.factory/m17-repro/gate-live-readiness",
+          "seconds": 43.1,
+          "stderr_sha256": "54fa14373d483f6d8d7371b67dedbf73ad9b95e117292cb745da7a290909d0e0",
+          "stdout_sha256": "76400090ce555f59ee921c0691143ba67c3d49cfe852ae317e273b309c6635e6",
+          "tail": "{\"exit\": 0, \"total\": 4, \"passed\": 4, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n....                                                                     [100%]\n4 passed in 42.34s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-live-readiness"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 30404,
+            "temp_dir_removed": true
+          },
+          "evidence_path": ".factory/m17-local/run_m17.py,.env.m17.local,tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "3c11cf4572e6792ffea38b5440759dc2d841a9bb3ecb6b7e0138c33106b354fa",
+          "id": "m17-live-witness",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python .factory/m17-local/run_m17.py --env-file .env.m17.local -- uv run python tools/harness.py pytest tests/system/test_m17_08_continuity_e2e.py::test_live_docker_real_cli_produces_evidence --basetemp=.factory/m17-repro/gate-live-witness",
+          "seconds": 157.0,
+          "stderr_sha256": "89d691d2c291cf1030444cb2dc4b14542ff651170ab912e4d403b7cbc5387bd8",
+          "stdout_sha256": "7f8ab0e9ac764b3f07b2205628a0ff1d4dd15496b4a4a5c0555a95ebfd9307e2",
+          "tail": "{\"exit\": 0, \"total\": 1, \"passed\": 1, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.                                                                        [100%]\n1 passed in 156.02s (0:02:36)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-live-witness"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 26744,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "plan/evidence/m17/verify_live.py,.factory/m17-repro/live/report.json",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "0acf5f6a92cc7c5282ecbb84c5fe74bd6e55e497efe6ae79e97f32cc87264c1d",
+          "id": "m17-live-evidence-integrity",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python plan/evidence/m17/verify_live.py --report .factory/m17-repro/live/report.json --factory-root .factory/m17-repro/live/factory",
+          "seconds": 0.3,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "72134867a5b26ec65ea9df5c15b7fe81779cef26f873230584e861b098416a51",
+          "tail": "{\"issues\": [], \"ok\": true, \"scope\": \"evidence integrity only; model quality and provenance are not established; redaction detection is incomplete\", \"status\": \"passed\"}",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-live-evidence-integrity"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 9752,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "plan/evidence/m17/verify_plan.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "8f0d8b0a081ca53cf93e456423550c0b2470870418fb42064950a3acb51cc933",
+          "id": "m17-design-coverage",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python plan/evidence/m17/verify_plan.py",
+          "seconds": 0.5,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e877cba3edaa6f65099ff27772dd85f16d89592c199788f2abb99dda69bcf888",
+          "tail": "{\"issue_count\": 46, \"issues\": [], \"ok\": true, \"scope\": \"design_coverage\"}",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-design-coverage"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 7776,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "plan/evidence/m17/run_contracts.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "86e5017badf6dbca8a925103932904426bcfe94e67f345beafb37f85cba9e3e4",
+          "id": "m17-all-known-issues",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python plan/evidence/m17/run_contracts.py --all",
+          "seconds": 253.6,
+          "stderr_sha256": "0dd7c6c37eaed74be5b2a041edc665ca5012fa2ed86d8f0b786356837cb8c56d",
+          "stdout_sha256": "eae5a6222fc7fd4ebcde7936ec125ba41cedbbb99278f17a014d20323132c168",
+          "tail": "{\"exit\": 0, \"total\": 81, \"passed\": 81, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": [], \"required_minimum_cases\": 81, \"exact_nodes_requested\": 78, \"scope\": \"offline_contract_execution\"}\n\n........................................................................ [ 88%]\n.........                                                                [100%]\n81 passed in 252.47s (0:04:12)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-all-known-issues"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 44356,
+            "temp_dir_removed": true
+          },
+          "evidence_path": ".factory/m17-local/run_m17.py,.env.m17.local,tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "af4d423340520b7d5140d4e8cef5e56f65bf47591cd82a5e622a112b7846c804",
+          "id": "m17-operability-live",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python .factory/m17-local/run_m17.py --env-file .env.m17.local -- uv run python tools/harness.py pytest tests/system/test_m17_08_operability_live.py::test_live_cross_domain_onboarding_and_recovery --basetemp=.factory/m17-repro/gate-operability-live",
+          "seconds": 342.3,
+          "stderr_sha256": "d723df6ef14df410d17601add7dd460ca6dcd98afa5c446885de5ed75ce63b62",
+          "stdout_sha256": "c7f3c3c38b8cd0109c1962e04d5e866107adcebbff4a7737b39b799ce8b632ee",
+          "tail": "{\"exit\": 0, \"total\": 1, \"passed\": 1, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n.                                                                        [100%]\n1 passed in 341.33s (0:05:41)",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-operability-live"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 10520,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "plan/evidence/m17/verify_plan.py,.factory/m17-repro/operability-live/index.json",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "c9b4cd36f1e27f87684024ad93bb6ac944e16d60d22f2c0828a7ab103521c2e2",
+          "id": "m17-operability-integrity",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python plan/evidence/m17/verify_plan.py --live-index .factory/m17-repro/operability-live/index.json",
+          "seconds": 0.9,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "aeca55bdd4cf7eaaa21e23318b6d58489f508009c15acc0b26f6f327d79dabd5",
+          "tail": "{\"issues\": [], \"ok\": true, \"scope\": \"evidence_integrity\"}",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M17\\20261118T194825Z-5555e55310\\tmp\\m17-operability-integrity"
+        }
+      ],
+      "review": {
+        "blockers": [],
+        "status": "passed"
+      },
+      "status": "passed",
+      "updated_at": "2026-11-18T20:24:08Z"
+    },
     "M2": {
       "commit": "84bdd0e",
       "dirty": true,
@@ -8265,9 +9265,7 @@
           "tail": "✔ 受保护文件与一致性用例都与基准一致"
         }
       ],
-      "outside_paths": [
-        "lan/state.json"
-      ],
+      "outside_paths": [],
       "status": "done",
       "updated_at": "2026-11-16T16:58:00Z"
     },

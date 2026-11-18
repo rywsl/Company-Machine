@@ -542,11 +542,19 @@ def run_check(
             {
                 "MAO_HARNESS_TEMP_DIR": str(temp_dir),
                 "MAO_HARNESS_CHECK_ID": check.id,
-                "TMPDIR": str(temp_dir),
-                "TEMP": str(temp_dir),
-                "TMP": str(temp_dir),
             }
         )
+        # Pytest and Docker fixtures need a user-owned system temp root on
+        # Windows. Keep harness evidence isolated while avoiding root-owned
+        # bind-mounted .git objects that cannot be cleaned by the test user.
+        if "tools/harness.py pytest" not in check.run:
+            env.update(
+                {
+                    "TMPDIR": str(temp_dir),
+                    "TEMP": str(temp_dir),
+                    "TMP": str(temp_dir),
+                }
+            )
     start = time.monotonic()
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
     kwargs: dict[str, Any] = {

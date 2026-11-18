@@ -204,8 +204,10 @@ def test_formal_m17_checks_stay_complete_and_review_audit_is_read_only():
         assert checks["contract"].parallel_group == "m17-offline-checks"
         assert checks["contract"].cacheable is True
         assert checks["contract"].exclusive_resources == ()
+    audit_state = json.loads(json.dumps(state))
+    audit_state["tasks"]["M17-01"]["outside_paths"] = ["lan/state.json"]
     before = json.dumps(state, sort_keys=True)
-    report = harness._review_audit(tasks["M17-01"], state)
+    report = harness._review_audit(tasks["M17-01"], audit_state)
     assert report["files"][0]["path"] == "lan/state.json"
     assert report["files"][0]["exists"] is False
     assert json.dumps(harness.load_state(), sort_keys=True) == before

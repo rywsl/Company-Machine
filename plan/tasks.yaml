@@ -2683,3 +2683,59 @@ tasks:
       - *doccheck
       - id: lock
         run: uv run python tools/harness.py lock --verify
+
+  # M18：本地 Web App 与自治编排入口。实现前置为 M17 阶段门通过。
+  - id: M18-01
+    milestone: M18
+    title: 本地 Web App 壳与四入口
+    card: plan/tasks/M18-01.md
+    deps: [M17-13]
+    spec: [spec/system/web-app.md]
+    paths: [tmp/m18-ui-demo/**]
+    accept:
+      - id: ui-syntax
+        run: node --check tmp/m18-ui-demo/app.js
+      - id: ui-shell-files
+        run: uv run python -c "from pathlib import Path; required = [Path('tmp/m18-ui-demo/index.html'), Path('tmp/m18-ui-demo/app.js'), Path('tmp/m18-ui-demo/styles.css')]; assert all(path.is_file() for path in required)"
+  - id: M18-02
+    milestone: M18
+    title: 两层拓扑与稳定画布
+    card: plan/tasks/M18-02.md
+    deps: [M18-01]
+    spec: [spec/system/web-app.md]
+    paths: [tmp/m18-ui-demo/**]
+    accept:
+      - id: ui-syntax
+        run: node --check tmp/m18-ui-demo/app.js
+  - id: M18-03
+    milestone: M18
+    title: Foreman、Harness 与自治资源请求
+    card: plan/tasks/M18-03.md
+    deps: [M18-02]
+    spec: [spec/system/web-app.md]
+    paths: [tmp/m18-ui-demo/**]
+    accept:
+      - id: ui-syntax
+        run: node --check tmp/m18-ui-demo/app.js
+  - id: M18-04
+    milestone: M18
+    title: 看板、资产、日志与上下文详情
+    card: plan/tasks/M18-04.md
+    deps: [M18-03]
+    spec: [spec/system/web-app.md]
+    paths: [tmp/m18-ui-demo/**]
+    accept:
+      - id: ui-syntax
+        run: node --check tmp/m18-ui-demo/app.js
+  - id: M18-05
+    milestone: M18
+    title: 本地 Web App 集成与浏览器验收
+    card: plan/tasks/M18-05.md
+    deps: [M18-04]
+    spec: [spec/system/web-app.md]
+    paths: [tmp/m18-ui-demo/**, output/playwright/**]
+    accept:
+      - id: ui-syntax
+        run: node --check tmp/m18-ui-demo/app.js
+      - id: ui-shell-files
+        run: uv run python -c "from pathlib import Path; required = [Path('tmp/m18-ui-demo/index.html'), Path('tmp/m18-ui-demo/app.js'), Path('tmp/m18-ui-demo/styles.css')]; assert all(path.is_file() for path in required)"
