@@ -81,7 +81,7 @@
     "plan/evidence/m17/task-split-observation.json": "ca1cc7bcd6040781fb9e4367daa950afd13fc957cf8557c7cdca258ac1803074",
     "plan/evidence/m17/verify_live.py": "762180eed3cf5c1ce0b3aa3bd0f371523e267a058fd90945c9960d34a91ad2c5",
     "plan/evidence/m17/verify_plan.py": "3fc869a811c13a077ef81335dca37cd390dd283fb7653e5ce08f2a2aba65a29d",
-    "plan/gates.yaml": "4faf349d3170fe0587dc980554ace8b4bf7f32f6155eda76ac17d5be86f4f1ae",
+    "plan/gates.yaml": "043cb08dc713bb96f8a3fe8fd1861b9ef5e16a8d073a65841ae8a527a9c903fb",
     "plan/journal/2026-11-16-M17-closure-audit.md": "612e3903bb8834ffd1059a8918d4055c9aa815bd841667036c388ff22b9c1734",
     "plan/journal/2026-11-16-M17-execution-audit.md": "52f952b83cb0e820106f11eff13d6021a6ede2b2ae55fac92bf2c12c804dc510",
     "plan/journal/2026-11-16-M17-feedback-audit.md": "344353da3123107fc62ff496730ebdfc8c176182e14ddd60b6b9edd167d69683",
