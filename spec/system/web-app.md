@@ -282,6 +282,8 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
+- `GET /api/v1/runtime` 返回 Podman 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
+- `POST /api/v1/runtime/ensure-ready` 请求应用托管的 Podman machine 或 rootless 服务就绪。不可用时返回 503 和可读原因，不回退为 Docker
 - `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱
 
 密钥值只在保险箱写入请求中出现。数据库、事件、Harness、Foreman 和普通 UI 只接触保险箱引用与状态。UI 展示语义化字段、图表、时间线和文件引用，底层 JSON 不作为用户详情内容渲染。
@@ -307,3 +309,5 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - Foreman 回复可以通过外部 Harness 回写同一 talk 线程
 - 项目资源请求只显示项目用途、范围、检查项和状态，密钥值进入保险箱
 - Podman 缺失时显示运行时依赖状态，不把 Docker 状态伪装成 Podman 在线
+- `/api/v1/runtime` 与 bootstrap 的 Podman 状态来自实际探测，不能用 Docker 在线状态替代
+- `POST /api/v1/runtime/ensure-ready` 在 Windows 尝试启动已配置的 Podman machine，在 Linux 只报告 rootless 服务状态
