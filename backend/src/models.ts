@@ -12,6 +12,50 @@ export interface BusinessSystem {
   updatedAt: string;
 }
 
+export type BusinessUnitKind = "operator" | "machine";
+export type BusinessUnitStatus = "pending" | "ready" | "running" | "blocked" | "archived";
+
+export interface BusinessUnit {
+  id: string;
+  businessSystemId: string;
+  projectId?: string;
+  kind: BusinessUnitKind;
+  name: string;
+  harnessRuntime?: string;
+  model?: string;
+  machineRef?: string;
+  status: BusinessUnitStatus;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BusinessRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type UnitRunStatus = "queued" | "running" | "completed" | "failed" | "blocked";
+
+export interface BusinessRun {
+  id: string;
+  businessSystemId: string;
+  status: BusinessRunStatus;
+  trigger: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UnitRun {
+  id: string;
+  runId: string;
+  unitId: string;
+  status: UnitRunStatus;
+  sessionId?: string;
+  inputs: string[];
+  outputs: string[];
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ProjectSourceKind = "repo_url" | "uploaded_file" | "local_folder";
 
 export interface ProjectSource {

@@ -5,6 +5,8 @@ import { dirname } from "node:path";
 import type {
   Artifact,
   BusinessSystem,
+  BusinessRun,
+  BusinessUnit,
   Event,
   ForemanEnvelope,
   HarnessProfile,
@@ -12,6 +14,7 @@ import type {
   ProjectSource,
   SecretRequest,
   TalkMessage,
+  UnitRun,
 } from "./models";
 
 const now = () => new Date().toISOString();
@@ -23,6 +26,15 @@ const parseJson = (value: unknown): Record<string, unknown> => {
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
+  }
+};
+const parseList = (value: unknown): string[] => {
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
   }
 };
 
@@ -95,9 +107,29 @@ export class SqliteStore {
         id TEXT PRIMARY KEY, message_id TEXT NOT NULL, text TEXT NOT NULL,
         status TEXT NOT NULL, created_at TEXT NOT NULL, claimed_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS business_units (
+        id TEXT PRIMARY KEY, business_system_id TEXT NOT NULL, project_id TEXT,
+        kind TEXT NOT NULL, name TEXT NOT NULL, harness_runtime TEXT, model TEXT,
+        machine_ref TEXT, status TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS business_runs (
+        id TEXT PRIMARY KEY, business_system_id TEXT NOT NULL, status TEXT NOT NULL,
+        trigger TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS unit_runs (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL, unit_id TEXT NOT NULL,
+        status TEXT NOT NULL, session_id TEXT, inputs TEXT NOT NULL DEFAULT '[]',
+        outputs TEXT NOT NULL DEFAULT '[]', error TEXT, created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL, UNIQUE(run_id, unit_id)
+      );
       CREATE INDEX IF NOT EXISTS business_talk_messages_created ON business_talk_messages(created_at, id);
       CREATE INDEX IF NOT EXISTS secret_requests_project ON secret_requests(project_id, created_at);
       CREATE INDEX IF NOT EXISTS foreman_outbox_status ON foreman_outbox(status, created_at, id);
+      CREATE INDEX IF NOT EXISTS business_units_system ON business_units(business_system_id, kind, created_at, id);
+      CREATE INDEX IF NOT EXISTS business_runs_system ON business_runs(business_system_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS unit_runs_run ON unit_runs(run_id, status, created_at, id);
     `);
   }
 
@@ -192,7 +224,84 @@ export class SqliteStore {
         .run(secret.id, secret.projectId, secret.name, secret.vaultRef, secret.status, json(secret.metadata), timestamp, timestamp);
       project.secretRequests.push(secret);
     }
+    if (project.businessSystemId) {
+      const operatorRuntime = typeof project.metadata.operator_runtime === "string" ? project.metadata.operator_runtime : "codex";
+      const operatorModel = typeof project.metadata.operator_model === "string" ? project.metadata.operator_model : "default";
+      this.db.query("INSERT OR IGNORE INTO business_units (id,business_system_id,project_id,kind,name,harness_runtime,model,machine_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(`${project.id}:operator`, project.businessSystemId, project.id, "operator", `${project.name} Operator`, operatorRuntime, operatorModel, null, "pending", json({ source: "intake" }), timestamp, timestamp);
+      const source = project.sources[0];
+      const machineRef = source?.repoUrl ?? source?.fileRef ?? source?.kind ?? null;
+      this.db.query("INSERT OR IGNORE INTO business_units (id,business_system_id,project_id,kind,name,harness_runtime,model,machine_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(`${project.id}:machine`, project.businessSystemId, project.id, "machine", project.name, null, null, machineRef, "ready", json({ source_count: project.sources.length, source_kind: source?.kind }), timestamp, timestamp);
+    }
     return project;
+  }
+
+  listBusinessUnits(businessSystemId: string): BusinessUnit[] {
+    return this.db.query("SELECT * FROM business_units WHERE business_system_id = ? ORDER BY kind, created_at, id").all(businessSystemId).map((row: any) => this.businessUnitFromRow(row));
+  }
+
+  getBusinessUnit(id: string): BusinessUnit | undefined {
+    const row = this.db.query("SELECT * FROM business_units WHERE id = ?").get(id) as any;
+    return row ? this.businessUnitFromRow(row) : undefined;
+  }
+
+  createBusinessRun(businessSystemId: string, trigger = "manual", metadata: Record<string, unknown> = {}, inputs: string[] = []): BusinessRun | undefined {
+    const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.kind === "operator");
+    if (!this.db.query("SELECT 1 FROM business_systems WHERE id = ?").get(businessSystemId)) return undefined;
+    const timestamp = now();
+    const value: BusinessRun = { id: randomUUID(), businessSystemId, status: units.length ? "queued" : "failed", trigger, metadata, createdAt: timestamp, updatedAt: timestamp };
+    this.db.query("INSERT INTO business_runs (id,business_system_id,status,trigger,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+      .run(value.id, value.businessSystemId, value.status, value.trigger, json(value.metadata), timestamp, timestamp);
+    for (const unit of units) {
+      this.db.query("INSERT INTO unit_runs (id,run_id,unit_id,status,session_id,inputs,outputs,error,created_at,updated_at) VALUES (?,?,?,?,NULL,?,'[]',NULL,?,?)")
+        .run(randomUUID(), value.id, unit.id, value.status === "failed" ? "blocked" : "queued", json(inputs), timestamp, timestamp);
+    }
+    return value;
+  }
+
+  listBusinessRuns(businessSystemId: string): BusinessRun[] {
+    return this.db.query("SELECT * FROM business_runs WHERE business_system_id = ? ORDER BY created_at, id").all(businessSystemId).map((row: any) => this.businessRunFromRow(row));
+  }
+
+  getBusinessRun(id: string): BusinessRun | undefined {
+    const row = this.db.query("SELECT * FROM business_runs WHERE id = ?").get(id) as any;
+    return row ? this.businessRunFromRow(row) : undefined;
+  }
+
+  listUnitRuns(runId: string): UnitRun[] {
+    return this.db.query("SELECT * FROM unit_runs WHERE run_id = ? ORDER BY created_at, id").all(runId).map((row: any) => this.unitRunFromRow(row));
+  }
+
+  claimUnitRun(runId: string, unitId: string, sessionId: string): UnitRun | undefined {
+    const timestamp = now();
+    this.db.query("UPDATE unit_runs SET status='running', session_id=?, updated_at=? WHERE run_id=? AND unit_id=? AND status='queued'").run(sessionId, timestamp, runId, unitId);
+    this.db.query("UPDATE business_runs SET status='running', updated_at=? WHERE id=? AND status='queued'").run(timestamp, runId);
+    const row = this.db.query("SELECT * FROM unit_runs WHERE run_id=? AND unit_id=?").get(runId, unitId) as any;
+    return row ? this.unitRunFromRow(row) : undefined;
+  }
+
+  completeUnitRun(id: string, status: UnitRun["status"], outputs: string[] = [], error?: string): UnitRun | undefined {
+    const timestamp = now();
+    this.db.query("UPDATE unit_runs SET status=?, outputs=?, error=?, updated_at=? WHERE id=?").run(status, json(outputs), error ?? null, timestamp, id);
+    const row = this.db.query("SELECT * FROM unit_runs WHERE id=?").get(id) as any;
+    if (!row) return undefined;
+    const statuses = this.db.query("SELECT status FROM unit_runs WHERE run_id=?").all(row.run_id) as Array<{ status: UnitRun["status"] }>;
+    const runStatus: BusinessRun["status"] = statuses.some((item) => item.status === "failed" || item.status === "blocked") ? "failed" : statuses.every((item) => item.status === "completed") ? "completed" : "running";
+    this.db.query("UPDATE business_runs SET status=?, updated_at=? WHERE id=?").run(runStatus, timestamp, row.run_id);
+    return this.unitRunFromRow(row);
+  }
+
+  private businessUnitFromRow(row: any): BusinessUnit {
+    return { id: row.id, businessSystemId: row.business_system_id, projectId: row.project_id ?? undefined, kind: row.kind, name: row.name, harnessRuntime: row.harness_runtime ?? undefined, model: row.model ?? undefined, machineRef: row.machine_ref ?? undefined, status: row.status, metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  private businessRunFromRow(row: any): BusinessRun {
+    return { id: row.id, businessSystemId: row.business_system_id, status: row.status, trigger: row.trigger, metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  private unitRunFromRow(row: any): UnitRun {
+    return { id: row.id, runId: row.run_id, unitId: row.unit_id, status: row.status, sessionId: row.session_id ?? undefined, inputs: parseList(row.inputs), outputs: parseList(row.outputs), error: row.error ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
   private projectFromRow(row: any): Project {

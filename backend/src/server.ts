@@ -7,6 +7,7 @@ import { extname, join, normalize } from "node:path";
 import type { BusinessSystem } from "./models";
 import { PodmanProvider, type RuntimeHealth } from "../runtime/podman";
 import { ForemanCoordinator } from "./foreman";
+import { OperatorCoordinator } from "./operator";
 import type { OfficialSpawn } from "./harness";
 import type { AcpSpawn } from "./acp";
 
@@ -20,6 +21,7 @@ export interface BackendApp {
   events: EventBus;
   vault: VaultStore;
   foreman: ForemanCoordinator;
+  operator: OperatorCoordinator;
   fetch(request: Request): Response | Promise<Response>;
   stop(): void;
 }
@@ -40,11 +42,12 @@ function runtimeDependency(health: RuntimeHealth) {
   };
 }
 
-export function createApp(options: { dbPath?: string; legacyPath?: string; runtime?: RuntimeProbe; foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn } } = {}): BackendApp {
+export function createApp(options: { dbPath?: string; legacyPath?: string; runtime?: RuntimeProbe; foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn }; operator?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn } } = {}): BackendApp {
   const store = new SqliteStore(options.dbPath, options.legacyPath);
   const events = new EventBus(store);
   const vault = new VaultStore();
   const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn });
+  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn });
   const runtime = options.runtime ?? new PodmanProvider();
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
   const runtimeHealth = async (refresh = false) => {
@@ -56,6 +59,9 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
   };
   const dispatchForemanIfConfigured = (id: string) => {
     if (store.listHarnessProfiles().some((profile) => profile.role === "foreman")) void foreman.dispatch(id);
+  };
+  const dispatchOperatorRun = (runId: string) => {
+    for (const unitRun of store.listUnitRuns(runId).filter((item) => item.status === "queued")) void operator.dispatch(runId, unitRun.id);
   };
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -110,6 +116,38 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       if (!system) return response({ error: "business system was not found" }, 404);
       const artifacts = store.listBusinessSystemArtifacts(system.id);
       return response(systemArtifactsMatch[2] === "materials" ? artifacts.filter((item) => item.recordType === "material") : artifacts);
+    }
+    const unitsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/units$/);
+    if (unitsMatch && request.method === "GET") {
+      if (!store.listBusinessSystems().some((item) => item.id === unitsMatch[1])) return response({ error: "business system was not found" }, 404);
+      return response(store.listBusinessUnits(unitsMatch[1]).map(publicUnit));
+    }
+    const runsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/runs$/);
+    if (runsMatch && request.method === "GET") {
+      if (!store.listBusinessSystems().some((item) => item.id === runsMatch[1])) return response({ error: "business system was not found" }, 404);
+      return response(store.listBusinessRuns(runsMatch[1]).map((run) => ({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) })));
+    }
+    if (runsMatch && request.method === "POST") {
+      const body = await readJson(request);
+      const inputs = Array.isArray(body.inputs) ? body.inputs.filter((item: unknown): item is string => typeof item === "string") : [];
+      const run = store.createBusinessRun(runsMatch[1], typeof body.trigger === "string" ? body.trigger : "manual", body.metadata && typeof body.metadata === "object" ? body.metadata : {}, inputs);
+      if (!run) return response({ error: "business system was not found" }, 404);
+      events.publish("business-run.created", { ...run, units: store.listUnitRuns(run.id) });
+      if (run.status === "queued" && body.dispatch !== false) dispatchOperatorRun(run.id);
+      return response({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) }, 201);
+    }
+    const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/);
+    if (runMatch && request.method === "GET") {
+      const run = store.getBusinessRun(runMatch[1]);
+      if (!run) return response({ error: "business run was not found" }, 404);
+      return response({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) });
+    }
+    const dispatchRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/dispatch$/);
+    if (dispatchRunMatch && request.method === "POST") {
+      const run = store.getBusinessRun(dispatchRunMatch[1]);
+      if (!run) return response({ error: "business run was not found" }, 404);
+      dispatchOperatorRun(run.id);
+      return response({ state: "dispatching", run_id: run.id }, 202);
     }
     if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects());
     if (url.pathname === "/api/v1/projects/intake" && request.method === "POST") {
@@ -249,18 +287,20 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
       const health = await runtimeHealth();
+      const factoryGraph = graphProjection(store, "factory", null);
+      const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: new Date().toISOString() },
-        graph: { factory: { scope: "factory", id: "factory", title: "Factory", nodes: [], edges: [] } },
+        graph: { factory: factoryGraph },
         assets: store.legacyArtifacts(), logs: store.legacyEvents(), talk: [...store.legacyTalk(), ...store.listTalkMessages()],
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { podman: runtimeDependency(health), harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
-        foreman: { configured: false }, constitution: { available: false } });
+        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") return eventsResponse(request, events, url.searchParams.get("cursor") ?? undefined);
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
     return response({ error: "not found" }, 404);
   };
-  return { store, events, vault, foreman, fetch, stop: () => { foreman.stop(); store.close(); } };
+  return { store, events, vault, foreman, operator, fetch, stop: () => { foreman.stop(); operator.stop(); store.close(); } };
 }
 
 function staticResponse(pathname: string): Response {
@@ -291,16 +331,36 @@ function publicProfile(profile: any) {
   return { ...profile, base_url: profile.baseUrl, api_key_configured: Boolean(profile.secretRef), updated_at: profile.updatedAt, verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined };
 }
 
+function publicUnit(unit: any) {
+  const sourceKind = typeof unit.metadata?.source_kind === "string" ? unit.metadata.source_kind : undefined;
+  return { ...unit, machineRef: unit.kind === "machine" ? sourceKind : undefined };
+}
+
+function publicUnitRun(run: any) {
+  return { ...run };
+}
+
 function graphProjection(store: SqliteStore, scope: string, workarea: string | null) {
   const systems = store.listBusinessSystems();
   const projects = store.listProjects();
   if (scope === "workarea" && workarea) {
     const selectedProjects = projects.filter((project) => project.businessSystemId === workarea || project.id === workarea);
-    const nodes = selectedProjects.flatMap((project, index) => [
+    const selectedSystem = systems.find((system) => system.id === workarea);
+    const units = selectedSystem ? store.listBusinessUnits(selectedSystem.id) : [];
+    const nodes = units.length ? units.map((unit, index) => ({
+      id: unit.id,
+      type: unit.kind,
+      group: unit.projectId ?? unit.businessSystemId,
+      label: unit.kind === "operator" ? "Operator" : unit.name,
+      position: { x: unit.kind === "operator" ? 170 : 470, y: 130 + Math.floor(index / 2) * 180 },
+      status: unit.status === "pending" ? "waiting" : unit.status,
+      metadata: { project: unit.name, harness: unit.harnessRuntime, model: unit.model, source_kind: unit.metadata.source_kind },
+    })) : selectedProjects.flatMap((project, index) => [
       { id: `${project.id}:operator`, type: "operator", group: project.id, label: "Operator", position: { x: 170, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, harness: "official" } },
       { id: `${project.id}:machine`, type: "machine", group: project.id, label: project.name, position: { x: 470, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, sources: project.sources.length } },
     ]);
-    const edges = selectedProjects.map((project) => ({ id: `${project.id}:operator-to-machine`, source: `${project.id}:operator`, target: `${project.id}:machine`, kind: "material", condition: "业务物料", status: "ready" }));
+    const operatorUnits = units.filter((unit) => unit.kind === "operator");
+    const edges = operatorUnits.length ? operatorUnits.map((unit) => ({ id: `${unit.id}:operator-to-machine`, source: unit.id, target: `${unit.projectId}:machine`, kind: "material", condition: "业务物料", status: "ready" })) : selectedProjects.map((project) => ({ id: `${project.id}:operator-to-machine`, source: `${project.id}:operator`, target: `${project.id}:machine`, kind: "material", condition: "业务物料", status: "ready" }));
     return { scope: "workarea", id: workarea, title: systems.find((system) => system.id === workarea)?.name ?? workarea, nodes, edges };
   }
   return { scope: "factory", id: "factory", title: "工厂", nodes: systems.map((system, index) => ({ id: system.id, type: "workarea", group: "factory", label: system.name, position: { x: 180 + (index % 3) * 300, y: 160 + Math.floor(index / 3) * 200 }, status: system.status === "active" ? "ready" : "unknown", metadata: { description: system.description, project_count: projects.filter((project) => project.businessSystemId === system.id).length } })), edges: [] };
