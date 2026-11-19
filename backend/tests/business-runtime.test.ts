@@ -10,6 +10,11 @@ function processForRecord(ref = "cas://report-1"): OfficialProcess {
   return { stdout: new ReadableStream({ start(controller) { controller.enqueue(body); controller.close(); } }), kill() {} };
 }
 
+function processForFailure(): OfficialProcess {
+  const body = new TextEncoder().encode(`${JSON.stringify({ type: "error", text: "构建失败" })}\n`);
+  return { stdout: new ReadableStream({ start(controller) { controller.enqueue(body); controller.close(); } }), kill() {} };
+}
+
 describe("Bun business execution loop", () => {
   test("creates operator and machine units and records a Harness material", async () => {
     const dbPath = `.factory/business-runtime-${randomUUID()}.db`;
@@ -58,6 +63,31 @@ describe("Bun business execution loop", () => {
       expect(app.store.getBusinessRun(run.id)?.status).toBe("completed");
       const unitRuns = app.store.listUnitRuns(run.id);
       expect(unitRuns.find((item) => item.unitId === secondOperator)?.inputs).toContain("cas://report-1");
+    } finally {
+      app.stop();
+      await rm(dbPath, { force: true });
+    }
+  });
+
+  test("blocks downstream operators when a predecessor fails", async () => {
+    const dbPath = `.factory/business-dag-failure-${randomUUID()}.db`;
+    const app = createApp({ dbPath, legacyPath: dbPath, operator: { spawn: () => processForFailure() } });
+    const headers = { "content-type": "application/json" };
+    try {
+      const system = await (await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers, body: JSON.stringify({ name: "失败传播业务" }) }))).json() as { id: string };
+      const first = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "失败步骤", repo_url: "https://example.test/fail.git" }) }))).json() as { id: string };
+      const second = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "下游步骤", repo_url: "https://example.test/downstream.git" }) }))).json() as { id: string };
+      const source = `${first.id}:operator`;
+      const target = `${second.id}:operator`;
+      const graphResponse = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, { method: "POST", headers, body: JSON.stringify({ graph: { nodes: [{ id: source }, { id: target }], edges: [{ source, target }] } }) }));
+      expect(graphResponse.status).toBe(200);
+      app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "https://example.invalid", model: "codex-test", mode: "session" });
+      const run = await (await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/runs`, { method: "POST", headers, body: JSON.stringify({}) }))).json() as { id: string };
+      for (let attempt = 0; attempt < 40 && app.store.getBusinessRun(run.id)?.status !== "failed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(app.store.getBusinessRun(run.id)?.status).toBe("failed");
+      const unitRuns = app.store.listUnitRuns(run.id);
+      expect(unitRuns.find((item) => item.unitId === source)?.status).toBe("failed");
+      expect(unitRuns.find((item) => item.unitId === target)?.status).toBe("blocked");
     } finally {
       app.stop();
       await rm(dbPath, { force: true });

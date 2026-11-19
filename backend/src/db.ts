@@ -291,14 +291,16 @@ export class SqliteStore {
     const run = this.getBusinessRun(runId);
     if (!run) return [];
     const unitRuns = this.listUnitRuns(runId);
-    const statuses = new Map(unitRuns.map((item) => [item.unitId, item.status]));
-    const outputs = new Map(unitRuns.map((item) => [item.unitId, item.outputs]));
+    this.reconcileBlockedUnitRuns(runId, unitRuns);
+    const refreshedUnitRuns = this.listUnitRuns(runId);
+    const statuses = new Map(refreshedUnitRuns.map((item) => [item.unitId, item.status]));
+    const outputs = new Map(refreshedUnitRuns.map((item) => [item.unitId, item.outputs]));
     const predecessors = new Map<string, string[]>();
     for (const edge of this.businessGraph(run.businessSystemId).edges) {
       predecessors.set(edge.target, [...(predecessors.get(edge.target) ?? []), edge.source]);
     }
     const ready: UnitRun[] = [];
-    for (const item of unitRuns.filter((candidate) => candidate.status === "queued")) {
+    for (const item of refreshedUnitRuns.filter((candidate) => candidate.status === "queued")) {
       const required = (predecessors.get(item.unitId) ?? []).filter((unitId) => statuses.has(unitId));
       if (required.some((unitId) => statuses.get(unitId) !== "completed")) continue;
       const inherited = required.flatMap((unitId) => outputs.get(unitId) ?? []);
@@ -310,6 +312,46 @@ export class SqliteStore {
       ready.push(item);
     }
     return ready;
+  }
+
+  /** Propagate terminal failures through the DAG so a run cannot stay running forever. */
+  private reconcileBlockedUnitRuns(runId: string, unitRuns: UnitRun[]): void {
+    const run = this.getBusinessRun(runId);
+    if (!run) return;
+    const statuses = new Map(unitRuns.map((item) => [item.unitId, item.status]));
+    const predecessors = new Map<string, string[]>();
+    for (const edge of this.businessGraph(run.businessSystemId).edges) {
+      predecessors.set(edge.target, [...(predecessors.get(edge.target) ?? []), edge.source]);
+    }
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const item of unitRuns) {
+        if (item.status !== "queued") continue;
+        const required = (predecessors.get(item.unitId) ?? []).filter((unitId) => statuses.has(unitId));
+        if (!required.some((unitId) => statuses.get(unitId) === "failed" || statuses.get(unitId) === "blocked")) continue;
+        const timestamp = now();
+        this.db.query("UPDATE unit_runs SET status='blocked', error=?, updated_at=? WHERE id=? AND status='queued'")
+          .run("predecessor-failed", timestamp, item.id);
+        const updated = this.db.query("SELECT status FROM unit_runs WHERE id=?").get(item.id) as { status?: string } | undefined;
+        if (updated?.status === "blocked") {
+          item.status = "blocked";
+          item.error = "predecessor-failed";
+          item.updatedAt = timestamp;
+          statuses.set(item.unitId, "blocked");
+          changed = true;
+        }
+      }
+    }
+    const finalStatuses = [...statuses.values()];
+    const nextStatus: BusinessRun["status"] = finalStatuses.some((status) => status === "failed" || status === "blocked")
+      ? "failed"
+      : finalStatuses.length > 0 && finalStatuses.every((status) => status === "completed")
+        ? "completed"
+        : finalStatuses.some((status) => status === "running" || status === "completed")
+          ? "running"
+          : "queued";
+    if (nextStatus !== run.status) this.db.query("UPDATE business_runs SET status=?, updated_at=? WHERE id=?").run(nextStatus, now(), runId);
   }
 
   claimUnitRun(runId: string, unitId: string, sessionId: string): UnitRun | undefined {
