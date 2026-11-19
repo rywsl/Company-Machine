@@ -6,6 +6,7 @@ const value = (name: string) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
 };
+const redactText = (text: string) => text.replace(/(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
 
 function usage(): void {
   console.log(`factory-bun commands
@@ -34,7 +35,10 @@ if (command === "serve") {
       const folder = value("--folder");
       const fileRef = value("--file-ref");
       if (!repo && !folder && !fileRef) throw new Error("one source is required");
-      const project = app.store.createIntake({ name: value("--name") ?? "新项目", repo_url: repo, local_folder: folder, uploaded_file_refs: fileRef ? [fileRef] : [] });
+      const name = value("--name") ?? "新项目";
+      const system = app.store.createBusinessSystem({ name, metadata: { intake: true, source: "factory-bun" } });
+      const project = app.store.createIntake({ name, business_system_id: system.id, repo_url: repo, local_folder: folder, uploaded_file_refs: fileRef ? [fileRef] : [] });
+      app.events.publish("business-system.created", system);
       app.events.publish("project.intake.created", project);
       console.log(JSON.stringify(project, null, 2));
     } else if (command === "foreman" && args[1] === "inbox") {
@@ -48,7 +52,7 @@ if (command === "serve") {
     } else if (command === "talk" && args[1] === "send") {
       const text = args.slice(2).join(" ").trim();
       if (!text) throw new Error("text is required");
-      const message = app.store.addTalkMessage({ body: text });
+      const message = app.store.addTalkMessage({ body: redactText(text) });
       const envelope = app.store.queueForemanMessage(message.id, message.body);
       app.events.publish("talk.message.created", message);
       app.events.publish("foreman.message.queued", envelope);
@@ -57,7 +61,7 @@ if (command === "serve") {
       const turnId = value("--turn-id");
       const text = args.slice(2).filter((item) => item !== "--turn-id" && item !== turnId).join(" ").trim();
       if (!text || !turnId) throw new Error("text and --turn-id are required");
-      const message = app.store.addTalkMessage({ role: "foreman", body: text, metadata: { turn_id: turnId } });
+      const message = app.store.addTalkMessage({ role: "foreman", body: redactText(text), metadata: { turn_id: turnId } });
       app.events.publish("talk.foreman.replied", message);
       console.log(JSON.stringify(message, null, 2));
     } else {
