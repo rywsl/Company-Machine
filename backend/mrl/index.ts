@@ -5,3 +5,4 @@ export * from "./query";
 export * from "./types";
 export * from "./checker";
 export * from "./template";
+export * from "./rules";
