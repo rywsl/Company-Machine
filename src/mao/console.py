@@ -197,6 +197,17 @@ class ConsoleServer:
         allowed = ("GET", "HEAD", "POST") if path == "/login" or post_inbox else ("GET", "HEAD")
         if handler.command not in allowed:
             allow = "GET, POST" if path == "/login" else "GET"
+            if handler.command in {"POST", "PUT", "PATCH"}:
+                # Drain a rejected request body before writing the response.
+                # This keeps the socket in a valid HTTP state on Windows.
+                try:
+                    _body(handler, 70000)
+                except _BadRequest:
+                    pass
+            # A rejected POST may still carry a request body. Close this
+            # HTTP/1.1 connection after the 405 so the body cannot be parsed
+            # as a second request and abort the response on Windows.
+            handler.close_connection = True
             self._send(handler, 405, b"", _TEXT, {"Allow": allow})
             return
         if path == "/healthz":

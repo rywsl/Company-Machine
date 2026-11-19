@@ -137,7 +137,7 @@ factory foreman wakes [--status open|taken|done|failed] [--json]
 
 ### 5.1 只读
 
-1. 除 `POST /login` 外，只接受 `GET` 与 `HEAD`。其他方法、以及对其他路径的 `POST` → 405。
+1. 除 `POST /login` 外，只接受 `GET` 与 `HEAD`。其他方法、以及对其他路径的 `POST` → 405。拒绝带 body 的方法时先消费受限请求体并关闭连接，避免客户端把残余 body 解析成下一条请求。
 2. 请求处理不写数据库、不写事件、不改文件（令牌文件只在 `load_token` 里、服务启动前写）。
 3. 服务器单线程（`http.server.HTTPServer`），请求串行处理，共用构造时传入的 `Context`。套接字超时 10 秒，慢客户端不会挂住服务。
 
