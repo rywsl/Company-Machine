@@ -442,6 +442,17 @@ export class SqliteStore {
     return result;
   }
 
-  close() { this.db.close(true); this.legacy?.close(true); }
+  close() {
+    // Bun may report a transient WAL lock while a just-finished read statement
+    // is being finalized. Checkpoint before closing and keep shutdown idempotent.
+    try { this.db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch { /* closing already in progress */ }
+    const bun = (globalThis as { Bun?: { gc?: (force?: boolean) => void } }).Bun;
+    bun?.gc?.(true);
+    try { this.db.close(true); } catch (error) {
+      if (!(error instanceof Error) || !error.message.toLowerCase().includes("locked")) throw error;
+      try { this.db.close(false); } catch { /* the process will release the handle */ }
+    }
+    try { this.legacy?.close(true); } catch { /* read-only legacy handles are best effort */ }
+  }
 }
 

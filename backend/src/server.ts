@@ -6,6 +6,9 @@ import { existsSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import type { BusinessSystem } from "./models";
 import { PodmanProvider, type RuntimeHealth } from "../runtime/podman";
+import { ForemanCoordinator } from "./foreman";
+import type { OfficialSpawn } from "./harness";
+import type { AcpSpawn } from "./acp";
 
 const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
@@ -16,6 +19,7 @@ export interface BackendApp {
   store: SqliteStore;
   events: EventBus;
   vault: VaultStore;
+  foreman: ForemanCoordinator;
   fetch(request: Request): Response | Promise<Response>;
   stop(): void;
 }
@@ -36,10 +40,11 @@ function runtimeDependency(health: RuntimeHealth) {
   };
 }
 
-export function createApp(options: { dbPath?: string; legacyPath?: string; runtime?: RuntimeProbe } = {}): BackendApp {
+export function createApp(options: { dbPath?: string; legacyPath?: string; runtime?: RuntimeProbe; foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn } } = {}): BackendApp {
   const store = new SqliteStore(options.dbPath, options.legacyPath);
   const events = new EventBus(store);
   const vault = new VaultStore();
+  const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn });
   const runtime = options.runtime ?? new PodmanProvider();
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
   const runtimeHealth = async (refresh = false) => {
@@ -48,6 +53,9 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     const health = await runtime.health();
     runtimeCache = { at: current, health };
     return health;
+  };
+  const dispatchForemanIfConfigured = (id: string) => {
+    if (store.listHarnessProfiles().some((profile) => profile.role === "foreman")) void foreman.dispatch(id);
   };
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -141,6 +149,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       const envelope = store.queueForemanMessage(message.id, message.body);
       events.publish("talk.message.created", message);
       events.publish("foreman.message.queued", envelope);
+      dispatchForemanIfConfigured(envelope.id);
       return response({ state: "accepted", message }, 201);
     }
     if (url.pathname === "/api/v1/talk" && request.method === "GET") return response([...store.legacyTalk(), ...store.listTalkMessages()]);
@@ -162,6 +171,11 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       if (!envelope) return response({ error: "foreman message was not found" }, 404);
       events.publish(`foreman.message.${foremanAck[2]}`, envelope);
       return response(envelope, 200);
+    }
+    const foremanDispatch = url.pathname.match(/^\/api\/v1\/foreman\/inbox\/([^/]+)\/dispatch$/);
+    if (foremanDispatch && request.method === "POST") {
+      void foreman.dispatch(foremanDispatch[1]);
+      return response({ state: "dispatching", inbox_id: foremanDispatch[1] }, 202);
     }
     if (url.pathname === "/api/v1/secrets/requests" && request.method === "POST") {
       const body = await readJson(request);
@@ -230,6 +244,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       const envelope = store.queueForemanMessage(message.id, message.body);
       events.publish("talk.message.created", message);
       events.publish("foreman.message.queued", envelope);
+      dispatchForemanIfConfigured(envelope.id);
       return response({ state: "accepted", message }, 201);
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
@@ -245,7 +260,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
     return response({ error: "not found" }, 404);
   };
-  return { store, events, vault, fetch, stop: () => store.close() };
+  return { store, events, vault, foreman, fetch, stop: () => { void foreman.close(); store.close(); } };
 }
 
 function staticResponse(pathname: string): Response {

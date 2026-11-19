@@ -42,6 +42,13 @@ export interface HarnessTransport {
   start(request: HarnessSessionRequest): Promise<HarnessSession>;
 }
 
+export type OfficialProcess = {
+  stdout: ReadableStream<Uint8Array>;
+  kill(): void;
+};
+
+export type OfficialSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe" }) => OfficialProcess;
+
 const DEFINITIONS: Record<OfficialHarnessName, HarnessDefinition> = {
   "claude-code": { id: "claude-code", displayName: "Claude Code", executable: "claude", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: true },
   codex: { id: "codex", displayName: "Codex", executable: "codex", transportPreference: "official-cli", transcriptFormat: "codex-jsonl", supportsResume: true },
@@ -67,4 +74,74 @@ export function officialCliInvocation(definition: HarnessDefinition, request: Ha
   const prompt = `${request.contract}\n\n${request.task}`;
   if (definition.id === "codex") return [definition.executable, "exec", "--json", "--skip-git-repo-check", "--model", request.model, prompt];
   return [definition.executable, "-p", prompt, "--model", request.model, "--output-format", "stream-json"];
+}
+
+/** Decode one JSONL record emitted by an official Harness CLI. */
+export function decodeOfficialLine(line: string): HarnessEvent | null {
+  let value: unknown;
+  try { value = JSON.parse(line); } catch { return null; }
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const item = record.item && typeof record.item === "object" ? record.item as Record<string, unknown> : undefined;
+  const message = record.message && typeof record.message === "object" ? record.message as Record<string, unknown> : undefined;
+  const type = typeof record.type === "string" ? record.type : typeof item?.type === "string" ? item.type : "";
+  const sessionId = typeof record.session_id === "string" ? record.session_id : typeof record.sessionId === "string" ? record.sessionId : undefined;
+  const content = message?.content;
+  const contentText = Array.isArray(content)
+    ? content.filter((part) => part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string").map((part) => (part as Record<string, unknown>).text as string).join("")
+    : undefined;
+  const text = typeof record.text === "string" ? record.text : typeof record.delta === "string" ? record.delta : typeof item?.text === "string" ? item.text : contentText;
+  const eventType: HarnessEvent["type"] = type.includes("error") || type.includes("fail") ? "session.failed"
+    : type.includes("start") || type.includes("init") ? "session.started"
+      : type.includes("tool") && !type.includes("complete") ? "tool.started"
+        : type.includes("complete") || type.includes("finish") || type === "result" ? "session.finished"
+          : "text.delta";
+  return { type: eventType, sessionId, text, metadata: record };
+}
+
+class OfficialCliSession implements HarnessSession {
+  readonly id: string;
+  private closed = false;
+
+  constructor(private readonly process: OfficialProcess, id: string) { this.id = id; }
+
+  async *events(): AsyncIterable<HarnessEvent> {
+    const reader = this.process.stdout.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    try {
+      while (!this.closed) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        pending += decoder.decode(chunk.value, { stream: true });
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() ?? "";
+        for (const line of lines) { const event = decodeOfficialLine(line); if (event) yield event; }
+      }
+      if (pending) { const event = decodeOfficialLine(pending); if (event) yield event; }
+    } finally { reader.releaseLock(); }
+  }
+
+  async close(): Promise<void> { this.closed = true; this.process.kill(); }
+}
+
+export class OfficialCliTransport implements HarnessTransport {
+  constructor(private readonly definition: HarnessDefinition, private readonly spawn: OfficialSpawn = defaultOfficialSpawn) {}
+
+  async start(request: HarnessSessionRequest): Promise<HarnessSession> {
+    const process = this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe" });
+    return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${Date.now()}`);
+  }
+}
+
+function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe" }): OfficialProcess {
+  const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
+  if (!bun) throw new Error("Bun runtime is required");
+  const process = bun.spawn(argv, { cwd: options.cwd, env: { ...((globalThis as any).process?.env ?? {}), ...options.env }, stdout: options.stdout, stderr: "pipe" });
+  return { stdout: process.stdout as ReadableStream<Uint8Array>, kill: () => process.kill() };
+}
+
+export function resolveOfficialHarness(runtime: string): HarnessDefinition | undefined {
+  const normalized = runtime.toLowerCase();
+  return officialHarnesses().find((item) => normalized === item.id || normalized.includes(item.id));
 }

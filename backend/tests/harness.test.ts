@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chooseTransport, officialCliInvocation, officialHarness, officialHarnesses } from "../src/harness";
+import { chooseTransport, decodeOfficialLine, officialCliInvocation, officialHarness, officialHarnesses } from "../src/harness";
 import { decodeAcpLine } from "../src/acp";
 
 describe("official Harness boundary", () => {
@@ -28,5 +28,10 @@ describe("official Harness boundary", () => {
   test("maps ACP JSON lines into bounded Harness events", () => {
     expect(decodeAcpLine('{"method":"session/update","params":{"sessionId":"s-1","delta":"hello"}}')).toMatchObject({ type: "text.delta", sessionId: "s-1", text: "hello" });
     expect(decodeAcpLine("not-json")).toBeNull();
+  });
+
+  test("maps official JSONL assistant records into realtime text events", () => {
+    expect(decodeOfficialLine('{"type":"assistant","message":{"content":[{"type":"text","text":"已完成"}]}}')).toMatchObject({ type: "text.delta", text: "已完成" });
+    expect(decodeOfficialLine('{"type":"result","text":"done"}')).toMatchObject({ type: "session.finished", text: "done" });
   });
 });
