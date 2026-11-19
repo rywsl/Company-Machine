@@ -1,5 +1,6 @@
 import { Expr, parseExpression } from "./parser";
 import { checkExpression, type CheckOptions, type FunctionSignature } from "./checker";
+import { DYN } from "./types";
 
 export class MrlEvalError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "MrlEvalError"; }
@@ -127,7 +128,10 @@ const builtins: Record<string, (...args: MrlValue[]) => MrlValue> = {
 
 export function evaluate(source: string | Expr, environment: EvalEnvironment = {}, options: EvaluateOptions = {}): MrlValue { return new Evaluator(options).evaluate(typeof source === "string" ? parseExpression(source) : source, environment); }
 export function compileExpr(source: string, options: CompileExprOptions = {}) {
-  const checked = checkExpression(source, { environment: options.environment, expect: options.expect, functions: options.checkFunctions });
+  const checkFunctions = options.checkFunctions ?? (options.functions
+    ? Object.fromEntries(Object.entries(options.functions).map(([name, fn]) => [name, { minArgs: fn.length, maxArgs: fn.length, returns: DYN }]))
+    : undefined);
+  const checked = checkExpression(source, { environment: options.environment, expect: options.expect, functions: checkFunctions });
   return {
     ast: checked.ast,
     type: checked.type,
