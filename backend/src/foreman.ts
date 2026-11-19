@@ -68,6 +68,7 @@ export class ForemanCoordinator {
         model: profile.model,
         cwd: this.cwd,
         resumeId: sessionId,
+        containerImage: profile.image,
       });
       this.sessions.set(id, session);
       let reply = "";

@@ -23,6 +23,7 @@ export interface HarnessSessionRequest {
   cwd: string;
   env?: Record<string, string>;
   resumeId?: string;
+  containerImage?: string;
 }
 
 export interface HarnessEvent {
@@ -51,7 +52,7 @@ export type OfficialProcess = {
   kill(): void;
 };
 
-export type OfficialSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe" }) => OfficialProcess;
+export type OfficialSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string }) => OfficialProcess;
 
 const DEFINITIONS: Record<OfficialHarnessName, HarnessDefinition> = {
   "claude-code": { id: "claude-code", displayName: "Claude Code", executable: "claude", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: true },
@@ -135,12 +136,12 @@ export class OfficialCliTransport implements HarnessTransport {
   constructor(private readonly definition: HarnessDefinition, private readonly spawn: OfficialSpawn = defaultOfficialSpawn) {}
 
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
-    const process = this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe" });
+    const process = this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage });
     return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${Date.now()}`);
   }
 }
 
-function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe" }): OfficialProcess {
+function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string }): OfficialProcess {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new Error("Bun runtime is required");
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
@@ -150,7 +151,10 @@ function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Recor
     if (typeof value === "string") env[key] = value;
   }
   Object.assign(env, options.env);
-  const process = bun.spawn(argv, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "pipe" });
+  const image = options.containerImage;
+  if (image && !/^[^\s@]+(?:\/[^\s@]+)*@sha256:[0-9a-f]{64}$/i.test(image)) throw new Error("Harness image must be pinned by digest");
+  const command = image ? ["podman", "run", "--rm", "-i", "--network", "none", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv] : argv;
+  const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "pipe" });
   const stdin = process.stdin && typeof process.stdin.write === "function" ? {
     write: async (data: Uint8Array) => { await process.stdin.write(data); await process.stdin.flush?.(); },
     end: async () => { await process.stdin.end?.(); },

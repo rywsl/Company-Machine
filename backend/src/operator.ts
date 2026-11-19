@@ -68,7 +68,7 @@ export class OperatorCoordinator {
     const transport = useAcp
       ? new AcpTransport(definition, this.options.acpSpawn ?? ((argv, spawnOptions) => {
         if (!this.options.spawn) throw new Error("ACP spawn is unavailable");
-        return this.options.spawn(argv, { cwd: spawnOptions.cwd, env: spawnOptions.env, stdout: "pipe" });
+        return this.options.spawn(argv, { cwd: spawnOptions.cwd, env: spawnOptions.env, stdout: "pipe", stdin: "pipe", containerImage: spawnOptions.containerImage });
       }))
       : new OfficialCliTransport(definition, this.options.spawn);
     let session: HarnessSession | undefined;
@@ -80,6 +80,7 @@ export class OperatorCoordinator {
         model: profile.model,
         cwd: this.cwd,
         resumeId: sessionId,
+        containerImage: profile.image,
       });
       this.sessions.set(unitRun.id, session);
       let failed = false;
