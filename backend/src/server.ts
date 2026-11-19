@@ -413,11 +413,7 @@ function importBusinessSystem(store: SqliteStore, document: Record<string, any>)
   for (const sourceProject of Array.isArray(document.projects) ? document.projects : []) {
     if (!sourceProject || typeof sourceProject.name !== "string") continue;
     const sources = Array.isArray(sourceProject.sources) ? sourceProject.sources : [];
-    const intake: Record<string, any> = { business_system_id: system.id, name: sourceProject.name, metadata: sourceProject.metadata && typeof sourceProject.metadata === "object" ? sourceProject.metadata : {} };
-    const firstRepo = sources.find((source: any) => source?.kind === "repo_url" && typeof source.ref === "string");
-    const fileRefs = sources.filter((source: any) => source?.kind !== "repo_url" && typeof source?.ref === "string").map((source: any) => String(source.ref));
-    if (firstRepo) intake.repo_url = firstRepo.ref;
-    if (fileRefs.length) intake.uploaded_file_refs = fileRefs;
+    const intake: Record<string, any> = { business_system_id: system.id, name: sourceProject.name, metadata: sourceProject.metadata && typeof sourceProject.metadata === "object" ? sourceProject.metadata : {}, portable_sources: sources.filter((source: any) => source && typeof source.kind === "string").map((source: any) => ({ kind: source.kind, ref: typeof source.ref === "string" ? source.ref : undefined })) };
     const project = store.createIntake(intake);
     if (typeof sourceProject.id === "string") projectIds.set(sourceProject.id, project.id);
   }

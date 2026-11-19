@@ -47,6 +47,7 @@ export interface IntakeInput {
   uploaded_file_refs?: string[];
   files?: Array<{ name?: string; ref?: string; digest?: string }>;
   local_folder?: string;
+  portable_sources?: Array<{ kind: ProjectSource["kind"]; ref?: string }>;
   metadata?: Record<string, unknown>;
   secret_requests?: Array<{ name: string; vault_ref: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }>;
 }
@@ -225,6 +226,11 @@ export class SqliteStore {
       if (fileRef) addSource("uploaded_file", { fileRef });
     }
     if (input.local_folder) addSource("local_folder", { localFolder: input.local_folder });
+    for (const source of input.portable_sources ?? []) {
+      if (source.kind === "repo_url" && source.ref) addSource("repo_url", { repoUrl: source.ref });
+      else if (source.kind === "uploaded_file" && source.ref) addSource("uploaded_file", { fileRef: source.ref });
+      else if (source.kind === "local_folder") addSource("local_folder", {});
+    }
     for (const request of input.secret_requests ?? []) {
       const secret: SecretRequest = { id: randomUUID(), projectId: project.id, name: request.name, vaultRef: request.vault_ref,
         status: request.status ?? "requested", metadata: request.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
