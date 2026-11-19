@@ -1,6 +1,6 @@
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
-import { AcpTransport, type AcpSpawn } from "./acp";
+import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, chooseTransport, resolveOfficialHarness, type HarnessSession, type OfficialSpawn } from "./harness";
 
 export interface ForemanCoordinatorOptions {
@@ -58,10 +58,7 @@ export class ForemanCoordinator {
     this.options.events.publish("foreman.session.started", { inboxId: id, sessionId, harness: definition.id });
     const useAcp = chooseTransport(definition, Boolean(this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
     const transport = useAcp
-      ? new AcpTransport(definition, this.options.acpSpawn ?? ((argv, spawnOptions) => {
-        if (!this.options.spawn) throw new Error("ACP spawn is unavailable");
-        return this.options.spawn(argv, { cwd: spawnOptions.cwd, env: spawnOptions.env, stdout: "pipe" });
-      }))
+      ? new AcpTransport(definition, this.options.acpSpawn ?? defaultAcpSpawn)
       : new OfficialCliTransport(definition, this.options.spawn);
     let session;
     try {

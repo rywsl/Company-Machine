@@ -26,7 +26,7 @@ export interface HarnessSessionRequest {
 }
 
 export interface HarnessEvent {
-  type: "session.started" | "text.delta" | "tool.started" | "tool.finished" | "session.finished" | "session.failed";
+  type: "session.started" | "text.delta" | "record" | "tool.started" | "tool.finished" | "session.finished" | "session.failed";
   sessionId?: string;
   text?: string;
   metadata?: Record<string, unknown>;
@@ -44,10 +44,14 @@ export interface HarnessTransport {
 
 export type OfficialProcess = {
   stdout: ReadableStream<Uint8Array>;
+  stdin?: {
+    write(data: Uint8Array): Promise<void> | void;
+    end?(): Promise<void> | void;
+  };
   kill(): void;
 };
 
-export type OfficialSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe" }) => OfficialProcess;
+export type OfficialSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe" }) => OfficialProcess;
 
 const DEFINITIONS: Record<OfficialHarnessName, HarnessDefinition> = {
   "claude-code": { id: "claude-code", displayName: "Claude Code", executable: "claude", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: true },
@@ -93,6 +97,7 @@ export function decodeOfficialLine(line: string): HarnessEvent | null {
   const text = typeof record.text === "string" ? record.text : typeof record.delta === "string" ? record.delta : typeof item?.text === "string" ? item.text : contentText;
   const eventType: HarnessEvent["type"] = type.includes("error") || type.includes("fail") ? "session.failed"
     : type.includes("start") || type.includes("init") ? "session.started"
+      : type === "mao.record" || type === "record" ? "record"
       : type.includes("tool") && !type.includes("complete") ? "tool.started"
         : type.includes("complete") || type.includes("finish") || type === "result" ? "session.finished"
           : "text.delta";
@@ -134,7 +139,7 @@ export class OfficialCliTransport implements HarnessTransport {
   }
 }
 
-function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe" }): OfficialProcess {
+function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe" }): OfficialProcess {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new Error("Bun runtime is required");
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
@@ -144,8 +149,12 @@ function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Recor
     if (typeof value === "string") env[key] = value;
   }
   Object.assign(env, options.env);
-  const process = bun.spawn(argv, { cwd: options.cwd, env, stdout: options.stdout, stderr: "pipe" });
-  return { stdout: process.stdout as ReadableStream<Uint8Array>, kill: () => process.kill() };
+  const process = bun.spawn(argv, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "pipe" });
+  const stdin = process.stdin && typeof process.stdin.write === "function" ? {
+    write: async (data: Uint8Array) => { await process.stdin.write(data); await process.stdin.flush?.(); },
+    end: async () => { await process.stdin.end?.(); },
+  } : undefined;
+  return { stdout: process.stdout as ReadableStream<Uint8Array>, stdin, kill: () => process.kill() };
 }
 
 export function resolveOfficialHarness(runtime: string): HarnessDefinition | undefined {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { chooseTransport, decodeOfficialLine, officialCliInvocation, officialHarness, officialHarnesses } from "../src/harness";
 import { decodeAcpLine } from "../src/acp";
+import { AcpTransport } from "../src/acp";
 
 describe("official Harness boundary", () => {
   test("lists the supported official Harnesses and prefers ACP where declared", () => {
@@ -33,5 +34,28 @@ describe("official Harness boundary", () => {
   test("maps official JSONL assistant records into realtime text events", () => {
     expect(decodeOfficialLine('{"type":"assistant","message":{"content":[{"type":"text","text":"已完成"}]}}')).toMatchObject({ type: "text.delta", text: "已完成" });
     expect(decodeOfficialLine('{"type":"result","text":"done"}')).toMatchObject({ type: "session.finished", text: "done" });
+  });
+
+  test("initializes ACP, creates a session and sends the prompt through stdin", async () => {
+    const writes: string[] = [];
+    const body = [
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 2, result: { sessionId: "s-1" } }),
+      JSON.stringify({ method: "session/update", params: { sessionId: "s-1", delta: "hello" } }),
+      JSON.stringify({ method: "session/complete", params: { sessionId: "s-1" } }),
+    ].join("\n") + "\n";
+    const transport = new AcpTransport(officialHarness("kimi-code")!, () => ({
+      stdout: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); } }),
+      stdin: { write(data) { writes.push(new TextDecoder().decode(data)); }, end() {} },
+      kill() {},
+    }));
+    const session = await transport.start({ task: "构建项目", contract: "你是厂长", model: "kimi", cwd: "/workspace" });
+    const events = [];
+    for await (const event of session.events()) events.push(event);
+    const messages = writes.join("").trim().split("\n").map((line) => JSON.parse(line));
+    expect(messages.map((message) => message.method)).toEqual(["initialize", "session/new", "session/prompt"]);
+    expect(messages[2].params.prompt[0].text).toContain("构建项目");
+    expect(events[0]).toMatchObject({ type: "text.delta", sessionId: "s-1", text: "hello" });
+    await session.close();
   });
 });
