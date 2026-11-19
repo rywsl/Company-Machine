@@ -2773,6 +2773,122 @@
       "status": "passed",
       "updated_at": "2026-11-18T20:24:08Z"
     },
+    "M18": {
+      "commit": "85990cf",
+      "dirty": true,
+      "evidence": [
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 19132,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "f36f418b734d99d06b16e749f7e1f48f65bdcd2dd53c8242ccf8f424e07afe20",
+          "id": "doccheck",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py doccheck",
+          "seconds": 3.2,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
+          "tail": "✔ 规范文档与实现一致",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T001247Z-89d6805594\\tmp\\doccheck"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 19856,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tools/harness.py",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "2077199b9fc8382f868d5a86d048d8ce3b4a68a78177ecbcf3ad4ec33028a7bb",
+          "id": "lock",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python tools/harness.py lock --verify",
+          "seconds": 0.7,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
+          "tail": "✔ 受保护文件与一致性用例都与基准一致",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T001247Z-89d6805594\\tmp\\lock"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 2260,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tmp/m18-ui-demo/app.js",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "4e824b6378c1e932b540d2dadc3e96a18f405a73df807b10f5b6d029df940fb7",
+          "id": "m18-ui-syntax",
+          "ok": true,
+          "reused": false,
+          "run": "node --check tmp/m18-ui-demo/app.js",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T001247Z-89d6805594\\tmp\\m18-ui-syntax"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 16904,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "527bab91ee4c4b22e0fe9c4a59925646d9a9e650aed342c8f13ff137c25e66c7",
+          "id": "m18-ui-files",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python -c \"from pathlib import Path; required = [Path('tmp/m18-ui-demo/index.html'), Path('tmp/m18-ui-demo/app.js'), Path('tmp/m18-ui-demo/styles.css')]; assert all(path.is_file() for path in required)\"",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T001247Z-89d6805594\\tmp\\m18-ui-files"
+        }
+      ],
+      "review": {
+        "blockers": [],
+        "status": "passed"
+      },
+      "status": "passed",
+      "updated_at": "2026-11-19T00:12:52Z"
+    },
     "M2": {
       "commit": "84bdd0e",
       "dirty": true,
@@ -10734,6 +10850,261 @@
       "outside_paths": [],
       "status": "done",
       "updated_at": "2026-11-17T11:05:28Z"
+    },
+    "M18-01": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)"
+      },
+      "commit": "85990cf",
+      "dirty": true,
+      "evidence": [
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 9296,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tmp/m18-ui-demo/app.js",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "6753db20056118556db9fc7e34e80804c782d5630f34d67d92df1d93ea90e4d2",
+          "id": "ui-syntax",
+          "ok": true,
+          "reused": false,
+          "run": "node --check tmp/m18-ui-demo/app.js",
+          "seconds": 0.2,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18-01\\20261118T235401Z-2dd206e8e6\\tmp\\ui-syntax"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 3144,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "e88ac27a7d09794e5091e0e50b62d3cbe4dbd6def612317639af392aae971061",
+          "id": "ui-shell-files",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python -c \"from pathlib import Path; required = [Path('tmp/m18-ui-demo/index.html'), Path('tmp/m18-ui-demo/app.js'), Path('tmp/m18-ui-demo/styles.css')]; assert all(path.is_file() for path in required)\"",
+          "seconds": 0.2,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18-01\\20261118T235401Z-2dd206e8e6\\tmp\\ui-shell-files"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-18T23:54:02Z"
+    },
+    "M18-02": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "plan/state.json": "ea2ca14cbe2da7cc1ad0655680eec94f789e57bfd40a4bf28cb1eb6332be4ccb"
+      },
+      "commit": "85990cf",
+      "dirty": true,
+      "evidence": [
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 4064,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tmp/m18-ui-demo/app.js",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "95805a0520704aa87d8458c1e426c138b4466ecf6b2a8edf3be7537a0f7251f9",
+          "id": "ui-syntax",
+          "ok": true,
+          "reused": false,
+          "run": "node --check tmp/m18-ui-demo/app.js",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18-02\\20261119T000341Z-785e7b5102\\tmp\\ui-syntax"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-19T00:03:42Z"
+    },
+    "M18-03": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "plan/state.json": "b77c345122058fd2fa3887650fe5b38671568ba2d2aaaea6176e7fb648602814",
+        "tmp/m18-ui-demo/app.js": "3d9691bfe3c9374ca3356191b585f65c1f5ce00551ab7134de4933f233621c19",
+        "tmp/m18-ui-demo/index.html": "212119b9d0c41cc537a989c0f18f58ac731dc0ce5d7161e48f3e8bc367d9ef3d",
+        "tmp/m18-ui-demo/styles.css": "0e3f14a2104f19b04b94fad08bbac10e5fec11756f6518f980f6fabd33ac6bfb"
+      },
+      "commit": "85990cf",
+      "dirty": true,
+      "evidence": [
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 5688,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tmp/m18-ui-demo/app.js",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "d6d93298053c505183a13f03d17214a6d374e24474758be8ce00c7b5d021bc8c",
+          "id": "ui-syntax",
+          "ok": true,
+          "reused": false,
+          "run": "node --check tmp/m18-ui-demo/app.js",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18-03\\20261119T000805Z-0f2a4519e6\\tmp\\ui-syntax"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-19T00:08:06Z"
+    },
+    "M18-04": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "plan/state.json": "b5018b9de2895f4e0288b2cc08b0dee06125aa9474c5fce4c23dfbf1d4e8e4a6",
+        "tmp/m18-ui-demo/app.js": "0b8e0502fdf8af6da3fdd03a66827cafa82a05e20583c65be730b8115e3ffee8",
+        "tmp/m18-ui-demo/index.html": "bf95b9a7f1d74351ddd91f9c9aeec878eef3c1083a9f406895631cfeba51fc2d",
+        "tmp/m18-ui-demo/styles.css": "2b41c4ef6c07c32e1760576a35d7b5081af39adcddb2411484a75b9e7f042c2f"
+      },
+      "commit": "85990cf",
+      "dirty": true,
+      "evidence": [
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 12156,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tmp/m18-ui-demo/app.js",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "d6d93298053c505183a13f03d17214a6d374e24474758be8ce00c7b5d021bc8c",
+          "id": "ui-syntax",
+          "ok": true,
+          "reused": false,
+          "run": "node --check tmp/m18-ui-demo/app.js",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18-04\\20261119T000910Z-35142c3f2f\\tmp\\ui-syntax"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-19T00:09:11Z"
+    },
+    "M18-05": {
+      "baseline": {
+        ".claude/worktrees/plan-m12-resident/": "(deleted)",
+        "plan/state.json": "b16a8c8d47c1ee13debb1bc463e31f111efe84bc7e6823ec31978fa9e971c7a8",
+        "tmp/m18-ui-demo/app.js": "0b8e0502fdf8af6da3fdd03a66827cafa82a05e20583c65be730b8115e3ffee8",
+        "tmp/m18-ui-demo/index.html": "bf95b9a7f1d74351ddd91f9c9aeec878eef3c1083a9f406895631cfeba51fc2d",
+        "tmp/m18-ui-demo/styles.css": "2b41c4ef6c07c32e1760576a35d7b5081af39adcddb2411484a75b9e7f042c2f"
+      },
+      "commit": "85990cf",
+      "dirty": true,
+      "evidence": [
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 16440,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "tmp/m18-ui-demo/app.js",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "d6d93298053c505183a13f03d17214a6d374e24474758be8ce00c7b5d021bc8c",
+          "id": "ui-syntax",
+          "ok": true,
+          "reused": false,
+          "run": "node --check tmp/m18-ui-demo/app.js",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18-05\\20261119T001056Z-065831ca7f\\tmp\\ui-syntax"
+        },
+        {
+          "blocker": null,
+          "cleanup": {
+            "attempted": false,
+            "ok": true,
+            "pid": 14696,
+            "temp_dir_removed": true
+          },
+          "evidence_path": "",
+          "exclusive_resources": [
+            "workspace",
+            "state"
+          ],
+          "executed": true,
+          "exit": 0,
+          "fingerprint": "2e65fded4bd5f62b8d7616552f600a33ea4b0a0eb9018fc636239efe78df3db5",
+          "id": "ui-shell-files",
+          "ok": true,
+          "reused": false,
+          "run": "uv run python -c \"from pathlib import Path; required = [Path('tmp/m18-ui-demo/index.html'), Path('tmp/m18-ui-demo/app.js'), Path('tmp/m18-ui-demo/styles.css')]; assert all(path.is_file() for path in required)\"",
+          "seconds": 0.1,
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tail": "",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18-05\\20261119T001056Z-065831ca7f\\tmp\\ui-shell-files"
+        }
+      ],
+      "outside_paths": [],
+      "status": "done",
+      "updated_at": "2026-11-19T00:10:57Z"
     },
     "M2-01": {
       "baseline": {
