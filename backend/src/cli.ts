@@ -6,6 +6,7 @@ const value = (name: string) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
 };
+const values = (name: string) => args.flatMap((item, index) => item === name && args[index + 1] ? [args[index + 1]] : []);
 const redactText = (text: string) => text.replace(/(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
 
 function usage(): void {
@@ -13,6 +14,11 @@ function usage(): void {
   serve
   status
   project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]
+  business units ID
+  business run ID [--input REF]
+  business runs ID
+  business export ID
+  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]
   foreman inbox [--limit N]
   foreman claim ID
   foreman done ID
@@ -41,6 +47,30 @@ if (command === "serve") {
       app.events.publish("business-system.created", system);
       app.events.publish("project.intake.created", project);
       console.log(JSON.stringify(project, null, 2));
+    } else if (command === "business" && ["units", "runs", "export"].includes(args[1] ?? "")) {
+      const id = args[2];
+      if (!id) throw new Error("business system id is required");
+      const route = args[1] === "units" ? `/api/v1/business-systems/${encodeURIComponent(id)}/units` : args[1] === "runs" ? `/api/v1/business-systems/${encodeURIComponent(id)}/runs` : `/api/v1/business-systems/${encodeURIComponent(id)}/export`;
+      const result = await app.fetch(new Request(`http://localhost${route}`));
+      if (!result.ok) throw new Error(await result.text());
+      console.log(JSON.stringify(await result.json(), null, 2));
+    } else if (command === "business" && args[1] === "run") {
+      const id = args[2];
+      if (!id) throw new Error("business system id is required");
+      const inputs = values("--input");
+      const result = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${encodeURIComponent(id)}/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) }));
+      if (!result.ok) throw new Error(await result.text());
+      console.log(JSON.stringify(await result.json(), null, 2));
+    } else if (command === "business" && args[1] === "conversion") {
+      const id = args[2];
+      const kind = value("--kind");
+      const summary = value("--summary");
+      if (!id || !kind || !summary) throw new Error("business system id, --kind, and --summary are required");
+      const inputs = values("--input");
+      const outputs = values("--output");
+      const result = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${encodeURIComponent(id)}/conversions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind, summary, inputs, outputs }) }));
+      if (!result.ok) throw new Error(await result.text());
+      console.log(JSON.stringify(await result.json(), null, 2));
     } else if (command === "foreman" && args[1] === "inbox") {
       console.log(JSON.stringify(app.store.listForemanInbox(Number(value("--limit") ?? 50)), null, 2));
     } else if (command === "foreman" && (args[1] === "claim" || args[1] === "done")) {
