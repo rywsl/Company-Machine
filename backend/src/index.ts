@@ -3,6 +3,7 @@ export * from "./db";
 export * from "./event-bus";
 export * from "./server";
 export * from "./harness";
+export * from "./acp";
 import { startServer } from "./server";
 
 if (import.meta.main) {

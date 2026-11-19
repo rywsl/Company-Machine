@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { chooseTransport, officialCliInvocation, officialHarness, officialHarnesses } from "../src/harness";
+import { decodeAcpLine } from "../src/acp";
 
 describe("official Harness boundary", () => {
   test("lists the supported official Harnesses and prefers ACP where declared", () => {
@@ -22,5 +23,10 @@ describe("official Harness boundary", () => {
     expect(argv[0]).toBe("codex");
     expect(argv).toContain("--json");
     expect(argv.at(-1)).toContain("write tests");
+  });
+
+  test("maps ACP JSON lines into bounded Harness events", () => {
+    expect(decodeAcpLine('{"method":"session/update","params":{"sessionId":"s-1","delta":"hello"}}')).toMatchObject({ type: "text.delta", sessionId: "s-1", text: "hello" });
+    expect(decodeAcpLine("not-json")).toBeNull();
   });
 });
