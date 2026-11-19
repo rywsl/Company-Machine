@@ -18,6 +18,7 @@ from mao.webapp.read_model import WebReadModel
 
 DEFAULT_PORT = 8091
 _STATIC = Path(__file__).with_name("static")
+_DIST = _STATIC / "dist"
 _JSON = "application/json; charset=utf-8"
 
 
@@ -161,11 +162,17 @@ class WebServer:
         self._json(handler, 202, {"state": "queued", "message": response})
 
     def _static(self, handler: BaseHTTPRequestHandler, path: str) -> None:
+        production = (_DIST / "index.html").is_file()
+        root = (_DIST if production else _STATIC).resolve()
         relative = "index.html" if path in {"", "/"} else path.removeprefix("/")
-        candidate = (_STATIC / relative).resolve()
-        root = _STATIC.resolve()
+        candidate = (root / relative).resolve()
         if candidate != root and root not in candidate.parents:
             raise _WebError("WEB_NOT_FOUND", "找不到静态资源", path=path)
+        if not candidate.is_file() and production:
+            legacy = (_STATIC / relative).resolve()
+            legacy_root = _STATIC.resolve()
+            if legacy != legacy_root and legacy_root in legacy.parents and legacy.is_file():
+                candidate = legacy
         if not candidate.is_file():
             raise _WebError("WEB_NOT_FOUND", "找不到静态资源", path=path)
         body = candidate.read_bytes()

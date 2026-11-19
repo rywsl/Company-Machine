@@ -2774,7 +2774,7 @@
       "updated_at": "2026-11-18T20:24:08Z"
     },
     "M18": {
-      "commit": "913bf2f",
+      "commit": "27d8107",
       "dirty": true,
       "evidence": [
         {
@@ -2782,7 +2782,7 @@
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 23920,
+            "pid": 29028,
             "temp_dir_removed": true
           },
           "evidence_path": "tools/harness.py",
@@ -2792,7 +2792,7 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "ed6058f04cfed3efc9687f3f702a13db1da6cf9c74744876d0bad030f042e6e5",
+          "fingerprint": "c85831251573790cd463c6383ff49a241a6f5520e20c4732af261921a9ed6226",
           "id": "doccheck",
           "ok": true,
           "reused": false,
@@ -2801,14 +2801,14 @@
           "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "stdout_sha256": "df01b872c3148b5bc3ea200853fc0c27216ba8ff501368ff2cd7ad9204fdfd2c",
           "tail": "✔ 规范文档与实现一致",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\doccheck"
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\doccheck"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 13348,
+            "pid": 22236,
             "temp_dir_removed": true
           },
           "evidence_path": "tools/harness.py",
@@ -2818,7 +2818,7 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "849ba059e893827df96e0dfcec545a3d6a0aca656dace25a670454e04feb495e",
+          "fingerprint": "16458914b27b2183a6933e509d8f0ce2067d27ae3e8dfc1ebcc5738c43c15715",
           "id": "lock",
           "ok": true,
           "reused": false,
@@ -2827,14 +2827,14 @@
           "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "stdout_sha256": "6ca88cd0d38a7d2f90d1f6318cae768371bd7ae389e108b3ea24870435da27c8",
           "tail": "✔ 受保护文件与一致性用例都与基准一致",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\lock"
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\lock"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 7912,
+            "pid": 22620,
             "temp_dir_removed": true
           },
           "evidence_path": "tmp/m18-ui-demo/app.js",
@@ -2844,7 +2844,7 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "21f98b1d28b438550f87308933e6e272d904e1bf38a61433f661dc67248b8143",
+          "fingerprint": "5883f44bf59a5acd7528497282720e50de8ce1ae2c28c71bd9396da767a6c20a",
           "id": "m18-ui-syntax",
           "ok": true,
           "reused": false,
@@ -2853,14 +2853,14 @@
           "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "tail": "",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\m18-ui-syntax"
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\m18-ui-syntax"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 27960,
+            "pid": 18960,
             "temp_dir_removed": true
           },
           "evidence_path": "",
@@ -2870,7 +2870,7 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "a2191d9fdf25fcdd3f9e7d29c0463d6e68793c813db35456a646139c96439a43",
+          "fingerprint": "57ed09e107d5f7794c21ee96cdf3c3dd48a84b8fd608e668ee1d443bb829ece3",
           "id": "m18-ui-files",
           "ok": true,
           "reused": false,
@@ -2879,14 +2879,14 @@
           "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "tail": "",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\m18-ui-files"
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\m18-ui-files"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 11860,
+            "pid": 28844,
             "temp_dir_removed": true
           },
           "evidence_path": "tools/harness.py,tests/system/test_m18_web_api.py",
@@ -2896,23 +2896,23 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "d3d5c14b36c9616ebaf11fcccaeae38f2816a06d3706fa9cd50118d56ca95092",
+          "fingerprint": "1780a9c693ffe7a8d160f03a63ba7654ba6ff9bbb82819a2594b5b22db0d008e",
           "id": "m18-web-api",
           "ok": true,
           "reused": false,
           "run": "uv run python tools/harness.py pytest tests/system/test_m18_web_api.py",
           "seconds": 2.6,
-          "stderr_sha256": "202ac1ab497afafb79433c40f1f98a391d7dc3b2c6833cf64e1dcd234f755e03",
-          "stdout_sha256": "f43d0f28c4f914ee02e0a293df221376a735e5190270db7692fad83555258802",
-          "tail": "{\"exit\": 0, \"total\": 2, \"passed\": 2, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..                                                                       [100%]\n2 passed in 1.89s",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\m18-web-api"
+          "stderr_sha256": "47d718f2ac450844cc2b2d841ccfce98ef9a9a5c831f99db2d5bd44377e6d45d",
+          "stdout_sha256": "45348cb3787fa40291f48bf4d4d41ab0677072f8faeab6ccf82110971f454bc8",
+          "tail": "{\"exit\": 0, \"total\": 2, \"passed\": 2, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..                                                                       [100%]\n2 passed in 1.91s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\m18-web-api"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 27824,
+            "pid": 18180,
             "temp_dir_removed": true
           },
           "evidence_path": "tools/harness.py,tests/system/test_m18_web_frontend.py",
@@ -2922,23 +2922,23 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "1612bdee6e4867615c1386ee92b253901428b0cbe24a5c11a9afa278d1f2a5f1",
+          "fingerprint": "0d51805bb85b83b8f6d89f3242bb50d2c2002e9247ea03f5e684d42281cdba48",
           "id": "m18-web-frontend",
           "ok": true,
           "reused": false,
           "run": "uv run python tools/harness.py pytest tests/system/test_m18_web_frontend.py",
-          "seconds": 2.5,
-          "stderr_sha256": "e76066469127e4212b524f33b0ffeba3bacf942bac7b35a99e3d9bd6149678f2",
-          "stdout_sha256": "24fd615aa0639e967fc67f7f583fcf568eda28f293ad34cdc0a71da1dae748f9",
-          "tail": "{\"exit\": 0, \"total\": 2, \"passed\": 2, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..                                                                       [100%]\n2 passed in 1.67s",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\m18-web-frontend"
+          "seconds": 2.2,
+          "stderr_sha256": "c54535fdf64de7dd543ac5cf7cd316216de1791301cdb31631723f2ebdd0d41d",
+          "stdout_sha256": "ebb09a480685bc3f9ae171189dc76ceb8fc395733b59d61c5055be416b3245bb",
+          "tail": "{\"exit\": 0, \"total\": 2, \"passed\": 2, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..                                                                       [100%]\n2 passed in 1.50s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\m18-web-frontend"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 26696,
+            "pid": 16440,
             "temp_dir_removed": true
           },
           "evidence_path": "tools/harness.py,tests/system/test_m18_web_talk.py",
@@ -2948,23 +2948,23 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "4b2108db4dd8413f7cfc55d554bd806e2ca4ea58aa2178c932786f65dfbea4e8",
+          "fingerprint": "526e4e962078d24cc1eb73bb620eb552f0477001d9158db8575254923a25d130",
           "id": "m18-web-talk",
           "ok": true,
           "reused": false,
           "run": "uv run python tools/harness.py pytest tests/system/test_m18_web_talk.py",
-          "seconds": 5.4,
+          "seconds": 5.1,
           "stderr_sha256": "e631d5e9218bd41cef6f8affbf4a41474a6b2acafef76f8eb1c751ff6beb1c08",
           "stdout_sha256": "9146137a899f13cd5b8b41ef5bbaf9a6ad5dd28f541fe836a90cd8d82ad77597",
           "tail": "{\"exit\": 0, \"total\": 2, \"passed\": 2, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..                                                                       [100%]\n2 passed in 4.38s",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\m18-web-talk"
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\m18-web-talk"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 20648,
+            "pid": 28948,
             "temp_dir_removed": true
           },
           "evidence_path": "tools/harness.py,tests/system/test_m18_web_graph.py",
@@ -2974,23 +2974,23 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "94850fc5d5d9b61ed51a5027cd70dd4f4f75d2a99877d4ff57d7a598ebbfaa3c",
+          "fingerprint": "765bbb5a712588de0ee2bf23ec8d28d95678fc1905e0cd71ee7d4e262fa23fc8",
           "id": "m18-web-graph",
           "ok": true,
           "reused": false,
           "run": "uv run python tools/harness.py pytest tests/system/test_m18_web_graph.py",
           "seconds": 1.4,
-          "stderr_sha256": "a65a2e135668904da5355e90568a4d7e06f5ac7b4e108ec7fe1b6ab82d6a1587",
-          "stdout_sha256": "58af4b6395d5ca5494ea9617a907bd97793cd742cce2723b014e29173c8389b0",
-          "tail": "{\"exit\": 0, \"total\": 2, \"passed\": 2, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..                                                                       [100%]\n2 passed in 0.67s",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\m18-web-graph"
+          "stderr_sha256": "bab81e885dddeb6695765997dfbca91fa96f00bde5c5de0cc6a315c0a1572617",
+          "stdout_sha256": "6e3c4bb498c1149f329124b9e9090d7daca04bb29f936de01870b7b3cd923e16",
+          "tail": "{\"exit\": 0, \"total\": 2, \"passed\": 2, \"failed\": 0, \"errors\": 0, \"skipped\": 0, \"failures\": [], \"skips\": []}\n\n..                                                                       [100%]\n2 passed in 0.66s",
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\m18-web-graph"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 19544,
+            "pid": 15868,
             "temp_dir_removed": true
           },
           "evidence_path": "src/mao/webapp/static/app.js",
@@ -3000,7 +3000,7 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "bf29a01497e6057742ea61a3d69cfc7f278500498270e0a74913697816016b71",
+          "fingerprint": "0a450f6c7b2eb2caaf0e4ef55cad045de211926c575d68e05fa856254f8cdf7d",
           "id": "m18-web-static",
           "ok": true,
           "reused": false,
@@ -3009,14 +3009,14 @@
           "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "tail": "",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\m18-web-static"
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\m18-web-static"
         },
         {
           "blocker": null,
           "cleanup": {
             "attempted": false,
             "ok": true,
-            "pid": 25828,
+            "pid": 4032,
             "temp_dir_removed": true
           },
           "evidence_path": "",
@@ -3026,7 +3026,7 @@
           ],
           "executed": true,
           "exit": 0,
-          "fingerprint": "b976f15a0222974de6d95b995729072e25d9c10ce03f5292d019b9199dc08dd7",
+          "fingerprint": "599c9b8f4ac89d6748c68a37c8b80e769fd1be3d073d9fc8241ad5906f871e97",
           "id": "m18-no-browser-artifacts",
           "ok": true,
           "reused": false,
@@ -3035,7 +3035,7 @@
           "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "tail": "",
-          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T014333Z-e145191a2c\\tmp\\m18-no-browser-artifacts"
+          "temp_dir": "D:\\Desktop\\machine_agent_org\\.factory\\harness-runs\\M18\\20261119T035233Z-becfaa19ef\\tmp\\m18-no-browser-artifacts"
         }
       ],
       "review": {
@@ -3043,7 +3043,7 @@
         "status": "passed"
       },
       "status": "passed",
-      "updated_at": "2026-11-19T01:43:51Z"
+      "updated_at": "2026-11-19T03:52:50Z"
     },
     "M2": {
       "commit": "84bdd0e",

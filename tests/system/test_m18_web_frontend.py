@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 import urllib.request
 from pathlib import Path
@@ -12,7 +13,7 @@ from mao.webapp.server import WebServer
 FIXTURE = Path("spec/examples/registry")
 
 
-def test_frontend_is_api_hydrated_and_has_local_only_shell(tmp_path: Path) -> None:
+def test_frontend_is_react_production_bundle_and_has_local_only_shell(tmp_path: Path) -> None:
     root = tmp_path / "factory"
     with Context.open(root, provider=LocalProvider(root)) as ctx:
         server = WebServer(ctx, snapshot=Snapshot.load(FIXTURE))
@@ -22,29 +23,40 @@ def test_frontend_is_api_hydrated_and_has_local_only_shell(tmp_path: Path) -> No
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
                 html = response.read().decode("utf-8")
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/app.js", timeout=5) as response:
-                app = response.read().decode("utf-8")
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/styles.css", timeout=5) as response:
+            script_match = re.search(r'<script type="module" crossorigin src="([^"]+\.js)">', html)
+            style_match = re.search(r'<link rel="stylesheet" crossorigin href="([^"]+\.css)">', html)
+            assert script_match
+            assert style_match
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}{script_match.group(1)}", timeout=5
+            ) as response:
+                bundle = response.read().decode("utf-8")
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}{style_match.group(1)}", timeout=5
+            ) as response:
                 css = response.read().decode("utf-8")
         finally:
             server.close()
 
-    assert 'id="app"' in html
-    assert 'src="/app.js"' in html
-    assert "/api/web/bootstrap" in app
-    assert "/api/web/graph?scope=workarea" in app
-    assert "localStorage" in app
-    assert "FACTORY" in app
-    assert "WORKAREA" in app
-    assert "登录" not in html + app + css
-    assert "租户" not in html + app + css
-    assert "邀请" not in html + app + css
-    assert "#edf1f4" in css
+    assert 'id="root"' in html
+    assert 'type="module"' in html
+    assert "/api/web/bootstrap" in bundle
+    assert "FACTORY" in bundle
+    assert "WORKAREA" in bundle
+    assert "登录" not in html + bundle + css
+    assert "租户" not in html + bundle + css
+    assert "邀请" not in html + bundle + css
+    assert "#e9eef1" in css
 
 
-def test_frontend_does_not_embed_mock_graph_or_secret_values() -> None:
-    app = Path("src/mao/webapp/static/app.js").read_text(encoding="utf-8")
-    assert "wa-vision" not in app
-    assert "OpenAI" not in app
-    assert "ANTHROPIC_API_KEY" not in app
-    assert "MODEL_API_KEY" not in app
+def test_frontend_source_is_componentized_and_does_not_embed_mock_graph_or_secrets() -> None:
+    source = Path("frontend/src/App.tsx").read_text(encoding="utf-8")
+    package = Path("frontend/package.json").read_text(encoding="utf-8")
+    assert "ReactFlow" in source
+    assert "localStorage" in source
+    assert "wa-vision" not in source
+    assert "OpenAI" not in source
+    assert "ANTHROPIC_API_KEY" not in source
+    assert "MODEL_API_KEY" not in source
+    assert '"react"' in package
+    assert '"@xyflow/react"' in package

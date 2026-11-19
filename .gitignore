@@ -7,3 +7,8 @@ __pycache__/
 .factory-test/
 dist/
 build/
+
+node_modules/
+
+!src/mao/webapp/static/dist/
+!src/mao/webapp/static/dist/**
