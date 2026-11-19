@@ -533,16 +533,27 @@ async function readJson(request: Request): Promise<Record<string, any>> {
 
 function eventsResponse(request: Request, events: EventBus, cursor?: string): Response {
   const last = request.headers.get("last-event-id") ?? cursor;
+  const cursorSeq = Number.isFinite(Number(last)) ? Number(last) : 0;
   let closeStream = () => {};
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const encoder = new TextEncoder();
+      let replaying = true;
+      let lastSent = cursorSeq;
+      const buffered: Array<ReturnType<EventBus["after"]>[number]> = [];
       const send = (event: any) => {
+        if (event.seq <= lastSent) return;
         const data = event.data && typeof event.data === "object" ? { ...event.data, type: event.type } : { type: event.type, value: event.data };
         controller.enqueue(encoder.encode(`id: ${event.seq}\nevent: mao.event\ndata: ${JSON.stringify(data)}\n\n`));
+        lastSent = event.seq;
       };
-      for (const event of events.after(last)) send(event);
-      const unsubscribe = events.subscribe(send);
+      const unsubscribe = events.subscribe((event) => {
+        if (replaying) buffered.push(event);
+        else send(event);
+      });
+      for (const event of events.after(cursorSeq)) send(event);
+      replaying = false;
+      for (const event of buffered.sort((left, right) => left.seq - right.seq)) send(event);
       closeStream = () => { unsubscribe(); try { controller.close(); } catch { /* client disconnected */ } };
       request.signal.addEventListener("abort", closeStream, { once: true });
     },

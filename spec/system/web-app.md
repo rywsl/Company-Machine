@@ -263,7 +263,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 
 普通浏览器操作只修改本地布局偏好。Foreman 目标、Harness 替换意图和资源请求通过现有 Foreman 邮箱或 talk 入口进入自治链路。浏览器不直接修改 Registry、RunPlan、Line、Machine、Operator、Secret 或 Constitution，也不直接调用 LLM API。
 
-`POST /api/web/talk` 成功只表示消息已经写入本地 Foreman 输入队列。前端优先订阅 SSE 事件流，断线时使用 `Last-Event-ID` 或事件游标补齐结果。serve 未运行、Foreman 不可用、宪法冲突和不可恢复异常必须进入异常上下文。
+`POST /api/web/talk` 成功只表示消息已经写入本地 Foreman 输入队列。前端优先订阅 SSE 事件流，断线时使用 `Last-Event-ID` 或事件游标补齐结果。SSE 建立连接时必须先登记订阅再回放游标，回放与实时事件按序去重，不能因连接建立竞态丢失 Foreman 增量。serve 未运行、Foreman 不可用、宪法冲突和不可恢复异常必须进入异常上下文。
 
 ### 11.4 前端连接状态
 
