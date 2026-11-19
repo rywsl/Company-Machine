@@ -6,6 +6,6 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["bun-shim.d.ts", "bench.ts", "src/**/*.ts", "runtime/**/*.ts", "tests/**/*.ts"]
+  "include": ["bun-shim.d.ts", "bench.ts", "mrl/**/*.ts", "src/**/*.ts", "runtime/**/*.ts", "tests/**/*.ts"]
 }
 
