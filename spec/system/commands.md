@@ -150,7 +150,7 @@ stdout 只有一个规范 JSON 值（`canonical_json`），后面跟一个换行
 `open_context(args)`：
 
 1. 根目录取 `--root`、`$FACTORY_ROOT`、`./.factory`（README 3.1）。
-2. provider：`--provider docker`（缺省）构造 `DockerProvider`，**构造时不得调用 docker**。只读命令因此在没有 Docker 的机器上也能运行。`local` 的 `--local-commands` 可以省略，省略时命令表为空 `{}`（与 M1 的实现一致）；只读命令和不执行工位的命令这样就够了。
+2. Python 兼容 CLI 的 provider：`--provider docker`（缺省）构造 `DockerProvider`，**构造时不得调用 docker**。只读命令因此在没有 Docker 的机器上也能运行。Bun 业务入口使用 Podman，不依赖这个兼容默认值。`local` 的 `--local-commands` 可以省略，省略时命令表为空 `{}`（与 M1 的实现一致）；只读命令和不执行工位的命令这样就够了。
 3. `Context.open(root, provider=...)`。命令结束时 `close`。
 
 ### 5.2 选择快照

@@ -25,7 +25,7 @@
 | 秘密注入 | M2（本组件不读取、不记录任何秘密） |
 | 资源队列、GPU、进程数以外的配额调度 | M2 调度器 |
 | 决定挂什么、跑什么命令 | `runner.md`、`gate.md` |
-| 在生产配置或 CLI 默认值里使用 `LocalProvider` | README D5；CLI 默认 `--provider docker` |
+| 在生产配置或 CLI 默认值里使用 `LocalProvider` | README D5。Bun 业务入口使用 Podman，Python 兼容 CLI 保留 `--provider docker` 以运行旧验收 |
 
 安全基线不可降级（D11、R7）。下面任何一条都不允许因为“容器里写不了文件”或“需要 docker”而放开：
 

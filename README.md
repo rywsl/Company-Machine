@@ -148,7 +148,7 @@ Expensive stations and every sink work in two phases: *propose*, with a cost est
 | **Kernel** | Meta-model, structure compiler, constitution invariants, event log. Changes rarely. | `src/mrl/` (MRL language + factory profile) |
 | **Structure** | Registry in Git. Types, machines, operators, stations, lines and policies are all Specs, versioned by **epoch**. | `mao.snapshot`, `mao.governance.epochs` |
 | **Runtime** | Scheduler, line runner, job state machine, sandboxes, gates, warehouse, cache, leases. | `mao.runner`, `mao.runs`, `mao.dynamic`, `mao.scheduler`, `mao.gate`, `mao.warehouse` |
-| **Adapters** | Machine packages, operator runtimes, Docker/Local sandboxes, connectors, service gateway, egress and model proxies, storage backends. | `mao.sandbox`, `mao.operator`, `mao.gateway`, `mao.egress`, `mao.backends` |
+| **Adapters** | Machine packages, official Harness runtimes, managed Podman sandboxes, connectors, service gateway, egress and model proxies, storage backends. | `backend/runtime`, `backend/src/harness.ts`, `mao.sandbox`, `mao.gateway`, `mao.egress`, `mao.backends` |
 | **Governance** | Verification pipeline, invariant audit, drift monitoring, reconciler, shadow and canary rollout, the foreman. | `mao.governance.*`, `mao.reconcile`, `mao.supervisor`, `mao.daemon` |
 
 **Six verification layers.** Each layer runs at a fixed time and fails in a fixed way:

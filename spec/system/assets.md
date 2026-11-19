@@ -103,7 +103,7 @@ def verify_package(src: Path, *, timeout_s: float = 120.0) -> dict[str, Any]
 def import_package(src: Path, root: Path, *, bindings: Mapping[str, Any],
                    provider: SandboxProvider | None = None,
                    by: str = "human", timeout_s: float = 120.0) -> dict[str, Any]
-    # provider 缺省为生产 DockerProvider；测试显式传 LocalProvider
+    # Python 兼容执行面 provider 缺省为 DockerProvider；Bun 业务入口使用 Podman。测试显式传 LocalProvider
 ```
 
 验证与导出不打开源工厂、不开 Agent；导出仅从已完成的 checkpoint 读取。现有 `factory backup` 签名和格式不变，不能把旧备份直接声称为完整检查点或已脱敏包。
