@@ -1,5 +1,5 @@
 import { Expr, parseExpression } from "./parser";
-import { checkExpression, type CheckOptions } from "./checker";
+import { checkExpression, type CheckOptions, type FunctionSignature } from "./checker";
 
 export class MrlEvalError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "MrlEvalError"; }
@@ -23,7 +23,11 @@ const equal = (a: unknown, b: unknown): boolean => {
 const finite = (value: number, code = "MRL-DOMAIN") => { if (!Number.isFinite(value)) throw new MrlEvalError(code, "non-finite number"); return Object.is(value, -0) ? 0 : value; };
 
 export interface EvaluateOptions { budget?: number; functions?: Record<string, (...args: MrlValue[]) => MrlValue>; }
-export interface CompileExprOptions extends EvaluateOptions, CheckOptions {}
+export interface CompileExprOptions extends EvaluateOptions {
+  environment?: CheckOptions["environment"];
+  expect?: CheckOptions["expect"];
+  checkFunctions?: Record<string, FunctionSignature>;
+}
 
 export class Evaluator {
   private steps = 0;
@@ -43,7 +47,19 @@ export class Evaluator {
         return result;
       }
       case "member": { const object = this.evaluate(ast.object, environment); if (!object || typeof object !== "object" || Array.isArray(object)) throw new MrlEvalError("MRL-TYPE", "field selection requires record"); if (!(ast.field in object)) throw new MrlEvalError("MRL-NO-FIELD", `missing field ${ast.field}`); return (object as Record<string, MrlValue>)[ast.field]; }
-      case "index": { const object = this.evaluate(ast.object, environment), index = this.evaluate(ast.index, environment); if (Array.isArray(object)) { if (!Number.isInteger(index) || index < 0 || index >= object.length) throw new MrlEvalError("MRL-INDEX", "list index out of range"); return object[index]; } if (object && typeof object === "object" && !Array.isArray(object) && typeof index === "string") { if (!(index in object)) throw new MrlEvalError("MRL-NO-FIELD", `missing key ${index}`); return (object as Record<string, MrlValue>)[index]; } throw new MrlEvalError("MRL-TYPE", "invalid index operation"); }
+      case "index": {
+        const object = this.evaluate(ast.object, environment);
+        const index = this.evaluate(ast.index, environment);
+        if (Array.isArray(object)) {
+          if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index >= object.length) throw new MrlEvalError("MRL-INDEX", "list index out of range");
+          return object[index];
+        }
+        if (object && typeof object === "object" && !Array.isArray(object) && typeof index === "string") {
+          if (!(index in object)) throw new MrlEvalError("MRL-NO-FIELD", `missing key ${index}`);
+          return (object as Record<string, MrlValue>)[index];
+        }
+        throw new MrlEvalError("MRL-TYPE", "invalid index operation");
+      }
       case "unary": { const value = this.evaluate(ast.operand, environment); if (ast.op === "!") { if (typeof value !== "boolean") throw new MrlEvalError("MRL-TYPE", "! requires bool"); return !value; } if (!isNumber(value)) throw new MrlEvalError("MRL-TYPE", "- requires number"); return finite(-value, "MRL-OVERFLOW"); }
       case "binary": return this.binary(ast.op, ast.left, ast.right, environment);
       case "conditional": { const condition = this.evaluate(ast.condition, environment); if (typeof condition !== "boolean") throw new MrlEvalError("MRL-TYPE", "condition requires bool"); return this.evaluate(condition ? ast.then : ast.otherwise, environment); }
@@ -94,9 +110,9 @@ const builtins: Record<string, (...args: MrlValue[]) => MrlValue> = {
   float: (value) => { if (typeof value === "number") return value; if (typeof value === "string" && /^[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(value)) return finite(Number(value)); throw new MrlEvalError("MRL-CONVERT", "cannot convert to float"); },
   string: (value) => { if (typeof value === "string") return value; if (typeof value === "boolean") return value ? "true" : "false"; if (typeof value === "number") return String(value); throw new MrlEvalError("MRL-TYPE", "cannot convert to string"); },
   abs: (value) => { if (!isNumber(value)) throw new MrlEvalError("MRL-TYPE", "abs requires number"); return finite(Math.abs(value), "MRL-OVERFLOW"); },
-  min: (...values) => { const list = values.length === 1 && Array.isArray(values[0]) ? values[0] : values; if (!list.length) throw new MrlEvalError("MRL-DOMAIN", "empty min"); return list.reduce((a, b) => a < b ? a : b); },
-  max: (...values) => { const list = values.length === 1 && Array.isArray(values[0]) ? values[0] : values; if (!list.length) throw new MrlEvalError("MRL-DOMAIN", "empty max"); return list.reduce((a, b) => a > b ? a : b); },
-  sum: (value) => { if (!Array.isArray(value) || value.some((item) => !isNumber(item))) throw new MrlEvalError("MRL-TYPE", "sum requires numeric list"); return finite(value.reduce((a, b) => a + b, 0), "MRL-OVERFLOW"); },
+  min: (...values) => { const list = values.length === 1 && Array.isArray(values[0]) ? values[0] : values; if (!list.length || list.some((item) => !isNumber(item))) throw new MrlEvalError("MRL-TYPE", "min requires numeric values"); return (list as number[]).reduce((a, b) => a < b ? a : b); },
+  max: (...values) => { const list = values.length === 1 && Array.isArray(values[0]) ? values[0] : values; if (!list.length || list.some((item) => !isNumber(item))) throw new MrlEvalError("MRL-TYPE", "max requires numeric values"); return (list as number[]).reduce((a, b) => a > b ? a : b); },
+  sum: (value) => { if (!Array.isArray(value) || value.some((item) => !isNumber(item))) throw new MrlEvalError("MRL-TYPE", "sum requires numeric list"); return finite((value as number[]).reduce((a, b) => a + b, 0), "MRL-OVERFLOW"); },
   startsWith: (a, b) => { if (typeof a !== "string" || typeof b !== "string") throw new MrlEvalError("MRL-TYPE", "startsWith requires strings"); return a.startsWith(b); },
   endsWith: (a, b) => { if (typeof a !== "string" || typeof b !== "string") throw new MrlEvalError("MRL-TYPE", "endsWith requires strings"); return a.endsWith(b); },
   contains: (a, b) => { if (typeof a !== "string" || typeof b !== "string") throw new MrlEvalError("MRL-TYPE", "contains requires strings"); return a.includes(b); },
@@ -111,7 +127,7 @@ const builtins: Record<string, (...args: MrlValue[]) => MrlValue> = {
 
 export function evaluate(source: string | Expr, environment: EvalEnvironment = {}, options: EvaluateOptions = {}): MrlValue { return new Evaluator(options).evaluate(typeof source === "string" ? parseExpression(source) : source, environment); }
 export function compileExpr(source: string, options: CompileExprOptions = {}) {
-  const checked = checkExpression(source, options);
+  const checked = checkExpression(source, { environment: options.environment, expect: options.expect, functions: options.checkFunctions });
   return {
     ast: checked.ast,
     type: checked.type,
