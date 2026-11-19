@@ -30,8 +30,13 @@ export class ForemanCoordinator {
     return work;
   }
 
-  async close(): Promise<void> {
+  stop(): void {
     this.closed = true;
+    for (const session of this.sessions.values()) void session.close();
+  }
+
+  async close(): Promise<void> {
+    this.stop();
     await Promise.allSettled([...this.sessions.values()].map((session) => session.close()));
     await Promise.allSettled(this.active.values());
   }

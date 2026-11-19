@@ -260,7 +260,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
     return response({ error: "not found" }, 404);
   };
-  return { store, events, vault, foreman, fetch, stop: () => { void foreman.close(); store.close(); } };
+  return { store, events, vault, foreman, fetch, stop: () => { foreman.stop(); store.close(); } };
 }
 
 function staticResponse(pathname: string): Response {
