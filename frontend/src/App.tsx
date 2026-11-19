@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import {
   Background,
@@ -315,7 +315,23 @@ function SecretDrawer({ secret, onClose }: { secret: SecretRecord; onClose: () =
   };
   return <DetailDrawer title="项目资源请求" eyebrow="PROJECT RESOURCE" onClose={onClose}><p>项目主动请求这项资源。密钥值直接写入保险箱，Harness 和 Foreman 只接触引用与验证状态。</p><div className="secret-key"><strong>{secret.key}</strong><span className={`status-badge ${secret.configured ? "good" : "bad"}`}>{secret.configured ? "已配置" : "待补充"}</span></div><div className="context-line"><span>使用范围</span><strong>{display(secret.usage_scope, "未声明")}</strong></div><div className="context-line"><span>绑定对象</span><strong>{display(secret.bound_objects, "暂无绑定")}</strong></div><div className="context-line"><span>最近使用</span><strong>{display(secret.last_used, "暂无记录")}</strong></div><div className="context-line"><span>过期状态</span><strong>{secret.expired ? "已过期" : "未发现过期"}</strong></div><details open><summary>项目检查项</summary><ul className="check-list">{(secret.agent_generated_checks ?? []).map((item) => <li key={item}>{item}</li>)}</ul></details>{secret.request && <div className="request-note"><span className="signal warn" /><span>项目请求状态为 {display(secret.request.status)}。</span></div>}{requestId && !secret.configured && <form className="secret-form" onSubmit={submit}><label className="config-field"><span>填写这项项目密钥</span><input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoComplete="off" /></label><button className="primary-button" type="submit" disabled={!value || saving}>{saving ? "写入中…" : "写入保险箱"}</button></form>}{message && <div className="context-note">{message}</div>}</DetailDrawer>;
 }
-function AssetDrawer({ asset, onClose }: { asset: AssetRecord; onClose: () => void }): ReactElement { return <DetailDrawer title={asset.id} eyebrow="ASSET CONTEXT" onClose={onClose}><div className="context-line"><span>类型</span><strong>{asset.type}</strong></div><div className="context-line"><span>封存</span><strong>{asset.sealed ? "已封存" : "处理中"}</strong></div><div className="context-line"><span>Validation Epoch</span><strong>由运行记录提供</strong></div><div className="context-line"><span>来源运行</span><strong>{display(asset.source?.run, "暂无")}</strong></div><div className="context-line"><span>来源节点</span><strong>{display(asset.source?.node, "暂无")}</strong></div><p>完整 Lineage 在上下文展开时读取，列表保持摘要。</p></DetailDrawer>; }
+function AssetDrawer({ asset, onClose }: { asset: AssetRecord; onClose: () => void }): ReactElement {
+  const lineage = [...new Set([...(asset.lineage ?? []), ...(asset.inputs ?? [])])];
+  const outputs = [...new Set(asset.outputs ?? [])];
+  return <DetailDrawer title={asset.title || asset.id} eyebrow="ASSET CONTEXT" onClose={onClose}>
+    <div className="context-line"><span>类型</span><strong>{display(asset.record_type, asset.type)}</strong></div>
+    <div className="context-line"><span>说明</span><strong>{display(asset.description || asset.summary, "暂无说明")}</strong></div>
+    <div className="context-line"><span>封存</span><strong>{asset.sealed ? "已封存" : "处理中"}</strong></div>
+    <div className="context-line"><span>来源运行</span><strong>{display(asset.source?.run, "暂无")}</strong></div>
+    <div className="context-line"><span>来源节点</span><strong>{display(asset.source?.node, "暂无")}</strong></div>
+    <section className="asset-lineage" aria-label="产物物料流转图"><span className="eyebrow">MATERIAL FLOW</span><div className="asset-flow-track">
+      {lineage.length ? <>{lineage.map((ref, index) => <span className="asset-flow-node" key={`input-${ref}-${index}`}>{ref}</span>)}<b>→</b></> : <span className="asset-flow-node muted">起点由项目定义</span>}
+      <span className="asset-flow-node current">{asset.title || asset.type}</span>
+      {outputs.map((ref, index) => <Fragment key={`output-${ref}-${index}`}><b>→</b><span className="asset-flow-node">{ref}</span></Fragment>)}
+    </div></section>
+    {asset.files?.length ? <details className="detail-collapse" open><summary>文件引用</summary><ul className="check-list">{asset.files.map((file, index) => <li key={`${file.ref}-${index}`}><strong>{file.path || file.ref}</strong><small>{file.mediaType || "引用文件"}</small></li>)}</ul></details> : null}
+  </DetailDrawer>;
+}
 function ConstitutionDrawer({ bootstrap, onClose }: { bootstrap: Bootstrap; onClose: () => void }): ReactElement { const constitution = bootstrap.constitution; return <DetailDrawer title="宪法" eyebrow="CONSTITUTION" onClose={onClose}><div className="context-line"><span>当前版本</span><strong>{display(constitution.version, "未配置")}</strong></div><div className="context-line"><span>生效状态</span><strong>{display(constitution.status, "未知")}</strong></div><div className="context-line"><span>最近变更</span><strong>{display(constitution.recent_change, "暂无")}</strong></div><div className="context-note">宪法冲突会进入日志异常上下文，由人处理边界决策，普通运行由 Foreman 自治。</div></DetailDrawer>; }
 
 export function App(): ReactElement {

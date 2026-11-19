@@ -302,7 +302,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     if (url.pathname === "/api/web/assets" && request.method === "GET") {
       const limit = Number(url.searchParams.get("limit") ?? 100);
-      return response(store.legacyArtifacts().slice(-Math.max(1, limit)));
+      return response(webAssets(store).slice(-Math.max(1, limit)));
     }
     if (url.pathname === "/api/web/secrets" && request.method === "GET") {
       return response(store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, usage_scope: secret.metadata.scope, request: { id: secret.id, project_id: secret.projectId, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })));
@@ -325,7 +325,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: new Date().toISOString() },
         graph: { factory: factoryGraph },
-        assets: store.legacyArtifacts(), logs: store.legacyEvents(), talk: [...store.legacyTalk(), ...store.listTalkMessages()],
+        assets: webAssets(store), logs: store.legacyEvents(), talk: [...store.legacyTalk(), ...store.listTalkMessages()],
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { podman: runtimeDependency(health), harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });
@@ -395,6 +395,51 @@ function publicProject(project: any) {
 
 function publicArtifact(record: any) {
   return { ...record, project_id: record.projectId, source_id: record.sourceId, record_type: record.recordType, created_at: record.createdAt };
+}
+
+function webAssets(store: SqliteStore) {
+  const legacy = store.legacyArtifacts().map((record) => {
+    const document = record.metadata?.document && typeof record.metadata.document === "object" ? record.metadata.document as Record<string, unknown> : {};
+    return {
+      id: record.id,
+      type: typeof document.kind === "string" ? document.kind : record.kind,
+      record_type: document.record_type === "material" ? "material" : "artifact",
+      ref: typeof document.ref === "string" ? document.ref : record.ref,
+      title: typeof document.title === "string" ? document.title : undefined,
+      description: typeof document.description === "string" ? document.description : undefined,
+      summary: typeof document.summary === "string" ? document.summary : undefined,
+      purpose: typeof document.purpose === "string" ? document.purpose : undefined,
+      status: typeof document.status === "string" ? document.status : undefined,
+      files: Array.isArray(document.files) ? portableValue(document.files) : [],
+      inputs: Array.isArray(document.inputs) ? document.inputs.filter((item): item is string => typeof item === "string") : [],
+      outputs: Array.isArray(document.outputs) ? document.outputs.filter((item): item is string => typeof item === "string") : [],
+      lineage: Array.isArray(document.lineage) ? document.lineage.filter((item): item is string => typeof item === "string") : [],
+      sealed: true,
+      expired: false,
+      created_at: record.createdAt,
+      source: { node: typeof document.producer === "object" && document.producer ? (document.producer as Record<string, unknown>).operator : undefined },
+    };
+  });
+  const business = store.listAllArtifacts().map((record) => ({
+    id: record.id,
+    type: record.kind,
+    record_type: record.recordType,
+    ref: record.ref,
+    title: record.title,
+    description: record.description,
+    summary: record.summary,
+    purpose: record.purpose,
+    status: record.status,
+    files: portableValue(record.files ?? []),
+    inputs: record.inputs ?? [],
+    outputs: record.outputs ?? [],
+    lineage: record.lineage ?? [],
+    sealed: ["sealed", "produced", "completed"].includes(record.status ?? ""),
+    expired: false,
+    created_at: record.createdAt,
+    source: { node: record.producer?.operator, run: typeof record.metadata.run_id === "string" ? record.metadata.run_id : undefined },
+  }));
+  return [...legacy, ...business];
 }
 
 function exportBusinessSystem(store: SqliteStore, id: string) {

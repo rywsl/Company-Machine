@@ -17,6 +17,8 @@ describe("business record and DAG boundaries", () => {
       const created = await body(await app.fetch(new Request(`http://localhost/api/v1/projects/${project.id}/artifacts`, { method: "POST", headers, body: JSON.stringify({ record_type: "material", kind: "script", ref: "cas://script-1", title: "分镜脚本", description: "给视频 Operator 使用的分镜脚本", summary: "已审核脚本", files: [{ ref: "cas://file-1", path: "storyboard.md" }] }) })));
       expect(created.recordType).toBe("material");
       expect(created.title).toBe("分镜脚本");
+      const webAssets = await body(await app.fetch(new Request("http://localhost/api/web/assets")));
+      expect(webAssets.some((asset: any) => asset.id === created.id && asset.record_type === "material")).toBe(true);
       const materials = await body(await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/materials`)));
       expect(materials).toHaveLength(1);
       expect(materials[0].files[0].path).toBe("storyboard.md");

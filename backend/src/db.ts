@@ -462,6 +462,10 @@ export class SqliteStore {
     return this.db.query("SELECT * FROM artifacts WHERE project_id = ? ORDER BY created_at, id").all(projectId).map((row: any) => this.artifactFromRow(row));
   }
 
+  listAllArtifacts(): Artifact[] {
+    return this.db.query("SELECT * FROM artifacts ORDER BY created_at, id").all().map((row: any) => this.artifactFromRow(row));
+  }
+
   listBusinessSystemArtifacts(businessSystemId: string): Artifact[] {
     const rows = this.db.query("SELECT artifacts.* FROM artifacts JOIN projects ON projects.id = artifacts.project_id WHERE projects.business_system_id = ? ORDER BY artifacts.created_at, artifacts.id").all(businessSystemId);
     return rows.map((row: any) => this.artifactFromRow(row));

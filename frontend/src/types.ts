@@ -50,6 +50,17 @@ export interface StreamEvent {
 export interface AssetRecord {
   id: string;
   type: string;
+  record_type?: "artifact" | "material" | string;
+  ref?: string;
+  title?: string;
+  description?: string;
+  summary?: string;
+  purpose?: string;
+  status?: string;
+  files?: Array<{ ref: string; path?: string; mediaType?: string; digest?: string }>;
+  inputs?: string[];
+  outputs?: string[];
+  lineage?: string[];
   sealed: boolean;
   expired: boolean;
   created_at?: string;
