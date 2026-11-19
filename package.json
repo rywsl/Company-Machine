@@ -6,6 +6,7 @@
     "build:web": "pnpm --filter @mao/web build",
     "check:web": "pnpm --filter @mao/web check",
     "backend:dev": "bun run backend/src/index.ts",
+    "factory": "bun run backend/src/cli.ts",
     "factory:bun": "bun run backend/src/cli.ts",
     "backend:check": "bun build backend/src/index.ts --target bun --outfile output/backend-check.js",
     "backend:build": "bun build backend/src/index.ts --outdir output/backend --target bun",

@@ -78,6 +78,7 @@ uv run python tools/harness.py verify     # check specs, implementation and acce
 
 # Start the Bun business control plane and Web App
 bun run backend/src/index.ts
+bun run factory status
 ```
 
 ### Your first line
