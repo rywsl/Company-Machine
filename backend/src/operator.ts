@@ -9,6 +9,7 @@ export interface OperatorCoordinatorOptions {
   cwd?: string;
   spawn?: OfficialSpawn;
   acpSpawn?: AcpSpawn;
+  onProgress?: (runId: string) => void;
 }
 
 /** Runs a business-system operator through an external official Harness. */
@@ -85,7 +86,7 @@ export class OperatorCoordinator {
         if (event.type === "record") {
           const artifact = this.recordFromEvent(event, unit.projectId, unit, definition.id);
           if (artifact) {
-            outputIds.push(artifact.id);
+            outputIds.push(artifact.ref);
             this.options.events.publish("artifact.created", artifact);
           }
         }
@@ -96,9 +97,11 @@ export class OperatorCoordinator {
       if (this.closed) return;
       const completed = this.options.store.completeUnitRun(unitRun.id, failed ? "failed" : "completed", outputIds, failed ? "official-harness-failed" : undefined);
       if (completed) this.options.events.publish("operator.run.completed", completed);
+      this.options.onProgress?.(runId);
     } catch (error) {
       const completed = this.options.store.completeUnitRun(unitRun.id, "failed", outputIds, error instanceof Error ? error.message : "official-harness-failed");
       if (completed) this.options.events.publish("operator.run.failed", completed);
+      this.options.onProgress?.(runId);
     } finally {
       this.sessions.delete(unitRun.id);
       await session?.close();

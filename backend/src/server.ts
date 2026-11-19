@@ -47,7 +47,8 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
   const events = new EventBus(store);
   const vault = new VaultStore();
   const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn });
-  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn });
+  let dispatchOperatorRun = (_runId: string) => {};
+  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId) });
   const runtime = options.runtime ?? new PodmanProvider();
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
   const runtimeHealth = async (refresh = false) => {
@@ -60,8 +61,8 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
   const dispatchForemanIfConfigured = (id: string) => {
     if (store.listHarnessProfiles().some((profile) => profile.role === "foreman")) void foreman.dispatch(id);
   };
-  const dispatchOperatorRun = (runId: string) => {
-    for (const unitRun of store.listUnitRuns(runId).filter((item) => item.status === "queued")) void operator.dispatch(runId, unitRun.id);
+  dispatchOperatorRun = (runId: string) => {
+    for (const unitRun of store.listReadyUnitRuns(runId)) void operator.dispatch(runId, unitRun.id);
   };
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);

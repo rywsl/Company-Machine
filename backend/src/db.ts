@@ -273,9 +273,35 @@ export class SqliteStore {
     return this.db.query("SELECT * FROM unit_runs WHERE run_id = ? ORDER BY created_at, id").all(runId).map((row: any) => this.unitRunFromRow(row));
   }
 
+  listReadyUnitRuns(runId: string): UnitRun[] {
+    const run = this.getBusinessRun(runId);
+    if (!run) return [];
+    const unitRuns = this.listUnitRuns(runId);
+    const statuses = new Map(unitRuns.map((item) => [item.unitId, item.status]));
+    const outputs = new Map(unitRuns.map((item) => [item.unitId, item.outputs]));
+    const predecessors = new Map<string, string[]>();
+    for (const edge of this.businessGraph(run.businessSystemId).edges) {
+      predecessors.set(edge.target, [...(predecessors.get(edge.target) ?? []), edge.source]);
+    }
+    const ready: UnitRun[] = [];
+    for (const item of unitRuns.filter((candidate) => candidate.status === "queued")) {
+      const required = (predecessors.get(item.unitId) ?? []).filter((unitId) => statuses.has(unitId));
+      if (required.some((unitId) => statuses.get(unitId) !== "completed")) continue;
+      const inherited = required.flatMap((unitId) => outputs.get(unitId) ?? []);
+      const inputs = [...new Set([...item.inputs, ...inherited])];
+      if (inputs.length !== item.inputs.length || inputs.some((value, index) => value !== item.inputs[index])) {
+        this.db.query("UPDATE unit_runs SET inputs=?, updated_at=? WHERE id=? AND status='queued'").run(json(inputs), now(), item.id);
+        item.inputs = inputs;
+      }
+      ready.push(item);
+    }
+    return ready;
+  }
+
   claimUnitRun(runId: string, unitId: string, sessionId: string): UnitRun | undefined {
     const timestamp = now();
     this.db.query("UPDATE unit_runs SET status='running', session_id=?, updated_at=? WHERE run_id=? AND unit_id=? AND status='queued'").run(sessionId, timestamp, runId, unitId);
+    this.db.query("UPDATE business_units SET status='running', updated_at=? WHERE id=?").run(timestamp, unitId);
     this.db.query("UPDATE business_runs SET status='running', updated_at=? WHERE id=? AND status='queued'").run(timestamp, runId);
     const row = this.db.query("SELECT * FROM unit_runs WHERE run_id=? AND unit_id=?").get(runId, unitId) as any;
     return row ? this.unitRunFromRow(row) : undefined;
@@ -289,7 +315,16 @@ export class SqliteStore {
     const statuses = this.db.query("SELECT status FROM unit_runs WHERE run_id=?").all(row.run_id) as Array<{ status: UnitRun["status"] }>;
     const runStatus: BusinessRun["status"] = statuses.some((item) => item.status === "failed" || item.status === "blocked") ? "failed" : statuses.every((item) => item.status === "completed") ? "completed" : "running";
     this.db.query("UPDATE business_runs SET status=?, updated_at=? WHERE id=?").run(runStatus, timestamp, row.run_id);
+    this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?").run(status === "completed" ? "ready" : status, timestamp, row.unit_id);
     return this.unitRunFromRow(row);
+  }
+
+  private businessGraph(businessSystemId: string): { edges: Array<{ source: string; target: string }> } {
+    const row = this.db.query("SELECT metadata FROM business_systems WHERE id=?").get(businessSystemId) as { metadata?: string } | undefined;
+    const metadata = parseJson(row?.metadata);
+    const graph = metadata.graph && typeof metadata.graph === "object" ? metadata.graph as { edges?: unknown } : {};
+    const edges = Array.isArray(graph.edges) ? graph.edges.filter((edge): edge is { source: string; target: string } => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string")) : [];
+    return { edges };
   }
 
   private businessUnitFromRow(row: any): BusinessUnit {
@@ -338,7 +373,7 @@ export class SqliteStore {
   }
 
   addArtifact(input: Omit<Artifact, "id" | "createdAt">): Artifact {
-    const metadata = {
+    const metadata: Record<string, unknown> = {
       ...(input.metadata ?? {}),
       record_type: input.recordType ?? (input.metadata?.record_type === "material" ? "material" : "artifact"),
       title: input.title ?? input.metadata?.title,

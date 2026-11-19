@@ -48,7 +48,7 @@ declare const Bun: {
   serve(options: { port: number; hostname?: string; fetch: (request: Request) => Response | Promise<Response> }): { url: URL; stop(): void };
   file(path: string): Blob;
 };
-declare const process: { env: Record<string, string | undefined>; exit(code?: number): never };
+declare const process: { env: Record<string, string | undefined>; cwd(): string; exit(code?: number): never };
 declare const Buffer: {
   from(value: any, encoding?: string): any;
   concat(values: any[]): any;
