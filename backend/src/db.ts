@@ -133,6 +133,10 @@ export class SqliteStore {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS business_talk_messages_created ON business_talk_messages(created_at, id);
+      CREATE INDEX IF NOT EXISTS project_sources_project_created ON project_sources(project_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS secret_requests_project_created ON secret_requests(project_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS artifacts_project_created ON artifacts(project_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS artifacts_created ON artifacts(created_at, id);
       CREATE INDEX IF NOT EXISTS secret_requests_project ON secret_requests(project_id, created_at);
       CREATE INDEX IF NOT EXISTS foreman_outbox_status ON foreman_outbox(status, created_at, id);
       CREATE INDEX IF NOT EXISTS business_units_system ON business_units(business_system_id, kind, created_at, id);
@@ -150,7 +154,20 @@ export class SqliteStore {
   }
 
   listProjects(): Project[] {
-    return this.db.query("SELECT * FROM projects ORDER BY created_at, id").all().map((row: any) => this.projectFromRow(row));
+    const rows = this.db.query("SELECT * FROM projects ORDER BY created_at, id").all() as any[];
+    const sources = new Map<string, any[]>();
+    for (const row of this.db.query("SELECT * FROM project_sources ORDER BY created_at, id").all() as any[]) {
+      const values = sources.get(row.project_id) ?? [];
+      values.push(row);
+      sources.set(row.project_id, values);
+    }
+    const secretRequests = new Map<string, any[]>();
+    for (const row of this.db.query("SELECT * FROM secret_requests ORDER BY created_at, id").all() as any[]) {
+      const values = secretRequests.get(row.project_id) ?? [];
+      values.push(row);
+      secretRequests.set(row.project_id, values);
+    }
+    return rows.map((row) => this.projectFromRow(row, sources.get(row.id) ?? [], secretRequests.get(row.id) ?? []));
   }
 
   getProject(id: string): Project | undefined {
@@ -395,8 +412,8 @@ export class SqliteStore {
     return { id: row.id, runId: row.run_id, unitId: row.unit_id, status: row.status, sessionId: row.session_id ?? undefined, inputs: parseList(row.inputs), outputs: parseList(row.outputs), error: row.error ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
-  private projectFromRow(row: any): Project {
-    const sources = this.db.query("SELECT * FROM project_sources WHERE project_id = ? ORDER BY created_at, id").all(row.id).map((item: any) => ({
+  private projectFromRow(row: any, sourceRows?: any[], secretRows?: any[]): Project {
+    const sources = (sourceRows ?? this.db.query("SELECT * FROM project_sources WHERE project_id = ? ORDER BY created_at, id").all(row.id)).map((item: any) => ({
       id: item.id,
       projectId: item.project_id,
       kind: item.kind,
@@ -406,7 +423,7 @@ export class SqliteStore {
       metadata: parseJson(item.metadata),
       createdAt: item.created_at,
     }));
-    const secretRequests = this.db.query("SELECT * FROM secret_requests WHERE project_id = ? ORDER BY created_at, id").all(row.id).map((item: any) => ({
+    const secretRequests = (secretRows ?? this.db.query("SELECT * FROM secret_requests WHERE project_id = ? ORDER BY created_at, id").all(row.id)).map((item: any) => ({
       id: item.id,
       projectId: item.project_id,
       name: item.name,
