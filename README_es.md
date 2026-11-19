@@ -11,7 +11,6 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="Dependencias de ejecución: 2" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="Stage gates M0–M9 superados" src="https://img.shields.io/badge/stage%20gates-M0%E2%80%93M9%20passed-14b8a6?style=flat-square">
   <img alt="1448 pruebas superadas" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
   <img alt="Agentes incluidos: 0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
@@ -75,9 +74,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py doctor     # comprueba el entorno
-uv run python tools/harness.py status     # hitos y stage gates
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 pruebas, ~1 min
+uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
 ```
 
 ### Tu primera línea
@@ -242,7 +239,7 @@ Códigos de salida: `0` éxito · `1` fallo de negocio · `2` uso · `3` registr
 
 ## Estado del proyecto
 
-Los diez hitos están completos y todos los stage gates se superan. El gate de M9 ejecutó lint, formato, comprobaciones de documentación, conformidad y **1448 pruebas** sin ningún fallo ni ninguna prueba omitida. Siguen abiertas algunas carencias del runtime; consulta [Runtime · Carencias conocidas](docs/es/runtime.md#6-carencias-conocidas-2026-11-13).
+La comprobación actual de consistencia entre código y specs es `uv run python tools/harness.py verify`. Las descripciones históricas de los hitos se conservan como contexto del proyecto.
 
 | Hito | Entregado |
 |---|---|
@@ -265,9 +262,9 @@ Los diez hitos están completos y todos los stage gates se superan. El gate de M
 src/mrl/          MRL: lexer, parser, verificador, evaluador, reglas, perfil de fábrica
 src/mao/          el plano de control de la fábrica (paquete `mao`, CLI `factory`)
 spec/             especificaciones normativas: MRL 1.0, perfil de fábrica, esquemas, specs de sistema, registro de ejemplo
-plan/             hitos, fichas de tareas, stage gates, revisiones, bloqueo de archivos protegidos
-tests/            pruebas de aceptación por hito, pruebas de sistema, dobles, registros de fixtures
-tools/            harness.py (ejecutor de tareas y gates), constructores de imágenes, hooks
+plan/             historical design, task and review material
+tests/            spec-linked acceptance tests, system tests and fixtures
+tools/            verify harness and build utilities
 docs/             diseño de la arquitectura (zh-CN), guías por idioma, diagramas
 ```
 
@@ -292,7 +289,7 @@ El diseño completo de la arquitectura (en chino) está en [docs/architecture.md
 
 ## Contribuir
 
-El trabajo sigue una separación entre diseñador e implementador que impone `tools/harness.py`. Las especificaciones, las fichas de tareas y las pruebas de aceptación están protegidas por `plan/protected.lock`; solo una persona puede volver a registrarlas. Los implementadores eligen una tarea con `harness task next`, la implementan según la especificación y lo demuestran con `harness accept <ID>`. Lee [AGENTS.md](AGENTS.md) y [docs/es/development.md](docs/es/development.md) antes de proponer un cambio.
+El flujo actual permite evolucionar juntos el código, las specs y las pruebas de aceptación. Antes de hacer commit o push, ejecuta `uv run python tools/harness.py verify`. Consulta [AGENTS.md](AGENTS.md) y [docs/es/development.md](docs/es/development.md) para las comprobaciones de consistencia.
 
 ## Licencia
 

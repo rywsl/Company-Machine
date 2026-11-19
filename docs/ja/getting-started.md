@@ -26,18 +26,14 @@ uv sync
 
 uv run factory --version                   # コントロールプレーン CLI
 uv run mrl --version                       # MRL ツールキット（"mrl 1.0.0" と表示）
-uv run python tools/harness.py doctor      # 環境チェック
-uv run python tools/harness.py status      # マイルストーンとステージゲート
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
-まず一部のテストを実行し、時間があれば全体を回します。
+Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 テスト、約 1 分
-uv run python tools/harness.py pytest tests                 # 全体（約 1450 テスト、Docker ありで約 15 分）
+uv run python tools/harness.py verify
 ```
-
-テストは必ず `harness.py pytest` 経由で実行してください。`tests` パッケージのインポートパスを設定してくれます。素の `pytest` では `ModuleNotFoundError: tests` になります。
 
 ## 3. 作業場所の準備
 
@@ -113,7 +109,7 @@ tools/factory/bin/  factoryctl。サンドボックスにマウントされる
 
 ```bash
 uv run python tools/build_test_images.py   # mao-test/<名前>:dev をビルドし、image ID を表示
-uv run python tools/harness.py pytest tests/acceptance   # Docker テスト層がスキップされず実行される
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
 Docker では、各ステーションが 1 つのコンテナとして動きます。

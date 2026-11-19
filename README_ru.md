@@ -11,7 +11,6 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="Зависимостей времени выполнения: 2" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="Контрольные точки этапов M0–M9 пройдены" src="https://img.shields.io/badge/stage%20gates-M0%E2%80%93M9%20passed-14b8a6?style=flat-square">
   <img alt="Пройдено 1448 тестов" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
   <img alt="Встроенных агентов: 0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
@@ -75,9 +74,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py doctor     # проверяет окружение
-uv run python tools/harness.py status     # вехи и контрольные точки этапов
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 тестов, ~1 мин
+uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
 ```
 
 ### Первая линия
@@ -242,7 +239,7 @@ flowchart LR
 
 ## Состояние проекта
 
-Все десять вех завершены, все контрольные точки этапов пройдены. Контрольная точка M9 прогнала линт, проверку форматирования, проверки документации, тесты соответствия и **1448 тестов** — ни одного сбоя и ни одного пропуска. Несколько недоработок в среде выполнения пока остаются открытыми; см. [Среда выполнения · Известные недоработки](docs/ru/runtime.md#6-известные-недоработки-2026-11-13).
+Текущая проверка согласованности кода и спецификаций выполняется командой `uv run python tools/harness.py verify`. Исторические описания этапов сохранены как контекст проекта.
 
 | Веха | Что сделано |
 |---|---|
@@ -265,9 +262,9 @@ flowchart LR
 src/mrl/          MRL: лексер, парсер, проверка, вычислитель, правила, профиль фабрики
 src/mao/          плоскость управления фабрикой (пакет `mao`, CLI `factory`)
 spec/             нормативные спецификации: MRL 1.0, профиль фабрики, схемы, системные спецификации, пример реестра
-plan/             вехи, карточки задач, контрольные точки этапов, ревью, блокировка защищённых файлов
-tests/            приёмочные тесты по вехам, системные тесты, фейки, реестры фикстур
-tools/            harness.py (исполнитель задач и контрольных точек), сборщики образов, хуки
+plan/             historical design, task and review material
+tests/            spec-linked acceptance tests, system tests and fixtures
+tools/            verify harness and build utilities
 docs/             архитектурный проект (zh-CN), руководства на разных языках, диаграммы
 ```
 
@@ -292,7 +289,7 @@ docs/             архитектурный проект (zh-CN), руково�
 
 ## Участие в разработке
 
-Работа ведётся с разделением ролей на проектировщика и исполнителя, и `tools/harness.py` следит за его соблюдением. Спецификации, карточки задач и приёмочные тесты защищены `plan/protected.lock`; перерегистрировать их может только человек. Исполнители берут задачу через `harness task next`, реализуют её по спецификации и подтверждают результат командой `harness accept <ID>`. Прежде чем предлагать изменение, прочитайте [AGENTS.md](AGENTS.md) и [docs/ru/development.md](docs/ru/development.md).
+Текущий процесс позволяет совместно изменять код, спецификации и приёмочные тесты. Перед commit или push выполните `uv run python tools/harness.py verify`. Проверки согласованности описаны в [AGENTS.md](AGENTS.md) и [docs/ru/development.md](docs/ru/development.md).
 
 ## Лицензия
 

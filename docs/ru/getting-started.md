@@ -26,18 +26,14 @@ uv sync
 
 uv run factory --version                   # CLI плоскости управления
 uv run mrl --version                       # инструментарий MRL (выводит "mrl 1.0.0")
-uv run python tools/harness.py doctor      # проверка окружения
-uv run python tools/harness.py status      # вехи и контрольные точки этапов
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
-Запустите быстрое подмножество тестов, а если есть время — весь набор:
+Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 тестов, около минуты
-uv run python tools/harness.py pytest tests                 # полный набор (~1450 тестов, ~15 мин с Docker)
+uv run python tools/harness.py verify
 ```
-
-Всегда запускайте тесты через `harness.py pytest`. Он настраивает путь импорта для пакета `tests`; обычный `pytest` падает с `ModuleNotFoundError: tests`.
 
 ## 3. Подготовка рабочего каталога
 
@@ -113,7 +109,7 @@ tools/factory/bin/  factoryctl, монтируется в песочницы
 
 ```bash
 uv run python tools/build_test_images.py   # собирает mao-test/<name>:dev и выводит ID образов
-uv run python tools/harness.py pytest tests/acceptance   # уровни с Docker теперь выполняются, а не пропускаются
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
 В Docker каждая станция работает в контейнере без root с `cap-drop ALL`, входными данными только для чтения, ограничениями ресурсов и без `docker.sock`. Сетевой доступ идёт через прокси исходящего трафика фабрики, а трафик к моделям — через её прокси моделей.

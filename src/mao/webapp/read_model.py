@@ -224,7 +224,7 @@ class WebReadModel:
         result = []
         for item in list_messages(self.ctx)[-limit:]:
             body = item.to_json()
-            body["body"] = self._safe_text(body.get("body"), 1200)
+            body["body"] = self.safe_text(body.get("body"), 1200)
             body["card"] = self._safe_obj(body.get("card"))
             body.pop("mailbox_id", None)
             result.append(body)
@@ -719,11 +719,11 @@ class WebReadModel:
     @staticmethod
     def _safe_scalar(value: Any) -> Any:
         if isinstance(value, (str, int, float, bool)) or value is None:
-            return WebReadModel._safe_text(value, 240) if isinstance(value, str) else value
+            return WebReadModel.safe_text(value, 240) if isinstance(value, str) else value
         return None
 
     @classmethod
-    def _safe_text(cls, value: Any, limit: int) -> str:
+    def safe_text(cls, value: Any, limit: int) -> str:
         text = "" if value is None else str(value)
         text = _SECRET_VALUE.sub(lambda match: match.group(1) + "=[REDACTED]", text)
         if "://" not in text:
@@ -741,7 +741,7 @@ class WebReadModel:
         if isinstance(value, list):
             return [cls._safe_obj(item) for item in value]
         if isinstance(value, str):
-            return cls._safe_text(value, 500)
+            return cls.safe_text(value, 500)
         if isinstance(value, (int, float, bool)) or value is None:
             return value
         return str(value)

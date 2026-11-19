@@ -495,7 +495,11 @@ class Gate:
         try:
             sandbox = self.provider.open(spec)
             result = sandbox.exec(
-                list(validator.get("run") or []), timeout_s=60, stdout=stdout, stderr=stderr
+                list(validator.get("run") or []),
+                timeout_s=60,
+                stdout=stdout,
+                stderr=stderr,
+                env={"PYTHONIOENCODING": "utf-8"},
             )
         except Exception as exc:
             return False, f"设施故障：{type(exc).__name__}", {}, True

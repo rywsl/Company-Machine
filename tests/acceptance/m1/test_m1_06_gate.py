@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -76,6 +77,7 @@ class _Sandbox:
             capture_output=True,
             timeout=timeout_s,
             check=False,
+            env=None if env is None else {**os.environ, **env},
         )
         Path(stdout).write_bytes(proc.stdout)
         Path(stderr).write_bytes(proc.stderr)

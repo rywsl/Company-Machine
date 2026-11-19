@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Mapping
@@ -380,6 +381,7 @@ def _notify(ctx: Any, item: HumanRequest, config: dict[str, Any] | None) -> None
             capture_output=True,
             timeout=config["timeout_s"],
             check=False,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
     except subprocess.TimeoutExpired:
         code = "NOTIFY_TIMEOUT"

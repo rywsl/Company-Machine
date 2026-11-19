@@ -26,18 +26,14 @@ uv sync
 
 uv run factory --version                   # 控制面命令行
 uv run mrl --version                       # MRL 工具（输出 "mrl 1.0.0"）
-uv run python tools/harness.py doctor      # 环境检查
-uv run python tools/harness.py status      # 里程碑与阶段门
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
-先运行一小部分测试，有时间再跑全套：
+Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 个测试，约 1 分钟
-uv run python tools/harness.py pytest tests                 # 全套（约 1450 个，有 Docker 时约 15 分钟）
+uv run python tools/harness.py verify
 ```
-
-请始终通过 `harness.py pytest` 运行测试。它会设置好 `tests` 包的导入路径，直接运行 `pytest` 会出现 `ModuleNotFoundError: tests`。
 
 ## 3. 准备工作区
 
@@ -113,7 +109,7 @@ tools/factory/bin/  factoryctl，挂载进沙箱
 
 ```bash
 uv run python tools/build_test_images.py   # 构建 mao-test/<名字>:dev 并输出 image ID
-uv run python tools/harness.py pytest tests/acceptance   # Docker 测试层不再跳过，而是实际运行
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
 在 Docker 中，每个工位都是一个容器：

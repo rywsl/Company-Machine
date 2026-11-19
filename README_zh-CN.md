@@ -11,7 +11,6 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="运行时依赖 2 个" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="阶段门 M0–M9 通过" src="https://img.shields.io/badge/stage%20gates-M0%E2%80%93M9%20passed-14b8a6?style=flat-square">
   <img alt="1448 个测试通过" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
   <img alt="内置 agent：0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
@@ -75,9 +74,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py doctor     # 检查环境
-uv run python tools/harness.py status     # 里程碑与阶段门
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 个测试，约 1 分钟
+uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
 ```
 
 ### 第一条产线
@@ -263,7 +260,7 @@ flowchart LR
 
 ## 项目状态
 
-十个里程碑全部完成，所有阶段门通过。阶段门 M9 运行了 lint、格式、文档检查、一致性用例和 **1448 个测试**，零失败、零跳过。运行期还有几处已知缺口，见 [运行时 · 已知缺口](docs/zh-CN/runtime.md#6-已知缺口2026-11-13)。
+当前代码和 spec 的一致性检查命令是 `uv run python tools/harness.py verify`。下面的里程碑说明作为项目历史背景保留。
 
 | 里程碑 | 交付 |
 |---|---|
@@ -286,9 +283,9 @@ flowchart LR
 src/mrl/          MRL：词法、语法、检查器、求值器、规则、工厂 profile
 src/mao/          工厂控制面（包 `mao`，命令 `factory`）
 spec/             规范：MRL 1.0、工厂 profile、schema、系统规范、示例 registry
-plan/             里程碑、任务卡、阶段门、审查、受保护文件锁
-tests/            按里程碑划分的验收测试、系统测试、替身、夹具 registry
-tools/            harness.py（任务与阶段门执行器）、镜像构建、hooks
+plan/             historical design, task and review material
+tests/            spec-linked acceptance tests, system tests and fixtures
+tools/            verify harness and build utilities
 docs/             架构设计（中文）、多语言指南、图示
 ```
 
@@ -313,7 +310,7 @@ docs/             架构设计（中文）、多语言指南、图示
 
 ## 参与贡献
 
-本项目采用“设计方 / 实现方”分工，由 `tools/harness.py` 强制执行。规范、任务卡和验收测试受 `plan/protected.lock` 保护，只有人能重新登记。实现方用 `harness task next` 领取任务，按规范实现，再用 `harness accept <ID>` 证明完成。提交变更前请先阅读 [AGENTS.md](AGENTS.md) 和 [docs/zh-CN/development.md](docs/zh-CN/development.md)。
+当前开发流程允许代码、spec 和验收测试一起演进。提交或推送前运行 `uv run python tools/harness.py verify`。一致性检查见 [AGENTS.md](AGENTS.md) 和 [docs/zh-CN/development.md](docs/zh-CN/development.md)。
 
 ## 许可证
 

@@ -11,7 +11,6 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="Runtime dependencies: 2" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="Stage gates M0–M9 passed" src="https://img.shields.io/badge/stage%20gates-M0%E2%80%93M9%20passed-14b8a6?style=flat-square">
   <img alt="1448 tests passed" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
   <img alt="Bundled agents: 0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
@@ -75,9 +74,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py doctor     # checks the environment
-uv run python tools/harness.py status     # milestones and stage gates
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 tests, ~1 min
+uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
 ```
 
 ### Your first line
@@ -242,7 +239,7 @@ Exit codes: `0` success · `1` business failure · `2` usage · `3` invalid regi
 
 ## Project Status
 
-All ten milestones are complete, and every stage gate passes. The M9 gate ran lint, format, doc checks, conformance and **1448 tests** with zero failures and zero skips. A few runtime gaps remain open; see [Runtime · Known gaps](docs/en/runtime.md#6-known-gaps-2026-11-13).
+The current source/spec consistency check is `uv run python tools/harness.py verify`. Historical milestone descriptions remain below for project context.
 
 | Milestone | Delivered |
 |---|---|
@@ -265,9 +262,9 @@ All ten milestones are complete, and every stage gate passes. The M9 gate ran li
 src/mrl/          MRL: lexer, parser, checker, evaluator, rules, factory profile
 src/mao/          the factory control plane (package `mao`, CLI `factory`)
 spec/             normative specs: MRL 1.0, factory profile, schemas, system specs, example registry
-plan/             milestones, task cards, stage gates, reviews, protected-file lock
-tests/            acceptance tests per milestone, system tests, fakes, fixture registries
-tools/            harness.py (task/gate runner), image builders, hooks
+plan/             historical design, task and review material
+tests/            spec-linked acceptance tests, system tests and fixtures
+tools/            verify harness and build utilities
 docs/             architecture design (zh-CN), per-language guides, diagrams
 ```
 
@@ -292,7 +289,7 @@ The full architecture design (in Chinese) is [docs/architecture.md](docs/archite
 
 ## Contributing
 
-Work follows a designer/implementer split, enforced by `tools/harness.py`. Specs, task cards and acceptance tests are protected by `plan/protected.lock`; only a human re-registers them. Implementers pick a task with `harness task next`, implement it against the spec and prove it with `harness accept <ID>`. Read [AGENTS.md](AGENTS.md) and [docs/en/development.md](docs/en/development.md) before opening a change.
+The current development workflow allows code, specs and acceptance tests to evolve together. Before committing or pushing, run `uv run python tools/harness.py verify`. See [AGENTS.md](AGENTS.md) and [docs/en/development.md](docs/en/development.md) for the consistency checks.
 
 ## License
 

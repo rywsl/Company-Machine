@@ -157,7 +157,7 @@ class WebServer:
             raise _WebError("WEB_BAD_REQUEST", "text 必须是非空字符串", field="text")
         message = post_human(self.ctx, body["text"].strip(), by=getpass.getuser())
         response = message.to_json()
-        response["body"] = WebReadModel._safe_text(response.get("body"), 1200)
+        response["body"] = WebReadModel.safe_text(response.get("body"), 1200)
         response.pop("mailbox_id", None)
         self._json(handler, 202, {"state": "queued", "message": response})
 

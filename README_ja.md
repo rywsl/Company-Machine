@@ -11,7 +11,6 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="ランタイム依存 2 個" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="ステージゲート M0–M9 合格" src="https://img.shields.io/badge/stage%20gates-M0%E2%80%93M9%20passed-14b8a6?style=flat-square">
   <img alt="1448 テスト合格" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
   <img alt="同梱エージェント：0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
@@ -75,9 +74,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py doctor     # 環境チェック
-uv run python tools/harness.py status     # マイルストーンとステージゲート
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 テスト、約 1 分
+uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
 ```
 
 ### 最初のライン
@@ -263,7 +260,7 @@ flowchart LR
 
 ## プロジェクトの状況
 
-10 のマイルストーンはすべて完了し、すべてのステージゲートに合格しています。M9 ゲートでは lint、フォーマット、ドキュメント検査、適合性ケース、**1448 テスト**を実行し、失敗ゼロ・スキップゼロでした。ランタイムには既知のギャップがいくつか残っています。[ランタイム · 既知のギャップ](docs/ja/runtime.md#6-既知のギャップ2026-11-13)を参照してください。
+現在のコードと spec の整合性検査は `uv run python tools/harness.py verify` です。下のマイルストーン説明はプロジェクトの履歴として残しています。
 
 | マイルストーン | 成果 |
 |---|---|
@@ -286,9 +283,9 @@ flowchart LR
 src/mrl/          MRL：字句解析、構文解析、検査器、評価器、ルール、工場プロファイル
 src/mao/          工場のコントロールプレーン（パッケージ `mao`、コマンド `factory`）
 spec/             規範：MRL 1.0、工場プロファイル、スキーマ、システム仕様、サンプル registry
-plan/             マイルストーン、タスクカード、ステージゲート、レビュー、保護ファイルのロック
-tests/            マイルストーンごとの受け入れテスト、システムテスト、テストダブル、フィクスチャ registry
-tools/            harness.py（タスクとゲートの実行器）、イメージビルダー、フック
+plan/             historical design, task and review material
+tests/            spec-linked acceptance tests, system tests and fixtures
+tools/            verify harness and build utilities
 docs/             アーキテクチャ設計（中国語）、各言語のガイド、図
 ```
 
@@ -313,7 +310,7 @@ docs/             アーキテクチャ設計（中国語）、各言語のガ�
 
 ## コントリビュート
 
-このプロジェクトは「設計者 / 実装者」の分担で進め、`tools/harness.py` がそれを強制します。仕様、タスクカード、受け入れテストは `plan/protected.lock` で保護され、再登録できるのは人だけです。実装者は `harness task next` でタスクを選び、仕様どおりに実装し、`harness accept <ID>` で完了を証明します。変更を出す前に [AGENTS.md](AGENTS.md)（中国語）と [docs/ja/development.md](docs/ja/development.md) を読んでください。
+現在の開発フローでは、コード、spec、受け入れテストを一緒に更新できます。commit または push の前に `uv run python tools/harness.py verify` を実行してください。[AGENTS.md](AGENTS.md) と [docs/ja/development.md](docs/ja/development.md) に整合性検査を記載しています。
 
 ## ライセンス
 

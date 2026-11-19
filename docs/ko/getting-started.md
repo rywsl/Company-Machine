@@ -26,18 +26,14 @@ uv sync
 
 uv run factory --version                   # 컨트롤 플레인 CLI
 uv run mrl --version                       # MRL 툴킷("mrl 1.0.0" 출력)
-uv run python tools/harness.py doctor      # 환경 점검
-uv run python tools/harness.py status      # 마일스톤과 스테이지 게이트
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
-빠른 테스트 일부를 먼저 실행하고, 시간이 있으면 전체 스위트를 돌려 보세요.
+Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py pytest tests/acceptance/m1   # 테스트 98개, 약 1분
-uv run python tools/harness.py pytest tests                 # 전체 스위트(테스트 약 1450개, Docker 사용 시 약 15분)
+uv run python tools/harness.py verify
 ```
-
-테스트는 항상 `harness.py pytest`로 실행하세요. `tests` 패키지의 import 경로를 설정해 주기 때문입니다. 그냥 `pytest`를 실행하면 `ModuleNotFoundError: tests`로 실패합니다.
 
 ## 3. 작업 공간 준비
 
@@ -113,7 +109,7 @@ tools/factory/bin/  factoryctl, 샌드박스에 마운트됨
 
 ```bash
 uv run python tools/build_test_images.py   # mao-test/<name>:dev를 빌드하고 이미지 ID를 출력
-uv run python tools/harness.py pytest tests/acceptance   # 이제 Docker 계층이 건너뛰지 않고 실행됨
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
 Docker에서는 모든 스테이션이 비 root 컨테이너로 실행되며 `cap-drop ALL`, 읽기 전용 입력, 리소스 제한이 적용되고 `docker.sock`은 없습니다. 네트워크 접근은 공장의 이그레스 프록시를, 모델 트래픽은 모델 프록시를 거칩니다.

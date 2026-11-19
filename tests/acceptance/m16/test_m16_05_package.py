@@ -104,7 +104,7 @@ def test_verify_rejects_extra_bytes_and_unsafe_paths(tmp_path: Path) -> None:
     dest = tmp_path / "package"
     export_package(checkpoint, dest, release=release)
     (dest / "unlisted-credentials.txt").write_text("unlisted", encoding="utf-8")
-    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest = json.loads((dest / "manifest.json").read_text(encoding="utf-8"))
     manifest["files"].append({"path": "../outside", "digest": "sha256:" + "0" * 64, "size": 0})
     (dest / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     report = verify_package(dest)

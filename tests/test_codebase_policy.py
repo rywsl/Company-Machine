@@ -1,7 +1,7 @@
-"""控制面代码的静态规则（spec/system/README.md 第 1、3 节；plan/README.md 第 6 节；plan/drift.md）。
+"""控制面代码的静态规则（spec/system/README.md 第 1、3 节；plan/drift.md）。
 
-这些规则用 AST 检查 src/mao 下的全部源码，违反即失败。没有豁免注释：
-确实需要例外时，先改 README 并写 ADR，再由人修改本文件。本文件受保护（plan/protected.lock）。
+这些规则用 AST 检查 src/mao 下的全部源码，违反即失败。没有豁免注释。
+需要例外时，应先更新相关规范并同步修改本文件。
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ FORBIDDEN_LITERALS = {
     "--cap-add": "禁止 --cap-add（D11）",
     "--network=host": "禁止 host 网络（D11）",
 }
-# 控制面不认识测试基础设施（plan/README.md 第 6 节第 4 条，plan/drift.md D-02、D-03、D-06）
+# 控制面不认识测试基础设施（plan/drift.md D-02、D-03、D-06）
 TEST_INFRA_LITERALS = (
     "tests/",
     "tests\\",
@@ -239,13 +239,13 @@ def _violations(path: Path) -> list[str]:
                     bad(node, msg)
             for lit in TEST_INFRA_LITERALS:
                 if lit in node.value:
-                    bad(node, f"控制面代码不得引用测试基础设施 {lit!r}（plan/README.md 第 6 节第 4 条）")
+                    bad(node, f"控制面代码不得引用测试基础设施 {lit!r}（plan/drift.md D-02、D-03、D-06）")
             for fixture in _FIXTURE_NAMES:
                 text = node.value
                 if text == fixture or text.startswith(fixture + "@") or (":" + fixture + "@") in text:
                     bad(
                         node,
-                        f"控制面代码不得写死夹具或示例里的名字 {fixture!r}（plan/README.md 第 6 节第 4 条）",
+                        f"控制面代码不得写死夹具或示例里的名字 {fixture!r}（plan/drift.md D-02、D-03、D-06）",
                     )
     return out
 

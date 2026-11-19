@@ -26,18 +26,14 @@ uv sync
 
 uv run factory --version                   # CLI del plano de control
 uv run mrl --version                       # kit de herramientas MRL (imprime "mrl 1.0.0")
-uv run python tools/harness.py doctor      # comprobación del entorno
-uv run python tools/harness.py status      # hitos y stage gates
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
-Ejecuta un subconjunto rápido de las pruebas y, si tienes tiempo, la batería completa:
+Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 pruebas, alrededor de un minuto
-uv run python tools/harness.py pytest tests                 # la batería completa (~1450 pruebas, ~15 min con Docker)
+uv run python tools/harness.py verify
 ```
-
-Ejecuta siempre las pruebas mediante `harness.py pytest`. Configura la ruta de importación del paquete `tests`; un `pytest` a secas falla con `ModuleNotFoundError: tests`.
 
 ## 3. Preparar un espacio de trabajo
 
@@ -113,7 +109,7 @@ El proveedor predeterminado es `docker`. Construye las imágenes de prueba una v
 
 ```bash
 uv run python tools/build_test_images.py   # construye mao-test/<name>:dev e imprime los ID de las imágenes
-uv run python tools/harness.py pytest tests/acceptance   # ahora los niveles de Docker se ejecutan en lugar de omitirse
+uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
 ```
 
 En Docker, cada estación se ejecuta como un contenedor no root con `cap-drop ALL`, entradas de solo lectura, límites de recursos y sin `docker.sock`. El acceso a la red pasa por el proxy de salida de la fábrica, y el tráfico hacia los modelos, por su proxy de modelos.

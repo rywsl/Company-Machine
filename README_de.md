@@ -11,7 +11,6 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="Laufzeitabhängigkeiten: 2" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="Stage-Gates M0–M9 bestanden" src="https://img.shields.io/badge/stage%20gates-M0%E2%80%93M9%20passed-14b8a6?style=flat-square">
   <img alt="1448 Tests bestanden" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
   <img alt="Mitgelieferte Agenten: 0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
@@ -75,9 +74,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py doctor     # prüft die Umgebung
-uv run python tools/harness.py status     # Meilensteine und Stage-Gates
-uv run python tools/harness.py pytest tests/acceptance/m1   # 98 Tests, ~1 Min.
+uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
 ```
 
 ### Ihre erste Linie
@@ -242,7 +239,7 @@ Exit-Codes: `0` Erfolg · `1` fachlicher Fehler · `2` Bedienfehler · `3` ungü
 
 ## Projektstatus
 
-Alle zehn Meilensteine sind abgeschlossen, und jedes Stage-Gate ist bestanden. Das M9-Gate hat Lint, Formatierung, Dokumentationsprüfungen, Konformität und **1448 Tests** ohne einen einzigen Fehlschlag und ohne übersprungene Tests ausgeführt. Einige Lücken in der Laufzeit sind noch offen; siehe [Laufzeit · Bekannte Lücken](docs/de/runtime.md#6-bekannte-lücken-2026-11-13).
+Die aktuelle Konsistenzprüfung von Quellcode und Specs ist `uv run python tools/harness.py verify`. Die historischen Meilensteinbeschreibungen darunter dienen weiterhin als Projektkontext.
 
 | Meilenstein | Geliefert |
 |---|---|
@@ -265,9 +262,9 @@ Alle zehn Meilensteine sind abgeschlossen, und jedes Stage-Gate ist bestanden. D
 src/mrl/          MRL: Lexer, Parser, Checker, Evaluator, Regeln, Fabrikprofil
 src/mao/          die Steuerungsebene der Fabrik (Paket `mao`, CLI `factory`)
 spec/             normative Spezifikationen: MRL 1.0, Fabrikprofil, Schemas, Systemspezifikationen, Beispiel-Registry
-plan/             Meilensteine, Aufgabenkarten, Stage-Gates, Reviews, Sperre für geschützte Dateien
-tests/            Abnahmetests je Meilenstein, Systemtests, Fakes, Fixture-Registries
-tools/            harness.py (Ausführung von Aufgaben und Gates), Image-Builder, Hooks
+plan/             historical design, task and review material
+tests/            spec-linked acceptance tests, system tests and fixtures
+tools/            verify harness and build utilities
 docs/             Architekturentwurf (zh-CN), Anleitungen je Sprache, Diagramme
 ```
 
@@ -292,7 +289,7 @@ Der vollständige Architekturentwurf (auf Chinesisch) ist [docs/architecture.md]
 
 ## Mitwirken
 
-Die Arbeit folgt einer Trennung zwischen Designer und Implementierer, die `tools/harness.py` durchsetzt. Spezifikationen, Aufgabenkarten und Abnahmetests sind durch `plan/protected.lock` geschützt; nur ein Mensch registriert sie neu. Implementierer wählen mit `harness task next` eine Aufgabe, setzen sie gemäß der Spezifikation um und weisen sie mit `harness accept <ID>` nach. Lesen Sie [AGENTS.md](AGENTS.md) und [docs/de/development.md](docs/de/development.md), bevor Sie eine Änderung einreichen.
+Der aktuelle Entwicklungsablauf erlaubt gemeinsame Änderungen an Code, Specs und Abnahmetests. Vor Commit oder Push `uv run python tools/harness.py verify` ausführen. Siehe [AGENTS.md](AGENTS.md) und [docs/de/development.md](docs/de/development.md) für die Konsistenzprüfungen.
 
 ## Lizenz
 

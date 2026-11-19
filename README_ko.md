@@ -11,7 +11,6 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="런타임 의존성 2개" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="스테이지 게이트 M0–M9 통과" src="https://img.shields.io/badge/stage%20gates-M0%E2%80%93M9%20passed-14b8a6?style=flat-square">
   <img alt="테스트 1448개 통과" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
   <img alt="내장 에이전트: 0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
@@ -75,9 +74,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py doctor     # 환경 점검
-uv run python tools/harness.py status     # 마일스톤과 스테이지 게이트
-uv run python tools/harness.py pytest tests/acceptance/m1   # 테스트 98개, 약 1분
+uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
 ```
 
 ### 첫 번째 라인
@@ -242,7 +239,7 @@ flowchart LR
 
 ## 프로젝트 현황
 
-10개 마일스톤이 모두 완료되었고 모든 스테이지 게이트를 통과했습니다. M9 게이트에서는 lint, 포맷, 문서 검사, 적합성 검사와 **테스트 1448개**를 실행했으며 실패 0건, 건너뜀 0건이었습니다. 런타임에는 아직 해결되지 않은 미비점이 몇 가지 있습니다. [런타임 · 알려진 미비점](docs/ko/runtime.md#6-알려진-미비점-2026-11-13)을 참고하세요.
+현재 코드와 spec의 일관성 검사는 `uv run python tools/harness.py verify`입니다. 아래의 마일스톤 설명은 프로젝트 맥락을 위한 기록으로 남아 있습니다.
 
 | 마일스톤 | 결과물 |
 |---|---|
@@ -265,9 +262,9 @@ flowchart LR
 src/mrl/          MRL: 렉서, 파서, 검사기, 평가기, 규칙, 공장 프로파일
 src/mao/          공장 컨트롤 플레인(패키지 `mao`, CLI `factory`)
 spec/             규범 문서: MRL 1.0, 공장 프로파일, 스키마, 시스템 명세, 예제 레지스트리
-plan/             마일스톤, 태스크 카드, 스테이지 게이트, 리뷰, 보호 파일 잠금
-tests/            마일스톤별 인수 테스트, 시스템 테스트, 테스트 대역, fixture 레지스트리
-tools/            harness.py(태스크·게이트 실행기), 이미지 빌더, 훅
+plan/             historical design, task and review material
+tests/            spec-linked acceptance tests, system tests and fixtures
+tools/            verify harness and build utilities
 docs/             아키텍처 설계(zh-CN), 언어별 가이드, 다이어그램
 ```
 
@@ -292,7 +289,7 @@ docs/             아키텍처 설계(zh-CN), 언어별 가이드, 다이어그�
 
 ## 기여하기
 
-작업은 설계자/구현자 역할 분리를 따르며, `tools/harness.py`가 이를 강제합니다. 명세, 태스크 카드, 인수 테스트는 `plan/protected.lock`으로 보호되며 다시 등록할 수 있는 것은 사람뿐입니다. 구현자는 `harness task next`로 태스크를 고르고, 명세에 맞게 구현한 뒤 `harness accept <ID>`로 완료를 증명합니다. 변경을 올리기 전에 [AGENTS.md](AGENTS.md)와 [docs/ko/development.md](docs/ko/development.md)를 읽어 주세요.
+현재 개발 흐름에서는 코드, spec, 인수 테스트를 함께 발전시킬 수 있습니다. 커밋 또는 푸시 전에 `uv run python tools/harness.py verify`를 실행합니다. 일관성 검사는 [AGENTS.md](AGENTS.md)와 [docs/ko/development.md](docs/ko/development.md)를 참고하세요.
 
 ## 라이선스
 
