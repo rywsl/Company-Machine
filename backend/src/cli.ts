@@ -18,6 +18,8 @@ function usage(): void {
   business run ID [--input REF]
   business runs ID
   business export ID
+  business graph ID --file PATH
+  business artifact PROJECT_ID --file PATH
   business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]
   foreman inbox [--limit N]
   foreman claim ID
@@ -59,6 +61,16 @@ if (command === "serve") {
       if (!id) throw new Error("business system id is required");
       const inputs = values("--input");
       const result = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${encodeURIComponent(id)}/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) }));
+      if (!result.ok) throw new Error(await result.text());
+      console.log(JSON.stringify(await result.json(), null, 2));
+    } else if (command === "business" && (args[1] === "graph" || args[1] === "artifact")) {
+      const id = args[2];
+      const file = value("--file");
+      if (!id || !file) throw new Error("target id and --file are required");
+      const document = await Bun.file(file).json();
+      const route = args[1] === "graph" ? `/api/v1/business-systems/${encodeURIComponent(id)}/graph` : `/api/v1/projects/${encodeURIComponent(id)}/artifacts`;
+      const body = args[1] === "graph" ? { graph: document.graph ?? document, by: "official-harness" } : document;
+      const result = await app.fetch(new Request(`http://localhost${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
       if (!result.ok) throw new Error(await result.text());
       console.log(JSON.stringify(await result.json(), null, 2));
     } else if (command === "business" && args[1] === "conversion") {

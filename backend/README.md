@@ -14,4 +14,4 @@ Secret values enter through `/api/v1/secrets/requests/:id/value` and are encrypt
 
 Run `bun run backend/bench.ts 100` to measure the factory graph, event replay and project list against a seeded SQLite database. Set `BENCH_DB_PATH` to keep the benchmark database in a chosen evidence directory.
 
-The Bun CLI also exposes `business units`, `business run`, `business runs`, `business export` and `business conversion` for Foreman or operator Harness workflows. These commands exchange business references and portable records, while the Web App renders their graph and timeline views.
+The Bun CLI also exposes `business units`, `business run`, `business runs`, `business export`, `business graph`, `business artifact` and `business conversion` for Foreman or operator Harness workflows. These commands exchange business references and portable records, while the Web App renders their graph and timeline views.
