@@ -11,7 +11,7 @@ export type AcpInput = {
   end?(): Promise<void> | void;
 };
 
-export type AcpSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string }) => AcpProcess;
+export type AcpSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress" }) => AcpProcess;
 
 export function decodeAcpLine(line: string): HarnessEvent | null {
   let message: Record<string, unknown>;
@@ -152,7 +152,7 @@ export class AcpTransport implements HarnessTransport {
   constructor(private readonly definition: HarnessDefinition, private readonly spawn: AcpSpawn, private readonly argvSuffix: string[] = []) {}
 
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
-    const process = this.spawn([this.definition.executable, ...this.argvSuffix], { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage });
+    const process = this.spawn([this.definition.executable, ...this.argvSuffix], { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network });
     const session = new AcpSession(process, request.resumeId ?? `${this.definition.id}:${Date.now()}`);
     try {
       await session.initialize(request);
@@ -164,12 +164,20 @@ export class AcpTransport implements HarnessTransport {
   }
 }
 
-export function defaultAcpSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string }): AcpProcess {
+export function defaultAcpSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress" }): AcpProcess {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new Error("Bun runtime is required");
   const image = options.containerImage;
   if (image && !/^[^\s@]+(?:\/[^\s@]+)*@sha256:[0-9a-f]{64}$/i.test(image)) throw new Error("Harness image must be pinned by digest");
-  const command = image ? ["podman", "run", "--rm", "-i", "--network", "none", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv] : argv;
+  const network = options.network ?? "none";
+  if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
+  let podmanNetwork = "none";
+  if (network === "egress") {
+    const managed = options.env.MAO_EGRESS_NETWORK;
+    if (!managed || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(managed)) throw new Error("Managed egress network is unavailable");
+    podmanNetwork = managed;
+  }
+  const command = image ? ["podman", "run", "--rm", "-i", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv] : argv;
   const process = bun.spawn(command, { cwd: options.cwd, env: options.env, stdout: options.stdout, stdin: options.stdin, stderr: "pipe" });
   const stdin = process.stdin && typeof process.stdin.write === "function" ? {
     write: async (data: Uint8Array) => { await process.stdin.write(data); await process.stdin.flush?.(); },

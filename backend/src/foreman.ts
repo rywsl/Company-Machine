@@ -69,6 +69,7 @@ export class ForemanCoordinator {
         cwd: this.cwd,
         resumeId: sessionId,
         containerImage: profile.image,
+        network: profile.network === "egress" ? "egress" : "none",
       });
       this.sessions.set(id, session);
       let reply = "";

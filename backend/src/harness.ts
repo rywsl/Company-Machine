@@ -24,6 +24,7 @@ export interface HarnessSessionRequest {
   env?: Record<string, string>;
   resumeId?: string;
   containerImage?: string;
+  network?: "none" | "egress";
 }
 
 export interface HarnessEvent {
@@ -52,7 +53,7 @@ export type OfficialProcess = {
   kill(): void;
 };
 
-export type OfficialSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string }) => OfficialProcess;
+export type OfficialSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress" }) => OfficialProcess;
 
 const DEFINITIONS: Record<OfficialHarnessName, HarnessDefinition> = {
   "claude-code": { id: "claude-code", displayName: "Claude Code", executable: "claude", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: true },
@@ -136,12 +137,12 @@ export class OfficialCliTransport implements HarnessTransport {
   constructor(private readonly definition: HarnessDefinition, private readonly spawn: OfficialSpawn = defaultOfficialSpawn) {}
 
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
-    const process = this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage });
+    const process = this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network });
     return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${Date.now()}`);
   }
 }
 
-function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string }): OfficialProcess {
+function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress" }): OfficialProcess {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new Error("Bun runtime is required");
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
@@ -153,7 +154,19 @@ function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Recor
   Object.assign(env, options.env);
   const image = options.containerImage;
   if (image && !/^[^\s@]+(?:\/[^\s@]+)*@sha256:[0-9a-f]{64}$/i.test(image)) throw new Error("Harness image must be pinned by digest");
-  const command = image ? ["podman", "run", "--rm", "-i", "--network", "none", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv] : argv;
+  const network = options.network ?? "none";
+  if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
+  let podmanNetwork = "none";
+  if (network === "egress") {
+    for (const key of ["MAO_EGRESS_NETWORK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) {
+      const value = hostEnv[key];
+      if (typeof value === "string" && env[key] === undefined) env[key] = value;
+    }
+    const managed = env.MAO_EGRESS_NETWORK;
+    if (!managed || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(managed)) throw new Error("Managed egress network is unavailable");
+    podmanNetwork = managed;
+  }
+  const command = image ? ["podman", "run", "--rm", "-i", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv] : argv;
   const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "pipe" });
   const stdin = process.stdin && typeof process.stdin.write === "function" ? {
     write: async (data: Uint8Array) => { await process.stdin.write(data); await process.stdin.flush?.(); },

@@ -49,7 +49,10 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
   const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn });
   let dispatchOperatorRun = (_runId: string) => {};
   const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId) });
-  const runtime = options.runtime ?? new PodmanProvider();
+  const runtime = options.runtime ?? new PodmanProvider({
+    egressNetwork: process.env.MAO_EGRESS_NETWORK,
+    egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])),
+  });
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
   const runtimeHealth = async (refresh = false) => {
     const current = Date.now();
@@ -412,6 +415,11 @@ function portableValue(value: unknown, key = ""): any {
 
 function importBusinessSystem(store: SqliteStore, document: Record<string, any>): BusinessSystem {
   if (document.schema !== "mao.business-system/1" || !document.system || typeof document.system.name !== "string") throw new Error("business system document schema or name is invalid");
+  const importedGraph = document.graph && typeof document.graph === "object" ? document.graph : undefined;
+  if (importedGraph) {
+    const graphError = validateDag(importedGraph);
+    if (graphError) throw new Error(`business system graph is invalid: ${graphError}`);
+  }
   const system = store.createBusinessSystem({ name: document.system.name, description: typeof document.system.description === "string" ? document.system.description : undefined, metadata: document.system.metadata && typeof document.system.metadata === "object" ? document.system.metadata : {} });
   const projectIds = new Map<string, string>();
   for (const sourceProject of Array.isArray(document.projects) ? document.projects : []) {
@@ -427,7 +435,7 @@ function importBusinessSystem(store: SqliteStore, document: Record<string, any>)
     if (!projectId) continue;
     store.addArtifact({ projectId, recordType: record.recordType === "artifact" ? "artifact" : "material", sourceId: typeof record.sourceId === "string" ? record.sourceId : undefined, kind: record.kind, ref: record.ref, title: record.title, description: record.description, summary: record.summary, purpose: record.purpose, status: record.status, producer: record.producer, files: Array.isArray(record.files) ? record.files : undefined, inputs: Array.isArray(record.inputs) ? record.inputs : undefined, outputs: Array.isArray(record.outputs) ? record.outputs : undefined, lineage: Array.isArray(record.lineage) ? record.lineage : undefined, metadata: record.metadata && typeof record.metadata === "object" ? record.metadata : {} });
   }
-  if (document.graph && typeof document.graph === "object") store.updateBusinessSystemMetadata(system.id, { graph: document.graph, graph_updated_by: "import" });
+  if (importedGraph) store.updateBusinessSystemMetadata(system.id, { graph: importedGraph, graph_updated_by: "import" });
   for (const conversion of Array.isArray(document.conversions) ? document.conversions : []) {
     if (typeof conversion.kind !== "string" || typeof conversion.summary !== "string") continue;
     store.createBusinessConversion({ businessSystemId: system.id, kind: conversion.kind, summary: conversion.summary, status: conversion.status === "running" || conversion.status === "completed" || conversion.status === "failed" ? conversion.status : "planned", inputs: Array.isArray(conversion.inputs) ? conversion.inputs : [], outputs: Array.isArray(conversion.outputs) ? conversion.outputs : [], producer: conversion.producer, metadata: conversion.metadata && typeof conversion.metadata === "object" ? conversion.metadata : {} });

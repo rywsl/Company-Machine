@@ -86,6 +86,7 @@ export type ContainerProvider = {
 const IMAGE_REF = /^(?:.+@)?sha256:[0-9a-f]{64}$/;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 const VOLUME = /^[A-Za-z0-9][A-Za-z0-9_.-]+$/;
+const NETWORK = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const FIXED_ENV: Array<[string, string]> = [
   ["FACTORY_IN", "/factory/in"],
@@ -195,24 +196,36 @@ export class PodmanProvider implements ContainerProvider {
   readonly name = "podman";
   private readonly run: CommandRunner;
   private readonly allowUnproxiedEgress: boolean;
+  private readonly egressNetwork: string | null;
+  private readonly egressEnv: Record<string, string>;
   private readonly executable: string;
   private readonly machine: string | null;
 
   constructor(options: {
     executable?: string;
     allowUnproxiedEgress?: boolean;
+    /** Podman network created and owned by the MAO egress proxy. */
+    egressNetwork?: string;
+    /** Proxy variables supplied by the managed egress service. */
+    egressEnv?: Record<string, string>;
     machine?: string;
     runner?: CommandRunner;
   } = {}) {
     this.executable = options.executable ?? "podman";
     this.allowUnproxiedEgress = options.allowUnproxiedEgress ?? false;
+    this.egressNetwork = options.egressNetwork ?? null;
+    this.egressEnv = { ...(options.egressEnv ?? {}) };
+    if (this.egressNetwork !== null && !NETWORK.test(this.egressNetwork)) {
+      throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid managed egress network", { field: "egressNetwork" });
+    }
     this.machine = options.machine ?? null;
     this.run = options.runner ?? defaultRunner;
   }
 
   buildRunArgv(spec: SandboxSpec): string[] {
-    assertSpec(spec, this.allowUnproxiedEgress);
-    const network = spec.network === "egress" ? "bridge" : "none";
+    const managedEgress = spec.network === "egress" && this.egressNetwork !== null;
+    assertSpec(spec, this.allowUnproxiedEgress || managedEgress);
+    const network = spec.network === "egress" ? (this.egressNetwork ?? "bridge") : "none";
     const tmpMb = spec.tmpMb ?? 256;
     const argv = [
       this.executable, "run", "--name", spec.name, "--detach", "--init", "--user", "10001:10001",
@@ -236,6 +249,12 @@ export class PodmanProvider implements ContainerProvider {
     for (const key of Object.keys(spec.env ?? {}).sort()) {
       if (FIXED_ENV.some(([fixed]) => fixed === key)) continue;
       argv.push("--env", `${key}=${spec.env?.[key]}`);
+    }
+    if (spec.network === "egress") {
+      for (const key of Object.keys(this.egressEnv).sort()) {
+        if (FIXED_ENV.some(([fixed]) => fixed === key) || Object.prototype.hasOwnProperty.call(spec.env ?? {}, key)) continue;
+        argv.push("--env", `${key}=${this.egressEnv[key]}`);
+      }
     }
     argv.push("--workdir", spec.workdir ?? "/workspace", spec.image);
     if (spec.command?.length) argv.push("/bin/sh", "-c", 'mkdir -p /tmp/home && exec "$@"', "sh", ...spec.command);

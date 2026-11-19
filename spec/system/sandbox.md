@@ -101,7 +101,9 @@ class PodmanProvider:
     name: str                  # = "podman"
     def __init__(self, root: Path, *, podman: str = "podman",
                  allow_unproxied_egress: bool = False, clock: Clock | None = None,
-                 machine: str | None = None) -> None
+                 machine: str | None = None,
+                 egress_network: str | None = None,
+                 egress_env: Mapping[str, str] | None = None) -> None
     def health(self) -> dict[str, Any]
     def ensure_ready(self) -> dict[str, Any]
     def build_run_argv(self, spec: SandboxSpec) -> list[str]
@@ -234,7 +236,7 @@ class DockerProvider:
 
 细则：
 
-- `network == "none"` 时 `--network` 的下一个参数是 `none`；`egress` 且开关打开时是 `bridge`。永远不写 `host`。
+- `network == "none"` 时 `--network` 的下一个参数是 `none`；受管 Podman egress 使用 `egressNetwork` 指定的网络，开发开关才使用 `bridge`。永远不写 `host`。
 - `--cpus` 用 `format(float(spec.cpus), "g")`：`1` 和 `1.0` 都是 `"1"`，`1.5` 是 `"1.5"`。
 - mount 串：
   - 绑定：`type=bind,source=<source 原样>,target=<target>`，只读时末尾加 `,readonly`；
@@ -246,6 +248,8 @@ class DockerProvider:
 - `self.docker` 原样作为 argv[0]（可以是绝对路径）。
 
 `allow_unproxied_egress=True` 只把网络从 `none` 换成 `bridge`。安全标志一条都不能少。这是开发开关，不是出网代理（D12）。
+
+Bun 的 Podman 业务入口可提供 `egressNetwork` 和受管代理环境变量。此时 `network="egress"` 使用显式的 Podman 网络名（通常为 `mao-egress`），并把 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 等代理变量作为受管配置注入。没有 `egressNetwork` 时，业务入口拒绝 `egress`，不会回退到宿主网络。Harness profile 的 `network: egress` 同样必须由 `MAO_EGRESS_NETWORK` 指向已创建的受管网络，否则启动失败。
 
 ### 5.3 镜像解析（S4）
 

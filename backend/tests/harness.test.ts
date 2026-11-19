@@ -59,4 +59,25 @@ describe("official Harness boundary", () => {
     expect(events[0]).toMatchObject({ type: "text.delta", sessionId: "s-1", text: "hello" });
     await session.close();
   });
+
+  test("passes the requested managed network to ACP spawn", async () => {
+    let observed: { network?: string; image?: string } | undefined;
+    const body = [
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 2, result: { sessionId: "s-egress" } }),
+      JSON.stringify({ method: "session/complete", params: { sessionId: "s-egress" } }),
+    ].join("\n") + "\n";
+    const transport = new AcpTransport(officialHarness("kimi-code")!, (_argv, options) => {
+      observed = { network: options.network, image: options.containerImage };
+      return {
+        stdout: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); } }),
+        stdin: { write() {}, end() {} },
+        kill() {},
+      };
+    });
+    const session = await transport.start({ task: "构建", contract: "你是厂长", model: "kimi", cwd: "/workspace", network: "egress", containerImage: "registry.example/harness@sha256:" + "a".repeat(64) });
+    for await (const _event of session.events()) { /* drain */ }
+    expect(observed).toEqual({ network: "egress", image: "registry.example/harness@sha256:" + "a".repeat(64) });
+    await session.close();
+  });
 });

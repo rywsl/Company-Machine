@@ -40,6 +40,22 @@ describe("PodmanProvider", () => {
     expect(() => provider.buildRunArgv({ ...spec, network: "egress" })).toThrow(PodmanError);
   });
 
+  test("uses the managed egress network and proxy environment", () => {
+    const provider = new PodmanProvider({
+      egressNetwork: "mao-egress",
+      egressEnv: { HTTPS_PROXY: "http://mao-egress:8080", NO_PROXY: "localhost" },
+    });
+    const argv = provider.buildRunArgv({ ...spec, network: "egress" });
+    expect(argv[argv.indexOf("--network") + 1]).toBe("mao-egress");
+    expect(argv).toContain("--env");
+    expect(argv).toContain("HTTPS_PROXY=http://mao-egress:8080");
+    expect(argv).toContain("NO_PROXY=localhost");
+  });
+
+  test("rejects unsafe managed network names", () => {
+    expect(() => new PodmanProvider({ egressNetwork: "mao-egress;bad" })).toThrow(PodmanError);
+  });
+
   test("probes health without throwing when Podman is missing", async () => {
     const provider = new PodmanProvider({ runner: async () => ({ exitCode: 127, stdout: new Uint8Array(), stderr: new TextEncoder().encode("missing") }) });
     await expect(provider.health()).resolves.toMatchObject({ available: false, reason: "missing" });
