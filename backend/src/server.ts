@@ -377,16 +377,17 @@ function publicUnitRun(run: any) {
 function publicProject(project: any) {
   return {
     ...project,
+    metadata: portableValue(project.metadata ?? {}),
     sources: Array.isArray(project.sources)
       ? project.sources.map((source: any) => {
         const { localFolder: _localFolder, ...portableSource } = source;
-        return portableSource;
+        return { ...portableSource, metadata: portableValue(source.metadata ?? {}) };
       })
       : [],
     secretRequests: Array.isArray(project.secretRequests)
       ? project.secretRequests.map((request: any) => {
         const { vaultRef: _vaultRef, ...publicRequest } = request;
-        return publicRequest;
+        return { ...publicRequest, metadata: portableValue(request.metadata ?? {}) };
       })
       : [],
   };
