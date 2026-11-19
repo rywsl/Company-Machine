@@ -229,13 +229,25 @@ export class SqliteStore {
   }
 
   addArtifact(input: Omit<Artifact, "id" | "createdAt">): Artifact {
-    const metadata = input.metadata ?? {};
+    const metadata = {
+      ...(input.metadata ?? {}),
+      record_type: input.recordType ?? (input.metadata?.record_type === "material" ? "material" : "artifact"),
+      title: input.title ?? input.metadata?.title,
+      description: input.description ?? input.metadata?.description,
+      status: input.status ?? input.metadata?.status,
+      producer: input.producer ?? input.metadata?.producer,
+    };
     const value: Artifact = {
       ...input,
       id: randomUUID(),
       createdAt: now(),
+      recordType: metadata.record_type === "material" ? "material" : "artifact",
+      title: typeof metadata.title === "string" ? metadata.title : undefined,
+      description: typeof metadata.description === "string" ? metadata.description : undefined,
       summary: input.summary ?? (typeof metadata.summary === "string" ? metadata.summary : undefined),
       purpose: input.purpose ?? (typeof metadata.purpose === "string" ? metadata.purpose : undefined),
+      status: typeof metadata.status === "string" ? metadata.status : undefined,
+      producer: metadata.producer && typeof metadata.producer === "object" ? metadata.producer as Artifact["producer"] : undefined,
       files: input.files ?? (Array.isArray(metadata.files) ? metadata.files as Artifact["files"] : undefined),
       inputs: input.inputs ?? (Array.isArray(metadata.inputs) ? metadata.inputs as string[] : undefined),
       outputs: input.outputs ?? (Array.isArray(metadata.outputs) ? metadata.outputs as string[] : undefined),
@@ -253,11 +265,16 @@ export class SqliteStore {
         id: row.id,
         projectId: row.project_id,
         sourceId: row.source_id ?? undefined,
+        recordType: metadata.record_type === "material" ? "material" : "artifact",
         kind: row.kind,
         ref: row.ref,
         metadata,
+        title: typeof metadata.title === "string" ? metadata.title : undefined,
+        description: typeof metadata.description === "string" ? metadata.description : undefined,
         summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
         purpose: typeof metadata.purpose === "string" ? metadata.purpose : undefined,
+        status: typeof metadata.status === "string" ? metadata.status : undefined,
+        producer: metadata.producer && typeof metadata.producer === "object" ? metadata.producer as Artifact["producer"] : undefined,
         files: Array.isArray(metadata.files) ? metadata.files : undefined,
         inputs: Array.isArray(metadata.inputs) ? metadata.inputs : undefined,
         outputs: Array.isArray(metadata.outputs) ? metadata.outputs : undefined,
@@ -265,6 +282,11 @@ export class SqliteStore {
         createdAt: row.created_at,
       };
     });
+  }
+
+  listBusinessSystemArtifacts(businessSystemId: string): Artifact[] {
+    const projectIds = this.db.query("SELECT id FROM projects WHERE business_system_id = ? ORDER BY created_at, id").all(businessSystemId) as Array<{ id: string }>;
+    return projectIds.flatMap(({ id }) => this.listArtifacts(id));
   }
 
   createSecretRequest(input: { projectId: string; name: string; vaultRef: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }): SecretRequest {

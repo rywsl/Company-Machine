@@ -276,14 +276,17 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `GET /api/v1/business-systems` 与 `POST /api/v1/business-systems` 管理业务系统聚合
 - `GET /api/v1/projects` 与 `POST /api/v1/projects/intake` 接收仓库链接、项目文件引用或本地文件夹来源
 - `GET /api/v1/business-systems/<id>` 返回业务系统、项目和 Artifact 摘要
+- `GET /api/v1/business-systems/<id>/artifacts` 与 `/materials` 返回该业务系统闭包内的语义化记录。`/materials` 只返回 `record_type=material` 的来料或中间物料
 - `GET/POST /api/v1/projects/<id>/artifacts` 读写带摘要、用途、文件引用、输入输出和 lineage 的物料 JSON
-- `POST /api/v1/business-systems/<id>/graph` 接收外部 Foreman 维护的 DAG 快照
+- `GET/POST /api/v1/business-systems/<id>/graph` 读取或接收外部 Foreman 维护的 DAG 快照。写入时节点标识唯一，边必须引用存在节点，图必须无环
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
 - `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱
 
 密钥值只在保险箱写入请求中出现。数据库、事件、Harness、Foreman 和普通 UI 只接触保险箱引用与状态。UI 展示语义化字段、图表、时间线和文件引用，底层 JSON 不作为用户详情内容渲染。
+
+业务记录的 JSON 契约保留 `record_type`（`artifact` 或 `material`）、`kind`、`ref`、`title`、`description`、`summary`、`purpose`、`status`、`producer`、`files`、`inputs`、`outputs` 和 `lineage`。`title`、`description` 或 `summary` 至少有一个面向人的说明。`files` 只保存引用、路径、媒体类型和摘要，不内嵌文件字节。记录由官方 Harness 产生或转换后写入，控制面只保存和分发这些描述，不执行记录中的指令。
 
 容器运行时采用 Podman。Windows 由应用管理 Podman machine，Linux 使用 rootless Podman。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。Docker 只作为迁移期兼容 provider。
 

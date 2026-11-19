@@ -29,17 +29,25 @@ export interface Artifact {
   id: string;
   projectId: string;
   sourceId?: string;
+  /** A human-readable business record that can travel between Harnesses. */
+  recordType?: "artifact" | "material";
   kind: string;
   ref: string;
+  title?: string;
+  description?: string;
   metadata: Record<string, unknown>;
   summary?: string;
   purpose?: string;
+  status?: string;
+  producer?: { operator?: string; machine?: string; harness?: string };
   files?: Array<{ ref: string; path?: string; mediaType?: string; digest?: string }>;
   inputs?: string[];
   outputs?: string[];
   lineage?: string[];
   createdAt: string;
 }
+
+export type Material = Artifact & { recordType: "material" };
 
 export type SecretRequestStatus = "requested" | "available" | "denied" | "revoked";
 

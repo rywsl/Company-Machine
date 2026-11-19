@@ -1,5 +1,7 @@
 import { tokenize, Token, MrlSyntaxError } from "./lexer";
 
+const reserved = new Set(["as", "break", "const", "continue", "else", "for", "function", "if", "import", "let", "loop", "package", "namespace", "return", "var", "void", "while"]);
+
 export type Expr =
   | { kind: "literal"; value: unknown }
   | { kind: "identifier"; name: string }
@@ -87,6 +89,7 @@ export class Parser {
       if (t.text === "true" || t.text === "false") return { kind: "literal", value: t.text === "true" };
       if (t.text === "null") return { kind: "literal", value: null };
       if (t.text === "in") this.fail("in is reserved");
+      if (reserved.has(t.text)) this.fail(`${t.text} is reserved`);
       if (this.at("(")) return { kind: "call", name: t.text, args: this.arguments() };
       return { kind: "identifier", name: t.text };
     }
