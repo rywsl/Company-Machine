@@ -74,7 +74,7 @@ def answer(ctx: Any, message_id: str, *, by: str, confirm: bool) -> TalkMessage
 
 读操作不检查常驻、`agents` 段和 serve。写操作按第 5.1 节检查。人的 `by` 与厂长的 `by` 不是同一条规则。
 
-Bun Web App 通过同源 API 使用这条线程。人的消息经 `/api/v1/talk` 写入，外部 Foreman 从 `/api/v1/foreman/inbox` claim 消息并经 `/api/v1/talk/reply` 写入回复。两类写入都会产生事件，页面通过 `/api/v1/events` 的 SSE 流增量刷新，不需要控制面调用模型。
+Bun Web App 通过同源 API 使用这条线程。人的消息经 `/api/v1/talk` 写入，外部 Foreman 从 `/api/v1/foreman/inbox` claim 消息并经 `/api/v1/talk/reply` 写入回复。使用现有 `.factory/factory.db` 时，Bun 同时把人的 talk 投影到兼容的 `talk_messages` 和 `agent_messages`，让现有 Foreman 继续接收同一意图。两类写入都会产生事件，页面通过 `/api/v1/events` 的 SSE 流增量刷新，不需要控制面调用模型。
 
 ### 3.2 不是页面操作的两个函数
 

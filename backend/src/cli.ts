@@ -53,6 +53,7 @@ if (command === "serve") {
       const text = args.slice(2).join(" ").trim();
       if (!text) throw new Error("text is required");
       const message = app.store.addTalkMessage({ body: redactText(text) });
+      app.store.bridgeHumanTalk(message.id, message.body);
       const envelope = app.store.queueForemanMessage(message.id, message.body);
       app.events.publish("talk.message.created", message);
       app.events.publish("foreman.message.queued", envelope);

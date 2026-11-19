@@ -41,12 +41,14 @@ export interface IntakeInput {
 export class SqliteStore {
   readonly db: Database;
   readonly legacy?: Database;
+  private readonly bridgeLegacy: boolean;
 
   constructor(dbPath = process.env.BUSINESS_DB_PATH ?? process.env.FACTORY_DB_PATH ?? ".factory/factory.db", legacyPath = process.env.FACTORY_DB_PATH ?? ".factory/factory.db") {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath, { create: true });
     this.db.exec("PRAGMA journal_mode = WAL");
     this.init();
+    this.bridgeLegacy = dbPath === legacyPath && /factory\.db$/i.test(dbPath.replaceAll("\\", "/"));
     if (dbPath === legacyPath) return;
     try {
       this.legacy = new Database(`file:${legacyPath}?mode=ro&immutable=1`, { readonly: true });
@@ -292,6 +294,28 @@ export class SqliteStore {
     return value;
   }
 
+  bridgeHumanTalk(messageId: string, text: string): void {
+    if (!this.bridgeLegacy || this.legacy || !this.hasLegacyTable("talk_messages") || !this.hasLegacyTable("agent_messages")) return;
+    const timestamp = now();
+    const mailboxId = `bun-am-${randomUUID()}`;
+    this.db.query("INSERT OR IGNORE INTO talk_messages (id,role,kind,by_name,body,reply_state,in_reply_to,card_type,ref_kind,ref_id,card,mailbox_id,created_at) VALUES (?,?,?,?,?,'open',NULL,NULL,NULL,NULL,'{}',?,?)")
+      .run(messageId, "human", "text", "bun", text, JSON.stringify({}), mailboxId, timestamp);
+    const messageBody = JSON.stringify({ message: messageId, by: "bun", text });
+    this.db.query("INSERT INTO agents (name,state,updated_at) VALUES ('foreman','active',?) ON CONFLICT(name) DO NOTHING").run(timestamp);
+    const columnStatement = this.db.query("PRAGMA table_info(agent_messages)") as any;
+    const columns = columnStatement.all() as Array<{ name: string }>;
+    columnStatement.finalize?.();
+    const hasSequence = columns.some((column) => column.name === "enqueue_seq");
+    if (hasSequence) {
+      const next = this.db.query("SELECT COALESCE(MAX(enqueue_seq),0) + 1 AS next FROM agent_messages").get() as { next: number };
+      this.db.query("INSERT OR IGNORE INTO agent_messages (id,agent,kind,source,body,state,turn,attempts,not_before,created_at,updated_at,enqueue_seq) VALUES (?,?,?,?,?,'pending',NULL,0,NULL,?,?,?)")
+        .run(mailboxId, "foreman", "talk", `talk:${messageId}`, messageBody, timestamp, timestamp, next.next);
+    } else {
+      this.db.query("INSERT OR IGNORE INTO agent_messages (id,agent,kind,source,body,state,turn,attempts,not_before,created_at,updated_at) VALUES (?,?,?,?,?,'pending',NULL,0,NULL,?,?)")
+        .run(mailboxId, "foreman", "talk", `talk:${messageId}`, messageBody, timestamp, timestamp);
+    }
+  }
+
   listForemanInbox(limit = 50): ForemanEnvelope[] {
     const bounded = Math.max(1, Math.min(200, Math.trunc(limit)));
     return this.db.query("SELECT * FROM foreman_outbox WHERE status IN ('queued','claimed') ORDER BY created_at, id LIMIT ?").all(bounded).map((row: any) => ({
@@ -384,10 +408,18 @@ export class SqliteStore {
   }
 
   private hasLegacyTable(name: string) {
-    const source = this.legacy ?? this.db;
-    return Boolean(source.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+    if (this.legacy) {
+      const statement = this.legacy.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?") as any;
+      const result = Boolean(statement.get(name));
+      statement.finalize?.();
+      return result;
+    }
+    const statement = this.db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?") as any;
+    const result = Boolean(statement.get(name));
+    statement.finalize?.();
+    return result;
   }
 
-  close() { this.db.close(); this.legacy?.close(); }
+  close() { this.db.close(true); this.legacy?.close(true); }
 }
 

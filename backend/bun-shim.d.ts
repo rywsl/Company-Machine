@@ -6,8 +6,9 @@ declare module "bun:sqlite" {
       all(...args: any[]): T[];
       get(...args: any[]): T | null;
       run(...args: any[]): { lastInsertRowid?: number | bigint };
+      finalize?(): void;
     };
-    close(): void;
+    close(force?: boolean): void;
   }
 }
 
