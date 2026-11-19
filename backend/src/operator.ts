@@ -1,5 +1,6 @@
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
+import { randomUUID } from "node:crypto";
 import { AcpTransport, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, chooseTransport, resolveOfficialHarness, type HarnessEvent, type HarnessSession, type OfficialSpawn } from "./harness";
 
@@ -75,7 +76,7 @@ export class OperatorCoordinator {
     try {
       session = await transport.start({
         task: this.taskFor(unit, runId, unitRun),
-        contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。",
+        contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。缺少项目资源时输出 {\"type\":\"mao.secret_request\",\"name\":\"...\",\"purpose\":\"...\",\"scope\":\"...\"}，由项目资源请求流程向用户呈现。",
         model: profile.model,
         cwd: this.cwd,
         resumeId: sessionId,
@@ -88,6 +89,14 @@ export class OperatorCoordinator {
           if (artifact) {
             outputIds.push(artifact.ref);
             this.options.events.publish("artifact.created", artifact);
+          }
+        }
+        if (event.type === "secret.request") {
+          const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata as Record<string, unknown> : {};
+          const name = typeof metadata.name === "string" ? metadata.name : undefined;
+          if (name) {
+            const request = this.options.store.createSecretRequest({ projectId: unit.projectId, name, vaultRef: `vault://secret/${randomUUID()}`, metadata: { purpose: metadata.purpose, scope: metadata.scope, checks: metadata.checks } });
+            this.options.events.publish("secret.requested", { id: request.id, projectId: request.projectId, name: request.name, purpose: request.metadata.purpose, scope: request.metadata.scope });
           }
         }
         const payload = { runId, unitRunId, unitId: unit.id, sessionId: event.sessionId ?? session.id, harness: definition.id, text: event.text, metadata: event.metadata };

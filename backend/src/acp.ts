@@ -33,6 +33,7 @@ export function decodeAcpLine(line: string): HarnessEvent | null {
         : typeof content?.text === "string" ? content.text : undefined;
   const eventType: HarnessEvent["type"] = method.includes("started") || method.includes("created") ? "session.started"
     : method === "mao.record" || method === "record" ? "record"
+    : method.includes("secret") && method.includes("request") ? "secret.request"
     : method.includes("tool") && method.includes("start") ? "tool.started"
       : method.includes("tool") ? "tool.finished"
         : method.includes("failed") || method.includes("error") ? "session.failed"

@@ -288,6 +288,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
+- Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
 - ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环
 - 启动官方 Harness 时只继承运行所需的基础环境和显式声明的变量。宿主环境中的其他密钥不会被批量转发
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要

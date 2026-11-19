@@ -34,6 +34,7 @@ describe("official Harness boundary", () => {
   test("maps official JSONL assistant records into realtime text events", () => {
     expect(decodeOfficialLine('{"type":"assistant","message":{"content":[{"type":"text","text":"已完成"}]}}')).toMatchObject({ type: "text.delta", text: "已完成" });
     expect(decodeOfficialLine('{"type":"result","text":"done"}')).toMatchObject({ type: "session.finished", text: "done" });
+    expect(decodeOfficialLine('{"type":"mao.secret_request","name":"VIDEO_API_KEY"}')).toMatchObject({ type: "secret.request" });
   });
 
   test("initializes ACP, creates a session and sends the prompt through stdin", async () => {

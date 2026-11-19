@@ -26,7 +26,7 @@ export interface HarnessSessionRequest {
 }
 
 export interface HarnessEvent {
-  type: "session.started" | "text.delta" | "record" | "tool.started" | "tool.finished" | "session.finished" | "session.failed";
+  type: "session.started" | "text.delta" | "record" | "secret.request" | "tool.started" | "tool.finished" | "session.finished" | "session.failed";
   sessionId?: string;
   text?: string;
   metadata?: Record<string, unknown>;
@@ -98,6 +98,7 @@ export function decodeOfficialLine(line: string): HarnessEvent | null {
   const eventType: HarnessEvent["type"] = type.includes("error") || type.includes("fail") ? "session.failed"
     : type.includes("start") || type.includes("init") ? "session.started"
       : type === "mao.record" || type === "record" ? "record"
+      : type.includes("secret") && type.includes("request") ? "secret.request"
       : type.includes("tool") && !type.includes("complete") ? "tool.started"
         : type.includes("complete") || type.includes("finish") || type === "result" ? "session.finished"
           : "text.delta";
