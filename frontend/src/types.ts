@@ -40,6 +40,13 @@ export interface EventRecord {
   [key: string]: unknown;
 }
 
+export interface StreamEvent {
+  id?: string;
+  type: string;
+  data?: Record<string, unknown>;
+  at?: string;
+}
+
 export interface AssetRecord {
   id: string;
   type: string;
@@ -104,7 +111,7 @@ export interface SecretRecord {
   expires_at?: string | null;
   expired?: boolean;
   status?: string;
-  request?: { status?: string } | null;
+  request?: { id?: string; project_id?: string; status?: string; purpose?: string; scope?: string } | null;
   agent_generated_checks?: string[];
 }
 
@@ -124,7 +131,7 @@ export interface Bootstrap {
   talk: TalkMessage[];
   harnesses: HarnessRecord[];
   harness_profiles?: HarnessProfile[];
-  dependencies?: { harnesses: DependencyStatus[]; docker: DependencyStatus };
+  dependencies?: { harnesses: DependencyStatus[]; podman?: DependencyStatus; docker?: DependencyStatus };
   foreman: { configured?: boolean; setup_required?: boolean; runtime?: string | null; model?: string | null; mode?: string | null; profile?: HarnessProfile | null };
   secrets: SecretRecord[];
   constitution: {

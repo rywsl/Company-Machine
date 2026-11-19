@@ -1,4 +1,4 @@
-import type { Bootstrap, Graph, EventRecord, AssetRecord, HarnessRecord, HarnessProfile, SecretRecord, TalkMessage } from "./types";
+import type { Bootstrap, Graph, EventRecord, AssetRecord, HarnessRecord, HarnessProfile, SecretRecord, StreamEvent, TalkMessage } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -55,3 +55,51 @@ export const sendTalk = (text: string) => api<{ state: string; message: TalkMess
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ text }),
 });
+
+export const submitProjectIntake = (payload: { repo_url?: string; files?: Array<{ name: string; digest?: string; ref?: string }>; local_folder?: string }) =>
+  api<{ project_id: string; state: string }>("/api/v1/projects/intake", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const requestProjectSecret = (payload: { project_id: string; name: string; purpose?: string; scope?: string }) =>
+  api<{ request_id: string; state: string }>("/api/v1/secrets/requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const putProjectSecret = (request_id: string, value: string) => api<{ request_id: string; state: string }>(`/api/v1/secrets/requests/${encodeURIComponent(request_id)}/value`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ value }),
+});
+
+export function subscribeToEvents(
+  onEvent: (event: StreamEvent) => void,
+  onError?: () => void,
+  cursor?: string,
+): () => void {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const source = new EventSource(`/api/v1/events${query}`);
+  const handle = (message: MessageEvent<string>) => {
+    try {
+      const data = JSON.parse(message.data) as Record<string, unknown>;
+      onEvent({
+        id: message.lastEventId || undefined,
+        type: message.type || String(data.type ?? "message"),
+        data,
+        at: typeof data.at === "string" ? data.at : undefined,
+      });
+    } catch {
+      onError?.();
+    }
+  };
+  source.onmessage = handle;
+  for (const eventName of ["mao.event", "talk.message", "run.updated", "job.updated", "asset.sealed", "graph.updated", "bootstrap.updated"]) {
+    source.addEventListener(eventName, handle as EventListener);
+  }
+  source.onerror = () => onError?.();
+  return () => source.close();
+}
