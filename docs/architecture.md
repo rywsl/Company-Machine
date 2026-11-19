@@ -2358,3 +2358,13 @@ ConversionRequest：
 数据库决议与外部效果分开：数据库同事务更新责任状态，Git refs、通知和重建通过持久 outbox 恢复；已知外部 task_id 续接，不确定提交先对账。成功、失败和取消回到发起岗位，持续周期不会依赖外层 Agent 重新分配具体任务。离线协议验收与真实模型的领域能力验证分别给证据。
 
 M17同时包含通用可操作性（spec/system/operability.md、plan/design-operability.md）：有界网络/未知结果对账、原生CLI会话与任务书资格、真实产品身份、manifest幂等部署与只读预检、受限外部操作文件邮箱，以及同源的help/错误/文档/skill。外部操作者只交接宏观意图与观察，业务组织仍由厂内岗位完成；不新增控制端口或控制面智能循环。两领域×两native runtime和历史产品库存的真实witness是退出条件，设计覆盖与能力完成分开。
+
+## Bun 与业务系统增补
+
+业务系统作为结构与资产的统一聚合存在。它引用项目来源、Operator、Machine、DAG、物料契约、转换、资源请求和来源证明，执行层继续复用 Type、Bean、Station、Line、Warehouse 与 Lineage。
+
+生产控制面迁移到 Bun 与 TypeScript。SQLite 旧数据库保持可读写兼容，新增业务表与历史事件、资产和 talk 数据共存。人的意图和 Foreman 回复通过事件游标进入同一条持久线程，Web App 使用 SSE 增量更新。
+
+官方 Harness 由 ACP 优先的声明式传输接入，官方 CLI 作为兼容路径。MAO 只负责进程边界、任务契约、物料、事件、权限和 transcript，模型循环与供应商密钥保留在官方 Harness 及模型代理内。
+
+容器生产实现使用应用托管的 Podman。Windows 管理 Podman machine，Linux 使用 rootless Podman。Docker provider 只承担迁移期兼容，业务事实不记录宿主 Docker 或个人路径状态。

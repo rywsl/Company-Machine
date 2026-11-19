@@ -17,13 +17,13 @@ from typing import Any
 from mao.base import canonical_json, utc_iso
 from mao.context import Context
 from mao.errors import FactoryError
-from mao.sandbox import DockerProvider, LocalProvider
+from mao.sandbox import DockerProvider, LocalProvider, PodmanProvider
 
 GLOBAL = argparse.ArgumentParser(add_help=False)
 GLOBAL.add_argument("--root", default=argparse.SUPPRESS)
 GLOBAL.add_argument("--registry", default=argparse.SUPPRESS)
 GLOBAL.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
-GLOBAL.add_argument("--provider", choices=("docker", "local"), default=argparse.SUPPRESS)
+GLOBAL.add_argument("--provider", choices=("podman", "docker", "local"), default=argparse.SUPPRESS)
 GLOBAL.add_argument("--local-commands", default=argparse.SUPPRESS)
 GLOBAL.add_argument("--epoch", default=argparse.SUPPRESS)
 
@@ -78,6 +78,8 @@ def open_context(args: argparse.Namespace) -> Context:
     if args.provider == "local":
         commands = load_commands(args.local_commands) if args.local_commands else {}
         provider: Any = LocalProvider(root, commands=commands)
+    elif args.provider == "podman":
+        provider = PodmanProvider(root)
     else:
         provider = DockerProvider(root)
     from mao.backends import open_context as open_backend

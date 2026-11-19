@@ -4,6 +4,10 @@
   "packageManager": "pnpm@11.16.0",
   "scripts": {
     "build:web": "pnpm --filter @mao/web build",
-    "check:web": "pnpm --filter @mao/web check"
+    "check:web": "pnpm --filter @mao/web check",
+    "backend:dev": "bun run backend/src/index.ts",
+    "backend:check": "bun check backend/src/index.ts",
+    "backend:build": "bun build backend/src/index.ts --outdir output/backend --target bun",
+    "backend:test": "bun test backend/tests"
   }
 }

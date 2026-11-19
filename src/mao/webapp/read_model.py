@@ -501,28 +501,34 @@ class WebReadModel:
             )
         return {
             "harnesses": harnesses,
-            "docker": self._docker_dependency(),
+            "podman": self._podman_dependency(),
         }
 
     @staticmethod
-    def _docker_dependency() -> dict[str, Any]:
-        executable = shutil.which("docker")
+    def _podman_dependency() -> dict[str, Any]:
+        executable = shutil.which("podman")
         if executable is None:
-            return {"state": "missing", "version": None, "message": "未找到 Docker CLI"}
+            return {"state": "missing", "version": None, "message": "未找到 Podman CLI", "provider": "podman"}
         try:
             result = subprocess.run(
-                [executable, "info", "--format", "{{.ServerVersion}}"],
+                [executable, "version", "--format", "{{.Version}}"],
                 capture_output=True,
                 text=True,
                 timeout=3,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
-            return {"state": "offline", "version": None, "message": "Docker CLI 存在，但 daemon 不在线"}
+            return {"state": "offline", "version": None, "message": "Podman CLI 存在，但运行时不在线", "provider": "podman"}
         version = result.stdout.strip()
         if result.returncode != 0 or not version:
-            return {"state": "offline", "version": None, "message": "Docker daemon 不在线"}
-        return {"state": "online", "version": version, "message": "Docker daemon 在线"}
+            return {"state": "offline", "version": None, "message": "Podman 运行时不在线", "provider": "podman"}
+        return {"state": "online", "version": version, "message": "Podman 运行时在线", "provider": "podman"}
+
+    @staticmethod
+    def _docker_dependency() -> dict[str, Any]:
+        """Compatibility projection for older clients during the cutover."""
+
+        return WebReadModel._podman_dependency()
 
     def harness_profiles(self) -> list[dict[str, Any]]:
         path = Path(self.ctx.root) / _HARNESS_PROFILE_PATH

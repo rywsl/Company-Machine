@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import shutil
 import sys
 from typing import Any
 
@@ -78,7 +79,7 @@ def _preparse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     pre.add_argument("--root", default=None)
     pre.add_argument("--registry", default=None)
     pre.add_argument("--json", action="store_true")
-    pre.add_argument("--provider", choices=("docker", "local"), default="docker")
+    pre.add_argument("--provider", choices=("podman", "docker", "local"), default="docker")
     pre.add_argument("--local-commands", default=None)
     pre.add_argument("--epoch", default=None)
     return pre.parse_known_args(argv)
@@ -101,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         code = exc.code
         return 0 if code is None else int(code)
+    if known.provider == "podman" and shutil.which("podman") is None:
+        print("--provider podman 需要可用的 Podman CLI", file=sys.stderr)
+        return 2
     try:
         command = next((item for item in rest if item in _COMMAND_MODULES), None)
         # `serve` is the resident path and only needs its own parser.  Keeping

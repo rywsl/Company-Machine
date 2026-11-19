@@ -1,6 +1,6 @@
 # M18 本地 Web App 用户入口与自治编排规范
 
-> 本规范定义 M18 的本地 Web App 交互边界。它把现有执行图、节点依赖、物料关系、运行状态和动态控制投影成用户可理解的工厂与厂区视图。M18 不增加 Factory、Workarea、Operator 或 Machine 后端实体。
+> 本规范定义本地 Web App 的交互边界。它把 BusinessSystem、项目来源、执行图、节点依赖、物料关系、运行状态和动态控制投影成用户可理解的工厂与厂区视图。BusinessSystem 是业务数据聚合，Line、Station、OperatorRuntime 和 Machine 继续承担执行事实。
 
 ## 1. 目的与范围
 
@@ -23,7 +23,7 @@ M18 交付四个入口，顺序固定为看板、编排、资产、日志。编�
 
 M18 依赖现有执行图和控制面能力，页面使用现有节点依赖、物料绑定、运行状态、动态控制、资产血缘、运行记录和宪法约束。Factory 和 Workarea 只是前端理解层名称，不能成为新的后端资源。
 
-Foreman 与 Operator 的 Harness 通过本地能力发现和适配器描述接入。示例 Harness 包括 Claude Code、Codex、DeepSeek Harness、Kimi CLI、Zcode、Pi、本地发现的 Harness 和自定义 Harness。示例清单不是封闭枚举，适配器可以增加名称、版本、启动方式、角色、输入输出协议、持续会话、工具调用、恢复能力和可用状态等字段。
+Foreman 与 Operator 的 Harness 通过官方 Harness 能力发现和声明式运行时接入。首批支持 Claude Code、Codex、DeepSeek Harness、Kimi Code、ZCode 和 Pi。ACP 是优先传输方式，官方 CLI 是兼容路径。控制面只负责启动、输入分发、事件接收和 transcript 解析。
 
 M18 demo 可以使用原生 DOM、Pointer Events、SVG 和本地 mock 数据，也可以使用 React Flow。无论采用哪种实现，都必须保持本规范的图数据形状、节点类型约束和层级互斥关系。控制面不得调用 LLM API。
 
@@ -263,11 +263,25 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 
 普通浏览器操作只修改本地布局偏好。Foreman 目标、Harness 替换意图和资源请求通过现有 Foreman 邮箱或 talk 入口进入自治链路。浏览器不直接修改 Registry、RunPlan、Line、Machine、Operator、Secret 或 Constitution，也不直接调用 LLM API。
 
-`POST /api/web/talk` 成功只表示消息已经写入本地 Foreman 输入队列。前端必须展示 `queued` 或现有处理状态，并通过轮询 `GET /api/web/talk`、`GET /api/web/logs` 或后续事件刷新结果。serve 未运行、Foreman 不可用、宪法冲突和不可恢复异常必须进入异常上下文。
+`POST /api/web/talk` 成功只表示消息已经写入本地 Foreman 输入队列。前端优先订阅 SSE 事件流，断线时使用 `Last-Event-ID` 或事件游标补齐结果。serve 未运行、Foreman 不可用、宪法冲突和不可恢复异常必须进入异常上下文。
 
 ### 11.4 前端连接状态
 
 首屏必须区分 `connecting`、`connected`、`degraded` 和 `exception`。静态 demo 可以在独立文件打开时使用显式 mock 数据，但 `factory web` 入口不能静默退回 mock。后端连接失败时显示当前错误和本地服务恢复入口，不能把 mock 状态显示成真实运行状态。
+
+### 11.5 Bun 业务控制面
+
+生产 Web API 使用 Bun 与 TypeScript。默认数据库为 `.factory/factory.db`，新增业务表与旧 SQLite 数据共存，旧事件、资产和 talk 数据通过只读兼容投影进入 Web App。
+
+- `GET /api/v1/business-systems` 与 `POST /api/v1/business-systems` 管理业务系统聚合
+- `GET /api/v1/projects` 与 `POST /api/v1/projects/intake` 接收仓库链接、项目文件引用或本地文件夹来源
+- `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
+- `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
+- `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱
+
+密钥值只在保险箱写入请求中出现。数据库、事件、Harness、Foreman 和普通 UI 只接触保险箱引用与状态。UI 展示语义化字段、图表、时间线和文件引用，底层 JSON 不作为用户详情内容渲染。
+
+容器运行时采用 Podman。Windows 由应用管理 Podman machine，Linux 使用 rootless Podman。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。Docker 只作为迁移期兼容 provider。
 
 ## 12. 真实 Web App 验收
 
@@ -280,3 +294,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - API 不要求登录，不返回秘密值，不暴露多用户入口
 - serve 关闭时前端展示真实异常，不伪造自治运行成功
 - 本地浏览器可完成看板、编排、资产、日志和 Foreman 对话的真实读写闭环
+- Intake 创建的项目会进入 BusinessSystem 图并通过事件流刷新
+- Foreman 回复可以通过外部 Harness 回写同一 talk 线程
+- 项目资源请求只显示项目用途、范围、检查项和状态，密钥值进入保险箱
+- Podman 缺失时显示运行时依赖状态，不把 Docker 状态伪装成 Podman 在线

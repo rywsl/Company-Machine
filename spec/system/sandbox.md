@@ -13,7 +13,8 @@
 本组件把“在隔离环境里执行”收成一个接口，供检验、操作工和 Runner 使用。
 
 - `SandboxProvider`：打开一次 attempt 的沙箱，在里面执行命令，结束后销毁容器。
-- `DockerProvider`：生产实现。只调用 `docker` 命令行，不使用 Docker SDK（README D2）。
+- `PodmanProvider`：生产实现。应用托管 Podman machine 或 rootless service，只调用受控 Podman CLI，不使用容器 SDK。
+- `DockerProvider`：迁移期兼容实现。旧验收和旧 Registry 可以继续显式选择它，新的运行入口使用 Podman。
 - `LocalProvider`：仅测试。在宿主上直接跑进程，**没有任何隔离**，用路径映射和命令映射模拟第 5 节的虚拟路径。
 
 不做的事：
@@ -84,7 +85,7 @@ class Sandbox(Protocol):
     def close(self) -> None    # 销毁容器；不删除 workspace 卷
 
 class SandboxProvider(Protocol):
-    name: str                  # "docker" | "local"
+    name: str                  # "podman" | "docker" | "local"
     def open(self, spec: SandboxSpec) -> Sandbox
     def remove_volume(self, name: str) -> None
 
@@ -95,6 +96,19 @@ class LocalProvider:           # 仅测试
     def open(self, spec: SandboxSpec) -> Sandbox
     def remove_volume(self, name: str) -> None          # 空操作
     def prepare_inject_volume(self, image: str, volume: str) -> None   # 空操作
+
+class PodmanProvider:
+    name: str                  # = "podman"
+    def __init__(self, root: Path, *, podman: str = "podman",
+                 allow_unproxied_egress: bool = False, clock: Clock | None = None,
+                 machine: str | None = None) -> None
+    def health(self) -> dict[str, Any]
+    def ensure_ready(self) -> dict[str, Any]
+    def build_run_argv(self, spec: SandboxSpec) -> list[str]
+    def resolve_image(self, image: str) -> str
+    def prepare_inject_volume(self, image: str, volume: str) -> None
+    def open(self, spec: SandboxSpec) -> Sandbox
+    def remove_volume(self, name: str) -> None
 
 class DockerProvider:
     name: str                  # = "docker"
@@ -107,7 +121,7 @@ class DockerProvider:
     def remove_volume(self, name: str) -> None
 ```
 
-`build_run_argv` 只读 `self.docker` 与 `self.allow_unproxied_egress`，不启动子进程，不访问文件系统。单元测试和验收测试锁的就是它返回的列表。
+`build_run_argv` 只读当前引擎可执行文件与 `allow_unproxied_egress`，不启动子进程，不访问文件系统。Podman 和 Docker 的 argv 安全约束相同，单元测试和验收测试锁定各自返回的列表。
 
 ---
 
@@ -336,6 +350,12 @@ Docker 的命名卷在**第一次**挂到镜像里已有内容的路径时，会
 - `docker` 退出码 137 且我们没有主动超时：当作进程被外部杀掉，`exit_code=137`，`timed_out=False`。
 
 ---
+
+### 5.10 Podman 运行时托管
+
+`PodmanProvider.health()` 必须返回可序列化的运行时状态，包含 `available`、平台、可执行文件、machine、rootless 和原因。Windows 上 `ensure_ready()` 先检查已配置的 machine，再启动后重新探测。Linux 上只接受 rootless 运行时。
+
+Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都进入显式依赖或环境错误。运行时状态进入 Web App 设置和日志上下文，业务系统数据不写入宿主个人路径或 Docker 状态。
 
 ## 6. 错误
 

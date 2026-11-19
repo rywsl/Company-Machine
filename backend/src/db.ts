@@ -1,0 +1,313 @@
+import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type {
+  Artifact,
+  BusinessSystem,
+  Event,
+  HarnessProfile,
+  Project,
+  ProjectSource,
+  SecretRequest,
+  TalkMessage,
+} from "./models";
+
+const now = () => new Date().toISOString();
+const json = (value: unknown) => JSON.stringify(value ?? {});
+const parseJson = (value: unknown): Record<string, unknown> => {
+  if (typeof value !== "string" || value.length === 0) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+export interface IntakeInput {
+  name?: string;
+  project_name?: string;
+  business_system_id?: string;
+  repo_url?: string;
+  uploaded_file_refs?: string[];
+  files?: Array<{ name?: string; ref?: string; digest?: string }>;
+  local_folder?: string;
+  metadata?: Record<string, unknown>;
+  secret_requests?: Array<{ name: string; vault_ref: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }>;
+}
+
+export class SqliteStore {
+  readonly db: Database;
+  readonly legacy?: Database;
+
+  constructor(dbPath = process.env.BUSINESS_DB_PATH ?? process.env.FACTORY_DB_PATH ?? ".factory/factory.db", legacyPath = process.env.FACTORY_DB_PATH ?? ".factory/factory.db") {
+    mkdirSync(dirname(dbPath), { recursive: true });
+    this.db = new Database(dbPath, { create: true });
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.init();
+    if (dbPath === legacyPath) return;
+    try {
+      this.legacy = new Database(`file:${legacyPath}?mode=ro&immutable=1`, { readonly: true });
+    } catch {
+      // A missing legacy database is normal for a new installation.
+    }
+  }
+
+  init() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS business_systems (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, status TEXT NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY, business_system_id TEXT, name TEXT NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS project_sources (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL,
+        repo_url TEXT, file_ref TEXT, local_folder TEXT, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS artifacts (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, source_id TEXT, kind TEXT NOT NULL,
+        ref TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS secret_requests (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, vault_ref TEXT NOT NULL,
+        status TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS harness_profiles (
+        id TEXT PRIMARY KEY, runtime TEXT NOT NULL, role TEXT NOT NULL, base_url TEXT NOT NULL,
+        model TEXT NOT NULL, mode TEXT NOT NULL, image TEXT, network TEXT, secret_ref TEXT,
+        verification TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS business_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
+        data TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS business_talk_messages (
+        id TEXT PRIMARY KEY, role TEXT NOT NULL, body TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS business_talk_messages_created ON business_talk_messages(created_at, id);
+      CREATE INDEX IF NOT EXISTS secret_requests_project ON secret_requests(project_id, created_at);
+    `);
+  }
+
+  listBusinessSystems(): BusinessSystem[] {
+    return this.db.query("SELECT * FROM business_systems ORDER BY created_at").all().map((row: any) => ({
+      id: row.id, name: row.name, description: row.description ?? undefined, status: row.status,
+      metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at,
+    }));
+  }
+
+  listProjects(): Project[] {
+    return this.db.query("SELECT * FROM projects ORDER BY created_at, id").all().map((row: any) => this.projectFromRow(row));
+  }
+
+  getProject(id: string): Project | undefined {
+    const row = this.db.query("SELECT * FROM projects WHERE id = ?").get(id) as any;
+    return row ? this.projectFromRow(row) : undefined;
+  }
+
+  createBusinessSystem(input: Partial<BusinessSystem> & { name: string }): BusinessSystem {
+    const timestamp = now();
+    const value: BusinessSystem = { id: input.id ?? randomUUID(), name: input.name, description: input.description,
+      status: input.status ?? "active", metadata: input.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
+    this.db.query("INSERT INTO business_systems (id,name,description,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+      .run(value.id, value.name, value.description ?? null, value.status, json(value.metadata), timestamp, timestamp);
+    return value;
+  }
+
+  listHarnessProfiles(): HarnessProfile[] {
+    return this.db.query("SELECT * FROM harness_profiles ORDER BY role, runtime").all().map((row: any) => ({
+      id: row.id,
+      runtime: row.runtime,
+      role: row.role,
+      baseUrl: row.base_url,
+      model: row.model,
+      mode: row.mode,
+      image: row.image ?? undefined,
+      network: row.network ?? undefined,
+      secretRef: row.secret_ref ?? undefined,
+      verification: parseJson(row.verification) as HarnessProfile["verification"],
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  saveHarnessProfile(input: Omit<HarnessProfile, "updatedAt" | "id"> & { id?: string }): HarnessProfile {
+    const updatedAt = now();
+    const value: HarnessProfile = { ...input, id: input.id ?? `${input.role}:${input.runtime}`, updatedAt };
+    this.db.query("INSERT INTO harness_profiles (id,runtime,role,base_url,model,mode,image,network,secret_ref,verification,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET runtime=excluded.runtime, role=excluded.role, base_url=excluded.base_url, model=excluded.model, mode=excluded.mode, image=excluded.image, network=excluded.network, secret_ref=excluded.secret_ref, verification=excluded.verification, updated_at=excluded.updated_at")
+      .run(value.id, value.runtime, value.role, value.baseUrl, value.model, value.mode, value.image ?? null, value.network ?? null, value.secretRef ?? null, json(value.verification ?? {}), updatedAt);
+    return value;
+  }
+
+  markHarnessVerification(id: string, state: string, reason?: string): HarnessProfile | undefined {
+    const current = this.listHarnessProfiles().find((profile) => profile.id === id);
+    if (!current) return undefined;
+    return this.saveHarnessProfile({ ...current, verification: { state, reason, checkedAt: now() } });
+  }
+
+  createIntake(input: IntakeInput): Project {
+    const timestamp = now();
+    const project: Project = { id: randomUUID(), businessSystemId: input.business_system_id,
+      name: input.name ?? input.project_name ?? "Untitled project", metadata: input.metadata ?? {},
+      createdAt: timestamp, updatedAt: timestamp, sources: [], secretRequests: [] };
+    this.db.query("INSERT INTO projects (id,business_system_id,name,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+      .run(project.id, project.businessSystemId ?? null, project.name, json(project.metadata), timestamp, timestamp);
+    const addSource = (kind: ProjectSource["kind"], fields: { repoUrl?: string; fileRef?: string; localFolder?: string }) => {
+      const source: ProjectSource = { id: randomUUID(), projectId: project.id, kind, ...fields, metadata: {}, createdAt: timestamp };
+      this.db.query("INSERT INTO project_sources (id,project_id,kind,repo_url,file_ref,local_folder,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)")
+        .run(source.id, source.projectId, source.kind, source.repoUrl ?? null, source.fileRef ?? null, source.localFolder ?? null, "{}", timestamp);
+      project.sources.push(source);
+    };
+    if (input.repo_url) addSource("repo_url", { repoUrl: input.repo_url });
+    for (const fileRef of input.uploaded_file_refs ?? []) addSource("uploaded_file", { fileRef });
+    for (const file of input.files ?? []) {
+      const fileRef = file.ref ?? file.name;
+      if (fileRef) addSource("uploaded_file", { fileRef });
+    }
+    if (input.local_folder) addSource("local_folder", { localFolder: input.local_folder });
+    for (const request of input.secret_requests ?? []) {
+      const secret: SecretRequest = { id: randomUUID(), projectId: project.id, name: request.name, vaultRef: request.vault_ref,
+        status: request.status ?? "requested", metadata: request.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
+      this.db.query("INSERT INTO secret_requests (id,project_id,name,vault_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+        .run(secret.id, secret.projectId, secret.name, secret.vaultRef, secret.status, json(secret.metadata), timestamp, timestamp);
+      project.secretRequests.push(secret);
+    }
+    return project;
+  }
+
+  private projectFromRow(row: any): Project {
+    const sources = this.db.query("SELECT * FROM project_sources WHERE project_id = ? ORDER BY created_at, id").all(row.id).map((item: any) => ({
+      id: item.id,
+      projectId: item.project_id,
+      kind: item.kind,
+      repoUrl: item.repo_url ?? undefined,
+      fileRef: item.file_ref ?? undefined,
+      localFolder: item.local_folder ?? undefined,
+      metadata: parseJson(item.metadata),
+      createdAt: item.created_at,
+    }));
+    const secretRequests = this.db.query("SELECT * FROM secret_requests WHERE project_id = ? ORDER BY created_at, id").all(row.id).map((item: any) => ({
+      id: item.id,
+      projectId: item.project_id,
+      name: item.name,
+      vaultRef: item.vault_ref,
+      status: item.status,
+      metadata: parseJson(item.metadata),
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+    }));
+    return {
+      id: row.id,
+      businessSystemId: row.business_system_id ?? undefined,
+      name: row.name,
+      metadata: parseJson(row.metadata),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      sources,
+      secretRequests,
+    };
+  }
+
+  addArtifact(input: Omit<Artifact, "id" | "createdAt">): Artifact {
+    const value = { ...input, id: randomUUID(), createdAt: now() };
+    this.db.query("INSERT INTO artifacts (id,project_id,source_id,kind,ref,metadata,created_at) VALUES (?,?,?,?,?,?,?)")
+      .run(value.id, value.projectId, value.sourceId ?? null, value.kind, value.ref, json(value.metadata), value.createdAt);
+    return value;
+  }
+
+  createSecretRequest(input: { projectId: string; name: string; vaultRef: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }): SecretRequest {
+    const timestamp = now();
+    const value: SecretRequest = { id: randomUUID(), projectId: input.projectId, name: input.name, vaultRef: input.vaultRef,
+      status: input.status ?? "requested", metadata: input.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
+    this.db.query("INSERT INTO secret_requests (id,project_id,name,vault_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+      .run(value.id, value.projectId, value.name, value.vaultRef, value.status, json(value.metadata), timestamp, timestamp);
+    return value;
+  }
+
+  addTalkMessage(input: { role?: string; body: string; metadata?: Record<string, unknown> }): TalkMessage {
+    const value: TalkMessage = { id: randomUUID(), role: input.role ?? "user", body: input.body, metadata: input.metadata ?? {}, createdAt: now() };
+    this.db.query("INSERT INTO business_talk_messages (id,role,body,metadata,created_at) VALUES (?,?,?,?,?)").run(value.id, value.role, value.body, json(value.metadata), value.createdAt);
+    return value;
+  }
+
+  listTalkMessages(): TalkMessage[] {
+    return this.db.query("SELECT * FROM business_talk_messages ORDER BY created_at, id").all().map((row: any) => ({
+      id: row.id, role: row.role, body: row.body, metadata: parseJson(row.metadata), createdAt: row.created_at,
+    }));
+  }
+
+  listSecretRequests(): SecretRequest[] {
+    return this.db.query("SELECT * FROM secret_requests ORDER BY created_at").all().map((row: any) => ({
+      id: row.id, projectId: row.project_id, name: row.name, vaultRef: row.vault_ref, status: row.status,
+      metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at,
+    }));
+  }
+
+  getSecretRequest(id: string): SecretRequest | undefined {
+    const row = this.db.query("SELECT * FROM secret_requests WHERE id = ?").get(id) as any;
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      name: row.name,
+      vaultRef: row.vault_ref,
+      status: row.status,
+      metadata: parseJson(row.metadata),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  markSecretAvailable(id: string): SecretRequest | undefined {
+    const timestamp = now();
+    this.db.query("UPDATE secret_requests SET status = 'available', updated_at = ? WHERE id = ?").run(timestamp, id);
+    return this.getSecretRequest(id);
+  }
+
+  appendEvent(type: string, data: unknown): Event {
+    const value = { id: randomUUID(), type, data, createdAt: now() };
+    const result = this.db.query("INSERT INTO business_events (id,type,data,created_at) VALUES (?,?,?,?)").run(value.id, value.type, json(value.data), value.createdAt);
+    return { ...value, seq: Number(result.lastInsertRowid) };
+  }
+
+  eventsAfter(seq = 0): Event[] {
+    return this.db.query("SELECT * FROM business_events WHERE seq > ? ORDER BY seq").all(seq).map((row: any) => ({
+      id: row.id, seq: Number(row.seq), type: row.type, data: JSON.parse(row.data), createdAt: row.created_at,
+    }));
+  }
+
+  legacyEvents(): Event[] {
+    const source = this.legacy ?? this.db;
+    if (!this.hasLegacyTable("events")) return [];
+    return source.query("SELECT seq,id,kind,data,at FROM events ORDER BY seq").all().map((row: any) => ({
+      seq: Number(row.seq), id: row.id, type: row.kind, data: parseJson(row.data), createdAt: row.at,
+    }));
+  }
+
+  legacyArtifacts(): Artifact[] {
+    const source = this.legacy ?? this.db;
+    if (!this.hasLegacyTable("asset_records")) return [];
+    return source.query("SELECT id,document,created_at,by_actor FROM asset_records ORDER BY created_at").all().map((row: any) => ({
+      id: row.id, projectId: "legacy", kind: "asset", ref: row.id, metadata: { document: parseJson(row.document), byActor: row.by_actor }, createdAt: row.created_at,
+    }));
+  }
+
+  legacyTalk(): TalkMessage[] {
+    const source = this.legacy ?? this.db;
+    if (!this.hasLegacyTable("talk_messages")) return [];
+    return source.query("SELECT id,role,body,card,created_at FROM talk_messages ORDER BY created_at, id").all().map((row: any) => ({
+      id: row.id, role: row.role, body: row.body, metadata: { card: parseJson(row.card) }, createdAt: row.created_at,
+    }));
+  }
+
+  private hasLegacyTable(name: string) {
+    const source = this.legacy ?? this.db;
+    return Boolean(source.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+  }
+
+  close() { this.db.close(); this.legacy?.close(); }
+}
+

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -17,7 +18,7 @@ from mao.errors import FactoryError
 
 _IMAGE = re.compile(r"^(?:.+@)?sha256:[0-9a-f]{64}$")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_SOCK = "docker" + ".sock"
+_SOCKS = ("docker" + ".sock", "podman" + ".sock")
 _PATH = "/opt/factory/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 _FIXED_ENV = (
     ("FACTORY_IN", "/factory/in"),
@@ -381,7 +382,7 @@ class DockerProvider:
         if _IMAGE.fullmatch(spec.image) is None:
             raise FactoryError("IMAGE_REF_INVALID", "镜像引用不合法", image=spec.image)
         for mount in spec.mounts:
-            if _SOCK in mount.source.lower() or _SOCK in mount.target.lower():
+            if any(sock in mount.source.lower() or sock in mount.target.lower() for sock in _SOCKS):
                 raise FactoryError("SANDBOX_SPEC_INVALID", "禁止挂载容器套接字", field="mounts")
 
 
@@ -437,6 +438,111 @@ class _DockerSandbox:
     def close(self) -> None:
         subprocess.run([self.provider.docker, "rm", "-f", self.name], capture_output=True, check=False)
         self._closed = True
+
+
+class PodmanProvider(DockerProvider):
+    """Podman CLI provider using the engine-neutral sandbox contract.
+
+    Podman intentionally shares the hardened argv and volume semantics with
+    the existing provider.  Keeping the implementation as a small adapter
+    preserves the Python reference runtime while Bun becomes the production
+    control plane.  ``docker`` remains a constructor attribute because the
+    sandbox implementation uses it as the executable slot.
+    """
+
+    name = "podman"
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        podman: str = "podman",
+        allow_unproxied_egress: bool = False,
+        clock: object | None = None,
+        machine: str | None = None,
+    ) -> None:
+        super().__init__(
+            root,
+            docker=podman,
+            allow_unproxied_egress=allow_unproxied_egress,
+            clock=clock,
+        )
+        self.podman = podman
+        self.machine = machine
+
+    def health(self) -> dict[str, Any]:
+        """Return a non-throwing runtime probe for Web App dependency views."""
+
+        if not shutil.which(self.podman) and not Path(self.podman).exists():
+            return {"available": False, "provider": self.name, "reason": "podman-missing"}
+        try:
+            proc = subprocess.run(
+                [self.podman, "info", "--format", "json"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return {"available": False, "provider": self.name, "reason": "podman-unavailable"}
+        if proc.returncode != 0:
+            return {
+                "available": False,
+                "provider": self.name,
+                "reason": proc.stderr.decode("utf-8", errors="replace").strip()[:240]
+                or "podman-info-failed",
+            }
+        try:
+            body = json.loads(proc.stdout.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            body = {}
+        rootless = body.get("host", {}).get("security", {}).get("rootless")
+        return {
+            "available": True,
+            "provider": self.name,
+            "machine": self.machine,
+            "rootless": rootless if isinstance(rootless, bool) else None,
+        }
+
+    def ensure_ready(self) -> dict[str, Any]:
+        """Start a configured Windows Podman machine when the engine is stopped."""
+
+        current = self.health()
+        if current.get("available") or os.name != "nt":
+            return current
+        try:
+            listed = subprocess.run(
+                [self.podman, "machine", "list", "--format", "json"],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+            if listed.returncode != 0:
+                return {**current, "reason": "podman-machine-list-failed"}
+            rows = json.loads(listed.stdout.decode("utf-8", errors="replace"))
+            machine = self.machine
+            if not machine and isinstance(rows, list) and rows:
+                first = rows[0] if isinstance(rows[0], dict) else {}
+                machine = first.get("Name") or first.get("name")
+            if not machine:
+                return {**current, "reason": "podman-machine-missing"}
+            started = subprocess.run(
+                [self.podman, "machine", "start", str(machine)],
+                capture_output=True,
+                timeout=120,
+                check=False,
+            )
+            if started.returncode != 0:
+                return {**current, "machine": machine, "reason": "podman-machine-start-failed"}
+            self.machine = str(machine)
+            return self.health()
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            return {**current, "reason": "podman-machine-unavailable"}
+
+    def open(self, spec: SandboxSpec) -> _DockerSandbox:
+        ready = self.ensure_ready()
+        if not ready.get("available"):
+            raise FactoryError("PODMAN_UNAVAILABLE", "找不到可用的 podman", podman=self.podman, **ready)
+        return super().open(spec)
 
 
 class LocalProvider:
