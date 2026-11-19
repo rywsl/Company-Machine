@@ -13,6 +13,7 @@ describe("business record and DAG boundaries", () => {
     try {
       const system = await body(await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers, body: JSON.stringify({ name: "制作业务" }) })));
       const project = await body(await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "项目", local_folder: "C:/work" }) })));
+      expect(JSON.stringify(project)).not.toContain("C:/work");
       const created = await body(await app.fetch(new Request(`http://localhost/api/v1/projects/${project.id}/artifacts`, { method: "POST", headers, body: JSON.stringify({ record_type: "material", kind: "script", ref: "cas://script-1", title: "分镜脚本", description: "给视频 Operator 使用的分镜脚本", summary: "已审核脚本", files: [{ ref: "cas://file-1", path: "storyboard.md" }] }) })));
       expect(created.recordType).toBe("material");
       expect(created.title).toBe("分镜脚本");

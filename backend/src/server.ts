@@ -106,7 +106,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       if (!system) return response({ error: "business system was not found" }, 404);
       const projects = store.listProjects().filter((project) => project.businessSystemId === system.id);
       const artifacts = store.listBusinessSystemArtifacts(system.id);
-      return response({ ...system, projects, artifacts: artifacts.map(publicArtifact), materials: artifacts.filter((item) => item.recordType === "material").map(publicArtifact) });
+      return response({ ...system, projects: projects.map(publicProject), artifacts: artifacts.map(publicArtifact), materials: artifacts.filter((item) => item.recordType === "material").map(publicArtifact) });
     }
     const graphMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/graph$/);
     if (graphMatch && request.method === "GET") {
@@ -183,7 +183,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       dispatchOperatorRun(run.id);
       return response({ state: "dispatching", run_id: run.id }, 202);
     }
-    if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects());
+    if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects().map(publicProject));
     if (url.pathname === "/api/v1/projects/intake" && request.method === "POST") {
       const body = await readJson(request);
       if (!body.repo_url && !body.local_folder && !(Array.isArray(body.files) && body.files.length) && !(Array.isArray(body.uploaded_file_refs) && body.uploaded_file_refs.length)) {
@@ -196,7 +196,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       }
       const project = store.createIntake(body);
       events.publish("project.intake.created", project);
-      return response({ ...project, project_id: project.id, state: "accepted" }, 201);
+      return response({ ...publicProject(project), project_id: project.id, state: "accepted" }, 201);
     }
     const artifactMatch = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/artifacts$/);
     if (artifactMatch && request.method === "GET") return response(store.listArtifacts(artifactMatch[1]).map(publicArtifact));
@@ -372,6 +372,24 @@ function publicUnit(unit: any) {
 
 function publicUnitRun(run: any) {
   return { ...run };
+}
+
+function publicProject(project: any) {
+  return {
+    ...project,
+    sources: Array.isArray(project.sources)
+      ? project.sources.map((source: any) => {
+        const { localFolder: _localFolder, ...portableSource } = source;
+        return portableSource;
+      })
+      : [],
+    secretRequests: Array.isArray(project.secretRequests)
+      ? project.secretRequests.map((request: any) => {
+        const { vaultRef: _vaultRef, ...publicRequest } = request;
+        return publicRequest;
+      })
+      : [],
+  };
 }
 
 function publicArtifact(record: any) {
