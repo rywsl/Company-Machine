@@ -67,7 +67,7 @@ if (command === "serve") {
       const id = args[2];
       const file = value("--file");
       if (!id || !file) throw new Error("target id and --file are required");
-      const document = await Bun.file(file).json();
+      const document = JSON.parse(await Bun.file(file).text());
       const route = args[1] === "graph" ? `/api/v1/business-systems/${encodeURIComponent(id)}/graph` : `/api/v1/projects/${encodeURIComponent(id)}/artifacts`;
       const body = args[1] === "graph" ? { graph: document.graph ?? document, by: "official-harness" } : document;
       const result = await app.fetch(new Request(`http://localhost${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));

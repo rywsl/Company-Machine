@@ -377,26 +377,33 @@ function exportBusinessSystem(store: SqliteStore, id: string) {
   const projects = store.listProjects().filter((project) => project.businessSystemId === id).map((project) => ({
     id: project.id,
     name: project.name,
-    metadata: project.metadata,
+    metadata: portableValue(project.metadata),
     sources: project.sources.map((source) => ({
       kind: source.kind,
       ref: source.kind === "repo_url" ? source.repoUrl : source.kind === "uploaded_file" ? source.fileRef : `intake://${project.id}`,
-      metadata: source.metadata,
+      metadata: portableValue(source.metadata),
     })),
-    secretRequests: project.secretRequests.map((secret) => ({ id: secret.id, name: secret.name, status: secret.status, metadata: secret.metadata })),
+    secretRequests: project.secretRequests.map((secret) => ({ id: secret.id, name: secret.name, status: secret.status, metadata: portableValue(secret.metadata) })),
   }));
   const artifacts = store.listBusinessSystemArtifacts(id);
   return {
     schema: "mao.business-system/1",
     exportedAt: new Date().toISOString(),
-    system: { ...system, metadata: { ...system.metadata } },
+    system: { ...system, metadata: portableValue(system.metadata) },
     graph: system.metadata.graph ?? graphProjection(store, "workarea", id),
     units: store.listBusinessUnits(id).map(publicUnit),
     projects,
-    records: artifacts,
-    conversions: store.listBusinessConversions(id),
+    records: artifacts.map((record) => ({ ...record, metadata: portableValue(record.metadata) })),
+    conversions: store.listBusinessConversions(id).map((conversion) => ({ ...conversion, metadata: portableValue(conversion.metadata) })),
     runs: store.listBusinessRuns(id).map((run) => ({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) })),
   };
+}
+
+function portableValue(value: unknown, key = ""): any {
+  if (/(secret|token|password|api[_-]?key|authorization|cookie|local[_-]?folder|host[_-]?path)/i.test(key)) return "[REDACTED]";
+  if (Array.isArray(value)) return value.map((item) => portableValue(item));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, portableValue(item, name)]));
+  return value;
 }
 
 function importBusinessSystem(store: SqliteStore, document: Record<string, any>): BusinessSystem {
