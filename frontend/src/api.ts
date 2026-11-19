@@ -50,6 +50,10 @@ export const verifyHarness = (profile_id: string) => api<{ profile: HarnessProfi
   body: JSON.stringify({ profile_id }),
 });
 export const getSecrets = () => api<SecretRecord[]>("/api/web/secrets?limit=100");
+export const ensureRuntime = () => api<{ dependency: { state: string; message?: string } }>("/api/v1/runtime/ensure-ready", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+});
 export const sendTalk = (text: string) => api<{ state: string; message: TalkMessage }>("/api/web/talk", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
