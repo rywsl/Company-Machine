@@ -137,7 +137,14 @@ export class OfficialCliTransport implements HarnessTransport {
 function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe" }): OfficialProcess {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new Error("Bun runtime is required");
-  const process = bun.spawn(argv, { cwd: options.cwd, env: { ...((globalThis as any).process?.env ?? {}), ...options.env }, stdout: options.stdout, stderr: "pipe" });
+  const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
+  const env: Record<string, string> = {};
+  for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMP", "TEMP", "LANG", "LC_ALL"]) {
+    const value = hostEnv[key];
+    if (typeof value === "string") env[key] = value;
+  }
+  Object.assign(env, options.env);
+  const process = bun.spawn(argv, { cwd: options.cwd, env, stdout: options.stdout, stderr: "pipe" });
   return { stdout: process.stdout as ReadableStream<Uint8Array>, kill: () => process.kill() };
 }
 
