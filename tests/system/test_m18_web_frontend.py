@@ -54,6 +54,8 @@ def test_frontend_source_is_componentized_and_does_not_embed_mock_graph_or_secre
     package = Path("frontend/package.json").read_text(encoding="utf-8")
     assert "ReactFlow" in source
     assert "localStorage" in source
+    assert "internal_steps" in source
+    assert "second canvas" not in source.lower()
     assert "wa-vision" not in source
     assert "OpenAI" not in source
     assert "ANTHROPIC_API_KEY" not in source

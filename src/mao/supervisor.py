@@ -73,7 +73,7 @@ class SupervisorConfig:
         for name in _FIELDS:
             if name not in section:
                 raise FactoryError("SUPERVISOR_CONFIG_INVALID", f"缺少 foreman.{name}", field=name)
-        env = {str(key): str(value) for key, value in dict(section.get("env") or {}).items()}
+        env = _resolve_env(root, section.get("env") or {})
         for name in env:
             if name.startswith(_ENV_PREFIXES):
                 raise FactoryError("SUPERVISOR_CONFIG_INVALID", "环境变量不允许覆盖", field="env")
@@ -688,6 +688,20 @@ def _validate(config: SupervisorConfig) -> SupervisorConfig:
         if ref not in config.models:
             raise FactoryError("SUPERVISOR_CONFIG_INVALID", "缺少模型", field=f"models.{ref}")
     return config
+
+
+def _resolve_env(root: Path, raw: Mapping[str, Any]) -> dict[str, str]:
+    from mao.egress import SecretStore
+
+    store = SecretStore(root)
+    result: dict[str, str] = {}
+    for key, value in dict(raw).items():
+        text = str(value)
+        if text.startswith("secret://"):
+            result[str(key)] = store.read(text.removeprefix("secret://"))
+        else:
+            result[str(key)] = text
+    return result
 
 
 def _approval_actionable(ctx: Any, snapshot: Any, wake: Any) -> bool:

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+from mao.base import canonical_json, utc_iso
 from mao.commands.common import governance_registry
 from mao.errors import FactoryError
+from mao.secrets import store_secret
 from mao.status import factory_status, tail_events
 from mao.talk import list_messages
 
@@ -16,6 +21,8 @@ _SECRET_KEY = re.compile(r"(?i)(api[_-]?key|secret|token|password|authorization|
 _SECRET_VALUE = re.compile(r"(?i)(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+")
 _PATH_VALUE = re.compile(r"(?i)(?:[A-Z]:\\|/)(?:[^\s/\\]+[/\\])*[^\s/\\]+")
 _ACTIVE_RUNS = {"PENDING", "RUNNING", "FAILING", "CANCELLING"}
+_HARNESS_PROFILE_PATH = Path(".factory") / "harnesses" / "profiles.json"
+_THINKING_EFFORTS = {"minimal", "low", "medium", "high", "max"}
 
 
 class WebReadModel:
@@ -39,6 +46,8 @@ class WebReadModel:
             "logs": self.logs(limit=24),
             "talk": self.talk(limit=24),
             "harnesses": self.harnesses(),
+            "harness_profiles": self.harness_profiles(),
+            "dependencies": self.dependencies(),
             "foreman": self.foreman(),
             "secrets": self.secret_resources(limit=50),
             "constitution": self.constitution(),
@@ -82,6 +91,7 @@ class WebReadModel:
             "title": "工厂",
             "nodes": lines,
             "edges": self._factory_edges(lines),
+            "metadata": self._graph_provenance(),
         }
 
     def workarea_graph(self, workarea: str | None) -> dict[str, Any] | None:
@@ -91,13 +101,72 @@ class WebReadModel:
         line_key = self._resolve_line_key(workarea)
         spec = snapshot.spec(line_key)
         metadata = snapshot.doc(line_key).get("metadata") or {}
-        nodes: list[dict[str, Any]] = []
-        edges: list[dict[str, Any]] = []
-        step_nodes: dict[str, tuple[str, str]] = {}
         steps = spec.get("steps") if isinstance(spec, dict) else None
         if not isinstance(steps, dict):
             steps = {}
-        for index, (step_name, raw_step) in enumerate(steps.items()):
+        records = self._workarea_step_records(snapshot, line_key, steps)
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        line_name = str(metadata.get("name") or line_key)
+        if records:
+            primary = next((record for record in records if record["runtime"] != "未声明"), records[0])
+            group_key = ("project", str(primary["runtime"]), "project")
+            operator_id = f"{line_key}:aggregate:operator"
+            machine_id = f"{line_key}:aggregate:machine"
+            status = self._aggregate_status([record["status"] for record in records])
+            operator_metadata = self._aggregate_operator_metadata(line_name, records, group_key)
+            machine_metadata = self._aggregate_machine_metadata(snapshot, line_name, records, group_key)
+            nodes.extend(
+                (
+                    {
+                        "id": operator_id,
+                        "type": "operator",
+                        "group": line_key,
+                        "label": "Operator",
+                        "position": {"x": 190, "y": 150},
+                        "status": status,
+                        "metadata": operator_metadata,
+                    },
+                    {
+                        "id": machine_id,
+                        "type": "machine",
+                        "group": line_key,
+                        "label": "Machine",
+                        "position": {"x": 470, "y": 150},
+                        "status": status,
+                        "metadata": machine_metadata,
+                    },
+                )
+            )
+            edges.append(
+                {
+                    "id": f"{operator_id}:to:{machine_id}",
+                    "source": operator_id,
+                    "target": machine_id,
+                    "kind": "aggregate",
+                    "condition": "Operator 管理完整项目 Machine",
+                    "status": status,
+                    "metadata": {
+                        "steps": [record["step"] for record in records],
+                        "stations": [record["station"] for record in records],
+                        "projection": "web_read_model",
+                    },
+                }
+            )
+        return {
+            "scope": "workarea",
+            "id": line_key,
+            "title": line_name,
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": self._graph_provenance(),
+        }
+
+    def _workarea_step_records(
+        self, snapshot: Any, line_key: str, steps: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for step_name, raw_step in steps.items():
             if not isinstance(raw_step, dict) or not raw_step.get("station"):
                 continue
             station_ref = str(raw_step["station"])
@@ -111,84 +180,222 @@ class WebReadModel:
                 runtime_ref = operator_ref.get("runtime")
                 model = operator_ref.get("model")
             machine_ref = station.get("machine")
-            operator_id = f"{line_key}:{step_name}:operator"
-            machine_id = f"{line_key}:{step_name}:machine"
-            step_nodes[str(step_name)] = (operator_id, machine_id)
-            operator_meta = {
-                "step": str(step_name),
-                "station": station_key,
-                "harness": self._short_ref(runtime_ref),
-                "model": self._safe_scalar(model),
-                "project": str(station.get("role") or "project operator"),
-                "inputs": self._port_names(station.get("inputs")),
-                "outputs": self._port_names(station.get("outputs")),
-                "resource_request": self._operator_request(line_key, str(step_name)),
-            }
-            machine_meta = self._machine_metadata(snapshot, machine_ref, station_key)
-            node_status = self._step_status(line_key, str(step_name))
-            x = 190 + (index % 3) * 310
-            y = 150 + (index // 3) * 205
-            nodes.append(
+            machine_key = None
+            machine_spec: dict[str, Any] = {}
+            if machine_ref:
+                try:
+                    machine_key = snapshot.key("Machine", str(machine_ref))
+                    machine_spec = snapshot.spec(machine_key)
+                except FactoryError:
+                    machine_key = str(machine_ref)
+            records.append(
                 {
-                    "id": operator_id,
-                    "type": "operator",
-                    "group": line_key,
-                    "label": f"{step_name} Operator",
-                    "position": {"x": x, "y": y},
-                    "status": node_status,
-                    "metadata": operator_meta,
+                    "step": str(step_name),
+                    "station": station_key,
+                    "station_name": str(
+                        (snapshot.doc(station_key).get("metadata") or {}).get("name") or station_key
+                    ),
+                    "role": str(station.get("role") or "transform"),
+                    "runtime": self._short_ref(runtime_ref) or "未声明",
+                    "model": self._safe_scalar(model),
+                    "machine": machine_key or "未声明",
+                    "machine_name": self._machine_name(machine_key),
+                    "machine_form": str(machine_spec.get("form") or "未声明"),
+                    "machine_spec": machine_spec,
+                    "status": self._step_status(line_key, str(step_name)),
+                    "inputs": self._port_types_for_details(station.get("inputs")),
+                    "outputs": self._port_types_for_details(station.get("outputs")),
+                    "resource_request": self._operator_request(line_key, str(step_name)),
+                    "params": self._safe_obj(raw_step.get("params") or {}),
                 }
             )
-            nodes.append(
-                {
-                    "id": machine_id,
-                    "type": "machine",
-                    "group": line_key,
-                    "label": self._machine_label(snapshot, machine_ref),
-                    "position": {"x": x + 150, "y": y},
-                    "status": node_status,
-                    "metadata": machine_meta,
-                }
-            )
-            edges.append(
-                {
-                    "id": f"{operator_id}:to:{machine_id}",
-                    "source": operator_id,
-                    "target": machine_id,
-                    "kind": "material",
-                    "condition": "Operator 交付项目执行",
-                    "status": node_status,
-                    "metadata": {"station": station_key},
-                }
-            )
-        for step_name, raw_step in steps.items():
-            if step_name not in step_nodes or not isinstance(raw_step, dict):
-                continue
-            target_operator, _ = step_nodes[step_name]
-            for source in self._binding_sources(raw_step.get("in")):
-                source_step = source.split(".", 1)[0]
-                source_nodes = step_nodes.get(source_step)
-                if source_nodes is None:
-                    continue
-                _, source_machine = source_nodes
-                condition = self._condition_summary(raw_step)
-                edges.append(
-                    {
-                        "id": f"{source_machine}:to:{target_operator}:{source}",
-                        "source": source_machine,
-                        "target": target_operator,
-                        "kind": "condition" if condition else "material",
-                        "condition": condition or f"输入绑定 {source}",
-                        "status": "unknown",
-                        "metadata": {"binding": source},
-                    }
-                )
+        return records
+
+    @staticmethod
+    def _workarea_group_key(record: dict[str, Any]) -> tuple[str, str, str]:
+        role = str(record["role"])
+        if role == "sink":
+            capability = "delivery"
+        elif role == "source":
+            capability = "ingress"
+        else:
+            capability = str(record["machine_form"])
+        return role, str(record["runtime"]), capability
+
+    @staticmethod
+    def _workarea_group_id(line_key: str, group_key: tuple[str, str, str]) -> str:
+        slug = "-".join(re.sub(r"[^A-Za-z0-9_.-]+", "-", item).strip("-") or "unknown" for item in group_key)
+        return f"{line_key}:aggregate:{slug}"
+
+    def _aggregate_operator_metadata(
+        self, line_name: str, records: list[dict[str, Any]], group_key: tuple[str, str, str]
+    ) -> dict[str, Any]:
+        _role, runtime, _capability = group_key
+        status = self._aggregate_status([record["status"] for record in records])
         return {
-            "scope": "workarea",
-            "id": line_key,
-            "title": str(metadata.get("name") or line_key),
-            "nodes": nodes,
-            "edges": edges,
+            "project": line_name,
+            "project_summary": f"{line_name} 项目由 Operator 负责整体运行",
+            "recent_status": status,
+            "harness": runtime,
+            "operator_runtime": sorted({record["runtime"] for record in records}),
+            "models": sorted({record["model"] for record in records if record["model"]}),
+            "inputs": sorted({item for record in records for item in record["inputs"]}),
+            "outputs": sorted({item for record in records for item in record["outputs"]}),
+            "step_count": len(records),
+            "internal_steps": self._internal_step_details(records),
+            "roles": sorted({record["role"] for record in records}),
+            "resource_requests": [
+                record["resource_request"] for record in records if record["resource_request"]
+            ],
+            "delivery": "由 Foreman、Operator 和项目配置判断",
+            "provenance": self._node_provenance(),
+        }
+
+    def _aggregate_machine_metadata(
+        self, snapshot: Any, line_name: str, records: list[dict[str, Any]], group_key: tuple[str, str, str]
+    ) -> dict[str, Any]:
+        _role, _runtime, capability = group_key
+        machine_keys = list(dict.fromkeys(str(record["machine"]) for record in records))
+        machines = [
+            self._machine_resource_details(snapshot, machine_key, records)
+            for machine_key in machine_keys
+            if machine_key != "未声明"
+        ]
+        status = self._aggregate_status([record["status"] for record in records])
+        return {
+            "project": line_name,
+            "project_summary": f"{line_name} 的完整启动项目与交付能力",
+            "recent_status": status,
+            "machines": machines,
+            "machine_count": len(machines),
+            "inputs": sorted({item for record in records for item in record["inputs"]}),
+            "outputs": sorted({item for record in records for item in record["outputs"]}),
+            "repos": sorted({item["repo"] for item in machines if item.get("repo")}),
+            "workflows": sorted({item["workflow"] for item in machines if item.get("workflow")}),
+            "step_count": len(records),
+            "internal_steps": self._internal_step_details(records),
+            "roles": sorted({record["role"] for record in records}),
+            "delivery": "由 Foreman、Operator 和项目配置判断",
+            "capability": capability,
+            "provenance": self._node_provenance(),
+        }
+
+    def _machine_resource_details(
+        self, snapshot: Any, machine_key: str, records: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        matching = [record for record in records if record["machine"] == machine_key]
+        try:
+            spec = snapshot.spec(machine_key)
+            metadata = snapshot.doc(machine_key).get("metadata") or {}
+        except FactoryError:
+            return {
+                "id": machine_key,
+                "name": self._machine_name(machine_key),
+                "form": "未声明",
+                "instance": None,
+                "resources": {},
+                "repo": None,
+                "workflow": None,
+                "recipes": [],
+                "stations": sorted({record["station"] for record in matching}),
+            }
+        source = spec.get("source") or {}
+        runtime = spec.get("runtime") or {}
+        return {
+            "id": machine_key,
+            "name": str(metadata.get("name") or self._machine_name(machine_key)),
+            "form": str(spec.get("form") or "未声明"),
+            "instance": self._safe_scalar(runtime.get("instance")),
+            "resources": self._safe_obj(runtime.get("resources") or {}),
+            "repo": self._safe_scalar(source.get("repo")),
+            "workflow": self._safe_scalar(source.get("workflow")),
+            "recipes": sorted(str(item) for item in (spec.get("recipes") or {})),
+            "stations": sorted({record["station"] for record in matching}),
+        }
+
+    @staticmethod
+    def _internal_step_details(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": record["step"],
+                "station": record["station_name"],
+                "status": record["status"],
+                "machine": record["machine_name"],
+                "operator": record["runtime"],
+                "inputs": record["inputs"],
+                "outputs": record["outputs"],
+                "params": record["params"],
+            }
+            for record in records
+        ]
+
+    @staticmethod
+    def _aggregate_operator_label(group_key: tuple[str, str, str]) -> str:
+        del group_key
+        return "Operator"
+
+    @staticmethod
+    def _aggregate_machine_label(group_key: tuple[str, str, str]) -> str:
+        del group_key
+        return "Machine"
+
+    @staticmethod
+    def _role_label(role: str) -> str:
+        return {
+            "source": "接入",
+            "transform": "处理",
+            "converter": "转换",
+            "planner": "规划",
+            "sink": "交付",
+        }.get(role, role)
+
+    @staticmethod
+    def _aggregate_status(statuses: list[str]) -> str:
+        values = set(statuses)
+        for candidate in ("exception", "running", "repairing", "validating", "waiting", "ready", "skipped"):
+            if candidate in values:
+                return candidate
+        return "unknown"
+
+    @staticmethod
+    def _machine_name(machine_key: str | None) -> str:
+        if not machine_key:
+            return "未声明"
+        return machine_key.split(":", 1)[-1].split("@", 1)[0]
+
+    @staticmethod
+    def _port_types_for_details(value: Any) -> list[str]:
+        if not isinstance(value, dict):
+            return []
+        found: list[str] = []
+        for name, declaration in value.items():
+            if isinstance(declaration, dict) and declaration.get("type"):
+                found.append(f"{name}: {declaration['type']}")
+            elif isinstance(declaration, str):
+                found.append(f"{name}: {declaration}")
+        return sorted(found)
+
+    def _graph_provenance(self) -> dict[str, Any]:
+        status = self.status()
+        foreman = self.foreman()
+        return {
+            "projection": "web_read_model.aggregate",
+            "static_source": "registry",
+            "runtime_source": "runs, run_nodes and wakes",
+            "foreman": {
+                "configured": bool(foreman.get("configured")),
+                "online": bool((status.get("supervisor") or {}).get("online")),
+                "graph_generated": False,
+                "state_source": "supervisor status",
+            },
+        }
+
+    @staticmethod
+    def _node_provenance() -> dict[str, str]:
+        return {
+            "static_source": "registry Line, Station, Machine and OperatorRuntime",
+            "runtime_source": "runs, run_nodes and wakes",
+            "projection": "web_read_model.aggregate",
         }
 
     def assets(self, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -262,26 +469,330 @@ class WebReadModel:
                 }
         for candidate in self._local_harnesses():
             found[candidate["id"]] = candidate
+        profiles = {
+            item["runtime"]: item for item in self.harness_profiles() if item.get("role") == "operator"
+        }
+        profiles.update(
+            {item["runtime"]: item for item in self.harness_profiles() if item["runtime"] not in profiles}
+        )
+        for item in found.values():
+            runtime = self._runtime_name(item["id"])
+            item["configuration"] = profiles.get(runtime)
         return sorted(found.values(), key=lambda item: (str(item.get("name", "")), str(item["id"])))
+
+    def dependencies(self) -> dict[str, Any]:
+        harnesses = []
+        for item in self.harnesses():
+            if item.get("kind") != "agent-cli":
+                continue
+            invoke = item.get("capabilities") or {}
+            harnesses.append(
+                {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "version": item.get("version"),
+                    "state": "ready" if item.get("available") else "missing",
+                    "integrity": {
+                        "runtime": True,
+                        "entrypoint": bool(item.get("available")),
+                        "tool_calls": bool(invoke.get("tool_calls")),
+                    },
+                }
+            )
+        return {
+            "harnesses": harnesses,
+            "docker": self._docker_dependency(),
+        }
+
+    @staticmethod
+    def _docker_dependency() -> dict[str, Any]:
+        executable = shutil.which("docker")
+        if executable is None:
+            return {"state": "missing", "version": None, "message": "未找到 Docker CLI"}
+        try:
+            result = subprocess.run(
+                [executable, "info", "--format", "{{.ServerVersion}}"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return {"state": "offline", "version": None, "message": "Docker CLI 存在，但 daemon 不在线"}
+        version = result.stdout.strip()
+        if result.returncode != 0 or not version:
+            return {"state": "offline", "version": None, "message": "Docker daemon 不在线"}
+        return {"state": "online", "version": version, "message": "Docker daemon 在线"}
+
+    def harness_profiles(self) -> list[dict[str, Any]]:
+        path = Path(self.ctx.root) / _HARNESS_PROFILE_PATH
+        if not path.is_file():
+            return []
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        raw_profiles = body.get("profiles") if isinstance(body, dict) else None
+        if not isinstance(raw_profiles, list):
+            return []
+        return [self._public_harness_profile(item) for item in raw_profiles if isinstance(item, dict)]
+
+    def save_harness_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise FactoryError("HARNESS_CONFIG_INVALID", "Harness 配置必须是对象", field="config")
+        runtime = self._runtime_name(payload.get("runtime"))
+        if not runtime:
+            raise FactoryError("HARNESS_CONFIG_INVALID", "缺少 runtime", field="runtime")
+        snapshot = self._require_snapshot()
+        runtime_key = snapshot.key("OperatorRuntime", runtime)
+        runtime_spec = snapshot.spec(runtime_key)
+        if runtime_spec.get("kind") != "agent-cli":
+            raise FactoryError("HARNESS_CONFIG_INVALID", "runtime 不是 agent-cli", field="runtime")
+        model = self._required_text(payload, "model")
+        allowed = [str(item) for item in runtime_spec.get("models_allowed") or []]
+        if allowed and model not in allowed:
+            raise FactoryError("HARNESS_CONFIG_INVALID", "模型不在 runtime 允许列表中", field="model")
+        base_url = self._required_text(payload, "base_url")
+        parsed = urlsplit(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise FactoryError("HARNESS_CONFIG_INVALID", "base_url 必须是 HTTP URL", field="base_url")
+        effort = str(payload.get("thinking_effort") or "medium")
+        if effort not in _THINKING_EFFORTS:
+            raise FactoryError("HARNESS_CONFIG_INVALID", "thinking_effort 不合法", field="thinking_effort")
+        context = self._positive_int(payload.get("context"), "context")
+        role = str(payload.get("role") or "operator")
+        if role not in {"operator", "foreman"}:
+            raise FactoryError("HARNESS_CONFIG_INVALID", "role 不合法", field="role")
+        profile_id = self._profile_id(runtime, role)
+        secret_name = f"HARNESS_{re.sub(r'[^A-Za-z0-9]+', '_', profile_id).upper()}_API_KEY"
+        api_key = str(payload.get("api_key") or "")
+        existing = next((item for item in self._stored_profiles() if item.get("id") == profile_id), None)
+        if api_key:
+            store_secret(self.ctx.root, secret_name, "model", api_key)
+        elif existing and existing.get("api_key_secret"):
+            secret_name = str(existing.get("api_key_secret") or secret_name)
+        else:
+            secret_name = ""
+        profile = {
+            "id": profile_id,
+            "runtime": runtime,
+            "role": role,
+            "base_url": base_url,
+            "model": model,
+            "thinking_effort": effort,
+            "context": context,
+            "api_key_secret": secret_name,
+            "image": str(payload.get("image") or ""),
+            "network": str(payload.get("network") or "egress"),
+            "session_timeout_s": self._positive_number(
+                payload.get("session_timeout_s", 600), "session_timeout_s"
+            ),
+            "session_budget_usd": self._nonnegative_number(
+                payload.get("session_budget_usd", 1), "session_budget_usd"
+            ),
+            "daily_budget_usd": self._nonnegative_number(
+                payload.get("daily_budget_usd", 10), "daily_budget_usd"
+            ),
+            "max_turns": self._positive_int(payload.get("max_turns", 20), "max_turns"),
+            "max_attempts": self._positive_int(payload.get("max_attempts", 2), "max_attempts"),
+            "backoff_s": self._nonnegative_number(payload.get("backoff_s", 60), "backoff_s"),
+            "mode": str(payload.get("mode") or "session"),
+            "verification": {"state": "pending", "reason": "等待 Foreman 验证", "checked_at": None},
+            "updated_at": utc_iso(self.ctx.clock.now()),
+        }
+        if profile["network"] not in {"none", "egress"}:
+            raise FactoryError("HARNESS_CONFIG_INVALID", "network 不合法", field="network")
+        if profile["mode"] not in {"session", "resident"}:
+            raise FactoryError("HARNESS_CONFIG_INVALID", "mode 不合法", field="mode")
+        profiles = [item for item in self._stored_profiles() if item.get("id") != profile_id]
+        profiles.append(profile)
+        self._write_profiles(profiles)
+        if profile["role"] == "foreman":
+            self._write_foreman_config(profile)
+        return self._public_harness_profile(profile)
+
+    def verify_harness_profile(self, profile_id: str) -> dict[str, Any]:
+        profile = next((item for item in self._stored_profiles() if item.get("id") == profile_id), None)
+        if profile is None:
+            raise FactoryError("HARNESS_CONFIG_MISSING", "找不到 Harness 配置", profile=profile_id)
+        runtime = self._runtime_name(profile.get("runtime"))
+        snapshot = self._require_snapshot()
+        runtime_key = snapshot.key("OperatorRuntime", runtime)
+        runtime_spec = snapshot.spec(runtime_key)
+        allowed = [str(item) for item in runtime_spec.get("models_allowed") or []]
+        if allowed and profile.get("model") not in allowed:
+            return self._update_verification(profile, "failed", "模型不在 runtime 允许列表中")
+        if not profile.get("api_key_secret"):
+            return self._update_verification(profile, "missing", "缺少 API key")
+        if not profile.get("image"):
+            return self._update_verification(profile, "missing", "缺少 harness image")
+        foreman = self.foreman()
+        if not foreman.get("configured"):
+            return self._update_verification(
+                profile, "agent_required", "请先配置 Foreman，由 agent 验证 harness"
+            )
+        from mao.talk import post_human
+
+        message = post_human(
+            self.ctx,
+            f"请验证 Harness 配置 {profile_id}。请启动对应 harness，验证 CLI 能启动，并通过一次最小模型请求确认 base_url、model 和 API key 可用。结果写回 Web App 可读的运行记录。",
+            by="human:web",
+        )
+        result = self._update_verification(profile, "requested", "已请求 Foreman 验证", request_id=message.id)
+        result["request_id"] = message.id
+        return result
+
+    def _stored_profiles(self) -> list[dict[str, Any]]:
+        path = Path(self.ctx.root) / _HARNESS_PROFILE_PATH
+        if not path.is_file():
+            return []
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        profiles = body.get("profiles") if isinstance(body, dict) else None
+        return [item for item in profiles if isinstance(item, dict)] if isinstance(profiles, list) else []
+
+    def _write_profiles(self, profiles: list[dict[str, Any]]) -> None:
+        path = Path(self.ctx.root) / _HARNESS_PROFILE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(canonical_json({"profiles": profiles}) + "\n", encoding="utf-8")
+
+    def _write_foreman_config(self, profile: dict[str, Any]) -> None:
+        path = Path(self.ctx.root) / "factory.json"
+        body: dict[str, Any] = {}
+        if path.is_file():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    body = loaded
+            except (OSError, json.JSONDecodeError):
+                body = {}
+        section = dict(body.get("foreman") or {})
+        section.update(
+            {
+                "runtime": profile["runtime"],
+                "model": profile["model"],
+                "reviewers": section.get("reviewers") or [],
+                "models": {**dict(section.get("models") or {}), profile["runtime"]: profile["model"]},
+                "image": profile["image"],
+                "network": profile["network"],
+                "session_timeout_s": profile["session_timeout_s"],
+                "session_budget_usd": profile["session_budget_usd"],
+                "daily_budget_usd": profile["daily_budget_usd"],
+                "max_turns": profile["max_turns"],
+                "max_attempts": profile["max_attempts"],
+                "backoff_s": profile["backoff_s"],
+                "mode": profile["mode"],
+                "env": {
+                    **dict(section.get("env") or {}),
+                    "ANTHROPIC_BASE_URL": profile["base_url"],
+                    "ANTHROPIC_API_KEY": f"secret://{profile['api_key_secret']}",
+                    "MAO_THINKING_EFFORT": profile["thinking_effort"],
+                    "MAO_CONTEXT": str(profile["context"]),
+                },
+            }
+        )
+        body["foreman"] = section
+        path.write_text(canonical_json(body) + "\n", encoding="utf-8")
+
+    def _update_verification(
+        self, profile: dict[str, Any], state: str, reason: str, **extra: Any
+    ) -> dict[str, Any]:
+        profile = dict(profile)
+        profile["verification"] = {
+            "state": state,
+            "reason": reason,
+            "checked_at": utc_iso(self.ctx.clock.now()),
+            **extra,
+        }
+        profiles = [item for item in self._stored_profiles() if item.get("id") != profile.get("id")]
+        profiles.append(profile)
+        self._write_profiles(profiles)
+        return self._public_harness_profile(profile)
+
+    @staticmethod
+    def _public_harness_profile(profile: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in profile.items() if key != "api_key_secret"} | {
+            "api_key_configured": bool(profile.get("api_key_secret"))
+        }
+
+    @staticmethod
+    def _runtime_name(value: Any) -> str:
+        return str(value or "").split(":", 1)[-1]
+
+    @staticmethod
+    def _profile_id(runtime: str, role: str) -> str:
+        runtime_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", runtime).strip("-") or "harness"
+        return f"{role}-{runtime_id}"
+
+    @staticmethod
+    def _required_text(payload: dict[str, Any], field: str) -> str:
+        value = str(payload.get(field) or "").strip()
+        if not value:
+            raise FactoryError("HARNESS_CONFIG_INVALID", f"缺少 {field}", field=field)
+        return value
+
+    @staticmethod
+    def _positive_int(value: Any, field: str) -> int:
+        if isinstance(value, bool):
+            raise FactoryError("HARNESS_CONFIG_INVALID", f"{field} 必须是正整数", field=field)
+        try:
+            result = int(value)
+        except (TypeError, ValueError) as exc:
+            raise FactoryError("HARNESS_CONFIG_INVALID", f"{field} 必须是正整数", field=field) from exc
+        if result < 1:
+            raise FactoryError("HARNESS_CONFIG_INVALID", f"{field} 必须是正整数", field=field)
+        return result
+
+    @staticmethod
+    def _positive_number(value: Any, field: str) -> float:
+        try:
+            result = float(value)
+        except (TypeError, ValueError) as exc:
+            raise FactoryError("HARNESS_CONFIG_INVALID", f"{field} 必须是正数", field=field) from exc
+        if result <= 0:
+            raise FactoryError("HARNESS_CONFIG_INVALID", f"{field} 必须是正数", field=field)
+        return result
+
+    @staticmethod
+    def _nonnegative_number(value: Any, field: str) -> float:
+        try:
+            result = float(value)
+        except (TypeError, ValueError) as exc:
+            raise FactoryError("HARNESS_CONFIG_INVALID", f"{field} 必须是非负数", field=field) from exc
+        if result < 0 or result != result:
+            raise FactoryError("HARNESS_CONFIG_INVALID", f"{field} 必须是非负数", field=field)
+        return result
 
     def foreman(self) -> dict[str, Any]:
         """Expose the current Foreman Harness without exposing local credentials."""
+        profile = next((item for item in self.harness_profiles() if item.get("role") == "foreman"), None)
         try:
             from mao.supervisor import SupervisorConfig
 
             config = SupervisorConfig.load(Path(self.ctx.root))
         except (FactoryError, OSError, ValueError, TypeError):
-            return {"configured": False, "runtime": None, "model": None, "mode": None}
+            return {
+                "configured": False,
+                "setup_required": True,
+                "runtime": None,
+                "model": None,
+                "mode": None,
+                "profile": profile,
+            }
         runtime = str(config.runtime)
         harness = next(
             (item for item in self.harnesses() if item["id"] == runtime or item["name"] == runtime), None
         )
         return {
             "configured": True,
+            "setup_required": False,
             "runtime": runtime,
             "model": self._safe_scalar(config.model),
             "mode": config.mode,
             "harness": harness,
+            "profile": profile,
         }
 
     def secret_resources(self, *, limit: int = 100) -> list[dict[str, Any]]:
@@ -615,32 +1126,6 @@ class WebReadModel:
         steps = spec.get("steps") if isinstance(spec, dict) else None
         return f"{len(steps) if isinstance(steps, dict) else 0} 个执行步骤"
 
-    def _machine_metadata(self, snapshot: Any, machine_ref: Any, station_key: str) -> dict[str, Any]:
-        if not machine_ref:
-            return {"station": station_key, "project": "未声明 Machine", "delivery": "由 Foreman 判断"}
-        key = snapshot.key("Machine", str(machine_ref))
-        spec = snapshot.spec(key)
-        source = spec.get("source") or {}
-        recipes = spec.get("recipes") or {}
-        recipe = next(iter(recipes.values()), {}) if isinstance(recipes, dict) else {}
-        return {
-            "station": station_key,
-            "machine": key,
-            "project": key.split(":", 1)[-1],
-            "repo": self._safe_scalar(source.get("repo")),
-            "workflow": self._safe_scalar(source.get("workflow")),
-            "inputs": self._port_names(recipe.get("inputs")),
-            "outputs": self._port_names(recipe.get("outputs")),
-            "delivery": "由 Foreman 根据项目配置判断",
-        }
-
-    @staticmethod
-    def _machine_label(snapshot: Any, machine_ref: Any) -> str:
-        del snapshot
-        if not machine_ref:
-            return "Machine"
-        return str(machine_ref).split("@", 1)[0]
-
     def _operator_request(self, line: str, step: str) -> dict[str, Any] | None:
         rows = self.ctx.db.query(
             "SELECT id, signal, subject, payload, status, at FROM wakes WHERE subject LIKE ? ORDER BY at DESC LIMIT 1",
@@ -688,27 +1173,6 @@ class WebReadModel:
             if isinstance(port, dict) and port.get("type"):
                 found.add(str(port["type"]))
         return found
-
-    @staticmethod
-    def _port_names(value: Any) -> list[str]:
-        return sorted(str(key) for key in value) if isinstance(value, dict) else []
-
-    @staticmethod
-    def _binding_sources(value: Any) -> list[str]:
-        found: list[str] = []
-        if isinstance(value, dict):
-            for item in value.values():
-                if isinstance(item, str) and "." in item and not item.startswith("$"):
-                    found.append(item)
-        return found
-
-    @staticmethod
-    def _condition_summary(step: dict[str, Any]) -> str | None:
-        for key in ("when", "condition", "switch", "until", "map"):
-            value = step.get(key)
-            if value is not None:
-                return str(value)[:160]
-        return None
 
     @staticmethod
     def _short_ref(value: Any) -> str | None:

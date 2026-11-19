@@ -53,6 +53,9 @@ def test_web_server_serves_static_health_and_bootstrap(tmp_path: Path) -> None:
         assert all(
             node["type"] in {"operator", "machine"} for node in bootstrap["graph"]["workarea"]["nodes"]
         )
+        assert "dependencies" in bootstrap
+        assert "docker" in bootstrap["dependencies"]
+        assert any(item["kind"] == "agent-cli" for item in bootstrap["harnesses"])
     finally:
         server.close()
         ctx.close()

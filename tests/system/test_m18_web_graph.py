@@ -45,3 +45,34 @@ def test_graph_does_not_expose_sink_control_or_secret_values(tmp_path: Path) -> 
         assert "api_key=" not in serialized
         assert "delivery" in serialized
         assert "foreman" in serialized
+
+
+def test_explainer_workarea_is_a_business_aggregate(tmp_path: Path) -> None:
+    root = tmp_path / "factory"
+    with Context.open(root, provider=LocalProvider(root)) as ctx:
+        model = WebReadModel(ctx, Snapshot.load(FIXTURE))
+        graph = model.workarea_graph("explainer-multilang")
+
+        assert graph is not None
+        assert len(graph["nodes"]) == 2
+        assert sum(node["type"] == "operator" for node in graph["nodes"]) == 1
+        assert sum(node["type"] == "machine" for node in graph["nodes"]) == 1
+        assert len(graph["edges"]) == 1
+        assert {edge["kind"] for edge in graph["edges"]} == {"aggregate"}
+        assert all("binding" not in edge["metadata"] for edge in graph["edges"])
+        assert all(node["metadata"]["step_count"] == 6 for node in graph["nodes"])
+        assert {item["name"] for item in graph["nodes"][0]["metadata"]["internal_steps"]} == {
+            "explainer",
+            "dub_en",
+            "vertical",
+            "to_s3",
+            "to_github",
+            "to_shorts",
+        }
+        assert all(
+            node["metadata"]["provenance"]["static_source"]
+            == "registry Line, Station, Machine and OperatorRuntime"
+            for node in graph["nodes"]
+        )
+        assert graph["metadata"]["projection"] == "web_read_model.aggregate"
+        assert graph["metadata"]["foreman"]["graph_generated"] is False

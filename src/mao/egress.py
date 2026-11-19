@@ -167,6 +167,11 @@ class SecretStore:
             out[name] = self._read(name)
         return out
 
+    def read(self, name: str) -> str:
+        """Read one secret for a control-plane component that explicitly needs it."""
+        self.secret_class(name)
+        return self._read(name)
+
     def redact(self, text: str) -> str:
         redacted = text
         for value in self._current_values():

@@ -1,4 +1,4 @@
-import type { Bootstrap, Graph, EventRecord, AssetRecord, HarnessRecord, SecretRecord, TalkMessage } from "./types";
+import type { Bootstrap, Graph, EventRecord, AssetRecord, HarnessRecord, HarnessProfile, SecretRecord, TalkMessage } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -39,6 +39,16 @@ export const getTalk = () => api<TalkMessage[]>("/api/web/talk?limit=80");
 export const getAssets = () => api<AssetRecord[]>("/api/web/assets?limit=100");
 export const getLogs = () => api<EventRecord[]>("/api/web/logs?limit=100");
 export const getHarnesses = () => api<HarnessRecord[]>("/api/web/harnesses");
+export const configureHarness = (config: Record<string, unknown>) => api<{ profile: HarnessProfile; foreman: Bootstrap["foreman"] }>("/api/web/harnesses/configure", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(config),
+});
+export const verifyHarness = (profile_id: string) => api<{ profile: HarnessProfile }>("/api/web/harnesses/verify", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ profile_id }),
+});
 export const getSecrets = () => api<SecretRecord[]>("/api/web/secrets?limit=100");
 export const sendTalk = (text: string) => api<{ state: string; message: TalkMessage }>("/api/web/talk", {
   method: "POST",

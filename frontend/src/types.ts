@@ -1,4 +1,4 @@
-export type Page = "dashboard" | "compose" | "assets" | "logs";
+export type Page = "dashboard" | "compose" | "assets" | "logs" | "settings";
 export type Scope = "factory" | "workarea";
 
 export interface GraphNode {
@@ -27,6 +27,7 @@ export interface Graph {
   title: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface EventRecord {
@@ -58,6 +59,38 @@ export interface HarnessRecord {
   roles?: string[];
   available?: boolean;
   capabilities?: Record<string, boolean>;
+  configuration?: HarnessProfile | null;
+}
+
+export interface DependencyStatus {
+  state: string;
+  version?: string | null;
+  message?: string;
+  id?: string;
+  name?: string;
+  integrity?: Record<string, boolean>;
+}
+
+export interface HarnessProfile {
+  id: string;
+  runtime: string;
+  role: "operator" | "foreman" | string;
+  base_url: string;
+  model: string;
+  thinking_effort: string;
+  context: number;
+  api_key_configured: boolean;
+  image?: string;
+  network?: string;
+  session_timeout_s?: number;
+  session_budget_usd?: number;
+  daily_budget_usd?: number;
+  max_turns?: number;
+  max_attempts?: number;
+  backoff_s?: number;
+  mode?: string;
+  verification?: { state?: string; reason?: string; checked_at?: string | null; request_id?: string };
+  updated_at?: string;
 }
 
 export interface SecretRecord {
@@ -90,7 +123,9 @@ export interface Bootstrap {
   logs: EventRecord[];
   talk: TalkMessage[];
   harnesses: HarnessRecord[];
-  foreman: { configured?: boolean; runtime?: string | null; model?: string | null; mode?: string | null };
+  harness_profiles?: HarnessProfile[];
+  dependencies?: { harnesses: DependencyStatus[]; docker: DependencyStatus };
+  foreman: { configured?: boolean; setup_required?: boolean; runtime?: string | null; model?: string | null; mode?: string | null; profile?: HarnessProfile | null };
   secrets: SecretRecord[];
   constitution: {
     available?: boolean;

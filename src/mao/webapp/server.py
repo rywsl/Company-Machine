@@ -81,9 +81,16 @@ class WebServer:
                 else:
                     self._static(handler, parsed.path)
                 return
-            if handler.command == "POST" and parsed.path == "/api/web/talk":
-                self._talk(handler)
-                return
+            if handler.command == "POST":
+                if parsed.path == "/api/web/talk":
+                    self._talk(handler)
+                    return
+                if parsed.path == "/api/web/harnesses/configure":
+                    self._configure_harness(handler)
+                    return
+                if parsed.path == "/api/web/harnesses/verify":
+                    self._verify_harness(handler)
+                    return
             self._error(handler, 405, "WEB_METHOD_NOT_ALLOWED", "请求方法不支持", {"method": handler.command})
         except _WebError as exc:
             status = (
@@ -146,13 +153,7 @@ class WebServer:
         raise _WebError("WEB_NOT_FOUND", "找不到 Web App API", path=path)
 
     def _talk(self, handler: BaseHTTPRequestHandler) -> None:
-        length = int(handler.headers.get("Content-Length", "0"))
-        if length < 1 or length > 64 * 1024:
-            raise _WebError("WEB_BAD_REQUEST", "请求体长度不合法", field="Content-Length")
-        try:
-            body = json.loads(handler.rfile.read(length).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise _WebError("WEB_BAD_REQUEST", "请求体不是合法 JSON") from exc
+        body = self._body(handler)
         if not isinstance(body, dict) or not isinstance(body.get("text"), str) or not body["text"].strip():
             raise _WebError("WEB_BAD_REQUEST", "text 必须是非空字符串", field="text")
         message = post_human(self.ctx, body["text"].strip(), by=getpass.getuser())
@@ -160,6 +161,30 @@ class WebServer:
         response["body"] = WebReadModel.safe_text(response.get("body"), 1200)
         response.pop("mailbox_id", None)
         self._json(handler, 202, {"state": "queued", "message": response})
+
+    def _configure_harness(self, handler: BaseHTTPRequestHandler) -> None:
+        body = self._body(handler)
+        if not isinstance(body, dict):
+            raise _WebError("WEB_BAD_REQUEST", "Harness 配置必须是对象")
+        profile = self.model.save_harness_profile(body)
+        self._json(handler, 200, {"profile": profile, "foreman": self.model.foreman()})
+
+    def _verify_harness(self, handler: BaseHTTPRequestHandler) -> None:
+        body = self._body(handler)
+        if not isinstance(body, dict) or not isinstance(body.get("profile_id"), str):
+            raise _WebError("WEB_BAD_REQUEST", "缺少 profile_id", field="profile_id")
+        profile = self.model.verify_harness_profile(body["profile_id"])
+        self._json(handler, 202, {"profile": profile})
+
+    @staticmethod
+    def _body(handler: BaseHTTPRequestHandler) -> Any:
+        length = int(handler.headers.get("Content-Length", "0"))
+        if length < 1 or length > 64 * 1024:
+            raise _WebError("WEB_BAD_REQUEST", "请求体长度不合法", field="Content-Length")
+        try:
+            return json.loads(handler.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _WebError("WEB_BAD_REQUEST", "请求体不是合法 JSON") from exc
 
     def _static(self, handler: BaseHTTPRequestHandler, path: str) -> None:
         production = (_DIST / "index.html").is_file()
