@@ -79,6 +79,16 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       events.publish("runtime.podman.checked", runtimeDependency(health));
       return response({ provider: "podman", health, dependency: runtimeDependency(health) }, health.available ? 200 : 503);
     }
+    if (url.pathname === "/api/v1/business-systems/import" && request.method === "POST") {
+      const document = await readJson(request);
+      try {
+        const imported = importBusinessSystem(store, document);
+        events.publish("business-system.imported", { id: imported.id, schema: document.schema });
+        return response(exportBusinessSystem(store, imported.id), 201);
+      } catch (error) {
+        return response({ error: error instanceof Error ? error.message : "business system document is invalid" }, 400);
+      }
+    }
     if (url.pathname === "/api/v1/business-systems" && request.method === "GET") return response(store.listBusinessSystems());
     if (url.pathname === "/api/v1/business-systems" && request.method === "POST") {
       const body = await readJson(request);
@@ -387,6 +397,35 @@ function exportBusinessSystem(store: SqliteStore, id: string) {
     conversions: store.listBusinessConversions(id),
     runs: store.listBusinessRuns(id).map((run) => ({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) })),
   };
+}
+
+function importBusinessSystem(store: SqliteStore, document: Record<string, any>): BusinessSystem {
+  if (document.schema !== "mao.business-system/1" || !document.system || typeof document.system.name !== "string") throw new Error("business system document schema or name is invalid");
+  const system = store.createBusinessSystem({ name: document.system.name, description: typeof document.system.description === "string" ? document.system.description : undefined, metadata: document.system.metadata && typeof document.system.metadata === "object" ? document.system.metadata : {} });
+  const projectIds = new Map<string, string>();
+  for (const sourceProject of Array.isArray(document.projects) ? document.projects : []) {
+    if (!sourceProject || typeof sourceProject.name !== "string") continue;
+    const sources = Array.isArray(sourceProject.sources) ? sourceProject.sources : [];
+    const intake: Record<string, any> = { business_system_id: system.id, name: sourceProject.name, metadata: sourceProject.metadata && typeof sourceProject.metadata === "object" ? sourceProject.metadata : {} };
+    const firstRepo = sources.find((source: any) => source?.kind === "repo_url" && typeof source.ref === "string");
+    const fileRefs = sources.filter((source: any) => source?.kind !== "repo_url" && typeof source?.ref === "string").map((source: any) => String(source.ref));
+    if (firstRepo) intake.repo_url = firstRepo.ref;
+    if (fileRefs.length) intake.uploaded_file_refs = fileRefs;
+    const project = store.createIntake(intake);
+    if (typeof sourceProject.id === "string") projectIds.set(sourceProject.id, project.id);
+  }
+  for (const record of Array.isArray(document.records) ? document.records : []) {
+    if (!record || typeof record.kind !== "string" || typeof record.ref !== "string" || typeof record.summary !== "string") continue;
+    const projectId = projectIds.get(String(record.projectId ?? record.project_id));
+    if (!projectId) continue;
+    store.addArtifact({ projectId, recordType: record.recordType === "artifact" ? "artifact" : "material", sourceId: typeof record.sourceId === "string" ? record.sourceId : undefined, kind: record.kind, ref: record.ref, title: record.title, description: record.description, summary: record.summary, purpose: record.purpose, status: record.status, producer: record.producer, files: Array.isArray(record.files) ? record.files : undefined, inputs: Array.isArray(record.inputs) ? record.inputs : undefined, outputs: Array.isArray(record.outputs) ? record.outputs : undefined, lineage: Array.isArray(record.lineage) ? record.lineage : undefined, metadata: record.metadata && typeof record.metadata === "object" ? record.metadata : {} });
+  }
+  if (document.graph && typeof document.graph === "object") store.updateBusinessSystemMetadata(system.id, { graph: document.graph, graph_updated_by: "import" });
+  for (const conversion of Array.isArray(document.conversions) ? document.conversions : []) {
+    if (typeof conversion.kind !== "string" || typeof conversion.summary !== "string") continue;
+    store.createBusinessConversion({ businessSystemId: system.id, kind: conversion.kind, summary: conversion.summary, status: conversion.status === "running" || conversion.status === "completed" || conversion.status === "failed" ? conversion.status : "planned", inputs: Array.isArray(conversion.inputs) ? conversion.inputs : [], outputs: Array.isArray(conversion.outputs) ? conversion.outputs : [], producer: conversion.producer, metadata: conversion.metadata && typeof conversion.metadata === "object" ? conversion.metadata : {} });
+  }
+  return system;
 }
 
 function graphProjection(store: SqliteStore, scope: string, workarea: string | null) {

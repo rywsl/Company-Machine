@@ -25,6 +25,10 @@ describe("business record and DAG boundaries", () => {
       expect(exported.schema).toBe("mao.business-system/1");
       expect(exported.conversions).toHaveLength(1);
       expect(JSON.stringify(exported)).not.toContain("C:/work");
+      const imported = await body(await app.fetch(new Request("http://localhost/api/v1/business-systems/import", { method: "POST", headers, body: JSON.stringify(exported) })));
+      expect(imported.schema).toBe("mao.business-system/1");
+      expect(imported.system.name).toBe("制作业务");
+      expect(imported.records).toHaveLength(1);
     } finally {
       app.stop();
       await rm(dbPath, { force: true });
