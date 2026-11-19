@@ -56,6 +56,22 @@ export interface UnitRun {
   updatedAt: string;
 }
 
+export type BusinessConversionStatus = "planned" | "running" | "completed" | "failed";
+
+export interface BusinessConversion {
+  id: string;
+  businessSystemId: string;
+  kind: string;
+  summary: string;
+  status: BusinessConversionStatus;
+  inputs: string[];
+  outputs: string[];
+  producer?: { operator?: string; harness?: string };
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ProjectSourceKind = "repo_url" | "uploaded_file" | "local_folder";
 
 export interface ProjectSource {

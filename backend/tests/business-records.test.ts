@@ -19,6 +19,12 @@ describe("business record and DAG boundaries", () => {
       const materials = await body(await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/materials`)));
       expect(materials).toHaveLength(1);
       expect(materials[0].files[0].path).toBe("storyboard.md");
+      const conversion = await body(await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/conversions`, { method: "POST", headers, body: JSON.stringify({ kind: "review-to-material", summary: "审核脚本转换为可执行物料", inputs: [created.ref], outputs: ["cas://approved-script"] }) })));
+      expect(conversion.status).toBe("planned");
+      const exported = await body(await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/export`)));
+      expect(exported.schema).toBe("mao.business-system/1");
+      expect(exported.conversions).toHaveLength(1);
+      expect(JSON.stringify(exported)).not.toContain("C:/work");
     } finally {
       app.stop();
       await rm(dbPath, { force: true });

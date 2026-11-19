@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import type {
   Artifact,
   BusinessSystem,
+  BusinessConversion,
   BusinessRun,
   BusinessUnit,
   Event,
@@ -124,12 +125,19 @@ export class SqliteStore {
         outputs TEXT NOT NULL DEFAULT '[]', error TEXT, created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL, UNIQUE(run_id, unit_id)
       );
+      CREATE TABLE IF NOT EXISTS business_conversions (
+        id TEXT PRIMARY KEY, business_system_id TEXT NOT NULL, kind TEXT NOT NULL,
+        summary TEXT NOT NULL, status TEXT NOT NULL, inputs TEXT NOT NULL DEFAULT '[]',
+        outputs TEXT NOT NULL DEFAULT '[]', producer TEXT, metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS business_talk_messages_created ON business_talk_messages(created_at, id);
       CREATE INDEX IF NOT EXISTS secret_requests_project ON secret_requests(project_id, created_at);
       CREATE INDEX IF NOT EXISTS foreman_outbox_status ON foreman_outbox(status, created_at, id);
       CREATE INDEX IF NOT EXISTS business_units_system ON business_units(business_system_id, kind, created_at, id);
       CREATE INDEX IF NOT EXISTS business_runs_system ON business_runs(business_system_id, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_run ON unit_runs(run_id, status, created_at, id);
+      CREATE INDEX IF NOT EXISTS business_conversions_system ON business_conversions(business_system_id, created_at, id);
     `);
   }
 
@@ -409,6 +417,30 @@ export class SqliteStore {
   listBusinessSystemArtifacts(businessSystemId: string): Artifact[] {
     const rows = this.db.query("SELECT artifacts.* FROM artifacts JOIN projects ON projects.id = artifacts.project_id WHERE projects.business_system_id = ? ORDER BY artifacts.created_at, artifacts.id").all(businessSystemId);
     return rows.map((row: any) => this.artifactFromRow(row));
+  }
+
+  createBusinessConversion(input: Omit<BusinessConversion, "id" | "createdAt" | "updatedAt">): BusinessConversion {
+    const timestamp = now();
+    const value: BusinessConversion = { ...input, id: randomUUID(), createdAt: timestamp, updatedAt: timestamp };
+    this.db.query("INSERT INTO business_conversions (id,business_system_id,kind,summary,status,inputs,outputs,producer,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(value.id, value.businessSystemId, value.kind, value.summary, value.status, json(value.inputs), json(value.outputs), value.producer ? json(value.producer) : null, json(value.metadata), timestamp, timestamp);
+    return value;
+  }
+
+  listBusinessConversions(businessSystemId: string): BusinessConversion[] {
+    return this.db.query("SELECT * FROM business_conversions WHERE business_system_id=? ORDER BY created_at,id").all(businessSystemId).map((row: any) => ({
+      id: row.id,
+      businessSystemId: row.business_system_id,
+      kind: row.kind,
+      summary: row.summary,
+      status: row.status,
+      inputs: parseList(row.inputs),
+      outputs: parseList(row.outputs),
+      producer: row.producer ? parseJson(row.producer) as BusinessConversion["producer"] : undefined,
+      metadata: parseJson(row.metadata),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   private artifactFromRow(row: any): Artifact {

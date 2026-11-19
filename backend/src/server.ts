@@ -4,7 +4,7 @@ import { VaultStore } from "./vault";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
-import type { BusinessSystem } from "./models";
+import type { BusinessConversion, BusinessSystem } from "./models";
 import { PodmanProvider, type RuntimeHealth } from "../runtime/podman";
 import { ForemanCoordinator } from "./foreman";
 import { OperatorCoordinator } from "./operator";
@@ -117,6 +117,26 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       if (!system) return response({ error: "business system was not found" }, 404);
       const artifacts = store.listBusinessSystemArtifacts(system.id);
       return response(systemArtifactsMatch[2] === "materials" ? artifacts.filter((item) => item.recordType === "material") : artifacts);
+    }
+    const conversionMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/conversions$/);
+    if (conversionMatch && request.method === "GET") {
+      if (!store.listBusinessSystems().some((item) => item.id === conversionMatch[1])) return response({ error: "business system was not found" }, 404);
+      return response(store.listBusinessConversions(conversionMatch[1]));
+    }
+    if (conversionMatch && request.method === "POST") {
+      const body = await readJson(request);
+      if (typeof body.kind !== "string" || typeof body.summary !== "string") return response({ error: "kind and summary are required" }, 400);
+      if (body.inputs !== undefined && (!Array.isArray(body.inputs) || body.inputs.some((item: unknown) => typeof item !== "string"))) return response({ error: "inputs must be string references" }, 400);
+      if (body.outputs !== undefined && (!Array.isArray(body.outputs) || body.outputs.some((item: unknown) => typeof item !== "string"))) return response({ error: "outputs must be string references" }, 400);
+      if (!store.listBusinessSystems().some((item) => item.id === conversionMatch[1])) return response({ error: "business system was not found" }, 404);
+      const conversion = store.createBusinessConversion({ businessSystemId: conversionMatch[1], kind: body.kind, summary: body.summary, status: body.status === "running" || body.status === "completed" || body.status === "failed" ? body.status : "planned", inputs: body.inputs ?? [], outputs: body.outputs ?? [], producer: body.producer && typeof body.producer === "object" ? body.producer : undefined, metadata: body.metadata && typeof body.metadata === "object" ? body.metadata : {} });
+      events.publish("business-conversion.created", conversion);
+      return response(conversion, 201);
+    }
+    const exportMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/export$/);
+    if (exportMatch && request.method === "GET") {
+      const document = exportBusinessSystem(store, exportMatch[1]);
+      return document ? response(document) : response({ error: "business system was not found" }, 404);
     }
     const unitsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/units$/);
     if (unitsMatch && request.method === "GET") {
@@ -339,6 +359,34 @@ function publicUnit(unit: any) {
 
 function publicUnitRun(run: any) {
   return { ...run };
+}
+
+function exportBusinessSystem(store: SqliteStore, id: string) {
+  const system = store.listBusinessSystems().find((item) => item.id === id);
+  if (!system) return undefined;
+  const projects = store.listProjects().filter((project) => project.businessSystemId === id).map((project) => ({
+    id: project.id,
+    name: project.name,
+    metadata: project.metadata,
+    sources: project.sources.map((source) => ({
+      kind: source.kind,
+      ref: source.kind === "repo_url" ? source.repoUrl : source.kind === "uploaded_file" ? source.fileRef : `intake://${project.id}`,
+      metadata: source.metadata,
+    })),
+    secretRequests: project.secretRequests.map((secret) => ({ id: secret.id, name: secret.name, status: secret.status, metadata: secret.metadata })),
+  }));
+  const artifacts = store.listBusinessSystemArtifacts(id);
+  return {
+    schema: "mao.business-system/1",
+    exportedAt: new Date().toISOString(),
+    system: { ...system, metadata: { ...system.metadata } },
+    graph: system.metadata.graph ?? graphProjection(store, "workarea", id),
+    units: store.listBusinessUnits(id).map(publicUnit),
+    projects,
+    records: artifacts,
+    conversions: store.listBusinessConversions(id),
+    runs: store.listBusinessRuns(id).map((run) => ({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) })),
+  };
 }
 
 function graphProjection(store: SqliteStore, scope: string, workarea: string | null) {
