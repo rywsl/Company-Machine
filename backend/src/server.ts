@@ -103,7 +103,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       if (!system) return response({ error: "business system was not found" }, 404);
       const projects = store.listProjects().filter((project) => project.businessSystemId === system.id);
       const artifacts = store.listBusinessSystemArtifacts(system.id);
-      return response({ ...system, projects, artifacts, materials: artifacts.filter((item) => item.recordType === "material") });
+      return response({ ...system, projects, artifacts: artifacts.map(publicArtifact), materials: artifacts.filter((item) => item.recordType === "material").map(publicArtifact) });
     }
     const graphMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/graph$/);
     if (graphMatch && request.method === "GET") {
@@ -126,7 +126,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       const system = store.listBusinessSystems().find((item) => item.id === systemArtifactsMatch[1]);
       if (!system) return response({ error: "business system was not found" }, 404);
       const artifacts = store.listBusinessSystemArtifacts(system.id);
-      return response(systemArtifactsMatch[2] === "materials" ? artifacts.filter((item) => item.recordType === "material") : artifacts);
+      return response((systemArtifactsMatch[2] === "materials" ? artifacts.filter((item) => item.recordType === "material") : artifacts).map(publicArtifact));
     }
     const conversionMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/conversions$/);
     if (conversionMatch && request.method === "GET") {
@@ -196,7 +196,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       return response({ ...project, project_id: project.id, state: "accepted" }, 201);
     }
     const artifactMatch = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/artifacts$/);
-    if (artifactMatch && request.method === "GET") return response(store.listArtifacts(artifactMatch[1]));
+    if (artifactMatch && request.method === "GET") return response(store.listArtifacts(artifactMatch[1]).map(publicArtifact));
     if (artifactMatch && request.method === "POST") {
       const body = await readJson(request);
       if (typeof body.kind !== "string" || typeof body.ref !== "string" || typeof body.summary !== "string") return response({ error: "kind, ref, and summary are required" }, 400);
@@ -207,7 +207,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       const metadata = { ...body.metadata, record_type: body.record_type, title: body.title, description: body.description, summary: body.summary, purpose: body.purpose, status: body.status, producer: body.producer, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage };
       const artifact = store.addArtifact({ projectId: project.id, sourceId: typeof body.source_id === "string" ? body.source_id : undefined, recordType: body.record_type, kind: body.kind, ref: body.ref, title: typeof body.title === "string" ? body.title : undefined, description: typeof body.description === "string" ? body.description : undefined, status: typeof body.status === "string" ? body.status : undefined, producer: body.producer && typeof body.producer === "object" ? body.producer : undefined, summary: body.summary, purpose: typeof body.purpose === "string" ? body.purpose : undefined, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage, metadata });
       events.publish("artifact.created", artifact);
-      return response(artifact, 201);
+      return response(publicArtifact(artifact), 201);
     }
     if (url.pathname === "/api/v1/talk" && request.method === "POST") {
       const body = await readJson(request);
@@ -371,6 +371,10 @@ function publicUnitRun(run: any) {
   return { ...run };
 }
 
+function publicArtifact(record: any) {
+  return { ...record, project_id: record.projectId, source_id: record.sourceId, record_type: record.recordType, created_at: record.createdAt };
+}
+
 function exportBusinessSystem(store: SqliteStore, id: string) {
   const system = store.listBusinessSystems().find((item) => item.id === id);
   if (!system) return undefined;
@@ -393,7 +397,7 @@ function exportBusinessSystem(store: SqliteStore, id: string) {
     graph: system.metadata.graph ?? graphProjection(store, "workarea", id),
     units: store.listBusinessUnits(id).map(publicUnit),
     projects,
-    records: artifacts.map((record) => ({ ...record, metadata: portableValue(record.metadata) })),
+    records: artifacts.map((record) => ({ ...publicArtifact(record), metadata: portableValue(record.metadata) })),
     conversions: store.listBusinessConversions(id).map((conversion) => ({ ...conversion, metadata: portableValue(conversion.metadata) })),
     runs: store.listBusinessRuns(id).map((run) => ({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) })),
   };
