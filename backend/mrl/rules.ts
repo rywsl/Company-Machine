@@ -152,7 +152,10 @@ export class RuleProgram {
       this.relations.set(relation.name, relation);
     }
     this.rules = modules.flatMap((module) => module.rules);
-    for (const rule of this.rules) if (!this.relations.has(rule.relation)) throw new MrlRuleError("MRL-UNDEFINED", `undefined relation ${rule.relation}`);
+    for (const rule of this.rules) {
+      if (!this.relations.has(rule.relation)) throw new MrlRuleError("MRL-UNDEFINED", `undefined relation ${rule.relation}`);
+      for (const body of rule.body) if (body.kind === "atom" && !this.relations.has(body.relation)) throw new MrlRuleError("MRL-UNDEFINED", `undefined relation ${body.relation}`);
+    }
   }
   evaluate(facts: Record<string, Row[]> = {}, budget = 100_000): RuleModel {
     const rows = new Map<string, Row[]>();
