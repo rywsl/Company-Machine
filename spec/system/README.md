@@ -59,12 +59,12 @@
 
 这些决定已经做出。任务执行者**禁止**在实现中改变它们；发现它们行不通时，停下来写 `plan/journal/` 记录并阻塞任务（见 `plan/README.md`）。
 
-**D1 语言与包。** 控制面用 Python ≥ 3.12，包名 `mao`，源码放在 `src/mao/`，与 `src/mrl/` 同仓库、同一个 `pyproject.toml`。命令行入口是 `factory = "mao.cli:main"`。
+**D1 语言与包。** 业务控制面使用 TypeScript，运行时为 Bun，源码入口在 `backend/src/`，命令行入口为 `factory:bun`。现有 `src/mao/` Python 执行面保留为迁移期兼容实现，负责尚未迁移的 Runner、治理、完整 MRL 工具链和旧 `factory` 命令。新的 BusinessSystem、Foreman Web API、物料投影和官方 Harness 信息分配不得依赖 Python 进程才能提供基本业务闭环。
 
-**D2 依赖。** 运行时依赖只允许：标准库、`pyyaml`、`jsonschema`、本仓库的 `mrl`。新增任何第三方依赖都必须先有 ADR。
-- 没有 Docker SDK：调用 `docker` 命令行（子进程）。
-- 没有 ORM：直接用标准库 `sqlite3`。
-- 没有 psutil、requests、pydantic。
+**D2 依赖。** Bun 业务控制面只使用 Bun 内置 SQLite、Web API、文件系统和进程接口，不调用模型厂商 API，不新增运行时依赖。前端只使用仓库已登记的 React 与 React Flow。Python 迁移兼容层继续遵守标准库、`pyyaml`、`jsonschema` 和本仓库 `mrl` 的约束。
+- 不使用 Docker SDK 或 Podman SDK。容器能力经受控的 Podman CLI 边界调用，禁止 shell 拼接。
+- 不使用 ORM。业务表直接通过 SQLite 查询访问。
+- 兼容层不得新增 `psutil`、`requests` 或 `pydantic`。
 
 **D3 MRL 是唯一的表达式与规则语言。** Spec 里出现的表达式和模板（属性、accept、审批条件、任务模板、argv 模板、收货规则模板……）一律用 `mrl.expr.compile_expr` / `compile_template` 编译。类型环境由 `mrl.factory.sites` 定义（factory-profile 第 4 章）。
 - **禁止**使用 Python `eval`/`exec`、Jinja、`str.format` 来渲染 Spec 中的模板。
@@ -74,10 +74,7 @@
 - 一次运行固定在一个快照（epoch）上，运行期间快照不可变。
 - M1 的 epoch 是 Registry 目录树的内容哈希；M3 起换成 Git commit。
 
-**D5 沙箱接口。** 所有“在隔离环境里执行”的操作都经过 `SandboxProvider`（第 4.5 节），一共两个实现：
-- `DockerProvider`：生产实现，通过 `docker` 命令行驱动本地 Docker。
-- `LocalProvider`：仅供测试，在宿主上直接运行进程，**没有任何隔离**。它通过路径映射和命令映射，模拟沙箱内的文件系统契约。
-- **禁止**在生产配置中使用 `LocalProvider`。CLI 默认 `--provider docker`。
+**D5 沙箱接口。** 所有“在隔离环境里执行”的操作都经过 `SandboxProvider`（第 4.5 节）。生产业务入口使用 Podman，Bun 通过 `backend/runtime/podman.ts` 维护健康检查、machine 就绪、镜像解析和受限容器参数。Python 兼容层保留 `DockerProvider` 以运行旧验收和明确选择的迁移任务。`LocalProvider` 仅供测试，在宿主上直接运行进程，**没有任何隔离**。新的业务系统不得把 Docker 状态当成 Podman 状态，也不得因 Podman 不可用静默回退。
 
 **D6 沙箱内文件系统契约。** 沙箱内的路径是固定的虚拟路径（第 5 节）。Spec 中的配方（`run`、`harvest`、`place`）只能使用这些路径。宿主侧的真实路径永远不出现在 Spec 中。
 
@@ -103,7 +100,7 @@
 - 完整的参数清单见 `sandbox.md`，由单元测试锁定。
 
 **D12 出网。** M1 只实现 `none`：容器不联网。
-- 策略要求其他出网等级时，DockerProvider 必须拒绝运行（错误码 `EGRESS_UNSUPPORTED`）。唯一的例外是配置里显式打开开发开关 `allow_unproxied_egress`。
+- 策略要求其他出网等级时，PodmanProvider 和兼容 DockerProvider 都必须拒绝运行（错误码 `EGRESS_UNSUPPORTED`）。唯一的例外是配置里显式打开开发开关 `allow_unproxied_egress`。
 - 带域名白名单的出网代理和模型代理在 M2 实现。
 
 **D13 秘密。** M1 不向沙箱注入任何秘密。M2 引入秘密时，秘密只经由环境变量进入沙箱，并且：

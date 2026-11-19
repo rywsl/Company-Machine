@@ -27,7 +27,7 @@
 
 ---
 
-> **What is this?** A factory control plane. It does not contain an agent and never calls a model API. Every bit of intelligence comes from CLI agents you already use (Claude Code headless, Codex, …) running inside Docker sandboxes. Everything *between* stations — routing, type checks, conversion, storage, scheduling, budgets, approvals and change control — is deterministic code.
+> **What is this?** A factory control plane. It does not contain an agent and never calls a model API. Every bit of intelligence comes from official Harness CLIs you already use (Claude Code headless, Codex, …) running through the managed Podman boundary. The Bun/TypeScript business control plane keeps systems, DAGs, materials, Foreman conversations and secrets independent from a host or personal workflow. The legacy Python execution plane remains available while its runtime modules migrate.
 
 Agent-native products such as [OpenMontage](https://github.com/OpenMontageInc/OpenMontage) put the agent in charge of the whole pipeline. Machine Agent Org works one level up: it treats such products as **machines** on a production line. Each machine is operated by an agent **operator** at a **station**. What one station produces is checked, sealed and handed to the next station as its input, until a **sink** publishes the result to S3, GitHub, YouTube or anywhere else.
 
@@ -61,8 +61,8 @@ The walkthrough in [docs/en/getting-started.md](docs/en/getting-started.md) show
 
 ### Prerequisites
 
-- **Python 3.12+** and **[uv](https://docs.astral.sh/uv/)**
-- **Docker** (optional): needed for the default `docker` sandbox provider and the Docker test tiers. Everything in this README also works with `--provider local`.
+- **Bun** for the business control plane and **Podman** for managed sandboxes
+- **Python 3.12+** and **[uv](https://docs.astral.sh/uv/)** for the migration-compatible execution plane and repository verification
 - **An agent CLI** (optional): Claude Code or Codex for real stations. The tests use a scripted fake agent instead.
 
 ### Install and verify
@@ -75,6 +75,9 @@ uv sync
 uv run factory --version
 uv run mrl --version
 uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
+
+# Start the Bun business control plane and Web App
+bun run backend/src/index.ts
 ```
 
 ### Your first line
