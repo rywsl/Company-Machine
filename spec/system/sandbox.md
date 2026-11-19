@@ -249,7 +249,7 @@ class DockerProvider:
 
 `allow_unproxied_egress=True` 只把网络从 `none` 换成 `bridge`。安全标志一条都不能少。这是开发开关，不是出网代理（D12）。
 
-Bun 的 Podman 业务入口可提供 `egressNetwork` 和受管代理环境变量。此时 `network="egress"` 使用显式的 Podman 网络名（通常为 `mao-egress`），并把 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 等代理变量作为受管配置注入。没有 `egressNetwork` 时，业务入口拒绝 `egress`，不会回退到宿主网络。Harness profile 的 `network: egress` 同样必须由 `MAO_EGRESS_NETWORK` 指向已创建的受管网络，否则启动失败。
+Bun 的 Podman 业务入口可提供 `egressNetwork` 和受管代理环境变量。此时 `network="egress"` 使用显式的 Podman 网络名（通常为 `mao-egress`），并把 `ALL_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 作为受管配置注入，其他环境变量一律拒绝。没有 `egressNetwork` 时，业务入口拒绝 `egress`，不会回退到宿主网络。Harness profile 的 `network: egress` 同样必须由 `MAO_EGRESS_NETWORK` 指向已创建的受管网络，否则启动失败。
 
 ### 5.3 镜像解析（S4）
 

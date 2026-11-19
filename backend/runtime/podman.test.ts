@@ -56,6 +56,10 @@ describe("PodmanProvider", () => {
     expect(() => new PodmanProvider({ egressNetwork: "mao-egress;bad" })).toThrow(PodmanError);
   });
 
+  test("rejects arbitrary egress environment injection", () => {
+    expect(() => new PodmanProvider({ egressNetwork: "mao-egress", egressEnv: { FACTORY_SECRET: "value" } })).toThrow(PodmanError);
+  });
+
   test("probes health without throwing when Podman is missing", async () => {
     const provider = new PodmanProvider({ runner: async () => ({ exitCode: 127, stdout: new Uint8Array(), stderr: new TextEncoder().encode("missing") }) });
     await expect(provider.health()).resolves.toMatchObject({ available: false, reason: "missing" });

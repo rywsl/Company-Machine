@@ -167,18 +167,24 @@ export class AcpTransport implements HarnessTransport {
 export function defaultAcpSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress" }): AcpProcess {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new Error("Bun runtime is required");
+  const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
+  const env = { ...options.env };
   const image = options.containerImage;
   if (image && !/^[^\s@]+(?:\/[^\s@]+)*@sha256:[0-9a-f]{64}$/i.test(image)) throw new Error("Harness image must be pinned by digest");
   const network = options.network ?? "none";
   if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
   let podmanNetwork = "none";
   if (network === "egress") {
-    const managed = options.env.MAO_EGRESS_NETWORK;
+    for (const key of ["MAO_EGRESS_NETWORK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) {
+      const value = hostEnv[key];
+      if (typeof value === "string" && env[key] === undefined) env[key] = value;
+    }
+    const managed = env.MAO_EGRESS_NETWORK;
     if (!managed || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(managed)) throw new Error("Managed egress network is unavailable");
     podmanNetwork = managed;
   }
   const command = image ? ["podman", "run", "--rm", "-i", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv] : argv;
-  const process = bun.spawn(command, { cwd: options.cwd, env: options.env, stdout: options.stdout, stdin: options.stdin, stderr: "pipe" });
+  const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin, stderr: "pipe" });
   const stdin = process.stdin && typeof process.stdin.write === "function" ? {
     write: async (data: Uint8Array) => { await process.stdin.write(data); await process.stdin.flush?.(); },
     end: async () => { await process.stdin.end?.(); },

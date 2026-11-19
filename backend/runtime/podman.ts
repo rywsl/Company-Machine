@@ -88,6 +88,7 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 const VOLUME = /^[A-Za-z0-9][A-Za-z0-9_.-]+$/;
 const NETWORK = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const EGRESS_ENV = new Set(["ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]);
 const FIXED_ENV: Array<[string, string]> = [
   ["FACTORY_IN", "/factory/in"],
   ["FACTORY_OUT", "/factory/out"],
@@ -215,6 +216,11 @@ export class PodmanProvider implements ContainerProvider {
     this.allowUnproxiedEgress = options.allowUnproxiedEgress ?? false;
     this.egressNetwork = options.egressNetwork ?? null;
     this.egressEnv = { ...(options.egressEnv ?? {}) };
+    for (const [key, value] of Object.entries(this.egressEnv)) {
+      if (!EGRESS_ENV.has(key) || value.includes("\u0000")) {
+        throw new PodmanError("SANDBOX_SPEC_INVALID", "Only managed proxy environment variables may be configured", { field: `egressEnv.${key}` });
+      }
+    }
     if (this.egressNetwork !== null && !NETWORK.test(this.egressNetwork)) {
       throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid managed egress network", { field: "egressNetwork" });
     }

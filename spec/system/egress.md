@@ -29,7 +29,7 @@
 | 自签 CA 的生成算法 | 标准库签不出证书。CA 由操作员放到指定路径；没有 CA 时按第 5.4 节失败关闭 |
 | 服务型机器的入站 webhook 监听 | M4。`ingress` 在 M2 只表示 Source **拉取**时的出站白名单 |
 
-Bun 业务入口使用 Podman 的受管网络实现同一边界。`egressNetwork` 必须指向由 MAO egress 服务创建的网络，代理变量通过 `egressEnv` 传入。未配置受管网络时，Bun 运行时拒绝 `network="egress"`。Harness profile 的 `network: egress` 由 `MAO_EGRESS_NETWORK` 显式绑定到该网络，不能隐式使用宿主网络。
+Bun 业务入口使用 Podman 的受管网络实现同一边界。`egressNetwork` 必须指向由 MAO egress 服务创建的网络，`egressEnv` 只允许 `ALL_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。未配置受管网络时，Bun 运行时拒绝 `network="egress"`。Harness profile 的 `network: egress` 由 `MAO_EGRESS_NETWORK` 显式绑定到该网络，不能隐式使用宿主网络或批量继承宿主环境。
 
 D10 禁止控制面自己当 agent 去调模型。模型代理不违反这一点：请求的发起者是沙箱内的 CLI，代理只注入密钥并记账。`mao.approvals`、`mao.scheduler`、`mao.contract` **禁止** import 本模块的转发函数。
 
