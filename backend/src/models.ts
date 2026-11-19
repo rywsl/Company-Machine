@@ -75,6 +75,15 @@ export interface TalkMessage {
   createdAt: string;
 }
 
+export interface ForemanEnvelope {
+  id: string;
+  messageId: string;
+  text: string;
+  status: "queued" | "claimed" | "done";
+  createdAt: string;
+  claimedAt?: string;
+}
+
 export interface HarnessProfile {
   id: string;
   runtime: string;

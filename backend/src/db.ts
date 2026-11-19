@@ -6,6 +6,7 @@ import type {
   Artifact,
   BusinessSystem,
   Event,
+  ForemanEnvelope,
   HarnessProfile,
   Project,
   ProjectSource,
@@ -88,8 +89,13 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS business_talk_messages (
         id TEXT PRIMARY KEY, role TEXT NOT NULL, body TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS foreman_outbox (
+        id TEXT PRIMARY KEY, message_id TEXT NOT NULL, text TEXT NOT NULL,
+        status TEXT NOT NULL, created_at TEXT NOT NULL, claimed_at TEXT
+      );
       CREATE INDEX IF NOT EXISTS business_talk_messages_created ON business_talk_messages(created_at, id);
       CREATE INDEX IF NOT EXISTS secret_requests_project ON secret_requests(project_id, created_at);
+      CREATE INDEX IF NOT EXISTS foreman_outbox_status ON foreman_outbox(status, created_at, id);
     `);
   }
 
@@ -237,6 +243,39 @@ export class SqliteStore {
     return this.db.query("SELECT * FROM business_talk_messages ORDER BY created_at, id").all().map((row: any) => ({
       id: row.id, role: row.role, body: row.body, metadata: parseJson(row.metadata), createdAt: row.created_at,
     }));
+  }
+
+  queueForemanMessage(messageId: string, text: string): ForemanEnvelope {
+    const value: ForemanEnvelope = { id: randomUUID(), messageId, text, status: "queued", createdAt: now() };
+    this.db.query("INSERT INTO foreman_outbox (id,message_id,text,status,created_at,claimed_at) VALUES (?,?,?,?,?,NULL)").run(value.id, value.messageId, value.text, value.status, value.createdAt);
+    return value;
+  }
+
+  listForemanInbox(limit = 50): ForemanEnvelope[] {
+    const bounded = Math.max(1, Math.min(200, Math.trunc(limit)));
+    return this.db.query("SELECT * FROM foreman_outbox WHERE status IN ('queued','claimed') ORDER BY created_at, id LIMIT ?").all(bounded).map((row: any) => ({
+      id: row.id,
+      messageId: row.message_id,
+      text: row.text,
+      status: row.status,
+      createdAt: row.created_at,
+      claimedAt: row.claimed_at ?? undefined,
+    }));
+  }
+
+  claimForemanMessage(id: string): ForemanEnvelope | undefined {
+    const claimedAt = now();
+    this.db.query("UPDATE foreman_outbox SET status='claimed', claimed_at=? WHERE id=? AND status='queued'").run(claimedAt, id);
+    const row = this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id) as any;
+    if (!row) return undefined;
+    return { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined };
+  }
+
+  completeForemanMessage(id: string): ForemanEnvelope | undefined {
+    this.db.query("UPDATE foreman_outbox SET status='done' WHERE id=? AND status IN ('queued','claimed')").run(id);
+    const row = this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id) as any;
+    if (!row) return undefined;
+    return { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined };
   }
 
   listSecretRequests(): SecretRequest[] {

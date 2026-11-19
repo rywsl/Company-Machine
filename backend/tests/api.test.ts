@@ -35,10 +35,22 @@ describe("Bun business backend", () => {
         headers: { "content-type": "application/json" },
       }));
       expect(talkResponse.status).toBe(201);
+      const inboxResponse = await app.fetch(new Request("http://localhost/api/v1/foreman/inbox"));
+      const inbox = await inboxResponse.json() as Array<Record<string, any>>;
+      expect(inbox).toHaveLength(1);
+      expect(inbox[0].text).toContain("搭建视频生产业务系统");
+      expect(inbox[0].text).not.toContain("secret-value");
+      const claimed = await app.fetch(new Request(`http://localhost/api/v1/foreman/inbox/${inbox[0].id}/claim`, { method: "POST" }));
+      expect(claimed.status).toBe(200);
+      const completed = await app.fetch(new Request(`http://localhost/api/v1/foreman/inbox/${inbox[0].id}/done`, { method: "POST" }));
+      expect(completed.status).toBe(200);
       expect(app.events.after().map((event) => event.type)).toEqual([
         "business-system.created",
         "project.intake.created",
         "talk.message.created",
+        "foreman.message.queued",
+        "foreman.message.claim",
+        "foreman.message.done",
       ]);
     } finally {
       app.stop();

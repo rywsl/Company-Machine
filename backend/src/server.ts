@@ -8,6 +8,8 @@ import type { BusinessSystem } from "./models";
 
 const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
+const SECRET_TEXT = /(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi;
+const redactText = (value: string) => value.replace(SECRET_TEXT, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
 
 export interface BackendApp {
   store: SqliteStore;
@@ -52,8 +54,10 @@ export function createApp(options: { dbPath?: string; legacyPath?: string } = {}
       const body = await readJson(request);
       const text = typeof body.body === "string" ? body.body : body.text;
       if (typeof text !== "string" || text.length === 0) return response({ error: "body is required" }, 400);
-      const message = store.addTalkMessage({ ...body, body: text });
+      const message = store.addTalkMessage({ ...body, body: redactText(text) });
+      const envelope = store.queueForemanMessage(message.id, message.body);
       events.publish("talk.message.created", message);
+      events.publish("foreman.message.queued", envelope);
       return response({ state: "accepted", message }, 201);
     }
     if (url.pathname === "/api/v1/talk" && request.method === "GET") return response([...store.legacyTalk(), ...store.listTalkMessages()]);
@@ -61,9 +65,20 @@ export function createApp(options: { dbPath?: string; legacyPath?: string } = {}
       const body = await readJson(request);
       const text = typeof body.text === "string" ? body.text : body.body;
       if (typeof text !== "string" || text.length === 0 || typeof body.turn_id !== "string") return response({ error: "text and turn_id are required" }, 400);
-      const message = store.addTalkMessage({ role: "foreman", body: text, metadata: { turn_id: body.turn_id, by: typeof body.by === "string" ? body.by : "foreman" } });
+      const message = store.addTalkMessage({ role: "foreman", body: redactText(text), metadata: { turn_id: body.turn_id, by: typeof body.by === "string" ? body.by : "foreman" } });
       events.publish("talk.foreman.replied", message);
       return response({ state: "accepted", message }, 201);
+    }
+    if (url.pathname === "/api/v1/foreman/inbox" && request.method === "GET") {
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      return response(store.listForemanInbox(limit));
+    }
+    const foremanAck = url.pathname.match(/^\/api\/v1\/foreman\/inbox\/([^/]+)\/(claim|done)$/);
+    if (foremanAck && request.method === "POST") {
+      const envelope = foremanAck[2] === "claim" ? store.claimForemanMessage(foremanAck[1]) : store.completeForemanMessage(foremanAck[1]);
+      if (!envelope) return response({ error: "foreman message was not found" }, 404);
+      events.publish(`foreman.message.${foremanAck[2]}`, envelope);
+      return response(envelope, 200);
     }
     if (url.pathname === "/api/v1/secrets/requests" && request.method === "POST") {
       const body = await readJson(request);
@@ -127,8 +142,10 @@ export function createApp(options: { dbPath?: string; legacyPath?: string } = {}
       const body = await readJson(request);
       const text = typeof body.text === "string" ? body.text : body.body;
       if (typeof text !== "string" || text.length === 0) return response({ error: "text is required" }, 400);
-      const message = store.addTalkMessage({ body: text });
+      const message = store.addTalkMessage({ body: redactText(text) });
+      const envelope = store.queueForemanMessage(message.id, message.body);
       events.publish("talk.message.created", message);
+      events.publish("foreman.message.queued", envelope);
       return response({ state: "accepted", message }, 201);
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
