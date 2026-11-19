@@ -31,6 +31,9 @@ class WebReadModel:
     def __init__(self, ctx: Any, snapshot: Any | None = None) -> None:
         self.ctx = ctx
         self.snapshot = snapshot
+        self._memo: dict[str, Any] = {}
+        self._runs_cache: dict[str, list[dict[str, Any]]] = {}
+        self._asset_sources_cache: dict[str, dict[str, Any]] | None = None
 
     def bootstrap(self) -> dict[str, Any]:
         status = self.status()
@@ -54,8 +57,13 @@ class WebReadModel:
         }
 
     def status(self) -> dict[str, Any]:
+        cached = self._memo.get("status")
+        if cached is not None:
+            return cached
         epochs, pipeline = self._governance()
-        return factory_status(self.ctx, epochs=epochs, pipeline=pipeline)
+        value = factory_status(self.ctx, epochs=epochs, pipeline=pipeline)
+        self._memo["status"] = value
+        return value
 
     def factory_graph(self) -> dict[str, Any]:
         snapshot = self._require_snapshot()
@@ -444,6 +452,9 @@ class WebReadModel:
         runtimes. A local JSON adapter directory is also accepted so a local
         deployment can add a Harness without changing this Web App.
         """
+        cached = self._memo.get("harnesses")
+        if cached is not None:
+            return cached
         found: dict[str, dict[str, Any]] = {}
         snapshot = self.snapshot
         if snapshot is not None:
@@ -478,7 +489,9 @@ class WebReadModel:
         for item in found.values():
             runtime = self._runtime_name(item["id"])
             item["configuration"] = profiles.get(runtime)
-        return sorted(found.values(), key=lambda item: (str(item.get("name", "")), str(item["id"])))
+        value = sorted(found.values(), key=lambda item: (str(item.get("name", "")), str(item["id"])))
+        self._memo["harnesses"] = value
+        return value
 
     def dependencies(self) -> dict[str, Any]:
         harnesses = []
@@ -531,17 +544,25 @@ class WebReadModel:
         return WebReadModel._podman_dependency()
 
     def harness_profiles(self) -> list[dict[str, Any]]:
+        cached = self._memo.get("harness_profiles")
+        if cached is not None:
+            return cached
         path = Path(self.ctx.root) / _HARNESS_PROFILE_PATH
         if not path.is_file():
+            self._memo["harness_profiles"] = []
             return []
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            self._memo["harness_profiles"] = []
             return []
         raw_profiles = body.get("profiles") if isinstance(body, dict) else None
         if not isinstance(raw_profiles, list):
+            self._memo["harness_profiles"] = []
             return []
-        return [self._public_harness_profile(item) for item in raw_profiles if isinstance(item, dict)]
+        value = [self._public_harness_profile(item) for item in raw_profiles if isinstance(item, dict)]
+        self._memo["harness_profiles"] = value
+        return value
 
     def save_harness_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
@@ -773,13 +794,16 @@ class WebReadModel:
 
     def foreman(self) -> dict[str, Any]:
         """Expose the current Foreman Harness without exposing local credentials."""
+        cached = self._memo.get("foreman")
+        if cached is not None:
+            return cached
         profile = next((item for item in self.harness_profiles() if item.get("role") == "foreman"), None)
         try:
             from mao.supervisor import SupervisorConfig
 
             config = SupervisorConfig.load(Path(self.ctx.root))
         except (FactoryError, OSError, ValueError, TypeError):
-            return {
+            value = {
                 "configured": False,
                 "setup_required": True,
                 "runtime": None,
@@ -787,11 +811,13 @@ class WebReadModel:
                 "mode": None,
                 "profile": profile,
             }
+            self._memo["foreman"] = value
+            return value
         runtime = str(config.runtime)
         harness = next(
             (item for item in self.harnesses() if item["id"] == runtime or item["name"] == runtime), None
         )
-        return {
+        value = {
             "configured": True,
             "setup_required": False,
             "runtime": runtime,
@@ -800,6 +826,8 @@ class WebReadModel:
             "harness": harness,
             "profile": profile,
         }
+        self._memo["foreman"] = value
+        return value
 
     def secret_resources(self, *, limit: int = 100) -> list[dict[str, Any]]:
         """Project secret names and bindings while keeping every value out of the UI."""
@@ -1034,11 +1062,14 @@ class WebReadModel:
         return {"state": "exception", "message": "本地 serve 未运行"}
 
     def _runs_for_line(self, line: str) -> list[dict[str, Any]]:
+        cached = self._runs_cache.get(line)
+        if cached is not None:
+            return cached
         rows = self.ctx.db.query(
             "SELECT id, line, state, created_at, updated_at, error FROM runs WHERE line IN (?, ?) ORDER BY created_at",
             (line, line.split(":", 1)[-1]),
         )
-        return [
+        value = [
             {
                 "id": str(row["id"]),
                 "line": str(row["line"]),
@@ -1049,6 +1080,8 @@ class WebReadModel:
             }
             for row in rows
         ]
+        self._runs_cache[line] = value
+        return value
 
     def _line_status(self, runs: list[dict[str, Any]]) -> str:
         if not runs:
@@ -1149,18 +1182,26 @@ class WebReadModel:
         }
 
     def _asset_source(self, bean_id: str) -> dict[str, Any] | None:
-        rows = self.ctx.db.query(
-            "SELECT execution_id, subject, assets FROM asset_uses ORDER BY execution_id DESC"
-        )
-        for row in rows:
-            try:
-                assets = json.loads(row["assets"])
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if bean_id not in assets:
-                continue
-            return {"run": str(row["execution_id"]), "node": str(row["subject"])}
-        return None
+        if self._asset_sources_cache is None:
+            found: dict[str, dict[str, Any]] = {}
+            rows = self.ctx.db.query(
+                "SELECT execution_id, subject, assets FROM asset_uses ORDER BY execution_id DESC"
+            )
+            for row in rows:
+                try:
+                    assets = json.loads(row["assets"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(assets, dict):
+                    asset_ids = assets.keys()
+                elif isinstance(assets, (list, tuple, set)):
+                    asset_ids = assets
+                else:
+                    continue
+                for asset_id in asset_ids:
+                    found.setdefault(str(asset_id), {"run": str(row["execution_id"]), "node": str(row["subject"])})
+            self._asset_sources_cache = found
+        return self._asset_sources_cache.get(bean_id)
 
     def _recent_change(self) -> dict[str, Any] | None:
         rows = self.ctx.db.query(

@@ -43,6 +43,7 @@ declare module "bun:test" {
 }
 
 declare const Bun: {
+  argv: string[];
   serve(options: { port: number; hostname?: string; fetch: (request: Request) => Response | Promise<Response> }): { url: URL; stop(): void };
   file(path: string): Blob;
 };

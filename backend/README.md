@@ -7,3 +7,5 @@ Run the development server from the repository root with `bun run backend/src/in
 The Web App is served from `src/mao/webapp/static/dist` when that directory exists. Build the frontend before packaging. The event stream is available at `/api/v1/events` and accepts a `Last-Event-ID` header or `cursor` query parameter.
 
 Secret values enter through `/api/v1/secrets/requests/:id/value` and are encrypted in the local vault. The database and event stream contain only the vault reference and status.
+
+Run `bun run backend/bench.ts 100` to measure the factory graph, event replay and project list against a seeded SQLite database. Set `BENCH_DB_PATH` to keep the benchmark database in a chosen evidence directory.
