@@ -568,7 +568,7 @@ export class SqliteStore {
     const timestamp = now();
     const mailboxId = `bun-am-${randomUUID()}`;
     this.db.query("INSERT OR IGNORE INTO talk_messages (id,role,kind,by_name,body,reply_state,in_reply_to,card_type,ref_kind,ref_id,card,mailbox_id,created_at) VALUES (?,?,?,?,?,'open',NULL,NULL,NULL,NULL,'{}',?,?)")
-      .run(messageId, "human", "text", "bun", text, JSON.stringify({}), mailboxId, timestamp);
+      .run(messageId, "human", "text", "bun", text, mailboxId, timestamp);
     const messageBody = JSON.stringify({ message: messageId, by: "bun", text });
     this.db.query("INSERT INTO agents (name,state,updated_at) VALUES ('foreman','active',?) ON CONFLICT(name) DO NOTHING").run(timestamp);
     const columnStatement = this.db.query("PRAGMA table_info(agent_messages)") as any;

@@ -28,6 +28,7 @@ describe("Bun business backend", () => {
       expect(intakeResponse.status).toBe(201);
       const project = await jsonResponse(intakeResponse);
       expect(project.sources[0].kind).toBe("repo_url");
+      expect(typeof project.foreman_inbox_id).toBe("string");
 
       const graphResponse = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, {
         method: "POST",
@@ -53,16 +54,19 @@ describe("Bun business backend", () => {
       expect(talkResponse.status).toBe(201);
       const inboxResponse = await app.fetch(new Request("http://localhost/api/v1/foreman/inbox"));
       const inbox = await inboxResponse.json() as Array<Record<string, any>>;
-      expect(inbox).toHaveLength(1);
-      expect(inbox[0].text).toContain("搭建视频生产业务系统");
-      expect(inbox[0].text).not.toContain("secret-value");
-      const claimed = await app.fetch(new Request(`http://localhost/api/v1/foreman/inbox/${inbox[0].id}/claim`, { method: "POST" }));
+      expect(inbox).toHaveLength(2);
+      const talkEnvelope = inbox.find((item) => item.text.includes("搭建视频生产业务系统"));
+      expect(talkEnvelope?.text).toContain("搭建视频生产业务系统");
+      expect(talkEnvelope?.text).not.toContain("secret-value");
+      const claimed = await app.fetch(new Request(`http://localhost/api/v1/foreman/inbox/${talkEnvelope?.id}/claim`, { method: "POST" }));
       expect(claimed.status).toBe(200);
-      const completed = await app.fetch(new Request(`http://localhost/api/v1/foreman/inbox/${inbox[0].id}/done`, { method: "POST" }));
+      const completed = await app.fetch(new Request(`http://localhost/api/v1/foreman/inbox/${talkEnvelope?.id}/done`, { method: "POST" }));
       expect(completed.status).toBe(200);
       expect(app.events.after().map((event) => event.type)).toEqual([
         "business-system.created",
         "project.intake.created",
+        "talk.message.created",
+        "foreman.message.queued",
         "business-system.graph.updated",
         "artifact.created",
         "talk.message.created",

@@ -196,7 +196,14 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       }
       const project = store.createIntake(body);
       events.publish("project.intake.created", project);
-      return response({ ...publicProject(project), project_id: project.id, state: "accepted" }, 201);
+      const intakeText = `项目「${project.name}」已提交。请厂长识别项目、建立 Operator 与 Machine，搭建业务 DAG，并说明下一步需要的项目资源。项目引用 ${project.id}。`;
+      const intakeMessage = store.addTalkMessage({ role: "user", body: intakeText, metadata: { source: "project-intake", project_id: project.id } });
+      store.bridgeHumanTalk(intakeMessage.id, intakeMessage.body);
+      const intakeEnvelope = store.queueForemanMessage(intakeMessage.id, intakeMessage.body);
+      events.publish("talk.message.created", intakeMessage);
+      events.publish("foreman.message.queued", intakeEnvelope);
+      dispatchForemanIfConfigured(intakeEnvelope.id);
+      return response({ ...publicProject(project), project_id: project.id, state: "accepted", foreman_inbox_id: intakeEnvelope.id }, 201);
     }
     const artifactMatch = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/artifacts$/);
     if (artifactMatch && request.method === "GET") return response(store.listArtifacts(artifactMatch[1]).map(publicArtifact));

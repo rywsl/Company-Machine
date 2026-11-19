@@ -44,11 +44,9 @@ if (command === "serve") {
       const fileRef = value("--file-ref");
       if (!repo && !folder && !fileRef) throw new Error("one source is required");
       const name = value("--name") ?? "新项目";
-      const system = app.store.createBusinessSystem({ name, metadata: { intake: true, source: "factory-bun" } });
-      const project = app.store.createIntake({ name, business_system_id: system.id, repo_url: repo, local_folder: folder, uploaded_file_refs: fileRef ? [fileRef] : [] });
-      app.events.publish("business-system.created", system);
-      app.events.publish("project.intake.created", project);
-      console.log(JSON.stringify(project, null, 2));
+      const intakeResponse = await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, repo_url: repo, local_folder: folder, uploaded_file_refs: fileRef ? [fileRef] : [] }) }));
+      if (!intakeResponse.ok) throw new Error(await intakeResponse.text());
+      console.log(JSON.stringify(await intakeResponse.json(), null, 2));
     } else if (command === "business" && ["units", "runs", "export"].includes(args[1] ?? "")) {
       const id = args[2];
       if (!id) throw new Error("business system id is required");

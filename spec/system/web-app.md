@@ -274,7 +274,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 生产 Web API 使用 Bun 与 TypeScript。默认数据库为 `.factory/factory.db`，新增业务表与旧 SQLite 数据共存，旧事件、资产和 talk 数据通过只读兼容投影进入 Web App。
 
 - `GET /api/v1/business-systems` 与 `POST /api/v1/business-systems` 管理业务系统聚合
-- `GET /api/v1/projects` 与 `POST /api/v1/projects/intake` 接收仓库链接、项目文件引用或本地文件夹来源
+- `GET /api/v1/projects` 与 `POST /api/v1/projects/intake` 接收仓库链接、项目文件引用或本地文件夹来源。Intake 成功后自动写入一条 Foreman 输入队列，厂长可继续识别项目、创建基础单元和搭建 DAG，即使当前还没有配置 Harness 也不能丢失这条意图
 - 项目公共投影只保留来源种类和可移植引用，`local_folder` 与保险箱引用不会返回给浏览器或业务系统导出
 - `GET /api/v1/business-systems/<id>` 返回业务系统、项目和 Artifact 摘要
 - `GET /api/v1/business-systems/<id>/artifacts` 与 `/materials` 返回该业务系统闭包内的语义化记录。`/materials` 只返回 `record_type=material` 的来料或中间物料
