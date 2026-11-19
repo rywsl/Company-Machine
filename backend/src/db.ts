@@ -124,6 +124,15 @@ export class SqliteStore {
     return value;
   }
 
+  updateBusinessSystemMetadata(id: string, metadata: Record<string, unknown>): BusinessSystem | undefined {
+    const current = this.db.query("SELECT * FROM business_systems WHERE id = ?").get(id) as any;
+    if (!current) return undefined;
+    const merged = { ...parseJson(current.metadata), ...metadata };
+    const updatedAt = now();
+    this.db.query("UPDATE business_systems SET metadata = ?, updated_at = ? WHERE id = ?").run(json(merged), updatedAt, id);
+    return { id: current.id, name: current.name, description: current.description ?? undefined, status: current.status, metadata: merged, createdAt: current.created_at, updatedAt };
+  }
+
   listHarnessProfiles(): HarnessProfile[] {
     return this.db.query("SELECT * FROM harness_profiles ORDER BY role, runtime").all().map((row: any) => ({
       id: row.id,
@@ -218,10 +227,42 @@ export class SqliteStore {
   }
 
   addArtifact(input: Omit<Artifact, "id" | "createdAt">): Artifact {
-    const value = { ...input, id: randomUUID(), createdAt: now() };
+    const metadata = input.metadata ?? {};
+    const value: Artifact = {
+      ...input,
+      id: randomUUID(),
+      createdAt: now(),
+      summary: input.summary ?? (typeof metadata.summary === "string" ? metadata.summary : undefined),
+      purpose: input.purpose ?? (typeof metadata.purpose === "string" ? metadata.purpose : undefined),
+      files: input.files ?? (Array.isArray(metadata.files) ? metadata.files as Artifact["files"] : undefined),
+      inputs: input.inputs ?? (Array.isArray(metadata.inputs) ? metadata.inputs as string[] : undefined),
+      outputs: input.outputs ?? (Array.isArray(metadata.outputs) ? metadata.outputs as string[] : undefined),
+      lineage: input.lineage ?? (Array.isArray(metadata.lineage) ? metadata.lineage as string[] : undefined),
+    };
     this.db.query("INSERT INTO artifacts (id,project_id,source_id,kind,ref,metadata,created_at) VALUES (?,?,?,?,?,?,?)")
       .run(value.id, value.projectId, value.sourceId ?? null, value.kind, value.ref, json(value.metadata), value.createdAt);
     return value;
+  }
+
+  listArtifacts(projectId: string): Artifact[] {
+    return this.db.query("SELECT * FROM artifacts WHERE project_id = ? ORDER BY created_at, id").all(projectId).map((row: any) => {
+      const metadata = parseJson(row.metadata);
+      return {
+        id: row.id,
+        projectId: row.project_id,
+        sourceId: row.source_id ?? undefined,
+        kind: row.kind,
+        ref: row.ref,
+        metadata,
+        summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
+        purpose: typeof metadata.purpose === "string" ? metadata.purpose : undefined,
+        files: Array.isArray(metadata.files) ? metadata.files : undefined,
+        inputs: Array.isArray(metadata.inputs) ? metadata.inputs : undefined,
+        outputs: Array.isArray(metadata.outputs) ? metadata.outputs : undefined,
+        lineage: Array.isArray(metadata.lineage) ? metadata.lineage : undefined,
+        createdAt: row.created_at,
+      };
+    });
   }
 
   createSecretRequest(input: { projectId: string; name: string; vaultRef: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }): SecretRequest {

@@ -275,6 +275,9 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 
 - `GET /api/v1/business-systems` 与 `POST /api/v1/business-systems` 管理业务系统聚合
 - `GET /api/v1/projects` 与 `POST /api/v1/projects/intake` 接收仓库链接、项目文件引用或本地文件夹来源
+- `GET /api/v1/business-systems/<id>` 返回业务系统、项目和 Artifact 摘要
+- `GET/POST /api/v1/projects/<id>/artifacts` 读写带摘要、用途、文件引用、输入输出和 lineage 的物料 JSON
+- `POST /api/v1/business-systems/<id>/graph` 接收外部 Foreman 维护的 DAG 快照
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要

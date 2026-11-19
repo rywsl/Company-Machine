@@ -29,6 +29,22 @@ describe("Bun business backend", () => {
       const project = await jsonResponse(intakeResponse);
       expect(project.sources[0].kind).toBe("repo_url");
 
+      const graphResponse = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, {
+        method: "POST",
+        body: JSON.stringify({ graph: { nodes: [{ id: "operator" }, { id: "machine" }], edges: [{ source: "operator", target: "machine" }] } }),
+        headers: { "content-type": "application/json" },
+      }));
+      expect(graphResponse.status).toBe(200);
+      const artifactResponse = await app.fetch(new Request(`http://localhost/api/v1/projects/${project.id}/artifacts`, {
+        method: "POST",
+        body: JSON.stringify({ kind: "video", ref: "cas://video-1", summary: "视频成片", purpose: "交付", files: [{ ref: "cas://file-1", path: "output.mp4" }] }),
+        headers: { "content-type": "application/json" },
+      }));
+      expect(artifactResponse.status).toBe(201);
+      expect((await jsonResponse(artifactResponse)).files[0].path).toBe("output.mp4");
+      const details = await jsonResponse(await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}`)));
+      expect(details.artifacts).toHaveLength(1);
+
       const talkResponse = await app.fetch(new Request("http://localhost/api/v1/talk", {
         method: "POST",
         body: JSON.stringify({ text: "搭建视频生产业务系统" }),
@@ -47,6 +63,8 @@ describe("Bun business backend", () => {
       expect(app.events.after().map((event) => event.type)).toEqual([
         "business-system.created",
         "project.intake.created",
+        "business-system.graph.updated",
+        "artifact.created",
         "talk.message.created",
         "foreman.message.queued",
         "foreman.message.claim",

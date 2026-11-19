@@ -32,6 +32,12 @@ export interface Artifact {
   kind: string;
   ref: string;
   metadata: Record<string, unknown>;
+  summary?: string;
+  purpose?: string;
+  files?: Array<{ ref: string; path?: string; mediaType?: string; digest?: string }>;
+  inputs?: string[];
+  outputs?: string[];
+  lineage?: string[];
   createdAt: string;
 }
 

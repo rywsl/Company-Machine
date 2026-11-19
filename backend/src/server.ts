@@ -35,6 +35,22 @@ export function createApp(options: { dbPath?: string; legacyPath?: string } = {}
       events.publish("business-system.created", system);
       return response(system, 201);
     }
+    const businessSystemMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)$/);
+    if (businessSystemMatch && request.method === "GET") {
+      const system = store.listBusinessSystems().find((item) => item.id === businessSystemMatch[1]);
+      if (!system) return response({ error: "business system was not found" }, 404);
+      const projects = store.listProjects().filter((project) => project.businessSystemId === system.id);
+      return response({ ...system, projects, artifacts: projects.flatMap((project) => store.listArtifacts(project.id)) });
+    }
+    const graphMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/graph$/);
+    if (graphMatch && request.method === "POST") {
+      const body = await readJson(request);
+      if (!body.graph || typeof body.graph !== "object") return response({ error: "graph is required" }, 400);
+      const system = store.updateBusinessSystemMetadata(graphMatch[1], { graph: body.graph, graph_updated_by: body.by ?? "foreman" });
+      if (!system) return response({ error: "business system was not found" }, 404);
+      events.publish("business-system.graph.updated", { id: system.id, graph: body.graph });
+      return response(system, 200);
+    }
     if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects());
     if (url.pathname === "/api/v1/projects/intake" && request.method === "POST") {
       const body = await readJson(request);
@@ -49,6 +65,18 @@ export function createApp(options: { dbPath?: string; legacyPath?: string } = {}
       const project = store.createIntake(body);
       events.publish("project.intake.created", project);
       return response({ ...project, project_id: project.id, state: "accepted" }, 201);
+    }
+    const artifactMatch = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/artifacts$/);
+    if (artifactMatch && request.method === "GET") return response(store.listArtifacts(artifactMatch[1]));
+    if (artifactMatch && request.method === "POST") {
+      const body = await readJson(request);
+      if (typeof body.kind !== "string" || typeof body.ref !== "string" || typeof body.summary !== "string") return response({ error: "kind, ref, and summary are required" }, 400);
+      const project = store.getProject(artifactMatch[1]);
+      if (!project) return response({ error: "project was not found" }, 404);
+      const metadata = { ...body.metadata, summary: body.summary, purpose: body.purpose, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage };
+      const artifact = store.addArtifact({ projectId: project.id, sourceId: typeof body.source_id === "string" ? body.source_id : undefined, kind: body.kind, ref: body.ref, metadata });
+      events.publish("artifact.created", artifact);
+      return response(artifact, 201);
     }
     if (url.pathname === "/api/v1/talk" && request.method === "POST") {
       const body = await readJson(request);
