@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import type { BusinessSystem } from "./models";
+import { PodmanProvider, type RuntimeHealth } from "../runtime/podman";
 
 const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
@@ -19,14 +20,50 @@ export interface BackendApp {
   stop(): void;
 }
 
-export function createApp(options: { dbPath?: string; legacyPath?: string } = {}): BackendApp {
+export interface RuntimeProbe {
+  health(): Promise<RuntimeHealth>;
+  ensureReady?(): Promise<RuntimeHealth>;
+}
+
+function runtimeDependency(health: RuntimeHealth) {
+  return {
+    state: health.available ? "online" : "offline",
+    version: health.available ? "available" : null,
+    message: health.available ? "Podman 运行时在线" : `Podman 运行时不可用：${health.reason ?? "unknown"}`,
+    provider: "podman",
+    machine: health.machine,
+    rootless: health.rootless,
+  };
+}
+
+export function createApp(options: { dbPath?: string; legacyPath?: string; runtime?: RuntimeProbe } = {}): BackendApp {
   const store = new SqliteStore(options.dbPath, options.legacyPath);
   const events = new EventBus(store);
   const vault = new VaultStore();
+  const runtime = options.runtime ?? new PodmanProvider();
+  let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
+  const runtimeHealth = async (refresh = false) => {
+    const current = Date.now();
+    if (!refresh && runtimeCache && current - runtimeCache.at < 5_000) return runtimeCache.health;
+    const health = await runtime.health();
+    runtimeCache = { at: current, health };
+    return health;
+  };
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...headers, "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "content-type,last-event-id" } });
     if (url.pathname === "/healthz" && request.method === "GET") return response({ ok: true });
+    if (url.pathname === "/api/v1/runtime" && request.method === "GET") {
+      const health = await runtimeHealth();
+      return response({ provider: "podman", health, dependency: runtimeDependency(health) });
+    }
+    if (url.pathname === "/api/v1/runtime/ensure-ready" && request.method === "POST") {
+      if (!runtime.ensureReady) return response({ error: "runtime readiness is unavailable" }, 501);
+      const health = await runtime.ensureReady();
+      runtimeCache = { at: Date.now(), health };
+      events.publish("runtime.podman.checked", runtimeDependency(health));
+      return response({ provider: "podman", health, dependency: runtimeDependency(health) }, health.available ? 200 : 503);
+    }
     if (url.pathname === "/api/v1/business-systems" && request.method === "GET") return response(store.listBusinessSystems());
     if (url.pathname === "/api/v1/business-systems" && request.method === "POST") {
       const body = await readJson(request);
@@ -40,16 +77,31 @@ export function createApp(options: { dbPath?: string; legacyPath?: string } = {}
       const system = store.listBusinessSystems().find((item) => item.id === businessSystemMatch[1]);
       if (!system) return response({ error: "business system was not found" }, 404);
       const projects = store.listProjects().filter((project) => project.businessSystemId === system.id);
-      return response({ ...system, projects, artifacts: projects.flatMap((project) => store.listArtifacts(project.id)) });
+      const artifacts = store.listBusinessSystemArtifacts(system.id);
+      return response({ ...system, projects, artifacts, materials: artifacts.filter((item) => item.recordType === "material") });
     }
     const graphMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/graph$/);
+    if (graphMatch && request.method === "GET") {
+      const system = store.listBusinessSystems().find((item) => item.id === graphMatch[1]);
+      if (!system) return response({ error: "business system was not found" }, 404);
+      return response(system.metadata.graph ?? graphProjection(store, "workarea", system.id));
+    }
     if (graphMatch && request.method === "POST") {
       const body = await readJson(request);
       if (!body.graph || typeof body.graph !== "object") return response({ error: "graph is required" }, 400);
+      const graphError = validateDag(body.graph);
+      if (graphError) return response({ error: graphError }, 400);
       const system = store.updateBusinessSystemMetadata(graphMatch[1], { graph: body.graph, graph_updated_by: body.by ?? "foreman" });
       if (!system) return response({ error: "business system was not found" }, 404);
       events.publish("business-system.graph.updated", { id: system.id, graph: body.graph });
       return response(system, 200);
+    }
+    const systemArtifactsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/(artifacts|materials)$/);
+    if (systemArtifactsMatch && request.method === "GET") {
+      const system = store.listBusinessSystems().find((item) => item.id === systemArtifactsMatch[1]);
+      if (!system) return response({ error: "business system was not found" }, 404);
+      const artifacts = store.listBusinessSystemArtifacts(system.id);
+      return response(systemArtifactsMatch[2] === "materials" ? artifacts.filter((item) => item.recordType === "material") : artifacts);
     }
     if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects());
     if (url.pathname === "/api/v1/projects/intake" && request.method === "POST") {
@@ -71,10 +123,12 @@ export function createApp(options: { dbPath?: string; legacyPath?: string } = {}
     if (artifactMatch && request.method === "POST") {
       const body = await readJson(request);
       if (typeof body.kind !== "string" || typeof body.ref !== "string" || typeof body.summary !== "string") return response({ error: "kind, ref, and summary are required" }, 400);
+      if (body.record_type !== undefined && body.record_type !== "artifact" && body.record_type !== "material") return response({ error: "record_type must be artifact or material" }, 400);
+      if (body.files !== undefined && (!Array.isArray(body.files) || body.files.some((file: unknown) => !file || typeof file !== "object" || typeof (file as any).ref !== "string"))) return response({ error: "files must contain file references" }, 400);
       const project = store.getProject(artifactMatch[1]);
       if (!project) return response({ error: "project was not found" }, 404);
-      const metadata = { ...body.metadata, summary: body.summary, purpose: body.purpose, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage };
-      const artifact = store.addArtifact({ projectId: project.id, sourceId: typeof body.source_id === "string" ? body.source_id : undefined, kind: body.kind, ref: body.ref, metadata });
+      const metadata = { ...body.metadata, record_type: body.record_type, title: body.title, description: body.description, summary: body.summary, purpose: body.purpose, status: body.status, producer: body.producer, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage };
+      const artifact = store.addArtifact({ projectId: project.id, sourceId: typeof body.source_id === "string" ? body.source_id : undefined, recordType: body.record_type, kind: body.kind, ref: body.ref, title: typeof body.title === "string" ? body.title : undefined, description: typeof body.description === "string" ? body.description : undefined, status: typeof body.status === "string" ? body.status : undefined, producer: body.producer && typeof body.producer === "object" ? body.producer : undefined, summary: body.summary, purpose: typeof body.purpose === "string" ? body.purpose : undefined, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage, metadata });
       events.publish("artifact.created", artifact);
       return response(artifact, 201);
     }
@@ -179,10 +233,12 @@ export function createApp(options: { dbPath?: string; legacyPath?: string } = {}
       return response({ state: "accepted", message }, 201);
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
+      const health = await runtimeHealth();
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: new Date().toISOString() },
         graph: { factory: { scope: "factory", id: "factory", title: "Factory", nodes: [], edges: [] } },
         assets: store.legacyArtifacts(), logs: store.legacyEvents(), talk: [...store.legacyTalk(), ...store.listTalkMessages()],
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
+        dependencies: { podman: runtimeDependency(health), harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
         foreman: { configured: false }, constitution: { available: false } });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") return eventsResponse(request, events, url.searchParams.get("cursor") ?? undefined);
@@ -233,6 +289,39 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
     return { scope: "workarea", id: workarea, title: systems.find((system) => system.id === workarea)?.name ?? workarea, nodes, edges };
   }
   return { scope: "factory", id: "factory", title: "工厂", nodes: systems.map((system, index) => ({ id: system.id, type: "workarea", group: "factory", label: system.name, position: { x: 180 + (index % 3) * 300, y: 160 + Math.floor(index / 3) * 200 }, status: system.status === "active" ? "ready" : "unknown", metadata: { description: system.description, project_count: projects.filter((project) => project.businessSystemId === system.id).length } })), edges: [] };
+}
+
+function validateDag(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return "graph must be an object";
+  const graph = value as { nodes?: unknown; edges?: unknown };
+  if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return "graph requires nodes and edges arrays";
+  const nodes = new Set<string>();
+  for (const node of graph.nodes) {
+    if (!node || typeof node !== "object" || typeof (node as any).id !== "string" || !(node as any).id) return "every graph node requires an id";
+    if (nodes.has((node as any).id)) return "graph node ids must be unique";
+    nodes.add((node as any).id);
+  }
+  const next = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (!edge || typeof edge !== "object" || typeof (edge as any).source !== "string" || typeof (edge as any).target !== "string") return "every graph edge requires source and target";
+    const source = (edge as any).source as string;
+    const target = (edge as any).target as string;
+    if (!nodes.has(source) || !nodes.has(target)) return "graph edges must reference existing nodes";
+    next.set(source, [...(next.get(source) ?? []), target]);
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (node: string): boolean => {
+    if (visiting.has(node)) return false;
+    if (visited.has(node)) return true;
+    visiting.add(node);
+    for (const target of next.get(node) ?? []) if (!visit(target)) return false;
+    visiting.delete(node);
+    visited.add(node);
+    return true;
+  };
+  for (const node of nodes) if (!visit(node)) return "graph must be acyclic";
+  return undefined;
 }
 
 async function readJson(request: Request): Promise<Record<string, any>> {
