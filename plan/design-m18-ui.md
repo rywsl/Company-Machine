@@ -17,7 +17,7 @@ Foreman 是工厂创造者。只要对应 Harness CLI 能运行，Foreman 就可
 
 人处理工厂级治理、Foreman 运行入口、宪法和 Foreman 无法继续处理的异常。普通运行问题由 Foreman 自治闭环处理。
 
-M17 阶段门当前没有通过，因此 M18 文档是设计输入，M18 后端集成任务不得宣称已完成。
+M17 阶段门已通过。M18-01 至 M18-05 已完成纯 UI demo 验证，后续任务负责把相同交互收敛为真实本地 Web App，并接入现有控制面能力。
 
 ## 2. 体验原则
 
@@ -222,3 +222,59 @@ M18 冻结用户可见边界、节点类型和核心自治逻辑。实现可以�
 - 后端运行语义变化后的聚合映射
 
 遇到现有后端没有直接对应的 UI 事实时，优先展示来源、当前状态和 Foreman 处理进度，并保留后续适配空间。不要为了填满画布增加后端不存在的节点或控制能力。
+
+
+## 11. 真实前端与后端适配
+
+M18 的第二阶段不再把 `tmp/m18-ui-demo` 当作最终入口。正式入口放在 `src/mao/webapp/`，由 `factory web` 提供静态资源和同源 `/api/web`。UI 继续复用 demo 的浅色金属质感、离屏侧边栏、MAO 停靠、双层画布和渐进式详情。
+
+后端使用现有 Context、EpochStore、Snapshot、LineRunner、ForemanQuery、Warehouse、events、talk 和 mailbox 能力。适配层只生成前端读模型，不引入 Factory 或 Workarea 持久化实体。
+
+### 11.1 适配层职责
+
+- 绑定本机回环 Web Server 和静态资源
+- 读取当前 Epoch、Registry、Line、Station、Machine、OperatorRuntime、Agent、runs、run_nodes、events、wakes、beans 和 lineage
+- 将 Line 聚合为工厂层 workarea 节点
+- 将 Station 的 operator 与 machine 投影为厂区层两个节点类型
+- 依据实际输入绑定和执行依赖生成显式边
+- 对秘密、凭据、完整 transcript 和内部路径做响应级脱敏
+- 把 Foreman 文本通过 `talk.post_human` 写入现有输入链路
+- 将 serve、Foreman 和 Registry 不可用状态传到前端
+
+### 11.2 正式前端状态
+
+正式前端状态分成三类。
+
+- `serverState` 保存 API 返回的运行事实、图、资产、日志、对话和连接状态
+- `interactionState` 保存当前页面、层级、选中节点、抽屉、Foreman 面板和本地布局
+- `pendingActions` 保存等待后端处理的 talk 或 Foreman 意图，不把 queued 当作 completed
+
+浏览器 localStorage 只保存节点位置、缩放、平移、MAO 位置和展开偏好。任何运行状态、密钥、宪法、资产内容和 Foreman 结果都来自 API。
+
+### 11.3 兼容策略
+
+`tmp/m18-ui-demo` 继续保留为纯 UI 交互基准。正式 Web App 可以在离线打开 demo 时使用 mock 数据，但 `factory web` 正式入口必须标明真实连接状态，API 失败时显示异常，不得静默使用 mock。
+
+旧 `factory console` 保持原有登录和只读控制台契约。M18 新 Web App 使用独立命令和路由，避免破坏 M7/M11 已有控制台验收。
+
+## 12. 实施切片扩展
+
+### M18-06 真实 Web API 与本地启动
+
+新增 `factory web`、回环绑定的 WebServer、静态资源入口和 `/api/web` 只读读模型。复用旧控制台的数据查询逻辑，但不复用登录流程。
+
+### M18-07 正式前端资源与真实数据 hydration
+
+将 demo 的视觉和交互落到 `src/mao/webapp/`。看板、工厂层、厂区层、资产和日志由 bootstrap 与按需 API 驱动，连接状态可见。
+
+### M18-08 Foreman 对话真实写入与刷新
+
+通过 `POST /api/web/talk` 接入现有 talk/mailbox 链路。前端显示 queued、running、answered、failed 和 exception，serve 未运行时显示真实错误。
+
+### M18-09 后端图聚合与本地浏览器回归
+
+实现 Line → workarea、Station → Operator/Machine、输入绑定 → 显式边的读模型，验证节点类型边界、脱敏、资产/日志/宪法上下文和真实 API 浏览器流程。
+
+### M18-10 M18 真实入口阶段门
+
+运行全量快速检查、Web API 系统测试、静态资源检查、本地服务器回归和真实浏览器验收。通过后 M18 才能宣称完成真实前端接入。

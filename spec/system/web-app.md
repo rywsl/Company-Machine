@@ -223,3 +223,60 @@ Operator 发现资源缺口后主动提出请求，Foreman 继续处理。
 - 浏览器布局恢复只保存布局和交互偏好，不能把运行状态、资产事实、密钥值或宪法状态写入布局存储。
 - React Flow 或原生 SVG 都可以作为实现选择。实现细节可以调整，只要保留四入口、两层节点边界、Foreman 自治和本地单机场景。
 - M18 任务应为未来控制面适配保留空间。遇到后端暂未直接暴露的事实，优先展示来源、当前状态和 Foreman 处理进度。
+
+
+## 11. 真实 Web App 集成
+
+M18 的正式用户入口由 `factory web` 启动。服务只绑定 `127.0.0.1`，页面和 API 使用同源请求，不提供登录、注册、账号、租户、邀请、远程 SaaS 或多用户会话。已有 `factory console` 保持兼容，继续承担受保护的旧控制台职责，不能被新 Web App 反向依赖。
+
+默认入口为 `http://127.0.0.1:<port>/`。页面直接进入看板。默认端口由 `web.port` 配置，未配置时使用本地 Web App 默认端口。端口为 `0` 时允许测试环境使用系统分配端口。
+
+### 11.1 API 边界
+
+真实前端通过以下同源 API 读取现有控制面事实。
+
+- `GET /api/web/bootstrap` 返回版本、运行连接状态、工厂图、厂区图、看板摘要、资产摘要、日志摘要、Harness 能力和当前宪法版本
+- `GET /api/web/graph?scope=factory` 返回工厂层聚合图
+- `GET /api/web/graph?scope=workarea&workarea=<line-key>` 返回指定厂区内部图
+- `GET /api/web/assets?limit=<n>` 返回脱敏后的资产摘要和来源引用
+- `GET /api/web/logs?limit=<n>&since=<cursor>` 返回事件、运行、验证、修复、资源请求和异常摘要
+- `GET /api/web/talk` 返回 Foreman 对话时间线
+- `POST /api/web/talk` 接受 `{ "text": "..." }`，使用本地用户身份调用现有 `talk.post_human`，把消息投递给常驻 Foreman。控制面不在此请求中调用模型 API
+- `GET /api/web/harnesses` 返回本地 Registry 中的 OperatorRuntime 和适配器能力摘要
+- `GET /api/web/constitution` 返回当前 Epoch、宪法版本、生效状态和最近变更摘要
+
+成功响应使用 `application/json`。业务失败返回 `4xx` 或 `409`，body 至少包含 `code`、`message` 和脱敏后的 `detail`。服务端不得把密钥值、Authorization、Cookie、完整本地凭据路径或未脱敏 transcript 写入响应。
+
+### 11.2 真实读模型
+
+Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoch 的 Registry、Line、Station、Machine、OperatorRuntime、Agent、runs、run_nodes、events、wakes、talk_messages、beans 和 lineage 读取事实。
+
+- 工厂层的 `workarea` 节点由现有 `Line` 聚合而来，节点 id 使用 Line key，节点位置只来自浏览器布局
+- 厂区层的 Operator 和 Machine 节点由 Line step 引用的 Station、operator.runtime 和 machine 解析而来
+- Operator → Machine 边来自 Station 的实际绑定
+- Machine → Operator 边来自 Line step 的输入绑定、switch 条件、subline 关系或现有执行依赖
+- 无法从后端事实推导的边不生成。适配层不得按节点数组顺序补连续箭头
+- 节点与边状态来自运行记录、run_nodes、events 和 Foreman 会话。状态缺失时使用 `unknown`，不得伪造运行事实
+- `scope`、`workarea`、节点类型和边类型由服务端校验
+
+### 11.3 写入边界
+
+普通浏览器操作只修改本地布局偏好。Foreman 目标、Harness 替换意图和资源请求通过现有 Foreman 邮箱或 talk 入口进入自治链路。浏览器不直接修改 Registry、RunPlan、Line、Machine、Operator、Secret 或 Constitution，也不直接调用 LLM API。
+
+`POST /api/web/talk` 成功只表示消息已经写入本地 Foreman 输入队列。前端必须展示 `queued` 或现有处理状态，并通过轮询 `GET /api/web/talk`、`GET /api/web/logs` 或后续事件刷新结果。serve 未运行、Foreman 不可用、宪法冲突和不可恢复异常必须进入异常上下文。
+
+### 11.4 前端连接状态
+
+首屏必须区分 `connecting`、`connected`、`degraded` 和 `exception`。静态 demo 可以在独立文件打开时使用显式 mock 数据，但 `factory web` 入口不能静默退回 mock。后端连接失败时显示当前错误和本地服务恢复入口，不能把 mock 状态显示成真实运行状态。
+
+## 12. 真实 Web App 验收
+
+- `factory web` 只监听本机回环地址，打开 `/` 直接返回 M18 前端
+- `/api/web/bootstrap` 能从真实 Context 返回图、运行、资产、日志和宪法摘要
+- 前端首屏由 API 数据驱动，不依赖写死的工厂节点或运行记录
+- 双击厂区后请求对应 `workarea` 图，工厂层和厂区层互斥
+- 节点移动、缩放、平移和 MAO 偏好仍只保存在浏览器本地
+- Foreman 输入通过 `POST /api/web/talk` 进入现有消息链路，不调用控制面 LLM API
+- API 不要求登录，不返回秘密值，不暴露多用户入口
+- serve 关闭时前端展示真实异常，不伪造自治运行成功
+- 本地浏览器可完成看板、编排、资产、日志和 Foreman 对话的真实读写闭环

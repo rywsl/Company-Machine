@@ -1201,3 +1201,19 @@ gates:
         run: node --check tmp/m18-ui-demo/app.js
       - id: m18-ui-files
         run: uv run python -c "from pathlib import Path; required = [Path('tmp/m18-ui-demo/index.html'), Path('tmp/m18-ui-demo/app.js'), Path('tmp/m18-ui-demo/styles.css')]; assert all(path.is_file() for path in required)"
+      - id: m18-web-api
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_api.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+      - id: m18-web-frontend
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_frontend.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+      - id: m18-web-talk
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_talk.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+      - id: m18-web-graph
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_graph.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+      - id: m18-web-static
+        run: node --check src/mao/webapp/static/app.js
+      - id: m18-no-browser-artifacts
+        run: uv run python -c "from pathlib import Path; root = Path('.'); bad = [p for p in root.glob('*.png')] + [p for p in root.glob('*.jpg')] + [p for p in root.glob('*.jpeg')] + [p for p in root.glob('output/playwright/**') if p.is_file()]; assert not bad, bad"

@@ -2739,3 +2739,65 @@ tasks:
         run: node --check tmp/m18-ui-demo/app.js
       - id: ui-shell-files
         run: uv run python -c "from pathlib import Path; required = [Path('tmp/m18-ui-demo/index.html'), Path('tmp/m18-ui-demo/app.js'), Path('tmp/m18-ui-demo/styles.css')]; assert all(path.is_file() for path in required)"
+
+  - id: M18-06
+    milestone: M18
+    title: 真实 Web API 与本地启动
+    card: plan/tasks/M18-06.md
+    deps: [M18-05]
+    spec: [spec/system/web-app.md]
+    paths: [src/mao/webapp/**, src/mao/commands/web.py, src/mao/cli.py, tests/system/test_m18_web_api.py]
+    accept:
+      - id: web-api
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_api.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+      - id: web-static-entry
+        run: uv run python -c "from pathlib import Path; required = [Path('src/mao/webapp/static/index.html'), Path('src/mao/webapp/static/app.js'), Path('src/mao/webapp/static/styles.css')]; assert all(path.is_file() for path in required)"
+  - id: M18-07
+    milestone: M18
+    title: 正式前端资源与真实数据 hydration
+    card: plan/tasks/M18-07.md
+    deps: [M18-06]
+    spec: [spec/system/web-app.md]
+    paths: [src/mao/webapp/static/**, tests/system/test_m18_web_frontend.py]
+    accept:
+      - id: frontend-tests
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_frontend.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+      - id: frontend-syntax
+        run: node --check src/mao/webapp/static/app.js
+  - id: M18-08
+    milestone: M18
+    title: Foreman 对话真实写入与刷新
+    card: plan/tasks/M18-08.md
+    deps: [M18-07]
+    spec: [spec/system/web-app.md]
+    paths: [src/mao/webapp/**, tests/system/test_m18_web_talk.py]
+    accept:
+      - id: web-talk
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_talk.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+  - id: M18-09
+    milestone: M18
+    title: 后端图聚合与本地浏览器回归
+    card: plan/tasks/M18-09.md
+    deps: [M18-08]
+    spec: [spec/system/web-app.md]
+    paths: [src/mao/webapp/**, tests/system/test_m18_web_graph.py]
+    accept:
+      - id: web-graph
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_graph.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+  - id: M18-10
+    milestone: M18
+    title: M18 真实入口阶段门
+    card: plan/tasks/M18-10.md
+    deps: [M18-09]
+    spec: [spec/system/web-app.md]
+    paths: [src/mao/webapp/**, src/mao/commands/web.py, src/mao/cli.py, tests/system/test_m18_web_*.py]
+    accept:
+      - id: web-suite
+        run: uv run python tools/harness.py pytest tests/system/test_m18_web_api.py tests/system/test_m18_web_frontend.py tests/system/test_m18_web_talk.py tests/system/test_m18_web_graph.py
+        assert: out.failed == 0 && out.errors == 0 && out.skipped == 0
+      - id: web-syntax
+        run: node --check src/mao/webapp/static/app.js
