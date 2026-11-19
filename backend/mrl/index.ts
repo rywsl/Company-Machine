@@ -2,3 +2,6 @@ export * from "./lexer";
 export * from "./parser";
 export * from "./evaluator";
 export * from "./query";
+export * from "./types";
+export * from "./checker";
+export * from "./template";

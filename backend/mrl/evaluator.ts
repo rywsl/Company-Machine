@@ -1,4 +1,5 @@
 import { Expr, parseExpression } from "./parser";
+import { checkExpression, type CheckOptions } from "./checker";
 
 export class MrlEvalError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "MrlEvalError"; }
@@ -22,6 +23,7 @@ const equal = (a: unknown, b: unknown): boolean => {
 const finite = (value: number, code = "MRL-DOMAIN") => { if (!Number.isFinite(value)) throw new MrlEvalError(code, "non-finite number"); return Object.is(value, -0) ? 0 : value; };
 
 export interface EvaluateOptions { budget?: number; functions?: Record<string, (...args: MrlValue[]) => MrlValue>; }
+export interface CompileExprOptions extends EvaluateOptions, CheckOptions {}
 
 export class Evaluator {
   private steps = 0;
@@ -108,5 +110,14 @@ const builtins: Record<string, (...args: MrlValue[]) => MrlValue> = {
 };
 
 export function evaluate(source: string | Expr, environment: EvalEnvironment = {}, options: EvaluateOptions = {}): MrlValue { return new Evaluator(options).evaluate(typeof source === "string" ? parseExpression(source) : source, environment); }
-export function compileExpr(source: string, options: EvaluateOptions = {}) { const ast = parseExpression(source); return { ast, evaluate: (environment: EvalEnvironment = {}) => new Evaluator(options).evaluate(ast, environment) }; }
+export function compileExpr(source: string, options: CompileExprOptions = {}) {
+  const checked = checkExpression(source, options);
+  return {
+    ast: checked.ast,
+    type: checked.type,
+    warnings: checked.warnings,
+    paths: checked.paths,
+    evaluate: (environment: EvalEnvironment = {}) => new Evaluator(options).evaluate(checked.ast, environment),
+  };
+}
 export const standardFunctions = builtins;
