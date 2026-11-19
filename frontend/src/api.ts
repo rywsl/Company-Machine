@@ -56,7 +56,7 @@ export const sendTalk = (text: string) => api<{ state: string; message: TalkMess
   body: JSON.stringify({ text }),
 });
 
-export const submitProjectIntake = (payload: { repo_url?: string; files?: Array<{ name: string; digest?: string; ref?: string }>; local_folder?: string }) =>
+export const submitProjectIntake = (payload: { name?: string; repo_url?: string; files?: Array<{ name: string; digest?: string; ref?: string }>; local_folder?: string }) =>
   api<{ project_id: string; state: string }>("/api/v1/projects/intake", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
