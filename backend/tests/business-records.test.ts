@@ -44,6 +44,14 @@ describe("business record and DAG boundaries", () => {
       expect((await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, { method: "POST", headers, body: JSON.stringify({ graph: cyclic }) }))).status).toBe(400);
       const dangling = { nodes: [{ id: "a" }], edges: [{ source: "a", target: "missing" }] };
       expect((await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, { method: "POST", headers, body: JSON.stringify({ graph: dangling }) }))).status).toBe(400);
+
+      const imported = await app.fetch(new Request("http://localhost/api/v1/business-systems/import", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ schema: "mao.business-system/1", system: { name: "坏图" }, graph: cyclic }),
+      }));
+      expect(imported.status).toBe(400);
+      expect((await body(await app.fetch(new Request("http://localhost/api/v1/business-systems"))))).toHaveLength(1);
     } finally {
       app.stop();
       await rm(dbPath, { force: true });
