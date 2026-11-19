@@ -28,6 +28,7 @@ _COMMAND_MODULES = (
     "source",
     "egress",
     "console",
+    "web",
     "contract",
     "deployment",
     "schedule",
