@@ -63,7 +63,7 @@ export class ForemanCoordinator {
     let session;
     try {
       session = await transport.start({
-        task: claimed.text,
+        task: `${claimed.text}\n\n当前业务系统摘要\n${this.options.store.listBusinessSystems().map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
         contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。需要写入业务事实时，在 MAO 仓库根目录使用 `bun run backend/src/cli.ts business graph <business-system-id> --file <path>`、`business artifact <project-id> --file <path>`、`business conversion <business-system-id> --kind <kind> --summary <summary>` 或 `business run <business-system-id>`。文件内容通过引用传递，密钥通过项目资源请求流程处理。",
         model: profile.model,
         cwd: this.cwd,
