@@ -46,7 +46,7 @@ M2 会在本组件上**追加**，不会改 README 4.9 的签名：`Runner.submi
 | `mao.base` | `canonical_json`、`utc_iso`、`parse_duration`、`Clock`、`IdSource` |
 | `mao.db.Database` | `tx`、`query`。迁移 `002_jobs.sql` |
 
-禁止在事务里调用 `sandbox.exec` 或 `docker`（S7）。禁止 `datetime.now`、`uuid`、`random`。
+禁止在事务里调用 `sandbox.exec` 或容器引擎命令（S7）。生产引擎为 Podman，Docker 只保留兼容 provider。禁止 `datetime.now`、`uuid`、`random`。
 
 ---
 
@@ -288,7 +288,7 @@ PENDING → PROVISIONING → RUNNING ⇄ AWAITING_APPROVAL
    - Docker 且 `form == workspace`：`workspace_volume` 用 4.2 的卷名，不把宿主 `workspace/` 挂进去。
    - Local：不设 `workspace_volume`，改为把 `attempt/workspace` 挂到 `/workspace`。`resume` 时先把上一 attempt 的 `workspace/` 用 `shutil.copytree` 拷过来（目录已存在则先删再拷）。
 5. agent-cli 且 runtime 有 `inject.volume`：卷名 `mao-op-` + digest 的前 12 位 hex。`provider.prepare_inject_volume(image, volume)`，再挂 `Mount("volume:"+volume, inject.mount, readonly=True)`。Local 上这个方法是空操作，命令映射由测试传入的 `LocalProvider` 负责。
-6. `provider.open(spec)`。失败：`FAILED`，错误码用沙箱抛出的那个（`DOCKER_UNAVAILABLE`、`IMAGE_NOT_FOUND`、`DOCKER_FAILED` 等），计入 failed 重试。
+6. `provider.open(spec)`。失败：`FAILED`，错误码用沙箱抛出的那个（`PODMAN_UNAVAILABLE`、`IMAGE_NOT_FOUND`、`PODMAN_FAILED` 或兼容 provider 的对应错误），计入 failed 重试。
 7. `PROVISIONING → RUNNING`。
 
 ### 5.5 执行

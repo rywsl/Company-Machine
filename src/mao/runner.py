@@ -774,7 +774,7 @@ class Runner:
             f"mao-{job.id}-ws" if job.attempt == 1 or mode == "resume" else f"mao-{job.id}-ws-{job.attempt}"
         )
         workspace_volume = None
-        if getattr(self.ctx.provider, "name", "") == "docker" and form == "workspace":
+        if getattr(self.ctx.provider, "name", "") in {"docker", "podman"} and form == "workspace":
             workspace_volume = volume
             if job.attempt == 1 and mode != "resume":
                 subprocess.run(
@@ -790,7 +790,7 @@ class Runner:
         if runtime.get("kind") == "agent-cli":
             inject = runtime.get("inject") or {}
             volume_ref = inject.get("volume")
-            if volume_ref and getattr(self.ctx.provider, "name", "") == "docker":
+            if volume_ref and getattr(self.ctx.provider, "name", "") in {"docker", "podman"}:
                 hexpart = str(volume_ref).split("sha256:", 1)[1]
                 op_volume = "mao-op-" + hexpart[:12]
                 self.ctx.provider.prepare_inject_volume(volume_ref, op_volume)
@@ -1072,7 +1072,7 @@ class Runner:
         self._ensure_proxies()
         token = token_hex(16)
         prepared.egress_token = token
-        docker = getattr(self.ctx.provider, "name", "") == "docker"
+        docker = getattr(self.ctx.provider, "name", "") in {"docker", "podman"}
         env = dict(prepared.spec.env)
         env.update(plan.env)
         env.update(store.inject(plan.secret_names))
@@ -1097,7 +1097,7 @@ class Runner:
         if proxies is not None:
             from mao.egress import proxy_env
 
-            urls = proxy_env(proxies, docker=getattr(self.ctx.provider, "name", "") == "docker")
+            urls = proxy_env(proxies, docker=getattr(self.ctx.provider, "name", "") in {"docker", "podman"})
             values["MODEL_PROXY"] = urls["MODEL_PROXY"]
             values["EGRESS_PROXY"] = urls["EGRESS_PROXY"]
         return values

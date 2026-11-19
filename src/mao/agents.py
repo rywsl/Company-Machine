@@ -1286,7 +1286,7 @@ class AgentHost:
         if getattr(sandbox.spec, "network", "none") == "egress":
             from mao.egress import proxy_env
 
-            docker = getattr(self.ctx.provider, "name", "") == "docker"
+            docker = getattr(self.ctx.provider, "name", "") in {"docker", "podman"}
             env.update(proxy_env(self.ctx.proxies, docker=docker))
         lease = getattr(self, "_lease", None)
         bound = self.ctx.db.query(
@@ -1563,7 +1563,7 @@ class AgentHost:
         runtime = snapshot.spec(cfg.runtime)
         inject = runtime.get("inject") or {}
         volume_ref = inject.get("volume")
-        if volume_ref and getattr(self.ctx.provider, "name", "") == "docker":
+        if volume_ref and getattr(self.ctx.provider, "name", "") in {"docker", "podman"}:
             hexpart = str(volume_ref).split("sha256:", 1)[-1]
             op_volume = "mao-op-" + hexpart[:12]
             self.ctx.provider.prepare_inject_volume(str(volume_ref), op_volume)
@@ -1592,7 +1592,7 @@ class AgentHost:
         env.update({str(key): str(value) for key, value in plan.env.items()})
         env.update(store.inject(plan.secret_names))
         self._ensure_proxies()
-        docker = getattr(self.ctx.provider, "name", "") == "docker"
+        docker = getattr(self.ctx.provider, "name", "") in {"docker", "podman"}
         env.update(credentialed_env(proxy_env(self.ctx.proxies, docker=docker), f"agent-{name}", token))
         return replace(spec, env=env, network="egress")
 
@@ -1603,7 +1603,7 @@ class AgentHost:
         from mao.operator import expand_control_vars
 
         self._ensure_proxies()
-        docker = getattr(self.ctx.provider, "name", "") == "docker"
+        docker = getattr(self.ctx.provider, "name", "") in {"docker", "podman"}
         urls = proxy_env(self.ctx.proxies, docker=docker)
         return expand_control_vars(
             invocation,

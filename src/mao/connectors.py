@@ -523,7 +523,7 @@ def _verify_network(
     register_check_egress(ctx.db, principal, plan, token=token)
     proxies = getattr(ctx, "proxies", None)
     if proxies is not None:
-        docker = getattr(ctx.provider, "name", "") == "docker"
+        docker = getattr(ctx.provider, "name", "") in {"docker", "podman"}
         env.update(credentialed_env(proxy_env(proxies, docker=docker), principal, token))
     return "egress", env
 

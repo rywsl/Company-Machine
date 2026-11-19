@@ -448,7 +448,7 @@ class ForemanSupervisor:
             self._ensure_proxies()
             from mao.egress import proxy_env
 
-            docker = getattr(self.ctx.provider, "name", "") == "docker"
+            docker = getattr(self.ctx.provider, "name", "") in {"docker", "podman"}
             urls = proxy_env(self.ctx.proxies, docker=docker)
             env.update(urls)
             inv = expand_control_vars(
@@ -482,7 +482,7 @@ class ForemanSupervisor:
         ]
         inject = runtime.get("inject") or {}
         volume_ref = inject.get("volume")
-        if volume_ref and getattr(self.ctx.provider, "name", "") == "docker":
+        if volume_ref and getattr(self.ctx.provider, "name", "") in {"docker", "podman"}:
             hexpart = str(volume_ref).split("sha256:", 1)[-1]
             op_volume = "mao-op-" + hexpart[:12]
             self.ctx.provider.prepare_inject_volume(str(volume_ref), op_volume)

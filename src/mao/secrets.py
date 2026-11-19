@@ -147,7 +147,7 @@ def verify_secret(
         env.update(plan.env)
         proxies = getattr(ctx, "proxies", None)
         if proxies is not None:
-            docker = getattr(ctx.provider, "name", "") == "docker"
+            docker = getattr(ctx.provider, "name", "") in {"docker", "podman"}
             env.update(credentialed_env(proxy_env(proxies, docker=docker), label, token))
     from mao.sandbox import sandbox_resources
 

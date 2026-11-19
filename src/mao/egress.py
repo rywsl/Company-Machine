@@ -714,7 +714,7 @@ def _start_forwarder(docker: str, name: str, ports: list[int], timeout_s: float,
 def start_owned_proxies(ctx: Any, *, model_port: int, timeout_s: float) -> tuple[EgressProxy, ModelProxy]:
     provider = ctx.provider
     docker = getattr(provider, "docker", None)
-    if getattr(provider, "name", "") == "docker" and docker:
+    if getattr(provider, "name", "") in {"docker", "podman"} and docker:
         gateway = ensure_egress_network(docker, timeout_s=timeout_s)
         host = proxy_bind_host(docker_operating_system(docker, timeout_s=timeout_s), gateway)
         provider.proxy_host = host

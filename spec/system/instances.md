@@ -294,11 +294,11 @@ CREATE INDEX emits_station_at ON emits(station, at);
 /bin/sh, -c, 'mkdir -p /tmp/home && exec "$@"', sh, *spec.command
 ```
 
-`Docker` 的 `alive()`：`docker inspect --format {{.State.Running}} <name>` 输出 `true`。命令失败也返回假，不抛错。
+`PodmanProvider` 的 `alive()` 使用 Podman inspect 检查容器运行状态。命令失败也返回假，不抛错。DockerProvider 继续遵循同一接口作为迁移期兼容实现。
 
 `LocalProvider.open`：`spec.command` 非空时，按 `sandbox.md` 5.6 映射 argv、env、工作目录后用 `subprocess.Popen` 启动，stdout、stderr 写到 `root/tmp/sandboxes/<name>/main.log`。`alive()`：打开它的对象上为 `Popen.poll() is None`；没有命令、或由 `attach` 得到的对象恒为真。`close` 终止主进程（先 `terminate`，5 秒后 `kill`）。
 
-`attach`：Docker 下检查容器在运行，返回绑定到这个名字的沙箱，`close` 仍是 `docker rm -f`；LocalProvider 下等于不启动进程的 `open`。
+`attach`：容器 provider 检查实例在运行，返回绑定到这个名字的沙箱，`close` 删除对应容器；LocalProvider 下等于不启动进程的 `open`。
 
 `once` 机器也使用 `runtime.command`：`Runner._spec` 把它放进 `SandboxSpec.command`。服务型机器靠它启动服务；没有它时服务不会运行，`gateway.md` 5.4 的健康检查报 `SERVICE_UNHEALTHY`。
 

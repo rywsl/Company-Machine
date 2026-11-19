@@ -1334,7 +1334,7 @@ def instance_spec(ctx: Any, snapshot: Any, station: str, instance_id: str) -> Sa
     resources = sandbox_resources(machine)
     form = machine.get("form")
     workspace_volume = None
-    if getattr(ctx.provider, "name", "") == "docker" and form == "workspace":
+    if getattr(ctx.provider, "name", "") in {"docker", "podman"} and form == "workspace":
         workspace_volume = f"mao-inst-{instance_id}-ws"
     else:
         mounts.append(Mount(source=str((host / "workspace").resolve()), target="/workspace", readonly=False))
@@ -1393,7 +1393,7 @@ def _instance_egress(ctx: Any, instance_id: str, plan: Any) -> dict[str, str]:
         start_owned_proxies(ctx, model_port=0, timeout_s=60.0)
         proxies = getattr(ctx, "proxies", None)
     if proxies is not None:
-        docker = getattr(ctx.provider, "name", "") == "docker"
+        docker = getattr(ctx.provider, "name", "") in {"docker", "podman"}
         env.update(credentialed_env(proxy_env(proxies, docker=docker), f"inst-{instance_id}", token))
     return env
 

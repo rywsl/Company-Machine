@@ -331,7 +331,7 @@ HTTPS 与方法：
 | `none` | `["--network", "none"]` |
 | `egress` | `["--network", "mao-egress", "--add-host=egress:host-gateway", "--add-host=model-proxy:host-gateway"]` |
 
-`DockerProvider.build_run_argv` 在 M1 结果上：`network=none` 保持 M1；`network=egress` 时用上表**替换** `--network none`，不是追加成两个 `--network`。必须仍然没有 `--network host`、`--privileged`、`--cap-add`、docker.sock 挂载（D11）。
+`PodmanProvider.build_run_argv` 在 M1 结果上：`network=none` 保持 M1；`network=egress` 时用上表**替换** `--network none`，不是追加成两个 `--network`。必须仍然没有 `--network host`、`--privileged`、`--cap-add`、容器套接字挂载（D11）。DockerProvider 兼容实现遵循同一安全契约。
 
 `network=egress` 但本进程没有活着的 `EgressProxy`：`DockerProvider.open` 抛 `EGRESS_UNSUPPORTED`（沿用 D12 的码，不新造一个“代理没开”的码）。`allow_unproxied_egress=True` 时可以不开代理直接出网，这是开发开关，验收测试不靠它。开关**不**关闭脱敏，也**不**把模型秘密注入沙箱。
 
