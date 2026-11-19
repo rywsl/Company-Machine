@@ -435,20 +435,27 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
     const selectedProjects = projects.filter((project) => project.businessSystemId === workarea || project.id === workarea);
     const selectedSystem = systems.find((system) => system.id === workarea);
     const units = selectedSystem ? store.listBusinessUnits(selectedSystem.id) : [];
-    const nodes = units.length ? units.map((unit, index) => ({
+    const storedGraph = selectedSystem?.metadata.graph && typeof selectedSystem.metadata.graph === "object" ? selectedSystem.metadata.graph as { nodes?: unknown; edges?: unknown } : undefined;
+    const storedNodes = Array.isArray(storedGraph?.nodes) ? storedGraph.nodes.filter((node): node is Record<string, any> => Boolean(node && typeof node === "object" && typeof (node as any).id === "string")) : [];
+    const storedIds = new Set(storedNodes.map((node) => node.id));
+    const nodes = units.length ? units.map((unit, index) => {
+      const saved = storedIds.has(unit.id) ? storedNodes.find((node) => node.id === unit.id) : undefined;
+      return {
       id: unit.id,
       type: unit.kind,
       group: unit.projectId ?? unit.businessSystemId,
       label: unit.kind === "operator" ? "Operator" : unit.name,
-      position: { x: unit.kind === "operator" ? 170 : 470, y: 130 + Math.floor(index / 2) * 180 },
+      position: saved?.position && typeof saved.position === "object" ? saved.position : { x: unit.kind === "operator" ? 170 : 470, y: 130 + Math.floor(index / 2) * 180 },
       status: unit.status === "pending" ? "waiting" : unit.status,
       metadata: { project: unit.name, harness: unit.harnessRuntime, model: unit.model, source_kind: unit.metadata.source_kind },
-    })) : selectedProjects.flatMap((project, index) => [
+      };
+    }) : selectedProjects.flatMap((project, index) => [
       { id: `${project.id}:operator`, type: "operator", group: project.id, label: "Operator", position: { x: 170, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, harness: "official" } },
       { id: `${project.id}:machine`, type: "machine", group: project.id, label: project.name, position: { x: 470, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, sources: project.sources.length } },
     ]);
     const operatorUnits = units.filter((unit) => unit.kind === "operator");
-    const edges = operatorUnits.length ? operatorUnits.map((unit) => ({ id: `${unit.id}:operator-to-machine`, source: unit.id, target: `${unit.projectId}:machine`, kind: "material", condition: "业务物料", status: "ready" })) : selectedProjects.map((project) => ({ id: `${project.id}:operator-to-machine`, source: `${project.id}:operator`, target: `${project.id}:machine`, kind: "material", condition: "业务物料", status: "ready" }));
+    const storedEdges = Array.isArray(storedGraph?.edges) ? storedGraph.edges.filter((edge): edge is Record<string, any> => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string" && storedIds.has((edge as any).source) && storedIds.has((edge as any).target))) : [];
+    const edges = storedEdges.length ? storedEdges.map((edge) => ({ id: typeof edge.id === "string" ? edge.id : `${edge.source}:${edge.target}`, source: edge.source, target: edge.target, kind: edge.kind ?? "material", condition: edge.condition, status: edge.status ?? "ready" })) : operatorUnits.length ? operatorUnits.map((unit) => ({ id: `${unit.id}:operator-to-machine`, source: unit.id, target: `${unit.projectId}:machine`, kind: "material", condition: "业务物料", status: "ready" })) : selectedProjects.map((project) => ({ id: `${project.id}:operator-to-machine`, source: `${project.id}:operator`, target: `${project.id}:machine`, kind: "material", condition: "业务物料", status: "ready" }));
     return { scope: "workarea", id: workarea, title: systems.find((system) => system.id === workarea)?.name ?? workarea, nodes, edges };
   }
   return { scope: "factory", id: "factory", title: "工厂", nodes: systems.map((system, index) => ({ id: system.id, type: "workarea", group: "factory", label: system.name, position: { x: 180 + (index % 3) * 300, y: 160 + Math.floor(index / 3) * 200 }, status: system.status === "active" ? "ready" : "unknown", metadata: { description: system.description, project_count: projects.filter((project) => project.businessSystemId === system.id).length } })), edges: [] };
