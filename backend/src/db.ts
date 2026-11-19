@@ -259,34 +259,36 @@ export class SqliteStore {
   }
 
   listArtifacts(projectId: string): Artifact[] {
-    return this.db.query("SELECT * FROM artifacts WHERE project_id = ? ORDER BY created_at, id").all(projectId).map((row: any) => {
-      const metadata = parseJson(row.metadata);
-      return {
-        id: row.id,
-        projectId: row.project_id,
-        sourceId: row.source_id ?? undefined,
-        recordType: metadata.record_type === "material" ? "material" : "artifact",
-        kind: row.kind,
-        ref: row.ref,
-        metadata,
-        title: typeof metadata.title === "string" ? metadata.title : undefined,
-        description: typeof metadata.description === "string" ? metadata.description : undefined,
-        summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
-        purpose: typeof metadata.purpose === "string" ? metadata.purpose : undefined,
-        status: typeof metadata.status === "string" ? metadata.status : undefined,
-        producer: metadata.producer && typeof metadata.producer === "object" ? metadata.producer as Artifact["producer"] : undefined,
-        files: Array.isArray(metadata.files) ? metadata.files : undefined,
-        inputs: Array.isArray(metadata.inputs) ? metadata.inputs : undefined,
-        outputs: Array.isArray(metadata.outputs) ? metadata.outputs : undefined,
-        lineage: Array.isArray(metadata.lineage) ? metadata.lineage : undefined,
-        createdAt: row.created_at,
-      };
-    });
+    return this.db.query("SELECT * FROM artifacts WHERE project_id = ? ORDER BY created_at, id").all(projectId).map((row: any) => this.artifactFromRow(row));
   }
 
   listBusinessSystemArtifacts(businessSystemId: string): Artifact[] {
-    const projectIds = this.db.query("SELECT id FROM projects WHERE business_system_id = ? ORDER BY created_at, id").all(businessSystemId) as Array<{ id: string }>;
-    return projectIds.flatMap(({ id }) => this.listArtifacts(id));
+    const rows = this.db.query("SELECT artifacts.* FROM artifacts JOIN projects ON projects.id = artifacts.project_id WHERE projects.business_system_id = ? ORDER BY artifacts.created_at, artifacts.id").all(businessSystemId);
+    return rows.map((row: any) => this.artifactFromRow(row));
+  }
+
+  private artifactFromRow(row: any): Artifact {
+    const metadata = parseJson(row.metadata);
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      sourceId: row.source_id ?? undefined,
+      recordType: metadata.record_type === "material" ? "material" : "artifact",
+      kind: row.kind,
+      ref: row.ref,
+      metadata,
+      title: typeof metadata.title === "string" ? metadata.title : undefined,
+      description: typeof metadata.description === "string" ? metadata.description : undefined,
+      summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
+      purpose: typeof metadata.purpose === "string" ? metadata.purpose : undefined,
+      status: typeof metadata.status === "string" ? metadata.status : undefined,
+      producer: metadata.producer && typeof metadata.producer === "object" ? metadata.producer as Artifact["producer"] : undefined,
+      files: Array.isArray(metadata.files) ? metadata.files : undefined,
+      inputs: Array.isArray(metadata.inputs) ? metadata.inputs : undefined,
+      outputs: Array.isArray(metadata.outputs) ? metadata.outputs : undefined,
+      lineage: Array.isArray(metadata.lineage) ? metadata.lineage : undefined,
+      createdAt: row.created_at,
+    };
   }
 
   createSecretRequest(input: { projectId: string; name: string; vaultRef: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }): SecretRequest {
