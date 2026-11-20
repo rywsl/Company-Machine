@@ -23,6 +23,35 @@ async function waitFor(condition: () => boolean) {
   expect(condition()).toBe(true);
 }
 
+test("dispatches a business run queued by the separate factory CLI", { timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-cli-dispatch-"));
+  const dbPath = join(root, "factory.db");
+  const calls: string[] = [];
+  const app = startServer({
+    port: 0, dbPath, legacyPath: dbPath,
+    operator: { spawn: (argv) => { calls.push(argv.join("\n")); return fixtureProcess("Completed queued work"); } },
+  });
+  try {
+    app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session" });
+    const system = app.store.createBusinessSystem({ name: "CLI dispatch" });
+    app.store.createIntake({ business_system_id: system.id, name: "Project" });
+    const bun = Bun as unknown as { spawn(argv: string[], options: object): { stdout: ReadableStream; stderr: ReadableStream; exited: Promise<number> } };
+    const child = bun.spawn([Bun.argv[0], join(import.meta.dir, "../src/cli.ts"), "business", "run", system.id, "--input", "cas://trigger"], {
+      env: { ...process.env, FACTORY_ROOT: root, FACTORY_DB_PATH: dbPath, BUSINESS_DB_PATH: dbPath }, stdout: "pipe", stderr: "pipe",
+    });
+    const [exit, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (exit !== 0) throw new Error(stderr);
+    const run = JSON.parse(stdout) as { id: string };
+    await waitFor(() => app.store.getBusinessRun(run.id)?.status === "completed");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("cas://trigger");
+  } finally {
+    await app.operator.close();
+    app.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("serving resumes queued work from SQLite without replaying unresolved work", async () => {
   const root = mkdtempSync(join(tmpdir(), "mao-server-recovery-"));
   const dbPath = join(root, "business.db");

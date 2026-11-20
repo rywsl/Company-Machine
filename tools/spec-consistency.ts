@@ -217,17 +217,24 @@ export function parseAcceptanceReport(root: string, source: string): AcceptanceC
 
 export function acceptanceProblems(spec: ReturnType<typeof inspectSpecifications>, cases: AcceptanceCase[]): string[] {
   const failures = cases.filter((item) => !item.passed).map(({ file, name }) => `${file}::${name} 失败或跳过`);
-  const ranFiles = new Set(cases.map((item) => item.file));
-  for (const file of spec.mappedFiles) {
-    if (!ranFiles.has(file)) failures.push(`${file} 没有执行任何验收用例`);
+  const results = new Map<string, Map<string, number>>();
+  for (const { file, name, passed } of cases) {
+    let fileResults = results.get(file);
+    if (!fileResults) {
+      fileResults = new Map();
+      results.set(file, fileResults);
+    }
+    if (passed) fileResults.set(name, (fileResults.get(name) ?? 0) + 1);
   }
-  for (const file of ranFiles) {
+  for (const file of spec.mappedFiles) {
+    if (!results.has(file)) failures.push(`${file} 没有执行任何验收用例`);
+  }
+  for (const file of results.keys()) {
     if (!spec.mappedFiles.has(file)) failures.push(`${file} 缺少活动验收映射`);
   }
   for (const [obligation, evidence] of spec.evidence) {
     for (const { file, name } of evidence) {
-      const matches = cases.filter((item) => item.file === file && item.name === name && item.passed);
-      if (matches.length !== 1) failures.push(`${obligation} 的 Bun 证据必须恰好通过一次 ${file}::${name}`);
+      if (results.get(file)?.get(name) !== 1) failures.push(`${obligation} 的 Bun 证据必须恰好通过一次 ${file}::${name}`);
     }
   }
   return failures;

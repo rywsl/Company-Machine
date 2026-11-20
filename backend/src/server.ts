@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { RandomIds, SystemClock } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
-import type { BusinessConversion, BusinessSystem } from "./models";
+import type { BusinessConversion, BusinessSystem, Event } from "./models";
 import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
@@ -64,11 +64,13 @@ interface BackendAppOptions {
   foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn };
   operator?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn };
   harnessVerificationTimeoutMs?: number;
+  dispatchWork?: boolean;
 }
 
 export function createApp(options: BackendAppOptions = {}): BackendApp {
   const store = new SqliteStore(options.dbPath, options.legacyPath);
   const events = new EventBus(store);
+  const eventStreams = new AbortController();
   const vault = options.vault ?? new VaultStore();
   const storageRoot = resolve(options.storageRoot ?? process.env.FACTORY_ROOT ?? dirname(process.env.FACTORY_DB_PATH ?? ".factory/factory.db"));
   let uploadWarehouse: Warehouse | undefined;
@@ -114,7 +116,11 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (!health.available) throw new Error(`${provider} runtime unavailable: ${health.reason ?? "unknown"}`);
   };
   const verificationJobs = new Map<string, AbortController>();
-  const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn, ensureRuntime });
+  const databasePath = (path: string) => path === ":memory:" ? path : resolve(path);
+  const foreman = new ForemanCoordinator({
+    store, events, ...options.foreman, ensureRuntime,
+    factoryEnv: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: databasePath(store.legacyPath), BUSINESS_DB_PATH: databasePath(store.dbPath) },
+  });
   let stopped = false;
   const runInBackground = (work: Promise<void>) => {
     void work.catch((error) => {
@@ -125,9 +131,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId), ensureRuntime, readSecret: (ref) => vault.get(ref) });
   const hasForeman = () => store.listHarnessProfiles().some((profile) => profile.role === "foreman");
   const dispatchForemanIfConfigured = (id: string) => {
-    if (hasForeman()) runInBackground(foreman.dispatch(id));
+    if (options.dispatchWork !== false && hasForeman()) runInBackground(foreman.dispatch(id));
   };
   dispatchOperatorRun = (runId: string) => {
+    if (options.dispatchWork === false) return;
     for (const unitRun of store.listReadyUnitRuns(runId)) runInBackground(operator.dispatch(runId, unitRun.id));
   };
   const recoverQueuedWork = () => {
@@ -486,22 +493,27 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
       const health = await runtimeHealth();
+      const eventCursor = store.latestEventSequence();
       const factoryGraph = graphProjection(store, "factory", null);
       const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: new Date().toISOString() },
-        eventCursor: store.latestEventSequence(), pendingForemanReplies: foreman.pendingReplies(),
+        eventCursor, pendingForemanReplies: foreman.pendingReplies(),
         graph: { factory: factoryGraph },
         assets: webAssets(store), logs: webLogs(store, 100), talk: [...store.legacyTalk(), ...store.listTalkMessages()].slice(-80),
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });
     }
-    if (url.pathname === "/api/v1/events" && request.method === "GET") return eventsResponse(request, events, url.searchParams.get("cursor") ?? undefined);
+    if (url.pathname === "/api/v1/events" && request.method === "GET") {
+      const signal = AbortSignal.any([request.signal, eventStreams.signal]);
+      return eventsResponse(events, request.headers.get("last-event-id") ?? url.searchParams.get("cursor"), signal);
+    }
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
     return response({ error: "not found" }, 404);
   };
   return { store, events, vault, foreman, operator, fetch, recoverQueuedWork, stop: () => {
     stopped = true;
+    eventStreams.abort();
     for (const job of verificationJobs.values()) job.abort();
     verificationJobs.clear();
     foreman.stop();
@@ -727,33 +739,57 @@ function webLogs(store: SqliteStore, limit: number) {
     .map((event) => ({ id: event.id, kind: event.type, at: event.createdAt, data: event.data }));
 }
 
-function eventsResponse(request: Request, events: EventBus, cursor?: string): Response {
-  const last = request.headers.get("last-event-id") ?? cursor;
-  const cursorSeq = Number.isFinite(Number(last)) ? Number(last) : 0;
-  let closeStream = () => {};
+function eventsResponse(events: EventBus, cursor: string | null, signal: AbortSignal): Response {
+  const startSequence = Number(cursor);
+  let sequence = Number.isSafeInteger(startSequence) && startSequence >= 0 ? startSequence : 0;
+  let page: Event[] = [];
+  let index = 0;
+  let closed = false;
+  let wake: (() => void) | undefined;
+  let cleanup = () => {};
+  const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const encoder = new TextEncoder();
-      let replaying = true;
-      let lastSent = cursorSeq;
-      const buffered: Array<ReturnType<EventBus["after"]>[number]> = [];
-      const send = (event: any) => {
-        if (event.seq <= lastSent) return;
-        const data = event.data && typeof event.data === "object" ? { ...event.data, type: event.type } : { type: event.type, value: event.data };
-        controller.enqueue(encoder.encode(`id: ${event.seq}\nevent: mao.event\ndata: ${JSON.stringify(data)}\n\n`));
-        lastSent = event.seq;
+      const abort = () => { cleanup(); controller.close(); };
+      const unsubscribe = events.subscribe(() => wake?.());
+      cleanup = () => {
+        closed = true;
+        unsubscribe();
+        signal.removeEventListener("abort", abort);
+        page = [];
+        wake?.();
       };
-      const unsubscribe = events.subscribe((event) => {
-        if (replaying) buffered.push(event);
-        else send(event);
-      });
-      for (const event of events.after(cursorSeq)) send(event);
-      replaying = false;
-      for (const event of buffered.sort((left, right) => left.seq - right.seq)) send(event);
-      closeStream = () => { unsubscribe(); try { controller.close(); } catch { /* client disconnected */ } };
-      request.signal.addEventListener("abort", closeStream, { once: true });
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort, { once: true });
     },
-    cancel() { closeStream(); },
+    async pull(controller) {
+      try {
+        while (!closed) {
+          if (index === page.length) {
+            page = events.after(sequence, 128);
+            index = 0;
+          }
+          const event = page[index];
+          if (event) {
+            const data = event.data && typeof event.data === "object" ? { ...event.data, type: event.type } : { type: event.type, value: event.data };
+            controller.enqueue(encoder.encode(`id: ${event.seq}\nevent: mao.event\ndata: ${JSON.stringify(data)}\n\n`));
+            sequence = event.seq;
+            index++;
+            return;
+          }
+          // Local publishers wake immediately. A CLI writing the same database cannot notify this process.
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 250);
+            wake = () => { clearTimeout(timer); resolve(); };
+          });
+          wake = undefined;
+        }
+      } catch (error) {
+        cleanup();
+        controller.error(error);
+      }
+    },
+    cancel() { cleanup(); },
   });
   return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "connection": "keep-alive", "access-control-allow-origin": "*" } });
 }
@@ -770,9 +806,21 @@ export function startServer(options: BackendAppOptions & { port?: number; hostna
         return app.fetch(request);
       },
     });
-    app.recoverQueuedWork();
     const listening = server;
-    return { ...app, server: listening, stop: () => { listening.stop(); app.stop(); } };
+    const dataVersion = app.store.db.query<{ data_version: number }>("PRAGMA data_version");
+    let version = dataVersion.get()?.data_version;
+    app.recoverQueuedWork();
+    const externalWork = setInterval(() => {
+      try {
+        const current = dataVersion.get()?.data_version;
+        if (current === version) return;
+        app.recoverQueuedWork();
+        version = current;
+      } catch (error) {
+        console.error("External work recovery failed", redactText(error instanceof Error ? error.message : String(error)));
+      }
+    }, 250);
+    return { ...app, server: listening, stop: () => { clearInterval(externalWork); listening.stop(); app.stop(); } };
   } catch (error) {
     server?.stop();
     app.stop();

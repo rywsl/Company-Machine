@@ -107,11 +107,11 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 
 ### 7.1 活动 Bun 验收
 
-`bun run verify:bun` 校验系统规范章节、MRL 诊断码与标准库说明、工厂内核声明以及本表与活动测试目录之间的双向映射。Bun 的 JUnit 报告须逐文件记录实际执行的用例，任何失败、跳过、待办或遗漏文件都会使验收失败。该命令还运行后端与 Web 的 TypeScript 检查，以及 `spec/mrl/conformance/` 中的 719 项一致性用例。通过的用例须覆盖全部内核诊断码，并实际触发全部 85 条内核诊断规则。
+`bun run verify:bun` 校验系统规范章节、MRL 诊断码与标准库说明、工厂内核声明以及本表与活动测试目录之间的双向映射。校验实时输出测试进度，并按文件和用例名称索引 Bun 的 JUnit 报告。任何失败、跳过、待办或遗漏文件都会使验收失败。该命令还运行后端与 Web 的 TypeScript 检查，以及 `spec/mrl/conformance/` 中的 719 项一致性用例。通过的用例须覆盖全部内核诊断码，并实际触发全部 85 条内核诊断规则。
 
 | 文件 | 验证 |
 |---|---|
-| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱、SSE 回放 |
+| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱、SSE 分页回放与跨进程写入 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |

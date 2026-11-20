@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
+import { SqliteStore } from "../src/db";
 
 async function jsonResponse(response: Response) {
   return response.json() as Promise<Record<string, any>>;
@@ -165,6 +166,39 @@ describe("Bun business backend", () => {
       expect(text).toContain('"type":"project.intake.created"');
       await reader?.cancel();
     } finally {
+      app.stop();
+      await rm(dbPath, { force: true });
+    }
+  });
+
+  test("replays multiple event pages and streams writes from a separate SQLite connection", async () => {
+    const dbPath = `.factory/test-${randomUUID()}.db`;
+    const app = createApp({ dbPath, legacyPath: dbPath });
+    const external = new SqliteStore(dbPath, dbPath);
+    const abort = new AbortController();
+    try {
+      for (let i = 1; i <= 141; i++) external.appendEvent("business-system.graph.updated", { i });
+      const response = await app.fetch(new Request("http://localhost/api/v1/events?cursor=0", {
+        headers: { "Last-Event-ID": "11" }, signal: abort.signal,
+      }));
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      const ids: number[] = [];
+      for (let i = 12; i <= 141; i++) {
+        const { value } = await reader.read();
+        ids.push(Number(decoder.decode(value).match(/^id: (\d+)/)?.[1]));
+      }
+      expect(ids).toEqual(Array.from({ length: 130 }, (_, index) => index + 12));
+      const next = reader.read();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      external.appendEvent("business-system.graph.updated", { i: 142 });
+      expect(decoder.decode((await next).value)).toContain("id: 142\n");
+      const pending = reader.read();
+      abort.abort();
+      expect(await pending).toEqual({ done: true, value: undefined });
+    } finally {
+      abort.abort();
+      external.close();
       app.stop();
       await rm(dbPath, { force: true });
     }

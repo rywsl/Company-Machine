@@ -13,9 +13,9 @@ export class EventBus {
     return event;
   }
 
-  after(lastEventId?: string | number): Event[] {
+  after(lastEventId?: string | number, limit?: number): Event[] {
     const seq = typeof lastEventId === "number" ? lastEventId : Number(lastEventId ?? 0);
-    return this.store.eventsAfter(Number.isFinite(seq) ? seq : 0);
+    return this.store.eventsAfter(Number.isFinite(seq) ? seq : 0, limit);
   }
 
   subscribe(listener: EventListener) {

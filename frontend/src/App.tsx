@@ -371,6 +371,8 @@ export function App(): ReactElement {
   const persistLayout = useCallback((next: LayoutState) => { setLayout(next); localStorage.setItem(LAYOUT_KEY, JSON.stringify(next)); }, []);
   const [liveReplies, setLiveReplies] = useState<Record<string, TalkMessage>>({});
   const [eventCursor, setEventCursor] = useState<string>();
+  const [workareaRevision, setWorkareaRevision] = useState(0);
+  const activeWorkarea = useRef<string | null>(null);
   const startedEvents = useRef(false);
   const retry = useCallback(async () => {
     setError("");
@@ -404,6 +406,10 @@ export function App(): ReactElement {
     if (type === "business-unit.binding.changed" && typeof eventData?.unitId === "string"
       && eventData.binding && typeof eventData.binding === "object") {
       updateOperatorNode(eventData.unitId, eventData.binding as OperatorBindingView);
+      return;
+    }
+    if (type === "business-system.graph.updated") {
+      if (eventData?.id === activeWorkarea.current) setWorkareaRevision((revision) => revision + 1);
       return;
     }
     if (type === "harness.profile.verification.completed" && typeof eventData?.id === "string"
@@ -461,7 +467,17 @@ export function App(): ReactElement {
   }, [updateOperatorNode]);
   useEffect(() => { void retry(); }, [retry]);
   useEffect(() => eventCursor === undefined ? undefined : subscribeToEvents((event) => { void refreshLive(event.type, event.data); }, undefined, eventCursor), [eventCursor, refreshLive]);
-  useEffect(() => { if (page !== "compose" || scope !== "workarea" || !workarea) return; void getGraph("workarea", workarea).then(setWorkareaGraph).catch((cause) => setError(cause instanceof Error ? cause.message : "厂区读取失败")); }, [page, scope, workarea]);
+  useEffect(() => {
+    activeWorkarea.current = page === "compose" && scope === "workarea" ? workarea : null;
+    if (!activeWorkarea.current) return;
+    let current = true;
+    void getGraph("workarea", activeWorkarea.current).then((graph) => {
+      if (current) setWorkareaGraph(graph);
+    }).catch((cause) => {
+      if (current) setError(cause instanceof Error ? cause.message : "厂区读取失败");
+    });
+    return () => { current = false; };
+  }, [page, scope, workarea, workareaRevision]);
   useEffect(() => { const handleResize = () => setMaoTop((value) => Math.max(44, Math.min(window.innerHeight - 44, value))); window.addEventListener("resize", handleResize); return () => window.removeEventListener("resize", handleResize); }, []);
   useEffect(() => { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ ...layout, sidebarDock, maoTop })); }, [layout, sidebarDock, maoTop]);
   const factoryGraph = bootstrap?.graph.factory ?? null; const activeGraph = scope === "factory" ? factoryGraph : workareaGraph;

@@ -61,9 +61,10 @@ export class SqliteStore {
   readonly legacy?: Database;
   private readonly bridgeLegacy: boolean;
 
-  constructor(dbPath = process.env.BUSINESS_DB_PATH ?? defaultFactoryDatabase(), legacyPath = defaultFactoryDatabase()) {
+  constructor(readonly dbPath = process.env.BUSINESS_DB_PATH ?? defaultFactoryDatabase(), readonly legacyPath = defaultFactoryDatabase()) {
     if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new ManagedDatabase(dbPath, { create: true });
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec("PRAGMA journal_mode = WAL");
     this.init();
     this.bridgeLegacy = dbPath === legacyPath && /factory\.db$/i.test(dbPath.replaceAll("\\", "/"));
@@ -851,8 +852,8 @@ export class SqliteStore {
     return { ...value, seq: Number(result.lastInsertRowid) };
   }
 
-  eventsAfter(seq = 0): Event[] {
-    return this.db.query("SELECT * FROM business_events WHERE seq > ? ORDER BY seq").all(seq).map((row: any) => ({
+  eventsAfter(seq = 0, limit = -1): Event[] {
+    return this.db.query("SELECT * FROM business_events WHERE seq > ? ORDER BY seq LIMIT ?").all(seq, limit).map((row: any) => ({
       id: row.id, seq: Number(row.seq), type: row.type, data: JSON.parse(row.data), createdAt: row.created_at,
     }));
   }

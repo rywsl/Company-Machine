@@ -10,8 +10,9 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const decoder = new TextDecoder();
 
 function run(label: string, argv: string[], quiet = false): void {
-  const result = Bun.spawnSync(argv, { cwd: root, stdout: "pipe", stderr: "pipe" });
-  if (result.exitCode !== 0 || !quiet) {
+  const output = quiet ? "pipe" : "inherit";
+  const result = Bun.spawnSync(argv, { cwd: root, stdout: output, stderr: output });
+  if (quiet && result.exitCode !== 0) {
     process.stdout.write(decoder.decode(result.stdout));
     process.stderr.write(decoder.decode(result.stderr));
   }

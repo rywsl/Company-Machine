@@ -58,7 +58,7 @@ async function runCommand(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const app = createApp();
+  const app = createApp({ dispatchWork: false });
   try {
     if (command === "status") {
       console.log(JSON.stringify({ ok: true, businessSystems: app.store.listBusinessSystems().length, foremanInbox: app.store.listForemanInbox().length }, null, 2));
