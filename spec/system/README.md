@@ -106,9 +106,10 @@
 - 表结构用编号 SQL 迁移文件管理（第 3.6 节）。
 - 生产后端（S3/MinIO、Postgres）是 M4 的事，M1–M3 的接口不得假设它们存在。
 
-**D9 确定性。** 凡是影响输出的时间和 ID，都必须来自注入的 `Clock` 和 `IdSource`（第 4.1 节）。
-- 组件内**禁止**直接调用 `datetime.now()`、`time.time()`、`uuid4()`、`random`。`mao.base` 内的 `SystemClock` 和 `RandomIds` 除外。
-- 测试用 `FakeClock` 和 `CounterIds`，让输出可以逐字节比较。
+**D9 确定性。** Bun 控制面从注入的 `Clock` 读取业务时间与单调时间，从注入的 `IdSource` 生成带前缀的记录 ID。业务存储从可注入的 UUID 生成函数分配无前缀的 UUIDv4。生产实现集中在 `backend/src/legacy/foundation.ts`，独立的 `factoryctl` 进程有自己的时钟与请求 ID。
+- 测试可注入 `FakeClock`、`CounterIds` 或固定的 UUID 生成函数。数据库时间戳与对外 UUID 保留已有格式。
+- Vault 的密钥和 nonce 与出网短期凭证使用系统加密随机数。子进程取消与 I/O 超时由真实计时器触发。
+- 工作目录来自配置、调用方参数或安装路径。官方 Harness 默认以 MAO 根目录启动，调用方可以指定工作目录。
 
 **D10 不造 agent。** 控制面内**禁止**直接调用任何 LLM API。一切模型调用都发生在沙箱内、由 OperatorRuntime 启动的现成 CLI 里。judge、planner、厂长也一样。
 

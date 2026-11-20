@@ -2,10 +2,9 @@ import { EventBus } from "./event-bus";
 import { SqliteStore } from "./db";
 import { VaultStore } from "./vault";
 import { exportBusinessSystem, importBusinessSystem } from "./business-portability";
-import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
-import { RandomIds, SystemClock } from "./legacy/foundation";
+import { RandomIds, type Clock } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
 import type { BusinessConversion, BusinessSystem, Event } from "./models";
 import type { RuntimeHealth } from "../runtime/podman";
@@ -65,28 +64,30 @@ interface BackendAppOptions {
   operator?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn };
   harnessVerificationTimeoutMs?: number;
   dispatchWork?: boolean;
+  clock?: Clock;
+  uuid?: () => string;
 }
 
 export function createApp(options: BackendAppOptions = {}): BackendApp {
-  const store = new SqliteStore(options.dbPath, options.legacyPath);
+  const store = new SqliteStore(options.dbPath, options.legacyPath, { clock: options.clock, uuid: options.uuid });
   const events = new EventBus(store);
   const eventStreams = new AbortController();
-  const vault = options.vault ?? new VaultStore();
+  const vault = options.vault ?? new VaultStore(undefined, undefined, store.clock);
   const storageRoot = resolve(options.storageRoot ?? process.env.FACTORY_ROOT ?? dirname(process.env.FACTORY_DB_PATH ?? ".factory/factory.db"));
   let uploadWarehouse: Warehouse | undefined;
-  const uploads = () => uploadWarehouse ??= new Warehouse(storageRoot, store.db, new SystemClock(), new RandomIds());
+  const uploads = () => uploadWarehouse ??= new Warehouse(storageRoot, store.db, store.clock, new RandomIds());
   const runtime = options.runtime ?? selectedContainerProvider();
   const provider = runtimeProvider(runtime);
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
   let runtimeHealthPromise: Promise<RuntimeHealth> | undefined;
   const runtimeHealth = async (refresh = false) => {
-    if (!refresh && runtimeCache && Date.now() - runtimeCache.at < 5_000) return runtimeCache.health;
+    if (!refresh && runtimeCache && store.clock.monotonic() - runtimeCache.at < 5) return runtimeCache.health;
     const previous = runtimeCache;
     const pending = runtimeHealthPromise ?? (runtimeHealthPromise = (async () => {
       const health = await runtime.health();
       // A readiness request can finish while an earlier passive probe is still running.
       if (runtimeCache && runtimeCache !== previous) return runtimeCache.health;
-      runtimeCache = { at: Date.now(), health };
+      runtimeCache = { at: store.clock.monotonic(), health };
       return health;
     })());
     try {
@@ -100,7 +101,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (!runtime.ensureReady) return runtimeHealth(true);
     const pending = runtimeReadyPromise ?? (runtimeReadyPromise = (async () => {
       const health = await runtime.ensureReady!();
-      runtimeCache = { at: Date.now(), health };
+      runtimeCache = { at: store.clock.monotonic(), health };
       return health;
     })());
     try {
@@ -158,7 +159,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         health = await ensureRuntimeHealth();
       } catch (error) {
         health = runtimeCache?.health ?? await runtime.health();
-        runtimeCache = { at: Date.now(), health };
+        runtimeCache = { at: store.clock.monotonic(), health };
         const dependency = runtimeDependency(health, provider);
         events.publish(`runtime.${provider}.checked`, dependency);
         return response({ provider, health, dependency, message: dependency.message, error: error instanceof Error ? error.message : "runtime unavailable" }, 503);
@@ -402,7 +403,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const body = await readJson(request);
       if (typeof body.project_id !== "string" || !projectCredentialName(body.name)) return response({ error: "project_id and a valid credential name are required" }, 400);
       if (!store.getProject(body.project_id)) return response({ error: "project was not found" }, 404);
-      const requestRecord = store.createSecretRequest({ projectId: body.project_id, name: body.name, vaultRef: `vault://secret/${randomUUID()}`, metadata: { purpose: body.purpose, scope: body.scope } });
+      const requestRecord = store.createSecretRequest({ projectId: body.project_id, name: body.name, vaultRef: `vault://secret/${store.uuid()}`, metadata: { purpose: body.purpose, scope: body.scope } });
       const { vaultRef: _vaultRef, ...visible } = requestRecord;
       events.publish("secret.requested", visible);
       return response({ request_id: requestRecord.id, state: requestRecord.status, request: visible }, 201);
@@ -451,7 +452,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const profile = store.saveHarnessProfile({
         runtime: definition.id, role: body.role, baseUrl, model: body.model.trim(), mode: typeof body.mode === "string" ? body.mode : "session",
         image: image || undefined, network: image ? body.network === "egress" ? "egress" : "none" : undefined,
-        verification: { state: "pending", checkedAt: new Date().toISOString() },
+        verification: { state: "pending", checkedAt: store.timestamp() },
       });
       verificationJobs.get(profile.id)?.abort();
       verificationJobs.delete(profile.id);
@@ -505,7 +506,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const eventCursor = store.latestEventSequence();
       const factoryGraph = graphProjection(store, "factory", null);
       const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
-      return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: new Date().toISOString() },
+      return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: store.timestamp() },
         eventCursor, pendingForemanReplies: foreman.pendingReplies(),
         graph: { factory: factoryGraph },
         assets: webAssets(store), logs: webLogs(store, 100), talk: store.recentTalk(80),

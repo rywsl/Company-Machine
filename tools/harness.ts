@@ -61,7 +61,6 @@ function verifyParity(spec: ReturnType<typeof inspectSpecifications>, caseCount:
     mrl,
     kernelRulesWithoutExecutionEvidence: unwitnessedRules,
     policyMigrationRemaining: [
-      "时钟、随机数和工作目录边界",
       "异常处理、文件编码与数据库迁移约束",
     ],
     activeAcceptance: { files: spec.mappedFiles.size, passed: caseCount },

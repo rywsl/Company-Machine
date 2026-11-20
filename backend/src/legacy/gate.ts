@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -7,7 +6,7 @@ import { validateInlineSchema } from "../../mrl/factory/schema";
 import { BOOL, DYN, parseType as parseMrlType, type MrlType } from "../../mrl/types";
 import type { ContainerProvider } from "../../runtime/podman";
 import { FactoryError } from "./errors";
-import { canonicalBytes, canonicalJson, digestBytes } from "./foundation";
+import { canonicalBytes, canonicalJson, digestBytes, randomUuid } from "./foundation";
 import { nominalTypeId, type Snapshot } from "./snapshot";
 import { acceptEnv, paramsValue, propertyEnv, recipeEnv } from "./values";
 import { mediaTypeOf, type Bean, type Warehouse } from "./warehouse";
@@ -412,7 +411,7 @@ export class Gate {
     const validators: Validator[] = this.snapshot.validators(type);
     const contract = this.typeContract(type);
     if (validators.length) {
-      const workspace = resolve(this.workdir, "mao-gate-" + randomUUID());
+      const workspace = resolve(this.workdir, "mao-gate-" + randomUuid());
       try {
         if (!this.provider) throw new FactoryError("GATE_RUNTIME_UNAVAILABLE", "缺少 validator 沙箱运行时");
         await this.warehouse.materialize(bean.id, join(workspace, "bean"), "bean");
@@ -455,7 +454,7 @@ export class Gate {
     provider: ContainerProvider, workspace: string, ordinal: number, validator: Validator, declared: Record<string, MrlType>,
   ):
   Promise<{ ok: true; facts: JsonObject } | { ok: false; detail: string }> {
-    const name = "mao-gate-" + randomUUID();
+    const name = "mao-gate-" + randomUuid();
     const stdout = join(workspace, String(ordinal) + ".out");
     const sandbox = await provider.open({
       name, image: validator.image, network: "none", workdir: "/",

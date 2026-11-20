@@ -6,12 +6,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
 import { SqliteStore } from "../src/db";
+import { FakeClock } from "../src/legacy/foundation";
 
 async function jsonResponse(response: Response) {
   return response.json() as Promise<Record<string, any>>;
 }
 
 describe("Bun business backend", () => {
+  test("uses the injected clock and UUID generator for business records and events", () => {
+    const clock = new FakeClock(new Date("2026-01-02T03:04:05Z"));
+    const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"];
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", clock, uuid: () => ids.shift()! });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Timed system" });
+      expect(system).toMatchObject({ id: "00000000-0000-4000-8000-000000000001", createdAt: "2026-01-02T03:04:05.000Z" });
+      clock.advance(8);
+      expect(app.events.publish("business-system.created", system)).toMatchObject({ id: "00000000-0000-4000-8000-000000000002", createdAt: "2026-01-02T03:04:13.000Z" });
+    } finally { app.stop(); }
+  });
+
   test("rolls back project intake when it cannot record the Foreman request", async () => {
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
     const intake = (business_system_id?: string) => app.fetch(new Request("http://localhost/api/v1/projects/intake", {

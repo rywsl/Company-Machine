@@ -13,6 +13,10 @@ const consoleOutput = new Set([
 const objectMutators = new Set(["assign", "defineProperty", "defineProperties", "setPrototypeOf", "freeze", "seal", "preventExtensions"]);
 const reflectMutators = new Set(["defineProperty", "deleteProperty", "preventExtensions", "set", "setPrototypeOf"]);
 const reflectiveKeys = new Set(["get", "set", "has", "defineProperty", "deleteProperty", "getOwnPropertyDescriptor"]);
+const nativeTime = new Set(["backend/src/legacy/foundation.ts", "backend/src/legacy/factoryctl.ts"]);
+const secretEntropy = new Set(["backend/src/vault.ts", "backend/src/legacy/egress-forwarder.ts"]);
+const randomFunctions = new Set(["randomUUID", "randomBytes", "randomInt", "randomFill", "randomFillSync", "getRandomValues"]);
+const cwdEntrypoints = new Set(["backend/src/cli.ts", "backend/src/index.ts"]);
 
 function unwrap(expression: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression) ||
@@ -72,6 +76,14 @@ function standardModule(expression: ts.Expression, name: string, checker: ts.Typ
   return globalBinding(target, name, checker) || (ts.isIdentifier(target) && importedFrom(target, checker) === `node:${name}`);
 }
 
+function nodeBuiltinMember(target: ts.Expression, module: string, checker: ts.TypeChecker): string | undefined {
+  const access = member(target);
+  if (access && standardModule(access.receiver, module, checker)) return access.name;
+  if (!ts.isIdentifier(target) || importedFrom(target, checker) !== `node:${module}`) return;
+  const binding = checker.getSymbolAtLocation(target)?.declarations?.find(ts.isImportSpecifier);
+  return binding && (binding.propertyName ?? binding.name).text;
+}
+
 export function modulePolicyProblems(root: string, files: string[]): string[] {
   if (!files.length) return [];
   const shim = join(root, "backend/bun-shim.d.ts");
@@ -97,7 +109,27 @@ export function modulePolicyProblems(root: string, files: string[]): string[] {
       (name === "stdout" && (standardModule(receiver, "process", checker) || globalBinding(receiver, "Bun", checker))) ||
       (consoleOutput.has(name) && standardModule(receiver, "console", checker))
     );
+    const checkDeterminism = (node: ts.CallExpression | ts.NewExpression) => {
+      const target = unwrap(node.expression);
+      const processMember = nodeBuiltinMember(target, "process", checker);
+      if (!cwdEntrypoints.has(path) && (processMember === "cwd" || processMember === "chdir")) {
+        report(node, "控制面工作目录来自配置或调用方参数");
+      }
+      if (nativeTime.has(path)) return;
+      const access = member(target);
+      if ((globalBinding(target, "Date", checker) && (!ts.isNewExpression(node) || !node.arguments?.length)) ||
+        (access?.name === "now" && (globalBinding(access.receiver, "Date", checker) || globalBinding(access.receiver, "performance", checker))) ||
+        (access?.name === "nanoseconds" && globalBinding(access.receiver, "Bun", checker)) || processMember === "hrtime") {
+        report(node, "控制面时间来自注入的 Clock");
+      }
+      const random = nodeBuiltinMember(target, "crypto", checker);
+      if ((random && randomFunctions.has(random) && (random !== "randomBytes" || !secretEntropy.has(path))) ||
+        (access?.name === "random" && globalBinding(access.receiver, "Math", checker))) {
+        report(node, "控制面 ID 来自 IdSource 或 foundation 中的 UUID 生成器");
+      }
+    };
     const inspect = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) || ts.isNewExpression(node)) checkDeterminism(node);
       const access = member(node);
       if (access?.name) {
         const { receiver, name } = access;

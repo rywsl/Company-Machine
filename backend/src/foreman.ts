@@ -2,7 +2,7 @@ import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import { projectSourceFacts } from "./project-sources";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
-import { OfficialCliTransport, chooseTransport, harnessEndpointEnv, resolveOfficialHarness, type HarnessSession, type OfficialSpawn } from "./harness";
+import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, resolveOfficialHarness, type HarnessSession, type OfficialSpawn } from "./harness";
 
 export interface ForemanCoordinatorOptions {
   store: SqliteStore;
@@ -24,7 +24,7 @@ export class ForemanCoordinator {
   private readonly cwd: string;
 
   constructor(private readonly options: ForemanCoordinatorOptions) {
-    this.cwd = options.cwd ?? process.cwd();
+    this.cwd = options.cwd ?? harnessControlPlaneRoot;
   }
 
   dispatch(id: string): Promise<void> {
@@ -77,7 +77,7 @@ export class ForemanCoordinator {
     const useAcp = chooseTransport(definition, Boolean(definition.id === "kimi-code" || this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
     const transport = useAcp
       ? new AcpTransport(definition, this.options.acpSpawn ?? defaultAcpSpawn)
-      : new OfficialCliTransport(definition, this.options.spawn);
+      : new OfficialCliTransport(definition, this.options.spawn, this.options.store.clock);
     let session;
     try {
       const persistent = !profile.image && (useAcp || definition.id === "codex" || definition.id === "claude-code");

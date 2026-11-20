@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { canonicalBytes, canonicalJson, digestBytes, digestFile, utcIso, type Clock, type IdSource } from "./foundation";
+import { canonicalBytes, canonicalJson, digestBytes, digestFile, randomUuid, utcIso, type Clock, type IdSource } from "./foundation";
 import { FactoryError } from "./errors";
 import { listFiles } from "../../mrl/factory/paths";
 
@@ -62,7 +62,7 @@ export class Warehouse {
   private async storeFile(source: string): Promise<{ digest: string; size: number }> {
     const scratch = join(this.root, "tmp");
     mkdirSync(scratch, { recursive: true });
-    const part = join(scratch, `cas-${randomUUID()}.part`);
+    const part = join(scratch, `cas-${randomUuid()}.part`);
     let ownsPart = false;
     const hash = createHash("sha256");
     const buffer = new Uint8Array(1024 * 1024);

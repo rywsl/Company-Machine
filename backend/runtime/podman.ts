@@ -8,6 +8,7 @@
 import { appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { EgressPlan } from "../src/legacy/egress";
+import { SystemClock, type Clock } from "../src/legacy/foundation";
 import type { startEgressForwarder } from "../src/legacy/egress-forwarder";
 import { egressRelayName, launchEgressRelay, type ContainerEgress } from "./egress-relay";
 import { spawnLoggedProcess, type LogPaths } from "./process-logs";
@@ -258,6 +259,7 @@ function assertSpec(spec: SandboxSpec, allowEgress: boolean): void {
 
 export class PodmanProvider implements ContainerProvider {
   readonly name: string = "podman";
+  protected readonly clock: Clock;
   private readonly run: CommandRunner;
   private readonly allowUnproxiedEgress: boolean;
   private readonly egressNetwork: string | null;
@@ -278,6 +280,7 @@ export class PodmanProvider implements ContainerProvider {
     machine?: string;
     platform?: string;
     runner?: CommandRunner;
+    clock?: Clock;
     relayImage?: string;
     startForwarder?: typeof startEgressForwarder;
   } = {}) {
@@ -296,6 +299,7 @@ export class PodmanProvider implements ContainerProvider {
     this.machine = options.machine ?? null;
     this.platformOverride = options.platform;
     this.run = options.runner ?? runCommand;
+    this.clock = options.clock ?? new SystemClock();
     this.relayImage = options.relayImage ?? environment().MAO_EGRESS_RELAY_IMAGE;
     this.startForwarder = options.startForwarder;
   }
@@ -506,14 +510,15 @@ export class PodmanProvider implements ContainerProvider {
       } else command.push("--env", `${key}=${value}`);
     }
     command.push(name, ...argv);
-    const started = Date.now();
+    const started = this.clock.monotonic();
+    const elapsedMilliseconds = () => Math.round((this.clock.monotonic() - started) * 1000);
     try {
       const result = await this.run(command, { timeoutMs: options.timeoutMs, logs: { stdout: options.stdout, stderr: options.stderr }, ...(managed ? { env: processEnv } : {}) });
       if (!result.logsWritten) {
         await writeBytes(options.stdout, result.stdout);
         await writeBytes(options.stderr, result.stderr);
       }
-      return { exitCode: result.exitCode, timedOut: false, durationMs: Math.max(0, Date.now() - started) };
+      return { exitCode: result.exitCode, timedOut: false, durationMs: elapsedMilliseconds() };
     } catch (error) {
       const diagnostic = error instanceof Error ? error.message : `${this.name} exec failed`;
       if (error instanceof PodmanError && error.detail.logsWritten === true) {
@@ -522,7 +527,7 @@ export class PodmanProvider implements ContainerProvider {
         await writeBytes(options.stdout, new Uint8Array());
         await writeBytes(options.stderr, new TextEncoder().encode(diagnostic));
       }
-      if (error instanceof PodmanError && error.code === "PODMAN_TIMEOUT") return { exitCode: null, timedOut: true, durationMs: Math.max(0, Date.now() - started) };
+      if (error instanceof PodmanError && error.code === "PODMAN_TIMEOUT") return { exitCode: null, timedOut: true, durationMs: elapsedMilliseconds() };
       throw error;
     }
   }

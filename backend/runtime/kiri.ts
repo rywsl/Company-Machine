@@ -2,6 +2,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { Clock } from "../src/legacy/foundation";
 
 import { PodmanProvider, runCommand, type CommandRunner, type RuntimeHealth, type SandboxSpec } from "./podman";
 
@@ -18,6 +19,7 @@ type KiriClientOptions = {
 export type KiriProviderOptions = KiriClientOptions & {
   autoStart?: boolean;
   runner?: CommandRunner;
+  clock?: Clock;
   egressNetwork?: string;
   egressEnv?: Record<string, string>;
   relayImage?: string;
@@ -108,6 +110,7 @@ export class KiriProvider extends PodmanProvider {
       }),
       egressNetwork: options.egressNetwork,
       egressEnv: options.egressEnv,
+      clock: options.clock,
       relayImage: options.relayImage,
       startForwarder: options.startForwarder,
     });
@@ -171,11 +174,11 @@ export class KiriProvider extends PodmanProvider {
     }
 
     // The packaged service is Type=simple and can report started before the API binds.
-    const deadline = performance.now() + 5_000;
-    while (performance.now() < deadline) {
-      ({ health, canStartService } = await this.probe(Math.max(1, Math.ceil(deadline - performance.now()))));
+    const deadline = this.clock.monotonic() + 5;
+    while (this.clock.monotonic() < deadline) {
+      ({ health, canStartService } = await this.probe(Math.max(1, Math.ceil((deadline - this.clock.monotonic()) * 1000))));
       if (!canStartService) return health;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(200, Math.max(0, deadline - performance.now()))));
+      await this.clock.sleep(Math.min(0.2, Math.max(0, deadline - this.clock.monotonic())));
     }
     return health;
   }

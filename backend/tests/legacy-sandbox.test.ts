@@ -113,6 +113,22 @@ describe("Bun M1 local sandbox and control mailbox", () => {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
+  test("uses the log directory when no working directory is mounted", async () => {
+    const directory = resolve(root("workdir"));
+    const provider = new LocalProvider({ probe: [Bun.argv[0], "-e", "console.log(process.cwd())"] });
+    const sandbox = await provider.open({ name: "local", image: "probe", mounts: [], workdir: join(directory, "unmounted") });
+    try {
+      const stdout = join(directory, "logs", "stdout");
+      expect((await sandbox.exec(["probe"], { timeoutMs: 5000, stdout, stderr: join(directory, "logs", "stderr") })).exitCode).toBe(0);
+      const cwd = normalize((await Bun.file(stdout).text()).trim());
+      const expected = join(directory, "logs");
+      expect(process.platform === "win32" ? cwd.toLowerCase() : cwd).toBe(process.platform === "win32" ? expected.toLowerCase() : expected);
+    } finally {
+      await sandbox.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("leaves unrelated host environment out of local commands", { timeout: 30_000 }, async () => {
     const directory = root("environment");
     const key = "MAO_TEST_UNRELATED_SECRET";

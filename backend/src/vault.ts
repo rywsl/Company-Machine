@@ -1,6 +1,7 @@
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { SystemClock, utcIso, type Clock } from "./legacy/foundation";
 
 type VaultRecord = { ref: string; iv: string; tag: string; ciphertext: string; updatedAt: string };
 
@@ -32,6 +33,7 @@ export class VaultStore {
   constructor(
     path = process.env.MAO_VAULT_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "vault.json"),
     keyPath = process.env.MAO_VAULT_KEY_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "vault.key"),
+    private readonly clock: Clock = new SystemClock(),
   ) {
     this.path = path;
     this.key = keyFromEnvironment(keyPath);
@@ -50,7 +52,7 @@ export class VaultStore {
       iv: iv.toString("base64"),
       tag: cipher.getAuthTag().toString("base64"),
       ciphertext: ciphertext.toString("base64"),
-      updatedAt: new Date().toISOString(),
+      updatedAt: utcIso(this.clock.now()),
     };
     writeFileSync(this.path, JSON.stringify(records), { mode: 0o600 });
   }

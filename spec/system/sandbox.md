@@ -194,6 +194,8 @@ Linux Podman 和 Kiri Linux 套接字模式通过本地固定镜像 `MAO_EGRESS_
 
 Bun 后端在 `exec` 启动时将子进程 stdout 和 stderr 分别重定向到调用方指定的日志文件。Podman、Kiri 和 LocalProvider 的日志在进程返回前即可读取，控制面不需要在内存里保存完整输出。超时终止子进程后保留已写入内容，容器运行时的超时诊断追加到 stderr。`backend/runtime/podman.test.ts` 验证运行中可读取日志并在超时后保留。
 
+Podman、Kiri 和 LocalProvider 使用注入的 `Clock.monotonic()` 计算 `ExecResult.durationMs`。LocalProvider 优先使用映射后的工作目录。在目录不可用时使用调用方指定的 stdout 日志所在目录。
+
 `exec` 在 `close` 之后调用：`SANDBOX_CLOSED`。
 
 ### 5.2 `build_run_argv`（验收测试锁定这一列表）
@@ -375,7 +377,7 @@ Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都�
 
 设置 `MAO_CONTAINER_RUNTIME=kiri` 后，Linux 默认使用 `linux-socket` 模式，通过 `docker --host unix:///run/kiri/docker.sock` 访问 Kiri 官方 headless 服务。`kiri.service` 管理 `kiri daemon`、套接字权限和 daemon 的状态目录。运行 MAO 的账户需要有权访问该套接字。健康探针通过 `info` 确认服务端标识为 Kiri，运行时状态显示 `linux-host`。默认仍由 Podman 执行业务沙箱。
 
-`ensure-ready` 先探测并复用已运行的服务。官方套接字不可用时，通过 `systemctl --no-ask-password start kiri.service` 请求就绪，并在有限时间内复查。同一 provider 的并发请求共享一次启动。服务启动失败时返回探测和启动诊断。自定义套接字和显式 context 的生命周期由部署方管理。
+`ensure-ready` 先探测并复用已运行的服务。官方套接字不可用时，通过 `systemctl --no-ask-password start kiri.service` 请求就绪，并使用注入的单调时钟在五秒内复查。同一 provider 的并发请求共享一次启动。服务启动失败时返回探测和启动诊断。自定义套接字和显式 context 的生命周期由部署方管理。
 
 官方套接字拒绝当前账户访问时，健康状态提示使用 `sudo kiri host-access "$USER"` 为运行 MAO 的账户配置权限并重新登录。套接字拒绝访问、客户端不可执行或端点属于其他引擎时，`ensure-ready` 直接返回诊断。
 

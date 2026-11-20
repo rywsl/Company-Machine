@@ -73,3 +73,30 @@ test("reserves stdout for CLI and executable entrypoints while permitting stderr
   })).toEqual([[1, 10], [3, 1], [4, 1], [5, 1], [6, 11], [11, 9]].map(([line, col]) =>
     `backend/src/library.ts:${line}:${col} 控制面标准输出仅用于命令行和进程入口`));
 });
+
+test("reserves wall time, elapsed time, ID randomness and cwd for their boundaries", () => {
+  const problems = scan({
+    "backend/src/legacy/foundation.ts": 'import { randomUUID } from "node:crypto"; Date.now(); randomUUID();',
+    "backend/src/legacy/factoryctl.ts": 'import { randomUUID } from "node:crypto"; performance.now(); randomUUID();',
+    "backend/src/vault.ts": 'import { randomBytes } from "node:crypto"; randomBytes(32);',
+    "backend/src/cli.ts": 'process.cwd();',
+    "backend/src/library.ts": [
+      'import { randomUUID as uuid } from "node:crypto";',
+      'import { cwd as where } from "node:process";',
+      'new Date();',
+      'Date.now();',
+      'globalThis.performance["now"]();',
+      'uuid();',
+      'Math.random();',
+      'where();',
+      'process.chdir("/a");',
+      'new Date(123);',
+      'function local(Date: { now(): number }) { return Date.now(); }',
+    ].join("\n"),
+  });
+  expect(problems).toEqual([
+    ...[3, 4, 5].map((line) => `backend/src/library.ts:${line}:1 控制面时间来自注入的 Clock`),
+    ...[6, 7].map((line) => `backend/src/library.ts:${line}:1 控制面 ID 来自 IdSource 或 foundation 中的 UUID 生成器`),
+    ...[8, 9].map((line) => `backend/src/library.ts:${line}:1 控制面工作目录来自配置或调用方参数`),
+  ]);
+});

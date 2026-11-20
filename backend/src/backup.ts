@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Database } from "bun:sqlite";
 import { FactoryError } from "./legacy/errors";
-import { canonicalJson } from "./legacy/foundation";
+import { canonicalJson, SystemClock, utcIso, type Clock } from "./legacy/foundation";
 import { readGovernedRegistry } from "./legacy/registry-config";
 import { ManagedDatabase } from "./sqlite";
 
@@ -17,7 +17,7 @@ const bundleName = "registry.bundle";
 const hashPattern = /^sha256:[0-9a-f]{64}$/;
 const casPattern = /^cas\/sha256\/([0-9a-f]{2})\/([0-9a-f]{62})$/;
 
-type BackupOptions = { root: string; businessDatabase?: string; withLogs?: boolean; by?: string; registry?: string };
+type BackupOptions = { root: string; businessDatabase?: string; withLogs?: boolean; by?: string; registry?: string; clock?: Clock };
 type BackupFile = { path: string; sha256: string; size: number };
 type ObjectFormat = "sha1" | "sha256";
 type RegistryBundle = {
@@ -418,7 +418,7 @@ export async function createBackup(options: BackupOptions, destination: string):
     if (registry) files.push(await describeFile(stage, bundleName));
     files.sort((a, b) => a.path.localeCompare(b.path, "en"));
     const manifest: BackupManifest = {
-      format, created_at: new Date().toISOString(), by: options.by ?? "human", files,
+      format, created_at: utcIso((options.clock ?? new SystemClock()).now()), by: options.by ?? "human", files,
       databases: { factory: factoryName, business: split ? businessName : hasBusiness ? factoryName : null },
       secrets: [...secretSet].sort(), with_logs: Boolean(options.withLogs),
       ...(registry ? { registry } : {}),

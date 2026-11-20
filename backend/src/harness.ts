@@ -4,9 +4,13 @@
  * provider authentication remain inside the official Harness.
  */
 
+import { resolve } from "node:path";
 import { resolveKiriClient } from "../runtime/kiri";
 import { resolvePodmanExecutable } from "../runtime/podman";
 import { prepareHarnessEgress } from "./harness-sandbox";
+import { SystemClock, type Clock } from "./legacy/foundation";
+
+export const harnessControlPlaneRoot = resolve(import.meta.dir, "../..");
 
 export type OfficialHarnessName = "claude-code" | "codex" | "deepseek-harness" | "zcode" | "kimi-code" | "pi";
 export type HarnessTransportKind = "acp" | "official-cli";
@@ -195,11 +199,11 @@ class OfficialCliSession implements HarnessSession {
 }
 
 export class OfficialCliTransport implements HarnessTransport {
-  constructor(private readonly definition: HarnessDefinition, private readonly spawn: OfficialSpawn = defaultOfficialSpawn) {}
+  constructor(private readonly definition: HarnessDefinition, private readonly spawn: OfficialSpawn = defaultOfficialSpawn, private readonly clock: Clock = new SystemClock()) {}
 
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
     const process = await this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network, egressBaseUrl: request.egressBaseUrl });
-    return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${Date.now()}`);
+    return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${this.clock.now().getTime()}`);
   }
 }
 

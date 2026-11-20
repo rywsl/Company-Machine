@@ -118,6 +118,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/cli.test.ts` | Bun 工厂命令、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
 | `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
+| `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
@@ -141,7 +142,6 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/dynamic-map.test.ts` | Map 列表展开、保序聚合、溢出与单轮提交数量限制 |
 | `backend/tests/dynamic-map-literal.test.ts` | 字面 Map 编译、实例转换、预算预留、持久化执行、分支跳过与存量计划恢复 |
 | `backend/tests/dynamic-plan.test.ts` | Plan schema、展开限额和当前 Run 预算，Planner 退回重试、封存、附加子节点和重启恢复 |
-| `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
 | `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
 | `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
@@ -227,6 +227,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_budget_exceeded_does_not_seal_or_retry` | `backend/tests/legacy-runner.test.ts` | `harvests official-shaped Harness outputs and stops over-budget jobs before sealing` | 超预算任务停止封存和重试 |
 | `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_writer_harvests_and_seals` | `backend/tests/legacy-runner.test.ts` | `harvests official-shaped Harness outputs and stops over-budget jobs before sealing` | Runner 采集官方 Harness 形状的产物并封存正常任务 |
 | `removed/python/tests/acceptance/m1/test_m1_09_cli.py::test_bean_lineage_json` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | CLI 封存后向上追溯，结果只包含原输入 Bean |
+| `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_tail_events` | `backend/tests/cli.test.ts` | `tails read-only factory events in sequence with inclusive time, literal prefix, limit and redaction` | 从末尾限量，保留插入顺序，按时间和类型前缀筛选，递归打码并拒绝不合法范围 |
 | `removed/python/tests/acceptance/m2/test_m2_01_runplan.py::test_templated_params_recorded` | `backend/tests/legacy-runplan.test.ts` | `orders the example by dependency layer and records parameters and budgets` | 归档示例产线的 `to_s3.prefix` 保留模板原文和模板字段标记 |
 | `removed/python/tests/acceptance/m2/test_m2_03_line_runner.py::test_epoch_mismatch` | `backend/tests/legacy-snapshot.test.ts` | `rejects a Run tick from a LineRunner bound to a different epoch` | 不同 Registry 快照下拒绝推进同一个 Run |
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_m2_compiler_still_rejects` | `backend/tests/legacy-runplan.test.ts` | `rejects missing inputs, incompatible contracts, cycles and unsupported constructs` | 静态入口对 Map 返回 `LINE_UNSUPPORTED` |
@@ -240,6 +241,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_budget_number_not_template` | `backend/tests/dynamic-plan.test.ts` | `rejects a planner budget template at Registry validation` | 工位的预算模板在加载 Registry 时产生 `E-SCHEMA` |
 | `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_budget_remaining` | `backend/tests/dynamic-plan.test.ts` | `enforces Plan allowlists, nesting, expanded converter steps, and remaining Run budget` | 计划预算等于 Run 剩余预算时接受，超限返回 `PLAN_BUDGET` |
 | `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_missing_converter_rejects_plan` | `backend/tests/dynamic-plan.test.ts` | `merges missing conversion requests without blocking planner retries` | 两次退回合并为一个转换需求，`blocked_runs` 为空 |
+| `removed/python/tests/acceptance/m3/test_m3_05_foreman.py::test_conversion_merged` | `backend/tests/conversion-requests.test.ts` | `merges conversion sightings, samples and blocked Runs into one durable request` | 相同规范化契约保留两个发现位置和阻塞 Run，重新打开数据库仍只有一条记录 |
+| `removed/python/tests/acceptance/m3/test_m3_05_foreman.py::test_cannot_self_resolve` | `backend/tests/conversion-requests.test.ts` | `resolves only contracts satisfied by the activated snapshot and refuses self-resolution` | 直接结案报 `CONVERSION_STATE_INVALID`，冻结转换不能满足必要属性的记录继续待处理 |
 | `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_sealed_plan_same_epoch` | `backend/tests/dynamic-plan.test.ts` | `retries rejected Plan output then seals and executes its child after restart` | Plan Bean 封存，附加作业重启后在父 epoch 完成 |
 | `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_runtime_resolution_append_only` | `backend/tests/dynamic-plan.test.ts` | `appends new runtime resolutions once and preserves a conflicting sidecar` | 仅追加未知键，拒绝覆盖内核预计算结果或侧车已有转换链 |
 | `removed/python/tests/acceptance/m9/test_m9_02_plan_runtime.py::test_plan_child_steps_run` | `backend/tests/dynamic-plan.test.ts` | `retries rejected Plan output then seals and executes its child after restart` | 验证子工位产物、同 epoch 和唯一的 `run.plan` 事件 |
@@ -344,7 +347,6 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m2/test_m2_11_source.py::test_service_form_unsupported` | `backend/tests/legacy-connectors.test.ts` | `rejects service Source execution and incomplete Source Run context before launching` | 服务型 Source 执行前返回 `FORM_UNSUPPORTED` |
 | `removed/python/tests/acceptance/m2/test_m2_11_source.py::test_policy_violation_defense` | `backend/tests/legacy-connectors.test.ts` | `rejects service Source execution and incomplete Source Run context before launching` | Run 上下文缺字段时拒绝创建 Source Job |
 | `removed/python/tests/acceptance/m7/test_m7_04_backup.py::test_restore_refuses` | `backend/tests/backup.test.ts` | `reports corrupt and missing blobs, extra files, and unsafe paths before restore` | 拒绝损坏备份和非空恢复目录，原 CAS 保留 |
-| `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_tail_events` | `backend/tests/cli.test.ts` | `tails read-only factory events in sequence with inclusive time, literal prefix, limit and redaction` | 从末尾限量，保留插入顺序，按时间和类型前缀筛选，递归打码并拒绝不合法范围 |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_none_stays_none` | `backend/tests/legacy-egress.test.ts` | `leaves none isolated and expands only explicitly delegated Machine tiers` | 无出网策略得到空允许列表 |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_none_stays_none` | `backend/runtime/podman.test.ts` | `emits the ordered Podman run contract and protects fixed environment entries` | 容器使用 none 网络，未注入代理凭证 |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_allow_exact_host_and_method` | `backend/tests/legacy-egress.test.ts` | `compiles the example Registry and matches exact HTTP(S) hosts` | 真实示例 Registry 解析出指定服务商域名 |
@@ -354,9 +356,6 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_connect_without_ca_rejected_when_methods_limited` | `backend/tests/legacy-egress-forwarder.test.ts` | `rejects a CONNECT if the HTTPS method is opaque or a monitor must authorize it` | 方法受限时以 403 拒绝不透明 CONNECT |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_unproxied_still_denied` | `backend/runtime/podman.test.ts` | `rejects Registry egress before querying an engine with only a configured bridge` | 缺少隔离代理时在访问容器引擎前拒绝 |
 
-| `removed/python/tests/acceptance/m3/test_m3_05_foreman.py::test_conversion_merged` | `backend/tests/conversion-requests.test.ts` | `merges conversion sightings, samples and blocked Runs into one durable request` | 相同规范化契约保留两个发现位置和阻塞 Run，重新打开数据库仍只有一条记录 |
-| `removed/python/tests/acceptance/m3/test_m3_05_foreman.py::test_cannot_self_resolve` | `backend/tests/conversion-requests.test.ts` | `resolves only contracts satisfied by the activated snapshot and refuses self-resolution` | 直接结案报 `CONVERSION_STATE_INVALID`，冻结转换不能满足必要属性的记录继续待处理 |
-
 归档 M11 的出网验收同时要求持久化主体令牌、审计事件、按需审批及核验主体的秘密分类。Bun 已有本地协议证据和发布与核验分开创建监听器的证据，这些用例仍保留在历史差异中。M2 中依赖模型代理、计量与预算的用例也保留在历史差异中。
 
 `parity --json` 输出逐条差异。历史 Python 验收文件只作为需求和证据索引读取。普通验证检查活动源码的依赖边界、Shell 与表达式调用约束，以及 Python 代码归档。完整代码策略中尚未迁移的检查会在 `parity` 中列出。通过的 Registry 用例会按规则文件和行号记录实际生成诊断的规则及触发用例。未触发的诊断规则仍列入覆盖缺口。
@@ -364,6 +363,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 Bun 使用工作区固定版本的 TypeScript 编译器解析生产源码。校验检查字符串和模板片段中的测试基础设施路径，以及示例和测试 Registry 实际声明的工位、产线、机器、GoldenSet 和 Baseline 名称。扫描范围是活动后端、运行时和 MRL 的非测试 TypeScript 文件。`verify:bun` 运行 `tools/registry-policy.test.ts`，校验 Registry 声明发现、定位和正反例。
 
 归档 `test_codebase_policy.py` 的模块边界在 Bun 下由编译器和 `tools/module-policy.ts` 检查。TypeScript 类型检查约束模块导出和类成员可见性。静态规则借助编译器解析的符号，检查直接引用导入对象的成员赋值和常见反射写入，以及可静态识别的私有成员下标访问和反射。stdout 由显式列出的命令行和服务进程入口管理。`verify:bun` 运行 `tools/module-policy.test.ts`，覆盖同名局部变量、成员访问、反射、stdout 与 stderr 诊断。
+
+同一检查覆盖 Bun 生产代码直接调用时钟、随机 ID 和当前目录 API 的情况，包括可静态识别的导入别名。`foundation.ts` 和独立的 `factoryctl` 提供运行时时钟与 ID，Vault 与出网转发器保留加密随机数。业务记录时钟、容器耗时、Kiri 就绪轮询以及 LocalProvider 的工作目录由对应 Bun 测试验证。
 
 Bun MRL 表达式检查标准库参数、宏短路、集合顺序和嵌套深度。规则检查覆盖模块归属、关系签名、变量绑定、宿主事实类型、分层否定及聚合。Registry 事实交给规范中的 `kernel/refs.mrl`、`kernel/types.mrl`、`kernel/stations.mrl` 和 `kernel/lines.mrl`。内核检查业务引用、类型继承、工位契约和产线绑定，并生成转换解析表。测试可按完整 Line 键或省略 `Line:` 的键匹配解析条目。Registry 的宪法在同一规则程序上执行，编译失败时仍会返回内核诊断。完整 int64 精度和整数值与同值浮点数的身份尚需迁移。超过 JavaScript 安全整数范围的 YAML 用例会报告证据缺口。规范用例以 `spec/mrl/conformance/` 为准。
 

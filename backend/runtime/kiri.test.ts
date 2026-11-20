@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { FakeClock } from "../src/legacy/foundation";
 import { egressRelayName, launchEgressRelay } from "./egress-relay";
 import { KiriProvider, buildKiriHarnessCommand, resolveKiriClient } from "./kiri";
 import type { CommandResult, SandboxSpec } from "./podman";
@@ -173,6 +174,20 @@ describe("KiriProvider", () => {
     expect((await custom.ensureReady()).reason).toBe("connection refused");
     expect(calls.filter((argv) => argv[0] === "systemctl")).toHaveLength(1);
     expect(calls.at(-1)?.slice(1, 3)).toEqual(["--host", "unix:///tmp/kiri.sock"]);
+  });
+
+  test("polls headless API readiness using the injected monotonic clock", async () => {
+    const clock = new FakeClock();
+    let started = false;
+    const provider = new KiriProvider({
+      platform: "linux", mode: "linux-socket", socket: "/run/kiri/docker.sock", clock,
+      runner: async (argv) => {
+        if (argv[0] === "systemctl") { started = true; return result(); }
+        return started && clock.monotonic() >= 0.4 ? result("Kiri") : result("", "connection refused", 1);
+      },
+    });
+    expect((await provider.ensureReady()).available).toBe(true);
+    expect(clock.monotonic()).toBeCloseTo(0.4);
   });
 
   test("reports packaged socket access failure without requesting a systemd start", async () => {

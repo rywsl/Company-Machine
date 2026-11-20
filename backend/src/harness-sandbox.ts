@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUuid } from "./legacy/foundation";
 import { launchEgressRelay } from "../runtime/egress-relay";
 import { resolveKiriClient } from "../runtime/kiri";
 import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
@@ -48,7 +48,7 @@ export async function prepareHarnessEgress(image: string, baseUrl = "", startFor
   const command = (...args: string[]) => [...prefix, ...args];
   const run = (argv: string[], options?: Parameters<typeof runCommand>[1]) =>
     runCommand(argv, { ...options, env: { ...options?.env, ...kiri?.env } });
-  const name = "mao-harness-" + randomUUID();
+  const name = "mao-harness-" + randomUuid();
   const relay = await launchEgressRelay({ name, image: resolvedRelay, plan, command, run, startForwarder });
   let closing: Promise<void> | undefined;
   return {

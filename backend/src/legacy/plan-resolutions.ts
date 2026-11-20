@@ -1,11 +1,10 @@
-import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { FactoryResolution } from "../../mrl/factory/references";
 import type { Context } from "./context";
 import { ConversionStore } from "./conversion-requests";
 import { FactoryError } from "./errors";
-import { canonicalJson } from "./foundation";
+import { canonicalJson, randomUuid } from "./foundation";
 import type { Snapshot } from "./snapshot";
 
 type Contract = { from: string; guarantees: string[]; to: string; requires: string[] };
@@ -82,7 +81,7 @@ export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows
       known.set(key, encoded);
     }
     if (!fresh.length) return;
-    const temporary = `${path}.${randomUUID()}.part`;
+    const temporary = `${path}.${randomUuid()}.part`;
     mkdirSync(dirname(path), { recursive: true });
     try {
       writeFileSync(temporary, canonicalJson([...existing, ...fresh]), { flag: "wx" });

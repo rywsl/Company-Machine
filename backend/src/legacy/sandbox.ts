@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { ContainerProvider, Sandbox, SandboxSpec } from "../../runtime/podman";
 import { spawnLoggedProcess, type LoggedProcess } from "../../runtime/process-logs";
 import { FactoryError } from "./errors";
+import { SystemClock, type Clock } from "./foundation";
 import { startLocalSandboxEgress, type SandboxEgress, type StartSandboxForwarder } from "./sandbox-egress";
 
 export type LocalCommandMap = Record<string, string[]>;
@@ -56,12 +57,12 @@ function mapping(spec: SandboxSpec): Array<[string, string]> {
 
 export class LocalProvider implements ContainerProvider {
   readonly name = "local";
-  constructor(readonly commands: LocalCommandMap = {}, private readonly startEgress?: StartSandboxForwarder) {}
+  constructor(readonly commands: LocalCommandMap = {}, private readonly startEgress?: StartSandboxForwarder, private readonly clock: Clock = new SystemClock()) {}
   buildRunArgv(spec: SandboxSpec): string[] { return this.commands[spec.image] ?? []; }
   async ensureReady(): Promise<{ available: true; platform: string; executable: string; machine: null; rootless: null }> { return { available: true, platform: process.platform, executable: "local", machine: null, rootless: null }; }
   async health(): Promise<{ available: true; platform: string; executable: string; machine: null; rootless: null }> { return this.ensureReady(); }
   async open(spec: SandboxSpec): Promise<Sandbox> {
-    return new LocalSandboxImpl(spec, this.commands, await startLocalSandboxEgress(spec, this.startEgress));
+    return new LocalSandboxImpl(spec, this.commands, this.clock, await startLocalSandboxEgress(spec, this.startEgress));
   }
   async resolveImage(image: string): Promise<string> { return image; }
   async prepareInjectVolume(_image: string, _volume: string): Promise<void> {}
@@ -72,7 +73,7 @@ export class LocalProvider implements ContainerProvider {
 class LocalSandboxImpl implements Sandbox {
   private readonly children = new Set<LoggedProcess>();
   private closing?: Promise<void>;
-  constructor(private readonly spec: SandboxSpec, private readonly commands: LocalCommandMap, private readonly egress?: SandboxEgress) {}
+  constructor(private readonly spec: SandboxSpec, private readonly commands: LocalCommandMap, private readonly clock: Clock, private readonly egress?: SandboxEgress) {}
   get name(): string { return this.spec.name; }
   async exec(argv: string[], options: Parameters<Sandbox["exec"]>[1]) {
     if (this.closing) throw new FactoryError("SANDBOX_CLOSED", "Local sandbox is closed", { name: this.name });
@@ -89,15 +90,15 @@ class LocalSandboxImpl implements Sandbox {
     const factoryctl = replacePath("/opt/factory/bin/factoryctl", mappings);
     if (factoryctl !== "/opt/factory/bin/factoryctl") environment.FACTORYCTL = factoryctl;
     const mappedWorkdir = replacePath(options.workdir ?? this.spec.workdir ?? "/workspace", mappings);
-    const workdir = existsSync(mappedWorkdir) ? mappedWorkdir : process.cwd();
-    const started = Date.now();
+    const workdir = existsSync(mappedWorkdir) ? mappedWorkdir : dirname(resolve(options.stdout));
+    const started = this.clock.monotonic();
     const child = spawnLoggedProcess(command, options, { cwd: workdir, env: this.egress?.env(environment) ?? environment });
     this.children.add(child);
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill(9); }, options.timeoutMs);
     try {
       const exitCode = await child.exited;
-      return { exitCode: timedOut ? null : exitCode, timedOut, durationMs: Date.now() - started };
+      return { exitCode: timedOut ? null : exitCode, timedOut, durationMs: Math.round((this.clock.monotonic() - started) * 1000) };
     } finally { clearTimeout(timer); this.children.delete(child); }
   }
   close(): Promise<void> {

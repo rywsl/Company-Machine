@@ -2,9 +2,8 @@ import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import type { BusinessUnit, UnitRun } from "./models";
 import { projectSourceFacts } from "./project-sources";
-import { randomUUID } from "node:crypto";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
-import { OfficialCliTransport, chooseTransport, harnessEndpointEnv, type HarnessEvent, type HarnessSession, type OfficialSpawn } from "./harness";
+import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, type HarnessEvent, type HarnessSession, type OfficialSpawn } from "./harness";
 import { resolveOperatorBinding } from "./operator-binding";
 
 export interface OperatorCoordinatorOptions {
@@ -38,7 +37,7 @@ export class OperatorCoordinator {
   private readonly cwd: string;
 
   constructor(private readonly options: OperatorCoordinatorOptions) {
-    this.cwd = options.cwd ?? process.cwd();
+    this.cwd = options.cwd ?? harnessControlPlaneRoot;
   }
 
   dispatch(runId: string, unitRunId?: string): Promise<void> {
@@ -96,7 +95,7 @@ export class OperatorCoordinator {
     this.options.events.publish("operator.run.claimed", { runId, unitRunId, unitId: unit.id, sessionId, harness: definition.id, model });
     const transport = useAcp
       ? new AcpTransport(definition, this.options.acpSpawn ?? this.options.spawn ?? defaultAcpSpawn)
-      : new OfficialCliTransport(definition, this.options.spawn);
+      : new OfficialCliTransport(definition, this.options.spawn, this.options.store.clock);
     let session: HarnessSession | undefined;
     const outputIds = new Set(unitRun.outputs);
     const credentials: Record<string, string> = Object.create(null);
@@ -148,7 +147,7 @@ export class OperatorCoordinator {
           const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata as Record<string, unknown> : {};
           const name = metadata.name;
           if (projectCredentialName(name) && !Object.hasOwn(credentials, name)) {
-            const request = this.options.store.createSecretRequest({ projectId: unit.projectId, name, vaultRef: `vault://secret/${randomUUID()}`, metadata: { purpose: metadata.purpose, scope: metadata.scope, checks: metadata.checks } });
+            const request = this.options.store.createSecretRequest({ projectId: unit.projectId, name, vaultRef: `vault://secret/${this.options.store.uuid()}`, metadata: { purpose: metadata.purpose, scope: metadata.scope, checks: metadata.checks } });
             this.options.store.linkUnitSecret(unitRun.id, request.id);
             if (!requested.has(request.id) && request.status !== "available") {
               this.options.events.publish("secret.requested", { id: request.id, projectId: request.projectId, name: request.name, purpose: request.metadata.purpose, scope: request.metadata.scope });

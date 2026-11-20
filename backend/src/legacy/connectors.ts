@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { EvalEnvironment } from "../../mrl/evaluator";
@@ -7,7 +6,7 @@ import { DYN } from "../../mrl/types";
 import type { ContainerProvider } from "../../runtime/podman";
 import type { Context } from "./context";
 import { FactoryError } from "./errors";
-import { canonicalJson, parseDuration, utcIso } from "./foundation";
+import { canonicalJson, parseDuration, randomUuid, utcIso } from "./foundation";
 import { JobStore, type Job } from "./jobs";
 import { sandboxResources } from "./sandbox";
 import { stationNetwork } from "./sandbox-egress";
@@ -253,7 +252,7 @@ export async function verifyReceipt(context: Context, snapshot: Snapshot, provid
       throw new FactoryError("RECEIPT_VERIFY_RECIPE_INVALID", "核验配方缺少命令或镜像");
     }
     const network = stationNetwork(context.root, snapshot, receipt.station);
-    const token = randomUUID().slice(0, 12);
+    const token = randomUuid().slice(0, 12);
     const principal = `${job.id}-verify-${token}`;
     const root = join(context.root, "jobs", job.id, `verify-${token}`);
     const inDir = join(root, "in");

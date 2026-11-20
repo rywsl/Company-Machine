@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { FactoryError } from "./errors";
 
@@ -48,6 +48,7 @@ export class FakeClock implements Clock {
   advance(seconds: number): void { if (seconds < 0) throw new RangeError("clock cannot move backwards"); this.elapsed += seconds; }
 }
 export interface IdSource { new: (prefix: string) => string; }
+export function randomUuid(): string { return randomUUID(); }
 function checkPrefix(prefix: string): void { if (!/^[a-z]{1,8}$/.test(prefix)) throw new Error("ID prefix is invalid"); }
 export class CounterIds implements IdSource {
   private counts = new Map<string, number>();

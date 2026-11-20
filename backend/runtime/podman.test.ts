@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
+import { FakeClock } from "../src/legacy/foundation";
 import { PodmanError, PodmanProvider, runCommand, type CommandResult, type SandboxSpec } from "./podman";
 
 const ok = (stdout = "", stderr = ""): CommandResult => ({
@@ -139,11 +140,14 @@ describe("PodmanProvider", () => {
 
   test("exec writes stdout and stderr through the provider", async () => {
     const calls: string[][] = [];
+    const clock = new FakeClock();
     const provider = new PodmanProvider({
+      clock,
       runner: async (argv) => {
         calls.push(argv);
         if (argv.includes("info")) return ok(JSON.stringify({ host: { security: { rootless: true } } }));
         if (argv.includes("inspect")) return ok(`sha256:${"b".repeat(64)}`);
+        if (argv.includes("exec")) clock.advance(0.125);
         return ok("out", "err");
       },
     });
@@ -152,6 +156,7 @@ describe("PodmanProvider", () => {
     const sandbox = await provider.open({ ...spec, image: `registry.example/worker@sha256:${"b".repeat(64)}` });
     const result = await sandbox.exec(["echo", "ok"], { timeoutMs: 1000, stdout: `${root}/stdout`, stderr: `${root}/stderr` });
     expect(result.exitCode).toBe(0);
+    expect(result.durationMs).toBe(125);
     expect(await Bun.file(`${root}/stdout`).text()).toBe("out");
     expect(await Bun.file(`${root}/stderr`).text()).toBe("err");
     expect(calls.some((argv) => argv.includes("run"))).toBe(true);

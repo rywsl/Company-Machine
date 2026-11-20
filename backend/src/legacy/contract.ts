@@ -1,11 +1,10 @@
-import { randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { copyFile, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { compileExpr, type EvalEnvironment } from "../../mrl/evaluator";
 import { BOOL, DYN } from "../../mrl/types";
 import { FactoryError } from "./errors";
-import { canonicalJson, digestFile, parseDuration, utcIso } from "./foundation";
+import { canonicalJson, digestFile, parseDuration, randomUuid, utcIso } from "./foundation";
 import { Gate } from "./gate";
 import type { Job } from "./jobs";
 import type { Runner } from "./runner";
@@ -324,7 +323,7 @@ export class ContractRunner {
   }
 
   private async validatorAccepts(typeId: string, validator: Validator, facts: Record<string, string>, fixture: string, timeoutMs: number): Promise<boolean> {
-    const name = `ct-${randomUUID()}`;
+    const name = `ct-${randomUuid()}`;
     const root = join(this.runner.context.root, "tmp", name);
     const bean = join(root, "bean");
     const payload = join(bean, "payload");

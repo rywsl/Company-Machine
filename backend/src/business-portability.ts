@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { SqliteStore } from "./db";
 import type { Artifact, BusinessConversion, BusinessSystem, ProjectSourceKind } from "./models";
 import { projectCredentialName } from "./operator";
@@ -158,7 +157,7 @@ export function exportBusinessSystem(
   }));
   return {
     schema: SCHEMA,
-    exportedAt: new Date().toISOString(),
+    exportedAt: store.timestamp(),
     system: { ...system, name: clean(system.name), description: clean(system.description), metadata: metadata(systemMetadata, clean) },
     graph: portable(system.metadata.graph ?? fallbackGraph(), clean),
     units: units.map((unit) => ({
@@ -193,7 +192,7 @@ export function importBusinessSystem(store: SqliteStore, document: Json, validat
   const records = rows(document.records, "records");
   const conversions = rows(document.conversions, "conversions");
   const ids = new Map<string, string>();
-  const allocate = (value: unknown, id = randomUUID()) => {
+  const allocate = (value: unknown, id = store.uuid()) => {
     if (typeof value === "string") {
       if (ids.has(value)) throw new Error("business system document contains duplicate IDs");
       ids.set(value, id);
@@ -262,7 +261,7 @@ export function importBusinessSystem(store: SqliteStore, document: Json, validat
       for (const request of rows(project.secretRequests, "secret requests")) {
         if (!projectCredentialName(request.name)) throw new Error("invalid project credential name");
         store.createSecretRequest({
-          projectId: imported.id, name: request.name, vaultRef: "vault://secret/" + randomUUID(),
+          projectId: imported.id, name: request.name, vaultRef: "vault://secret/" + store.uuid(),
           status: "requested", metadata: metadata(request.metadata, clean),
         });
       }

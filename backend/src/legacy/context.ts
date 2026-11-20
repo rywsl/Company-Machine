@@ -1,9 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { ManagedDatabase } from "../sqlite";
-import { RandomIds, SystemClock, type Clock, type IdSource } from "./foundation";
+import { randomUuid, RandomIds, SystemClock, type Clock, type IdSource } from "./foundation";
 import { Warehouse } from "./warehouse";
 
 export interface ContextOptions { provider?: unknown; clock?: Clock; ids?: IdSource; }
@@ -54,7 +53,7 @@ export async function installFactoryctl(root: string): Promise<string> {
   }
   const directory = dirname(target);
   mkdirSync(directory, { recursive: true });
-  const part = join(directory, `.factoryctl.${randomUUID()}.part`);
+  const part = join(directory, `.factoryctl.${randomUuid()}.part`);
   writeFileSync(part, data, { mode: 0o755, flag: "wx" });
   try {
     renameSync(part, target);

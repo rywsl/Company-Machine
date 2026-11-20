@@ -194,8 +194,8 @@ export class ChangeSetStore {
     this.checkWindows(config, limit);
     const configuredTimeout = config.git_timeout_s;
     const seconds = typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 60;
-    const deadline = performance.now() + Math.min(options.timeoutSeconds ?? seconds, seconds) * 1_000;
-    const run = (args: string[], env?: Record<string, string>, allowed?: number[]) => git(this.epochs.registry, args, deadline - performance.now(), env, allowed);
+    const deadline = clock.monotonic() + Math.min(options.timeoutSeconds ?? seconds, seconds);
+    const run = (args: string[], env?: Record<string, string>, allowed?: number[]) => git(this.epochs.registry, args, (deadline - clock.monotonic()) * 1000, env, allowed);
     const active = this.epochs.current();
     const stale = () => new FactoryError("CHANGESET_STALE", "基线不是当前 active 或提交不是其后代", { base_epoch: checked.base, active: this.epochs.current() });
     const resolved = await run(["rev-parse", "--verify", "--end-of-options", `${reference}^{commit}`], undefined, [0, 1, 128]);
