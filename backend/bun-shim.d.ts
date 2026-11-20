@@ -36,6 +36,7 @@ declare module "node:path" {
   export const dirname: (path: string) => string;
   export const extname: (path: string) => string;
   export const join: (...parts: string[]) => string;
+  export const basename: (path: string) => string;
   export const resolve: (...parts: string[]) => string;
   export const normalize: (path: string) => string;
 }
@@ -43,11 +44,12 @@ declare module "node:path" {
 declare module "node:fs/promises" {
   export const mkdir: (...args: any[]) => Promise<void>;
   export const rm: (...args: any[]) => Promise<void>;
+  export const readdir: (...args: any[]) => Promise<string[]>;
 }
 
 declare module "bun:test" {
   export const describe: (name: string, body: () => void) => void;
-  export const test: (name: string, body: () => void | Promise<void>) => void;
+  export const test: (name: string, bodyOrOptions: (() => void | Promise<void>) | { timeout?: number }, body?: () => void | Promise<void>) => void;
   export const expect: (value: any) => any;
 }
 
@@ -58,7 +60,7 @@ declare const Bun: {
   file(path: string): Blob;
   write(path: string, source: unknown): Promise<number>;
 };
-declare const process: { env: Record<string, string | undefined>; cwd(): string; exit(code?: number): never; exitCode?: number };
+declare const process: { env: Record<string, string | undefined>; platform: string; cwd(): string; exit(code?: number): never; exitCode?: number; stdout: { write(value: string): boolean }; stderr: { write(value: string): boolean } };
 declare const Buffer: {
   from(value: any, encoding?: string): any;
   concat(values: any[]): any;
