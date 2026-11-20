@@ -9,6 +9,7 @@ export interface ForemanCoordinatorOptions {
   cwd?: string;
   spawn?: OfficialSpawn;
   acpSpawn?: AcpSpawn;
+  ensureRuntime?: () => Promise<void>;
 }
 
 /** Dispatches persisted user intent to an external official Harness process. */
@@ -50,6 +51,14 @@ export class ForemanCoordinator {
     if (!profile || !definition) {
       this.options.events.publish("foreman.session.failed", { inboxId: id, reason: "foreman-harness-not-configured" });
       return;
+    }
+    if (profile.image && this.options.ensureRuntime) {
+      try {
+        await this.options.ensureRuntime();
+      } catch (error) {
+        this.options.events.publish("foreman.session.failed", { inboxId: id, reason: error instanceof Error ? error.message : "container-runtime-unavailable" });
+        return;
+      }
     }
     const claimed = this.options.store.claimForemanMessage(id);
     if (!claimed) return;

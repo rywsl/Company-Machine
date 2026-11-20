@@ -11,6 +11,7 @@ export interface OperatorCoordinatorOptions {
   spawn?: OfficialSpawn;
   acpSpawn?: AcpSpawn;
   onProgress?: (runId: string) => void;
+  ensureRuntime?: () => Promise<void>;
 }
 
 /** Runs a business-system operator through an external official Harness. */
@@ -74,6 +75,7 @@ export class OperatorCoordinator {
     let session: HarnessSession | undefined;
     const outputIds: string[] = [];
     try {
+      if (profile.image) await this.options.ensureRuntime?.();
       session = await transport.start({
         task: this.taskFor(unit, runId, unitRun),
         contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。缺少项目资源时输出 {\"type\":\"mao.secret_request\",\"name\":\"...\",\"purpose\":\"...\",\"scope\":\"...\"}，由项目资源请求流程向用户呈现。",

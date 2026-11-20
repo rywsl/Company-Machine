@@ -53,9 +53,6 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
   const store = new SqliteStore(options.dbPath, options.legacyPath);
   const events = new EventBus(store);
   const vault = new VaultStore();
-  const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn });
-  let dispatchOperatorRun = (_runId: string) => {};
-  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId) });
   const runtime = options.runtime ?? (process.env.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
     ? new KiriProvider({ kiriExecutable: process.env.MAO_KIRI_EXECUTABLE, dockerExecutable: process.env.MAO_DOCKER_EXECUTABLE, context: process.env.MAO_KIRI_CONTEXT, mode: process.env.MAO_KIRI_MODE === "docker-context" ? "docker-context" : "kiri", socket: process.env.MAO_KIRI_SOCKET, dataDir: process.env.MAO_KIRI_DATA_DIR, egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) })
     : new PodmanProvider({ egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) }));
@@ -68,6 +65,23 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     runtimeCache = { at: current, health };
     return health;
   };
+  let runtimeReadyPromise: Promise<void> | undefined;
+  const ensureRuntime = async () => {
+    if (!runtime.ensureReady) return;
+    const pending = runtimeReadyPromise ?? (runtimeReadyPromise = (async () => {
+      const health = await runtime.ensureReady!();
+      runtimeCache = { at: Date.now(), health };
+      if (!health.available) throw new Error(`${provider} runtime unavailable: ${health.reason ?? "unknown"}`);
+    })());
+    try {
+      await pending;
+    } finally {
+      if (runtimeReadyPromise === pending) runtimeReadyPromise = undefined;
+    }
+  };
+  const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn, ensureRuntime });
+  let dispatchOperatorRun = (_runId: string) => {};
+  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId), ensureRuntime });
   const dispatchForemanIfConfigured = (id: string) => {
     if (store.listHarnessProfiles().some((profile) => profile.role === "foreman")) void foreman.dispatch(id);
   };

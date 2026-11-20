@@ -16,6 +16,36 @@ function processForFailure(): OfficialProcess {
 }
 
 describe("Bun business execution loop", () => {
+  test("ensures the selected container runtime before a containerized Operator starts", async () => {
+    const dbPath = `.factory/business-runtime-ready-${randomUUID()}.db`;
+    let ensured = 0;
+    let spawned = 0;
+    const app = createApp({
+      dbPath,
+      legacyPath: dbPath,
+      runtime: {
+        health: async () => ({ available: false, platform: "linux", executable: "kiri", machine: "linux-host", rootless: null }),
+        ensureReady: async () => { ensured += 1; return { available: true, platform: "linux", executable: "kiri", machine: "linux-host", rootless: null }; },
+      },
+      operator: { spawn: () => { spawned += 1; return processForRecord("cas://runtime-ready"); } },
+    });
+    const headers = { "content-type": "application/json" };
+    try {
+      const system = await (await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers, body: JSON.stringify({ name: "运行时就绪业务" }) }))).json() as { id: string };
+      const project = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "容器步骤", repo_url: "https://example.test/runtime.git" }) }))).json() as { id: string };
+      app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "https://example.invalid", model: "codex-test", mode: "session", image: `registry.example/harness@sha256:${"a".repeat(64)}` });
+      const run = await (await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/runs`, { method: "POST", headers, body: JSON.stringify({}) }))).json() as { id: string };
+      for (let attempt = 0; attempt < 30 && app.store.listArtifacts(project.id).length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(app.store.listArtifacts(project.id)).toHaveLength(1);
+      expect(ensured).toBe(1);
+      expect(spawned).toBe(1);
+      expect(app.store.getBusinessRun(run.id)?.status).toBe("completed");
+    } finally {
+      app.stop();
+      await rm(dbPath, { force: true });
+    }
+  });
+
   test("creates operator and machine units and records a Harness material", async () => {
     const dbPath = `.factory/business-runtime-${randomUUID()}.db`;
     const app = createApp({ dbPath, legacyPath: dbPath, operator: { spawn: () => processForRecord() } });
