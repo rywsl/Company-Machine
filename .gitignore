@@ -5,7 +5,23 @@ __pycache__/
 .ruff_cache/
 .factory/
 .factory-test/
+
+# Local temporary files and generated run output
+tmp/
+output/
+coverage/
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Build artifacts and tool caches
 build/
+dist/
+*.tsbuildinfo
+.cache/
+.vite/
 
 node_modules/
 
