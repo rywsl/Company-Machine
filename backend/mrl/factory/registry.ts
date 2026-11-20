@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { relative } from "node:path";
 import { listFiles } from "./paths";
 import { loadDocuments, YamlError } from "./yamlio";
 
@@ -30,11 +30,10 @@ export function layoutKind(rel: string): string | undefined {
 }
 export function isConstitution(rel: string): boolean { return /^constitution\/[^/]+\.mrl$/.test(rel.replaceAll("\\", "/")); }
 
-function relative(root: string, file: string): string { return file.slice(root.length + (root.endsWith("\\") || root.endsWith("/") ? 0 : 1)).replaceAll("\\", "/"); }
 export function readTree(root: string): Record<string, string> {
   const result: Record<string, string> = {};
   for (const file of listFiles(root)) {
-    const rel = relative(root, file);
+    const rel = relative(root, file).replaceAll("\\", "/");
     if (layoutKind(rel) || isConstitution(rel)) result[rel] = readFileSync(file, "utf8");
   }
   return result;

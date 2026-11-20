@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 function env(): Record<string, string | undefined> {
@@ -32,9 +32,9 @@ export function listFiles(root: string): string[] {
   const visit = (directory: string) => {
     for (const entry of readdirSync(directory)) {
       const path = join(directory, entry);
-      const stat = statSync(path);
+      const stat = lstatSync(path);
       if (stat.isDirectory()) visit(path);
-      else output.push(path);
+      else if (stat.isFile()) output.push(path);
     }
   };
   if (existsSync(root)) visit(root);

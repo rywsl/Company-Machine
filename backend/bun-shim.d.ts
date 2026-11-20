@@ -23,6 +23,7 @@ declare module "node:fs" {
   export const mkdirSync: (...args: any[]) => void;
   export const readdirSync: (...args: any[]) => any[];
   export const statSync: (...args: any[]) => any;
+  export const lstatSync: (...args: any[]) => any;
   export const renameSync: (...args: any[]) => void;
   export const unlinkSync: (...args: any[]) => void;
   export const rmSync: (...args: any[]) => void;

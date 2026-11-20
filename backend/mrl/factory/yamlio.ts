@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 export class YamlError extends Error {
   constructor(readonly message: string, readonly line = 0, readonly col = 0) {
     super(message);
@@ -23,22 +25,25 @@ function splitDocuments(source: string): Array<{ text: string; line: number; ind
   const documents: Array<{ text: string; line: number; index: number }> = [];
   let start = 1;
   let documentIndex = 0;
+  let explicitStart = false;
   let current: string[] = [];
   const push = () => {
-    const text = current.join("\n");
-    if (text.trim() && !/^\.\.\.\s*(?:#.*)?$/.test(text.trim())) documents.push({ text, line: start, index: documentIndex });
-    documentIndex += 1;
+    const firstContentLine = current.findIndex((line) => line.trim() && !line.trimStart().startsWith("#"));
+    if (firstContentLine >= 0) documents.push({ text: current.join("\n"), line: start + firstContentLine, index: documentIndex });
+    if (firstContentLine >= 0 || explicitStart) documentIndex += 1;
     current = [];
   };
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (/^---\s*(?:#.*)?$/.test(line)) {
       push();
+      explicitStart = true;
       start = index + 2;
       continue;
     }
     if (/^\.\.\.\s*(?:#.*)?$/.test(line)) {
       push();
+      explicitStart = false;
       start = index + 2;
       continue;
     }
@@ -70,5 +75,4 @@ export function loadOne(source: string): unknown {
 export function loadFile(path: string): unknown {
   return loadOne(readFileSync(path, "utf8"));
 }
-import { readFileSync } from "node:fs";
 

@@ -1,5 +1,5 @@
 import { documentKey, documentKind, documentPosition, documentSubject, loadRegistry, type HostDiagnostic, type Registry, type SpecDocument } from "./registry";
-import { registryKinds, validate } from "./schema";
+import { registryKinds, schemaForKind, validate } from "./schema";
 
 export interface RegistryDiagnostic extends HostDiagnostic { severity: "error" | "warning" | "info"; }
 export interface RegistryCheckResult { root: string; ok: boolean; diagnostics: RegistryDiagnostic[]; stats: Record<string, number>; registry: Registry; }
@@ -18,11 +18,11 @@ function asDiagnostic(document: SpecDocument | undefined, diagnostic: HostDiagno
 function validateDocument(document: SpecDocument): RegistryDiagnostic[] {
   const diagnostics: RegistryDiagnostic[] = [];
   const kind = documentKind(document);
-  if (!kind || !registryKinds.includes(kind as typeof registryKinds[number])) {
-    diagnostics.push(asDiagnostic(document, { code: "E-LAYOUT", subject: documentSubject(document), message: `unknown or non-registry kind ${kind || "(missing)"}`, path: "kind" }));
+  if (schemaForKind(kind) && !registryKinds.includes(kind as typeof registryKinds[number])) {
+    diagnostics.push(asDiagnostic(document, { code: "E-LAYOUT", subject: documentSubject(document), message: `${kind} is a record and cannot be declared in the Registry`, path: "kind" }));
     return diagnostics;
   }
-  if (kind !== document.expectedKind) {
+  if (schemaForKind(kind) && kind !== document.expectedKind) {
     diagnostics.push(asDiagnostic(document, { code: "E-LAYOUT", subject: documentSubject(document), message: `this path requires ${document.expectedKind}, got ${kind}`, path: "kind" }));
     return diagnostics;
   }
@@ -39,11 +39,13 @@ export function checkRegistry(rootOrRegistry: string | Registry): RegistryCheckR
   const seen = new Map<string, SpecDocument>();
   const stats: Record<string, number> = {};
   for (const document of registry.docs) {
-    diagnostics.push(...validateDocument(document));
+    const documentDiagnostics = validateDocument(document);
+    diagnostics.push(...documentDiagnostics);
+    if (documentDiagnostics.length) continue;
     const kind = documentKind(document);
     if (kind) stats[`kind:${kind}`] = (stats[`kind:${kind}`] ?? 0) + 1;
     const key = documentKey(document);
-    if (key && !diagnostics.some((item) => item.file === document.file && item.doc === document.index && item.code === "E-SCHEMA")) {
+    if (key) {
       if (seen.has(key)) diagnostics.push(asDiagnostic(document, { code: "E-DUPLICATE", subject: key, message: `duplicate Spec key, first declared in ${seen.get(key)?.file}` }));
       else seen.set(key, document);
     }

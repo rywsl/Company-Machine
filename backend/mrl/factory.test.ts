@@ -25,7 +25,15 @@ describe("Bun MRL factory registry", () => {
   test("supports YAML documents and reports schema errors", () => {
     const documents = loadDocuments("---\n---\na: true\n---\nb: on\n");
     expect(documents.map((document) => document.data)).toEqual([{ a: true }, { b: "on" }]);
-    expect(documents.map((document) => document.index)).toEqual([2, 3]);
+    expect(documents.map((document) => document.index)).toEqual([1, 2]);
     expect(validate({ apiVersion: "mao/v1", kind: "Type", metadata: { name: "bad", version: "nope" }, spec: {} }).length).toBeGreaterThan(0);
+  });
+
+  test("checks nested Line bindings and exclusive step shapes", () => {
+    const line = { apiVersion: "mao/v1", kind: "Line", metadata: { name: "pipeline", version: 1 } };
+    const badBinding = { ...line, spec: { steps: { run: { station: "upper@1", in: { note: { from: "invalid source" } } } } } };
+    expect(validate(badBinding).map((error) => error.path)).toContain("spec.steps.run.in.note");
+    const ambiguousStep = { ...line, spec: { steps: { run: { station: "upper@1", subline: "pipeline@1" } } } };
+    expect(validate(ambiguousStep).map((error) => error.path)).toContain("spec.steps.run");
   });
 });

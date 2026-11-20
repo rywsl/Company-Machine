@@ -16,7 +16,7 @@
 
 ## Factory Registry 运行时
 
-Registry 的活动结构检查位于 `backend/mrl/factory/`。`paths.ts` 解析 `MRL_SPEC_DIR` 或仓库内的 `spec/`，`yamlio.ts` 使用 Bun 原生 YAML 解析器处理 YAML 1.2 文档，`registry.ts` 按工厂 profile 的目录布局读取 Spec，`schema.ts` 解析 `spec/schemas/` 的 Draft 2020-12 结构约束，`check.ts` 输出布局、YAML、schema、重复键和宪法缺失诊断。
+Registry 的活动结构检查位于 `backend/mrl/factory/`。`paths.ts` 解析 `MRL_SPEC_DIR` 或仓库内的 `spec/`，`yamlio.ts` 使用 Bun 原生 YAML 解析器处理多文档输入，`registry.ts` 按工厂 profile 的目录布局读取普通文件，`schema.ts` 读取 `spec/schemas/` 并检查包括嵌套引用、动态属性和互斥分支在内的结构约束，`check.ts` 输出布局、YAML、schema、重复 Spec 键和宪法缺失诊断。YAML 映射中重复键和非字符串键的拒绝校验仍待与工厂 profile 对齐。
 
 M1 的基础值、快照和本地仓库边界位于 `backend/src/legacy/`。`foundation.ts` 提供规范 JSON、摘要、时钟和 ID，`snapshot.ts` 读取已检查 Registry 并提供 Spec/type/facts/always 查询，`warehouse.ts` 提供 CAS、Bean、封存、物化和血缘，`context.ts` 负责工厂目录与 Bun SQLite 装配。它们与 BusinessSystem 表保持独立，便于后续把 Runner/Gate 接到同一仓库。
 
