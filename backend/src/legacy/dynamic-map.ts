@@ -42,11 +42,11 @@ export function readMap(line: string, step: string, value: unknown): MapDefiniti
   return { ...options, over: { source: match[1] === "$inputs" ? "input" : "node", node: match[1], port: match[2] } };
 }
 
-export function mapCount(definition: MapDefinition, sourceLength: number, line: string, step: string): number {
+export function mapCount(definition: MapDefinition, sourceLength: number): number | undefined {
   const limit = definition.maxItems;
   if (limit === undefined || sourceLength <= limit) return sourceLength;
   if (definition.overflow === "truncate") return limit;
-  throw new FactoryError("DYNAMIC_OVERFLOW", "map 列表长度超过展开上限", { line, step, length: sourceLength, max_items: limit });
+  return undefined;
 }
 
 export function mapFamily(family: readonly PlanNode[], index: number): PlanNode[] {

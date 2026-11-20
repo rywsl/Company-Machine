@@ -2,7 +2,7 @@ import { MrlStaticError } from "../../mrl/checker";
 import { compileExpr, MrlEvalError, type EvalEnvironment } from "../../mrl/evaluator";
 import { MrlSyntaxError } from "../../mrl/lexer";
 import { BOOL, DYN } from "../../mrl/types";
-import { readMap } from "./dynamic-map";
+import { mapCount, mapFamily, readMap } from "./dynamic-map";
 import { readUntil } from "./dynamic-until";
 import { freezeSubline, sublineShape } from "./dynamic-subline";
 import { FactoryError } from "./errors";
@@ -85,14 +85,22 @@ function compileDynamicLine(snapshot: Snapshot, lineRef: string, ancestry: Reado
     const ids = new Set(family.map((node) => node.id));
     const budget = family.reduce((sum, node) => sum + node.budgetUsd, 0);
     const { over } = definition;
-    const limit = "items" in over ? over.items.length : definition.maxItems;
+    const literalCount = "items" in over ? mapCount(definition, over.items.length) ?? 0 : undefined;
+    const limit = literalCount ?? definition.maxItems;
     if (limit === undefined && budget > 0) return invalid(line, step, "max-items");
     for (const node of family) {
       multiplicities.set(node.id, limit ?? 0);
       nodes.delete(node.id);
     }
     const deps = new Set(family.flatMap((node) => node.deps.filter((dependency) => !ids.has(dependency))));
-    if (!("items" in over)) {
+    if (literalCount !== undefined) {
+      for (let index = 0; index < literalCount; index++) {
+        for (const member of mapFamily(family, index)) {
+          nodes.set(member.id, { ...member, mapInstance: { owner: step, index } });
+          if (member.kind === "station") deps.add(member.id);
+        }
+      }
+    } else if (!("items" in over)) {
       const origin = base.nodes.find((node) => node.id === over.node);
       const declaration = over.source === "input" ? base.inputs[over.port]
         : origin && (sublines.get(over.node)?.shape.outputs[over.port]?.type ?? snapshot.spec(origin.station).outputs?.[over.port]?.type);

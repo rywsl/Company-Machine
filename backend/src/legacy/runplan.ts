@@ -31,6 +31,7 @@ export interface PlanNode {
   readonly until?: UntilDefinition;
   readonly subline?: SublineDefinition;
   readonly map?: MapPlan;
+  readonly mapInstance?: { readonly owner: string; readonly index: number };
 }
 
 type Parameter = string | boolean | number;
@@ -62,6 +63,7 @@ export class RunPlan implements Plan {
   readonly budgetItems: Plan["budgetItems"];
 
   private readonly nodesById: ReadonlyMap<string, PlanNode>;
+  private readonly mapInstancesByOwner = new Map<string, PlanNode[][]>();
 
   constructor(plan: Plan) {
     const value = structuredClone(plan);
@@ -75,6 +77,13 @@ export class RunPlan implements Plan {
     this.budgetCapUsd = value.budgetCapUsd;
     this.budgetItems = value.budgetItems;
     this.nodesById = new Map(this.nodes.map((node) => [node.id, node]));
+    for (const node of this.nodes) {
+      if (!node.mapInstance) continue;
+      const { owner, index } = node.mapInstance;
+      const families = this.mapInstancesByOwner.get(owner) ?? [];
+      (families[index] ??= []).push(node);
+      this.mapInstancesByOwner.set(owner, families);
+    }
   }
 
   static fromJSON(value: RunPlanJSON): RunPlan {
@@ -87,10 +96,11 @@ export class RunPlan implements Plan {
       budgetItems: value.budget_items,
       outputs: value.outputs,
       keep: value.keep,
-      nodes: value.nodes.map(({ inputs, budget_usd, ...node }) => ({
+      nodes: value.nodes.map(({ inputs, budget_usd, map_instance, ...node }) => ({
         ...node,
         budgetUsd: budget_usd,
         inputs: inputs.map(({ out_port, ...input }) => ({ ...input, outPort: out_port })),
+        ...(map_instance ? { mapInstance: map_instance } : {}),
       })),
     });
   }
@@ -99,6 +109,10 @@ export class RunPlan implements Plan {
     const node = this.nodesById.get(id);
     if (!node) throw new FactoryError("NODE_NOT_FOUND", "运行计划没有该节点", { node: id });
     return node;
+  }
+
+  mapInstances(owner: string): readonly (readonly PlanNode[])[] | undefined {
+    return this.mapInstancesByOwner.get(owner);
   }
 
   toJSON() {
@@ -126,6 +140,7 @@ export class RunPlan implements Plan {
         ...(node.until ? { until: node.until } : {}),
         ...(node.subline ? { subline: node.subline } : {}),
         ...(node.map ? { map: node.map } : {}),
+        ...(node.mapInstance ? { map_instance: node.mapInstance } : {}),
       })),
       outputs: this.outputs,
       keep: this.keep,

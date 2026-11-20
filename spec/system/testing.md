@@ -139,6 +139,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/dynamic-until.test.ts` | until 有界执行、结果聚合、重启恢复和预算预留 |
 | `backend/tests/dynamic-subline.test.ts` | Subline 冻结计划、父子运行关联、产物和费用结算 |
 | `backend/tests/dynamic-map.test.ts` | Map 列表展开、保序聚合、溢出与单轮提交数量限制 |
+| `backend/tests/dynamic-map-literal.test.ts` | 字面 Map 编译、实例转换、预算预留、持久化执行、分支跳过与存量计划恢复 |
 | `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
 | `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
@@ -226,7 +227,11 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m1/test_m1_09_cli.py::test_bean_lineage_json` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | CLI 封存后向上追溯，结果只包含原输入 Bean |
 | `removed/python/tests/acceptance/m2/test_m2_01_runplan.py::test_templated_params_recorded` | `backend/tests/legacy-runplan.test.ts` | `orders the example by dependency layer and records parameters and budgets` | 归档示例产线的 `to_s3.prefix` 保留模板原文和模板字段标记 |
 | `removed/python/tests/acceptance/m2/test_m2_03_line_runner.py::test_epoch_mismatch` | `backend/tests/legacy-snapshot.test.ts` | `rejects a Run tick from a LineRunner bound to a different epoch` | 不同 Registry 快照下拒绝推进同一个 Run |
+| `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_m2_compiler_still_rejects` | `backend/tests/legacy-runplan.test.ts` | `rejects missing inputs, incompatible contracts, cycles and unsupported constructs` | 静态入口对 Map 返回 `LINE_UNSUPPORTED` |
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_plain_line_digest_matches_m2` | `backend/tests/dynamic-switch.test.ts` | `compiles ordered switch cases and preserves the static plan document` | 示例静态 Line 的两个编译入口生成相同计划 |
+| `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_literal_map_order` | `backend/tests/dynamic-map-literal.test.ts` | `compiles literal Map families and persists ordered, single-submission execution` | 使用类型正确的脚本工位和隐式转换替代缺少字幕输入的历史配音夹具，验证计划实例、模板及有序产物 |
+| `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_dynamic_overflow_reject` | `backend/tests/dynamic-map-literal.test.ts` | `rejects a literal Map overflow before creating instances` | 计划只保留控制节点，运行时保存 `DYNAMIC_OVERFLOW` |
+| `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_truncate_keeps_prefix` | `backend/tests/dynamic-map-literal.test.ts` | `compiles and executes only the original literal Map prefix when truncating` | 使用相同合规脚本夹具验证仅编译和运行原列表前两个元素 |
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_switch_first_match` | `backend/tests/dynamic-switch.test.ts` | `commits the first true choice, skip and submission in one tick across restart` | 两个真条件按声明顺序选择第一个，并持久化控制节点 |
 | `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_switch_selects_one_branch` | `backend/tests/dynamic-switch.test.ts` | `runs one selected branch and skips the alternative with no job` | 两种物料分别选择对应分支，控制节点无 Job，另一个分支跳过 |
 | `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_until_stops_when_condition_holds` | `backend/tests/dynamic-until.test.ts` | `stops on the first true until result after restoring a persisted iteration` | 各轮为独立 Job，第二轮为真时只输出第二轮结果且无第三轮 |

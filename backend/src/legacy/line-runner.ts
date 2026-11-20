@@ -94,17 +94,24 @@ export class LineRunner {
       if (run.state === "RUNNING") {
         const dynamic = plan.nodes.some((node) => node.kind === "switch");
         for (const planned of plan.nodes) {
-          if (nodes.get(planned.id)?.state !== "WAITING") continue;
+          if (planned.mapInstance || nodes.get(planned.id)?.state !== "WAITING") continue;
           if (planned.kind === "subline" && nodes.get(planned.id)?.params?.child_run) continue;
+          const instances = plan.mapInstances(planned.id);
+          const deps = instances ? planned.deps.filter((id) => plan.node(id).mapInstance?.owner !== planned.id) : planned.deps;
           try {
             if (dynamic) {
-              const readiness = this.dynamicReadiness(plan, planned, nodes);
+              const readiness = this.dynamicReadiness(plan, planned, nodes, deps);
               if (readiness === "waiting") continue;
               if (readiness === "skipped") {
                 nodes.set(planned.id, this.runs.skipNode(id, planned.id));
+                for (const family of instances ?? []) {
+                  for (const member of family) {
+                    if (nodes.get(member.id)?.state === "WAITING") nodes.set(member.id, this.runs.skipNode(id, member.id));
+                  }
+                }
                 continue;
               }
-            } else if (!planned.deps.every((dep) => nodes.get(dep)?.state === "DONE")) continue;
+            } else if (!deps.every((dep) => nodes.get(dep)?.state === "DONE")) continue;
             if (planned.kind === "switch") {
               if (!planned.switch) throw new FactoryError("RUN_PLAN_INVALID", "运行计划缺少 switch 定义", { step: planned.step });
               const on = planned.switch.on;
@@ -133,7 +140,7 @@ export class LineRunner {
               continue;
             }
             if (planned.kind === "map") {
-              this.advanceMap(run, planned, plan, nodes, submitted);
+              this.advanceMap(run, planned, plan, nodes, submitted, instances);
               continue;
             }
             const node = planned.kind === "until" ? this.nextIteration(id, planned, nodes) : planned;
@@ -226,21 +233,29 @@ export class LineRunner {
     return iteration;
   }
 
-  private advanceMap(run: Run, node: PlanNode, plan: RunPlan, nodes: Map<string, RunNode>, submitted: string[]): void {
+  private advanceMap(
+    run: Run, node: PlanNode, plan: RunPlan, nodes: Map<string, RunNode>, submitted: string[],
+    compiled: ReturnType<RunPlan["mapInstances"]>,
+  ): void {
     const definition = node.map;
     if (!definition) throw new FactoryError("RUN_PLAN_INVALID", "运行计划缺少 map 定义", { step: node.step });
     const { over } = definition;
     const items = "items" in over ? over.items
       : over.source === "input" ? run.inputs[over.port] : nodes.get(over.node)?.outputs[over.port];
     if (!items) throw new FactoryError("INPUT_MISSING", "map 来源没有列表物料", { step: node.step });
-    const count = mapCount(definition, items.length, run.line, node.step);
-    const families = Array.from({ length: count }, (_, index) => mapFamily(definition.family, index));
-    const ids = families.flatMap((family) => family.map(({ id }) => id));
-    if (ids.length && ids.some((id) => !nodes.has(id))) {
-      const bound = "items" in over ? count : definition.maxItems ?? count;
-      this.runs.prepareInstances(run.id, node.id, ids, bound * node.budgetUsd);
-      this.runs.releaseUnusedReservation(run.id, node.id, count * node.budgetUsd);
-      for (const stored of this.runs.nodes(run.id)) if (!nodes.has(stored.nodeId)) nodes.set(stored.nodeId, stored);
+    const count = mapCount(definition, items.length);
+    if (count === undefined) {
+      throw new FactoryError("DYNAMIC_OVERFLOW", "map 列表长度超过展开上限", { line: run.line, step: node.step, length: items.length, max_items: definition.maxItems });
+    }
+    const families = compiled ?? Array.from({ length: count }, (_, index) => mapFamily(definition.family, index));
+    if (!compiled) {
+      const ids = families.flatMap((family) => family.map(({ id }) => id));
+      if (ids.some((id) => !nodes.has(id))) {
+        const bound = "items" in over ? count : definition.maxItems ?? count;
+        this.runs.prepareInstances(run.id, node.id, ids, bound * node.budgetUsd);
+        this.runs.releaseUnusedReservation(run.id, node.id, count * node.budgetUsd);
+        for (const stored of this.runs.nodes(run.id)) if (!nodes.has(stored.nodeId)) nodes.set(stored.nodeId, stored);
+      }
     }
     const waitingBudget = families.reduce((total, family) => total + family.reduce((sum, member) =>
       sum + (nodes.get(member.id)?.state === "WAITING" ? member.budgetUsd : 0), 0), 0);
@@ -273,14 +288,14 @@ export class LineRunner {
     }
   }
 
-  private dynamicReadiness(plan: RunPlan, node: PlanNode, nodes: Map<string, RunNode>): "ready" | "waiting" | "skipped" {
-    const controls = node.deps.filter((dependency) => {
+  private dynamicReadiness(plan: RunPlan, node: PlanNode, nodes: Map<string, RunNode>, deps: readonly string[]): "ready" | "waiting" | "skipped" {
+    const controls = deps.filter((dependency) => {
       const definition = plan.node(dependency).switch;
       return definition && switchTargets(definition).includes(node.step);
     });
     if (controls.some((id) => !["DONE", "SKIPPED"].includes(nodes.get(id)?.state ?? ""))) return "waiting";
     if (controls.length && !controls.some((id) => nodes.get(id)?.params?.selected === node.step)) return "skipped";
-    const data = node.deps.filter((id) => !controls.includes(id));
+    const data = deps.filter((id) => !controls.includes(id));
     if (data.some((id) => !["DONE", "SKIPPED"].includes(nodes.get(id)?.state ?? ""))) return "waiting";
     if (data.length && data.every((id) => nodes.get(id)?.state === "SKIPPED") && !node.inputs.some(({ source }) => source === "input")) return "skipped";
     return "ready";

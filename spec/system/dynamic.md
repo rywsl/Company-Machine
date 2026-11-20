@@ -76,7 +76,7 @@ class DynamicRunner:
 |---|---|---|
 | `station` | 与 M2 相同 | 是 |
 | `converter` | 与 M2 相同 | 是 |
-| `map` | 动态列表尚未展开的占位 | 否 |
+| `map` | Map 控制节点。Bun 用它推进实例、聚合输出并记录溢出 | 否 |
 | `switch` | 分支控制 | 否 |
 | `until` | 迭代控制 | 否 |
 | `subline` | 子产线 | 否（子 run 自己提交） |
@@ -123,9 +123,9 @@ Plan 文档必须符合 `records.schema.json` 的 `plan`。`metadata.generated_b
 
 **字面列表**（编译期就知道长度）：
 
-- 长度是 N。每个元素一个节点 `{step}#{i}`，`params` 在提交时用 `Snapshot.compiled` 渲染，环境在 `lines.md` 的 step-param 环境上增加 `as` 的名字，值是该元素（string / 数 / bool）。禁止 `str.format`（D3）。
+- 长度为 N。编译时按 `max_items` 和 `overflow` 选择原始前缀；超限且设为 `reject` 时只保留控制节点，运行时该节点记录 `DYNAMIC_OVERFLOW`。接受的每个元素生成一个工位 `{step}#{i}` 和所需的转换节点。提交时渲染 `params`，在 `lines.md` 的 step-param 环境中把该元素（string / 数 / bool）绑定到 `as`。
 - 聚合节点 `{step}` 依赖全部实例。它的输出端口类型是 `list<工位输出类型>`，与 `lines.mrl` 的 `step_out_port` 一致。Bean id 列表按 i 升序拼接。
-- 预算：每个实例预留工位的 `budget_usd`。实例个数必须等于内核 `multiplicity` 用的 items。不等 → `RUN_PLAN_INVALID`。
+- 预算按编译出的实例数量乘以每个实例工位及转换的 `budget_usd`，在提交作业前预留。
 
 **动态来源**（`over` 是来源写法，类型必须是 `list<T>`）：
 
@@ -139,7 +139,7 @@ Plan 文档必须符合 `records.schema.json` 的 `plan`。`metadata.generated_b
 - `max_parallel`：一次 `tick` 最多新提交这么多个该 map 的 `WAITING` 实例，按序号升序。其余保持 `WAITING`。这不依赖调度器。
 - `$item` 绑定到当前元素的 Bean。`as` 若存在，模板环境里的值是该 Bean 的 `bean_value`（factory-profile：动态来源的 `as` 是元素 Bean）。
 
-Bun 的 RunPlan 冻结 Map 来源与实例工位和转换节点的定义。运行时按来源顺序生成 `{step}#{i}`，转换节点用同一个索引关联所属实例。每个 tick 按 `max_parallel` 限制新提交的实例工位，调度器继续按配置准入作业。展开时预留声明上限对应的预算并释放未用额度。聚合节点按实例索引拼接封存产物。
+Bun 的 RunPlan 冻结 Map 来源与实例工位和转换节点的定义。字面实例在计划里带有所属 Map 与索引，随 run 一起以 `WAITING` 状态保存。由 Map 控制节点推进字面实例。若 `switch` 跳过 Map，控制节点和编译出的成员在同一 tick 标记为 `SKIPPED`。存量计划中没有预编译成员的字面 Map 可以在运行时展开。动态列表在来源就绪后按顺序生成 `{step}#{i}`，展开时预留声明上限对应的预算并释放未用额度。转换节点与工位共享实例索引。两种来源均在每个 tick 按 `max_parallel` 限制新提交的实例工位，调度器继续按配置准入作业。聚合节点按实例索引拼接封存产物。
 
 ### 5.3 switch
 
@@ -210,7 +210,7 @@ Bun 在父 RunPlan 中保存子计划及其摘要，编译时拒绝递归引用�
 
 | 错误码 | 触发条件 | detail |
 |---|---|---|
-| `DYNAMIC_OVERFLOW` | 动态 map 长度超过 `max_items` 且 overflow 不是 `truncate`（写入节点 error） | `step, length, max_items` |
+| `DYNAMIC_OVERFLOW` | 字面或动态 Map 长度超过 `max_items` 且拒绝溢出（写入节点 error） | `step, length, max_items` |
 | `UNTIL_EXHAUSTED` | 达到 `max_iter` 时条件仍为假（写入节点 error） | `step, max_iter` |
 | `SWITCH_EVAL` | switch 条件求值失败（写入节点 error） | `step, index, mrl` |
 | `SUBLINE_FAILED` | 子 run 不是 `SUCCEEDED`（写入节点 error） | `step, child, child_state` |
