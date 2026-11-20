@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
 import type { OfficialProcess } from "../src/harness";
+import { projectCredentialName } from "../src/operator";
 import { VaultStore } from "../src/vault";
 
 function processForRecord(ref = "cas://report-1", summary = "项目已完成构建"): OfficialProcess {
@@ -20,6 +21,13 @@ function processForFailure(): OfficialProcess {
 }
 
 describe("Bun business execution loop", () => {
+  test("reserves engine connection and registry configuration for the deployment", () => {
+    for (const name of ["CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_CONF", "REGISTRY_AUTH_FILE"]) {
+      expect(projectCredentialName(name)).toBe(false);
+    }
+    expect(projectCredentialName("PUBLISH_TOKEN")).toBe(true);
+  });
+
   test("persists a scoped Operator binding, projects it in the graph and invokes the exact model", async () => {
     const invocations: string[][] = [];
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", operator: { spawn: (argv) => {

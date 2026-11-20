@@ -20,7 +20,7 @@ export interface OperatorCoordinatorOptions {
 
 export function projectCredentialName(name: unknown): name is string {
   return typeof name === "string" && /^[A-Z][A-Z0-9_]{0,95}$/.test(name)
-    && !/^(?:PATH|HOME|USERPROFILE|SYSTEMROOT|COMSPEC|SHELL|TMP|TEMP|TMPDIR|LD_.*|DYLD_.*|NODE_.*|BUN_.*|MAO_.*|GIT_.*|DOCKER_.*|PODMAN_.*|KIRI_.*)$/.test(name);
+    && !/^(?:PATH|HOME|USERPROFILE|SYSTEMROOT|COMSPEC|SHELL|TMP|TEMP|TMPDIR|LD_.*|DYLD_.*|NODE_.*|BUN_.*|MAO_.*|GIT_.*|DOCKER_.*|PODMAN_.*|KIRI_.*|CONTAINER_HOST|CONTAINER_CONNECTION|CONTAINERS_.*|REGISTRY_AUTH_FILE)$/.test(name);
 }
 
 function redactCredentialValues(value: unknown, secrets: string[]): unknown {
