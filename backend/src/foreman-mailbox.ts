@@ -11,6 +11,7 @@ export const foremanMailboxContract = [
   "选择本轮唯一的 r- 加 32 个小写十六进制字符作为 id。先写临时文件，再以 0644 权限原子重命名为 <id>.json。",
   "请求 JSON 包含 id、op 和 args。等待并读取 responses/<id>.json 的 ok、result 和 error 后再继续。",
   "business.units 使用 systemId。business.graph 使用 systemId 和 graph。",
+  "普通对话可用 project.register 登记仓库，传入 repoUrl 和可选 name。响应提供 projectId 和 systemId，后续操作直接使用这些 ID。",
   "business.bind 使用 systemId、unitId、harness 和可选 model。",
   "business.artifact 使用 projectId、kind、ref、summary 和可选的 recordType、files。files 只含文件引用。",
   "business.conversion 使用 systemId、kind、summary 和可选 inputs、outputs。business.run 使用 systemId 和可选 inputs。",
@@ -18,6 +19,7 @@ export const foremanMailboxContract = [
 ].join(" ");
 
 type FetchBusiness = (request: Request) => Promise<Response>;
+export type RegisterForemanRepository = (input: { name: string; repoUrl: string }) => { projectId: string; systemId: string };
 type Scope = { systems: ReadonlySet<string>; projectSystem: (projectId: string) => string | undefined; projectId?: string };
 type Operation = { method: "GET" | "POST" | "PATCH"; path: string; body?: Record<string, unknown> };
 
@@ -28,6 +30,20 @@ const text = (value: unknown): value is string => typeof value === "string" && B
 const reference = (value: unknown): value is string =>
   text(value) && !/^(?:[\\/]|[a-z]:[\\/]|(?:file|vault|secret):)/i.test(value.trim());
 const references = (value: unknown): boolean => value === undefined || Array.isArray(value) && value.every(reference);
+
+function repositoryInput(args: Record<string, unknown>): Parameters<RegisterForemanRepository>[0] | undefined {
+  if (!text(args.repoUrl) || (args.name !== undefined && !text(args.name))) return;
+  const source = args.repoUrl.trim();
+  if (!/^(?:https?|ssh|git):\/\//i.test(source) || /[\s\\?#]/.test(source)) return;
+  try {
+    const url = new URL(source);
+    const slug = url.pathname.split("/").filter(Boolean).at(-1)?.replace(/\.git$/i, "");
+    if (!url.hostname || url.username || url.password || !slug) return;
+    const name = typeof args.name === "string" ? args.name.trim() : decodeURIComponent(slug);
+    if (!name.trim() || name.length > 256 || /[\u0000-\u001f\u007f]/.test(name)) return;
+    return { name, repoUrl: url.href };
+  } catch { return; }
+}
 
 function operation(op: string, args: Record<string, unknown>, scope: Scope): Operation | undefined {
   const { systemId, projectId, unitId, harness, model, graph, kind, ref, summary, recordType, files, inputs, outputs } = args;
@@ -80,7 +96,7 @@ function denied(id: string, code: string, message: string): CtlResponse {
   return { id, ok: false, result: null, error: { code, message } };
 }
 
-export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness) {
+export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, registerRepository?: RegisterForemanRepository) {
   const root = mkdtempSync(join(tmpdir(), "mao-foreman-"));
   let active = true;
   let stopped: Promise<void> | undefined;
@@ -91,10 +107,21 @@ export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness) {
     mkdirSync(responses);
     chmodSync(requests, 0o1777);
     chmodSync(responses, 0o755);
+    const systems = new Set(scope.systems);
+    const operations = { ...scope, systems };
+    const registrations = new Map<string, ReturnType<RegisterForemanRepository>>();
     const server = new CtlServer(root, {
       async handle({ id, op, args }) {
         if (!active) return denied(id, "FOREMAN_MAILBOX_CLOSED", "厂长邮箱已关闭");
-        const request = operation(op, args, scope);
+        if (op === "project.register") {
+          const input = registerRepository && repositoryInput(args);
+          if (!registerRepository || !input) return denied(id, "FOREMAN_OPERATION_INVALID", "当前轮无法登记该仓库。请提供无凭据的仓库 URL");
+          const result = registrations.get(id) ?? registerRepository(input);
+          registrations.set(id, result);
+          systems.add(result.systemId);
+          return { id, ok: true, result, error: null };
+        }
+        const request = operation(op, args, operations);
         if (!request) return denied(id, "FOREMAN_OPERATION_INVALID", "操作参数无效，或目标不在当前轮的范围内");
         const response = await fetchBusiness(new Request("http://localhost" + request.path, {
           method: request.method,

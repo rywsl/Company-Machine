@@ -1,7 +1,7 @@
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import { projectSourceFacts } from "./project-sources";
-import { foremanMailboxContract, openForemanMailbox } from "./foreman-mailbox";
+import { foremanMailboxContract, openForemanMailbox, type RegisterForemanRepository } from "./foreman-mailbox";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, resolveOfficialHarness, type OfficialSpawn } from "./harness";
 import { HarnessTurn } from "./harness-turn";
@@ -15,6 +15,7 @@ export interface ForemanCoordinatorOptions {
   ensureRuntime?: () => Promise<void>;
   factoryEnv?: Record<string, string>;
   fetchBusiness?: (request: Request) => Promise<Response>;
+  registerRepository?: RegisterForemanRepository;
 }
 
 /** Dispatches persisted user intent to an external official Harness process. */
@@ -97,7 +98,7 @@ export class ForemanCoordinator {
         mailbox = openForemanMailbox({
           systems: new Set(systems.map(({ id }) => id)), projectId: project?.id,
           projectSystem: (id) => this.options.store.getProject(id)?.businessSystemId,
-        }, this.options.fetchBusiness);
+        }, this.options.fetchBusiness, message.source === "project-intake" ? undefined : this.options.registerRepository);
       }
       const session = await turn.start(transport, {
         task: `${claimed.text}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${systems.map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,

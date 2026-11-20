@@ -11,10 +11,22 @@ function fakeProcess(lines: string[]): OfficialProcess {
   return { stdout: new ReadableStream({ start(controller) { controller.enqueue(body); controller.close(); } }), kill() {} };
 }
 
+type MailboxReply = { id: string; ok: boolean; result: unknown; error: { code: string } | null };
+
+async function askMailbox(root: string, index: number, op: string, args: Record<string, unknown>): Promise<MailboxReply> {
+  const id = "r-" + index.toString(16).padStart(32, "0");
+  const request = join(root, "requests", id + ".json");
+  await Bun.write(request + ".part", JSON.stringify({ id, op, args }));
+  renameSync(request + ".part", request);
+  const response = join(root, "responses", id + ".json");
+  for (let attempt = 0; attempt < 100 && !existsSync(response); attempt++) await new Promise((done) => setTimeout(done, 10));
+  return JSON.parse(await Bun.file(response).text());
+}
+
 test("applies a container Foreman mailbox request within its intake scope", async () => {
   let root: string | undefined;
   let sourcePrompt = "";
-  const replies: Array<{ id: string; ok: boolean; result: unknown; error: { code: string } | null }> = [];
+  const replies: MailboxReply[] = [];
   const app = createApp({
     dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
     runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
@@ -24,13 +36,7 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
       sourcePrompt = argv.join(" ");
       expect(options.env).not.toHaveProperty("FACTORY_DB_PATH");
       const ask = async (index: number, op: string, args: Record<string, unknown>) => {
-        const id = "r-" + index.toString(16).padStart(32, "0");
-        const request = join(root!, "requests", id + ".json");
-        await Bun.write(request + ".part", JSON.stringify({ id, op, args }));
-        renameSync(request + ".part", request);
-        const response = join(root!, "responses", id + ".json");
-        for (let attempt = 0; attempt < 100 && !existsSync(response); attempt++) await new Promise((done) => setTimeout(done, 10));
-        replies.push(JSON.parse(await Bun.file(response).text()));
+        replies.push(await askMailbox(root!, index, op, args));
       };
       await ask(1, "business.units", { systemId: project.businessSystemId });
       await ask(2, "business.graph", { systemId: project.businessSystemId, graph });
@@ -41,6 +47,7 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
       await ask(7, "business.artifact", { projectId: project.id, kind: "note", summary: "fixture", ref: "material://note", files: [{ ref: "cas://blob" }] });
       await ask(8, "business.conversion", { systemId: project.businessSystemId, kind: "publish", summary: "fixture", inputs: ["material://note"] });
       await ask(9, "business.run", { systemId: project.businessSystemId, inputs: ["material://note"] });
+      await ask(10, "project.register", { repoUrl: "https://code.example/new-system.git" });
       return fakeProcess([JSON.stringify({ type: "result", text: "已更新业务图" })]);
     } },
   });
@@ -59,7 +66,7 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
     });
     await app.foreman.dispatch(body.foreman_inbox_id);
     expect(replies.map(({ error }) => error?.code ?? null)).toEqual([
-      null, null, "FOREMAN_OPERATION_INVALID", "FOREMAN_OPERATION_INVALID", "FOREMAN_OPERATION_INVALID", null, null, null, null,
+      null, null, "FOREMAN_OPERATION_INVALID", "FOREMAN_OPERATION_INVALID", "FOREMAN_OPERATION_INVALID", null, null, null, null, "FOREMAN_OPERATION_INVALID",
     ]);
     expect(replies[0].result).toHaveLength(2);
     expect(replies[5].result).toMatchObject({ id: project.id + ":operator", harness: "codex", model: "fixture-model" });
@@ -72,6 +79,63 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
     expect(sourcePrompt).not.toContain("其他业务");
     expect(app.store.getForemanMessage(body.foreman_inbox_id)?.status).toBe("done");
     expect(root && existsSync(root)).toBe(false);
+  } finally { app.stop(); }
+});
+
+test("registers a repository from a general Foreman turn and uses its new scope", { timeout: 10_000 }, async () => {
+  let registration: { projectId: string; systemId: string } | undefined;
+  const graph = { nodes: [{ id: "operator" }, { id: "machine" }], edges: [{ source: "operator", target: "machine" }] };
+  const app = createApp({
+    dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
+    runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
+    foreman: { spawn: async (_argv, options) => {
+      const root = options.foremanMailbox!;
+      const invalid = [
+        "https://user:secret@code.example/team/private.git",
+        "https://code.example/team/private.git?token=fixture-key",
+        "file:///mnt/repo",
+      ];
+      for (const [index, repoUrl] of invalid.entries()) {
+        const rejected = await askMailbox(root, index + 1, "project.register", { repoUrl });
+        expect(rejected).toMatchObject({ ok: false, error: { code: "FOREMAN_OPERATION_INVALID" } });
+      }
+      const repository = { repoUrl: "https://code.example/team/sample.git" };
+      const created = await askMailbox(root, 4, "project.register", repository);
+      expect(created.ok).toBe(true);
+      expect(await askMailbox(root, 4, "project.register", repository)).toEqual(created);
+      registration = created.result as typeof registration;
+      if (!registration) throw new Error("Expected repository registration");
+      const { systemId, projectId } = registration;
+      const units = await askMailbox(root, 5, "business.units", { systemId });
+      expect(units.ok).toBe(true);
+      expect(units.result).toHaveLength(2);
+      expect((await askMailbox(root, 6, "business.graph", { systemId, graph })).ok).toBe(true);
+      expect((await askMailbox(root, 7, "business.bind", { systemId, unitId: projectId + ":operator", harness: "codex" })).ok).toBe(true);
+      expect((await askMailbox(root, 8, "business.run", { systemId })).ok).toBe(true);
+      return fakeProcess([JSON.stringify({ type: "result", text: "已登记并组装业务系统" })]);
+    } },
+  });
+  try {
+    app.store.saveHarnessProfile({
+      runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session",
+      image: "registry.example/foreman@sha256:" + "a".repeat(64),
+    });
+    const talk = await app.fetch(new Request("http://localhost/api/v1/talk", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "用这个仓库搭建业务系统" }),
+    }));
+    expect(talk.status).toBe(201);
+    const [envelope] = app.store.listForemanInbox();
+    await app.foreman.dispatch(envelope.id);
+    expect(app.store.getForemanMessage(envelope.id)?.status).toBe("done");
+    if (!registration) throw new Error("Missing repository registration");
+    expect(app.store.listBusinessSystems()).toHaveLength(1);
+    expect(app.store.getBusinessSystem(registration.systemId)?.metadata.graph).toEqual(graph);
+    expect(app.store.getProject(registration.projectId)).toMatchObject({
+      name: "sample", sources: [{ kind: "repo_url", repoUrl: "https://code.example/team/sample.git" }], secretRequests: [],
+    });
+    expect(app.store.listBusinessRuns(registration.systemId)).toHaveLength(1);
+    expect(app.store.listForemanInbox()).toHaveLength(0);
+    expect(app.events.after().filter(({ type }) => type === "foreman.message.queued")).toHaveLength(1);
   } finally { app.stop(); }
 });
 

@@ -123,6 +123,16 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     store, events, ...options.foreman, ensureRuntime,
     factoryEnv: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: databasePath(store.legacyPath), BUSINESS_DB_PATH: databasePath(store.dbPath) },
     fetchBusiness: (request) => fetch(request),
+    registerRepository: ({ name, repoUrl }) => {
+      const { system, project } = store.db.transaction(() => {
+        const system = store.createBusinessSystem({ name, metadata: { intake: true } });
+        const project = store.createIntake({ name, repo_url: repoUrl, business_system_id: system.id });
+        return { system, project };
+      }).immediate();
+      events.publish("business-system.created", system);
+      events.publish("project.intake.created", publicProject(project));
+      return { projectId: project.id, systemId: system.id };
+    },
   });
   let stopped = false;
   const runInBackground = (work: Promise<void>) => {
