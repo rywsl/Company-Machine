@@ -96,6 +96,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 
 同一命令执行两个 Operator。上游暂存二进制产物并通过官方 CLI 的 JSONL 适配器声明文件。宿主核对 CAS 摘要、项目下载权限和所属业务系统。DAG 后继读取只读挂载并核对文件字节，结束后检查临时目录已清理。
 
+厂长验收还会把登记的业务系统导出为业务包，在独立买方根目录完成静态校验和导入。买方不会继承卖方的运行队列、Harness 配置、来源主机路径或凭据值，项目密钥请求重新处于 `requested` 状态。随后买方只配置新的官方 Harness 镜像，创建一次业务运行，先让上游 Operator 读取导入包中的 CAS 物料，再让 DAG 后继读取上游新产物。Kiri Linux headless 与 Podman 均需通过这条路径，且验收结束后只保留买方 CAS，来源暂存和 Operator 物料暂存全部清理。
+
 ### 5.2 端到端
 
 活动 Bun 测试在 `backend/tests/legacy-runner.test.ts` 中用 `LocalProvider` 执行 `upper` 工位，检查已封存的输入、脚本执行和输出封存。业务 Harness 在容器启动前的就绪检查由 `backend/tests/business-runtime.test.ts` 覆盖。验证实际容器时，`MAO_CONTAINER_RUNTIME` 选择引擎，`imageIds` 提供已构建夹具的镜像 ID。用同一工位比较正文和 facts，Bean ID 可随规范化后的文件字节变化。

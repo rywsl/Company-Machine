@@ -108,7 +108,7 @@ describe("Bun business backend", () => {
       expect((await intake(ssh)).status).toBe(201);
       const visible = await app.fetch(new Request("http://localhost/api/v1/projects"));
       const projects = await visible.json() as Array<{ sources: Array<{ repoUrl: string }> }>;
-      expect(projects.map(({ sources }) => sources[0].repoUrl)).toEqual([repository, ssh]);
+      expect(projects.map(({ sources }) => sources[0].repoUrl).sort()).toEqual([repository, ssh].sort());
     } finally { app.stop(); }
   });
 

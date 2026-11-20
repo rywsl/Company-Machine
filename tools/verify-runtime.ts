@@ -8,7 +8,8 @@ import { selectedContainerProvider } from "../backend/runtime/selected";
 import { spawnOfficialProcess } from "../backend/src/harness";
 import { Context, Gate, Runner, Warehouse, digestBytes, loadSnapshot } from "../backend/src/legacy";
 import { materialInputRoot, materialOutputRoot } from "../backend/src/material-files";
-import { createApp } from "../backend/src/server";
+import { createApp, type BackendApp } from "../backend/src/server";
+import { VaultStore } from "../backend/src/vault";
 import { imageIds, imageTag, renderRegistry, writeJson, writeText } from "../tests/fakes/fakelib";
 
 const verifyMounts = `
@@ -81,6 +82,7 @@ const producedBytes = [3, 10, 42, 255, 0];
 const repoUrl = "https://code.example/team/runtime-fixture.git";
 const companionRepo = "https://code.example/team/companion-fixture.git";
 const projectKey = "PROJECT_FIXTURE_KEY";
+const sellerCredential = "seller-private-runtime-fixture-value";
 const graph = { nodes: [{ id: "operator" }, { id: "machine" }], edges: [{ source: "operator", target: "machine" }] };
 
 const foremanFixture = `
@@ -168,6 +170,128 @@ try {
 }
 `;
 
+const buyerFixture = `
+import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+const { materialInputRoot, producedBytes, projectKey, upload } = ${JSON.stringify({ materialInputRoot, producedBytes, projectKey, upload })};
+const sources = JSON.parse(process.argv.at(-1));
+const mounts = readFileSync("/proc/self/mountinfo", "utf8").split("\\n").map((line) => line.split(" "));
+const mode = (path) => mounts.find((fields) => fields[4] === path)?.[5].split(",")[0];
+assert.equal(process.getuid(), 10001);
+assert.equal(process.env[projectKey], undefined);
+const input = materialInputRoot + "/1";
+assert.equal(mode(input), "ro");
+assert.equal(mode(materialInputRoot + "/2"), undefined);
+assert.deepEqual([...readFileSync(input)], producedBytes);
+assert.throws(() => writeFileSync(input, "unexpected"));
+if (sources.length) {
+  assert.equal(sources.length, 1);
+  assert.equal(mode(sources[0]), "ro");
+  assert.deepEqual([...readFileSync(sources[0])], upload);
+}
+const role = sources.length ? "producer" : "consumer";
+console.log(JSON.stringify({ type: "mao.record", record_type: "material", kind: "package-check", ref: "material://buyer-" + role, summary: "Read a file from the imported business package" }));
+console.log(JSON.stringify({ type: "result", text: "Verified imported material" }));
+`;
+
+async function verifyBusinessTransfer(
+  seller: BackendApp,
+  fixture: { root: string; storageRoot: string; image: string; systemId: string; projectId: string; artifactId: string; digest: string },
+): Promise<void> {
+  const { root, storageRoot, image, systemId, projectId, artifactId, digest } = fixture;
+  const credential = seller.store.createSecretRequest({
+    projectId, name: projectKey, vaultRef: "vault://secret/seller-fixture", status: "available",
+  });
+  seller.vault.put(credential.vaultRef, sellerCredential);
+  const pkg = join(root, "package");
+  const buyerRoot = join(root, "buyer");
+  const sellerDb = join(storageRoot, "factory.db");
+  const cli = async (...args: string[]) => {
+    const result = await runCommand([Bun.argv[0], "run", "backend/src/cli.ts", "business", ...args], {
+      timeoutMs: 30_000,
+      env: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: sellerDb, BUSINESS_DB_PATH: sellerDb,
+        MAO_VAULT_PATH: join(storageRoot, "vault.json"), MAO_VAULT_KEY_PATH: join(storageRoot, "vault.key") },
+    });
+    assert.equal(result.exitCode, 0, new TextDecoder().decode(result.stderr));
+    return JSON.parse(new TextDecoder().decode(result.stdout));
+  };
+  const exported = await cli("export", systemId, "--package", pkg);
+  assert.equal(exported.blobs.length, 2);
+  const document = await Bun.file(join(pkg, "business.json")).text();
+  for (const privateValue of [root, sellerCredential, credential.vaultRef]) {
+    assert.ok(!document.includes(privateValue), "业务包包含卖方路径或凭据数据");
+  }
+  assert.deepEqual(await cli("verify", pkg), { ok: true, problems: [], acceptance: "not_run" });
+  const imported = await cli("import", pkg, "--root", buyerRoot);
+  assert.equal(imported.root, buyerRoot);
+  assert.equal(imported.acceptance, "not_run");
+  assert.notEqual(imported.system.id, systemId);
+
+  const database = join(buyerRoot, "factory.db");
+  const stages: string[] = [];
+  const buyer = createApp({
+    dbPath: database, legacyPath: database, storageRoot: buyerRoot, dispatchWork: false,
+    vault: new VaultStore(join(buyerRoot, "vault.json"), join(buyerRoot, "vault.key")),
+    operator: { spawn: (argv, options) => {
+      assert.ok(options.materialFiles);
+      assert.equal(options.materialFiles.inputs.length, 1);
+      const { outputDirectory, inputs } = options.materialFiles;
+      const sources = options.projectSources ?? [];
+      stages.push(outputDirectory);
+      assert.ok(argv.at(-1)?.includes("build/result.bin"));
+      assert.ok(!argv.at(-1)?.includes(root));
+      return spawnOfficialProcess(["bun", "-e", buyerFixture, JSON.stringify(sources.map(({ index }) => `/mao/sources/${index}`))], { ...options, stdin: undefined });
+    } },
+  });
+  try {
+    const buyerSystemId = imported.system.id;
+    assert.deepEqual(buyer.store.listBusinessRuns(buyerSystemId), []);
+    assert.deepEqual(buyer.store.listHarnessProfiles(), []);
+    const buyerProjects = buyer.store.listProjects(buyerSystemId);
+    const producer = buyerProjects.find(({ secretRequests }) => secretRequests.some(({ name }) => name === projectKey));
+    const consumer = buyerProjects.find(({ id }) => id !== producer?.id);
+    assert.ok(producer && consumer);
+    assert.notEqual(producer.id, projectId);
+    const [requested] = producer.secretRequests;
+    assert.equal(requested.status, "requested");
+    assert.notEqual(requested.vaultRef, credential.vaultRef);
+    assert.equal(buyer.vault.get(requested.vaultRef), undefined);
+    const material = buyer.store.listArtifacts(producer.id).find(({ ref }) => ref === "material://sources-checked");
+    assert.ok(material);
+    assert.notEqual(material.id, artifactId);
+    assert.deepEqual(buyer.store.artifactFileGrants(buyerSystemId, [material.id]), [{ artifactId: material.id, position: 0, digest, size: producedBytes.length }]);
+    const warehouse = new Warehouse(buyerRoot, buyer.store.db, buyer.store.clock);
+    await chmod(warehouse.blobPath(digest), 0o600);
+    buyer.store.saveHarnessProfile({
+      runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session", image, sessionTimeoutSeconds: 45,
+    });
+    const input = `material://${material.id}`;
+    const response = await buyer.fetch(new Request(`http://localhost/api/v1/business-systems/${buyerSystemId}/runs`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs: [input], dispatch: false }),
+    }));
+    assert.equal(response.status, 201);
+    const { id: runId } = await response.json() as { id: string };
+    const ready = buyer.store.listReadyUnitRuns(runId);
+    assert.deepEqual(ready.map(({ unitId, inputs }) => ({ unitId, inputs })), [{ unitId: producer.id + ":operator", inputs: [input] }]);
+    await buyer.operator.dispatch(runId, ready[0].id);
+    const upstream = buyer.store.listArtifacts(producer.id).find(({ ref }) => ref === "material://buyer-producer");
+    assert.ok(upstream, JSON.stringify(buyer.store.listUnitRuns(runId)));
+    const next = buyer.store.listReadyUnitRuns(runId, ready[0].id);
+    assert.deepEqual(next.map(({ unitId, inputs }) => ({ unitId, inputs })), [
+      { unitId: consumer.id + ":operator", inputs: [input, upstream.ref] },
+    ]);
+    await buyer.operator.dispatch(runId, next[0].id);
+    assert.equal(buyer.store.getBusinessRun(runId)?.status, "completed", JSON.stringify(buyer.store.listUnitRuns(runId)));
+    assert.ok(buyer.store.listArtifacts(consumer.id).some(({ ref }) => ref === "material://buyer-consumer"));
+    for (const path of stages) {
+      try { await stat(path); throw new Error(`material staging path was not removed: ${path}`); }
+      catch (error) { if ((error as { code?: string }).code !== "ENOENT") throw error; }
+    }
+  } finally {
+    buyer.stop();
+  }
+}
+
 async function verifyForeman(provider: string): Promise<void> {
   assert.equal(process.platform, "linux", "厂长容器邮箱需要本地 Linux 容器引擎");
   const image = await foremanImage(provider);
@@ -189,7 +313,8 @@ async function verifyForeman(provider: string): Promise<void> {
     return { folder: folder.index, file: file.index };
   };
   const app = createApp({
-    dbPath: join(root, "business.db"), legacyPath: ":memory:", storageRoot, dispatchWork: false,
+    dbPath: join(storageRoot, "factory.db"), legacyPath: join(storageRoot, "factory.db"), storageRoot, dispatchWork: false,
+    vault: new VaultStore(join(storageRoot, "vault.json"), join(storageRoot, "vault.key")),
     foreman: { spawn: (argv, options) => {
       assert.ok(options.foremanMailbox);
       mailboxes.push(options.foremanMailbox);
@@ -272,7 +397,13 @@ async function verifyForeman(provider: string): Promise<void> {
     const consumer = app.store.createIntake({ name: "Material consumer", business_system_id: systemId, repo_url: "https://code.example/consumer.git" });
     const producerUnit = project_id + ":operator";
     const consumerUnit = consumer.id + ":operator";
-    app.store.updateBusinessSystemMetadata(systemId, { graph: { edges: [{ source: producerUnit, target: consumerUnit }] } });
+    const graphUpdate = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${systemId}/graph`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ graph: {
+        nodes: [{ id: producerUnit }, { id: consumerUnit }], edges: [{ source: producerUnit, target: consumerUnit }],
+      } }),
+    }));
+    assert.equal(graphUpdate.status, 200);
     const run = app.store.createBusinessRun(systemId);
     assert.ok(run);
     const initial = app.store.listReadyUnitRuns(run.id);
@@ -301,9 +432,14 @@ async function verifyForeman(provider: string): Promise<void> {
     assert.equal(outputStages.length, 2);
     assert.equal(uploads.length, 2);
     for (const path of uploads) assert.notEqual(path, blob);
-    for (const path of [...mailboxes, ...uploads, ...outputStages, ...inputCopies]) await assert.rejects(stat(path), { code: "ENOENT" });
+    for (const path of [...mailboxes, ...uploads, ...outputStages, ...inputCopies]) {
+      try { await stat(path); throw new Error(`foreman staging path was not removed: ${path}`); }
+      catch (error) { if ((error as { code?: string }).code !== "ENOENT") throw error; }
+    }
     assert.equal(app.store.listTalkMessages().filter(({ body }) => body === checkedReply).length, 2);
     console.log(`${provider}: 厂长邮箱、仓库登记、业务图、项目密钥申请、项目来源挂载、Operator 间 CAS 文件交接和清理通过`);
+    await verifyBusinessTransfer(app, { root, storageRoot, image, systemId, projectId: project_id, artifactId: artifact.id, digest });
+    console.log(`${provider}: 业务包 CLI 移交、买方 DAG、已导入 CAS 和项目凭据隔离通过`);
     passed = true;
   } finally {
     app.stop();
