@@ -9,7 +9,8 @@
 | 命令 | 作用 |
 |---|---|
 | `factory serve` | 启动 Bun Web API 和 Web App。 |
-| `factory status` | 输出业务系统数量和厂长队列摘要。 |
+| `factory status [--root PATH] [--json]` | 输出业务系统、厂长队列、运行、治理指针、费用和告警。存在错误级告警时退出码为 1。 |
+| `factory metrics [--root PATH]` | 以 Prometheus 文本输出当前工厂状态、告警和已记录的历史费用。 |
 | `factory runtime status` | 读取当前 Podman 或 Kiri 健康状态。 |
 | `factory runtime ensure-ready` | 请求当前运行时就绪。不可用时退出码 4。 |
 | `factory project intake ...` | 通过仓库、文件夹或文件引用创建项目。 |

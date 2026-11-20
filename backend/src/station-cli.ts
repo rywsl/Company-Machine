@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { selectedContainerProvider } from "../runtime/selected";
 import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RunStore, Runner, canonicalJson, dumpJob, loadSnapshot, type RunState } from "./legacy";
 import { compileDynamicRunPlan } from "./legacy/dynamic-switch";
@@ -15,6 +15,7 @@ import { readGovernedRegistry } from "./legacy/registry-config";
 import { RegistrySelection } from "./registry-selection";
 import { createBackup, restoreBackup, verifyBackup } from "./backup";
 import { tailEvents, type EventScope } from "./legacy/events";
+import { factoryStatus, renderMetrics } from "./legacy/status";
 
 export class CliUsageError extends Error {}
 
@@ -33,6 +34,8 @@ const commands = {
   ...epochCommands,
   bean: ["import --type TYPE --file PATH=HOST", "lineage BEAN --direction up|down"],
   events: ["[--since ISO] [--kind PREFIX] [--limit N]"],
+  status: ["[--root PATH] [--json]"],
+  metrics: ["[--root PATH]"],
   job: ["run STATION [--input PORT=BEAN] [--param NAME=JSON] [--cache]", "show JOB", "events JOB [--since ISO] [--kind PREFIX] [--limit N]", "exec JOB"],
   cache: ["ls [--station STATION]", "explain JOB", "invalidate (--key KEY|--job JOB|--station STATION|--bean BEAN) --reason TEXT"],
   line: ["plan LINE", "run LINE [--in PORT=BEAN] [--budget USD] [--variant STEP=VALUE] [--no-cache]", "exec RUN", "ls [--state STATE]", "show RUN", "nodes RUN", "events RUN [--since ISO] [--kind PREFIX] [--limit N]", "cancel RUN", "retry RUN NODE", "rebuild RUN"],
@@ -52,7 +55,7 @@ export function isStationScope(scope: string): scope is keyof typeof commands {
 }
 
 export function stationUsage(scope: keyof typeof commands): string {
-  if (scope === "events") return "factory events " + commands.events[0];
+  if (scope === "events" || scope === "status" || scope === "metrics") return `factory ${scope} ${commands[scope][0]}`;
   return `factory ${scope} commands\n  ${commands[scope].join("\n  ")}`;
 }
 
@@ -147,6 +150,14 @@ export async function runStationCli(argv: string[]): Promise<number> {
     throw new CliUsageError("Unknown factory command");
   }
   const root = options.root ?? process.env.FACTORY_ROOT ?? ".factory";
+  if ((scope === "status" || scope === "metrics") && operation !== "help" && operation !== "--help") {
+    if (operation) throw new CliUsageError(`Unexpected argument: ${operation}`);
+    const factory = (options.root ? undefined : process.env.FACTORY_DB_PATH) ?? join(root, "factory.db");
+    const business = (options.root ? undefined : process.env.BUSINESS_DB_PATH) ?? factory;
+    const health = factoryStatus({ root: options.root ?? process.env.FACTORY_ROOT ?? dirname(factory), factory, business });
+    console.log(scope === "status" ? canonicalJson(health.status) : renderMetrics(health));
+    return scope === "metrics" || health.status.ok ? 0 : 1;
+  }
   if (scope === "events" && operation !== "help" && operation !== "--help") {
     return runEventsCli(root, operation === undefined ? [] : [operation, ...args]);
   }

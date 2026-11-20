@@ -116,6 +116,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
+| `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
 | `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
 | `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
@@ -228,6 +229,11 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_writer_harvests_and_seals` | `backend/tests/legacy-runner.test.ts` | `harvests official-shaped Harness outputs and stops over-budget jobs before sealing` | Runner 采集官方 Harness 形状的产物并封存正常任务 |
 | `removed/python/tests/acceptance/m1/test_m1_09_cli.py::test_bean_lineage_json` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | CLI 封存后向上追溯，结果只包含原输入 Bean |
 | `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_tail_events` | `backend/tests/cli.test.ts` | `tails read-only factory events in sequence with inclusive time, literal prefix, limit and redaction` | 从末尾限量，保留插入顺序，按时间和类型前缀筛选，递归打码并拒绝不合法范围 |
+| `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_status_counts` | `backend/tests/status.test.ts` | `summarizes sorted factory states and the active epoch through the CLI` | 读取已出现的 Job、Run 和厂长状态及 active 指针 |
+| `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_status_alerts_order` | `backend/tests/status.test.ts` | `orders safe mode, failed Foreman work and dead letter alerts` | 依序输出安全模式、失败队列和死信，退出码为 1 |
+| `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_status_without_governance` | `backend/tests/status.test.ts` | `reads status without governance and leaves an uninitialized root untouched` | 非治理工厂保留 Job 计数，未知目录保持未初始化 |
+| `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_spend_today` | `backend/tests/status.test.ts` | `counts UTC model, transcript and Foreman spend once` | UTC 当天累计三类成本，排除旧记录和重复计费 |
+| `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_metrics_text` | `backend/tests/status.test.ts` | `emits the documented Prometheus families with sorted and escaped sample labels` | 九组指标声明、组件状态和排序转义后的标签 |
 | `removed/python/tests/acceptance/m2/test_m2_01_runplan.py::test_templated_params_recorded` | `backend/tests/legacy-runplan.test.ts` | `orders the example by dependency layer and records parameters and budgets` | 归档示例产线的 `to_s3.prefix` 保留模板原文和模板字段标记 |
 | `removed/python/tests/acceptance/m2/test_m2_03_line_runner.py::test_epoch_mismatch` | `backend/tests/legacy-snapshot.test.ts` | `rejects a Run tick from a LineRunner bound to a different epoch` | 不同 Registry 快照下拒绝推进同一个 Run |
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_m2_compiler_still_rejects` | `backend/tests/legacy-runplan.test.ts` | `rejects missing inputs, incompatible contracts, cycles and unsupported constructs` | 静态入口对 Map 返回 `LINE_UNSUPPORTED` |

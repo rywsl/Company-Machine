@@ -91,6 +91,8 @@ factory events [--since ISO] [--kind PREFIX] [--limit N] [--json]
   - `today_usd` = `jobs_today + foreman_today_usd`。都保留 6 位小数。
 - `at` 是 `ctx.clock.now()`。
 
+Bun 的 `factory status` 保留 `businessSystems` 和 `foremanInbox` 计数，并从只读 SQLite 快照读取 Job、Run、审批、ChangeSet 和持久化安全模式。业务数据库单独配置时，从该库读取业务系统和 Foreman 投递队列。队列的 `queued` 和 `claimed` 分别计作 `open` 和 `taken`。费用来自已经写入的成本。旧库有模型用量或厂长会话成本时使用这些记录，并去除与 Job 成本重叠的项目。Bun 的官方 Harness 会话开始事件计入 `mao_foreman_sessions_total` 的 `started` 样本。服务在线指标来自已持久化的有效租约。命令能读取尚未初始化的工厂路径并返回空计数。
+
 ### 4.2 告警
 
 按下表顺序生成，`alerts` 保持这个顺序：
@@ -162,7 +164,7 @@ Bun 的 `factory events` 读取工厂事件表。`factory line events RUN` 按 `
 | | `test_metrics_text` | `# TYPE` 行的指标名集合恰好是 4.3 的表；`mao_up` 两个样本；`mao_jobs` 的样本与计数一致且按标签升序 |
 | | `test_tail_events` | `since` 包含下界、`kind` 前缀匹配、取最后 `limit` 条后升序；`data` 已打码 |
 
-活动 Bun 验收位于 `backend/tests/cli.test.ts`，覆盖事件查询的时间、排序、范围、脱敏及只读命令入口。
+活动 Bun 验收位于 `backend/tests/status.test.ts` 和 `backend/tests/cli.test.ts`。覆盖状态和告警、当天费用、Prometheus 文本、初始化前只读访问，以及事件查询的时间、排序、范围和脱敏。
 
 ```
 uv run python tools/harness.py pytest tests/acceptance/m7/test_m7_01_status.py
