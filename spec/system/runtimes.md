@@ -191,7 +191,7 @@ Claude Code 与 Codex 的 Base URL 必须是无用户名、密码、片段和敏
 
 Linux Kiri 的 `ensure-ready` 复用在线 Unix socket。标准 `/run/kiri/docker.sock` 与自动发现的 `/var/lib/kiri-daemon/.kiri/run/docker.sock` 都可以请求 systemd 启动 `kiri.service`。Linux Podman readiness 必须确认 rootless 能力，rootful 或未知状态返回 MAO 用户和 `systemctl --user enable --now podman.socket` 的恢复诊断。
 
-完整业务部署中，Bun 控制面与 rootless Podman 或 headless Kiri 运行在同一个用户和宿主路径命名空间。这样项目来源、Material 文件和 Foreman mailbox 的 bind mount 对控制面和容器引擎保持同一绝对路径。容器化控制面通过远程 Podman socket 连接时，需要显式宿主路径映射来启用完整挂载能力。仓库提供 `deploy/mao-control-plane.service` 作为生产 systemd user service，`deploy/mao-control-plane.Containerfile` 用于便携镜像构建。
+完整业务部署中，Bun 控制面与 rootless Podman 或 headless Kiri 运行在同一个用户和宿主路径命名空间。这样项目来源、Material 文件和 Foreman mailbox 的 bind mount 对控制面和容器引擎保持同一绝对路径。容器化控制面通过远程 Podman socket 连接时，需要显式宿主路径映射来启用完整挂载能力。仓库提供 `deploy/mao-control-plane.service` 作为生产 systemd user service。该单元不固定运行时、不执行 Podman 专属启动前检查，Bun 控制面通过 `/readyz` 和 `ensure-ready` 选择并检查 Podman 或 Kiri。`deploy/mao-control-plane.Containerfile` 用于便携镜像构建。
 
 ### 4.2 `serve.json` 的增补（`daemon.md` 4.2）
 

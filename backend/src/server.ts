@@ -108,8 +108,71 @@ function canAccessProject(principal: AuthPrincipal, store: SqliteStore, projectI
   return Boolean(project?.businessSystemId && (principal.businessSystems?.has("*") || principal.businessSystems?.has(project.businessSystemId)));
 }
 
+function canAccessBusinessSystem(principal: AuthPrincipal, store: SqliteStore, businessSystemId: string): boolean {
+  return canAccessSystem(principal, businessSystemId)
+    || store.listProjects(businessSystemId).some((project) => canAccessProject(principal, store, project.id));
+}
+
 function canMutate(principal: AuthPrincipal, role: "foreman" | "operator" = "operator"): boolean {
   return !principal.scoped || principal.role === "admin" || principal.role === role || principal.role === "foreman";
+}
+
+function visibleBusinessSystemIds(principal: AuthPrincipal | undefined, store: SqliteStore): Set<string> | undefined {
+  if (!principal?.scoped || principal.role === "admin") return undefined;
+  const systems = new Set(store.listBusinessSystems()
+    .filter((system) => canAccessBusinessSystem(principal, store, system.id))
+    .map((system) => system.id));
+  for (const project of store.listProjects()) {
+    if (project.businessSystemId && canAccessProject(principal, store, project.id)) systems.add(project.businessSystemId);
+  }
+  return systems;
+}
+
+function visibleProjectIds(store: SqliteStore, systems: Set<string> | undefined): Set<string> | undefined {
+  if (!systems) return undefined;
+  return new Set(store.listProjects()
+    .filter((project) => project.businessSystemId && systems.has(project.businessSystemId))
+    .map((project) => project.id));
+}
+
+function scopedFactoryGraph<T extends { nodes?: Array<{ id: string }>; edges?: Array<{ source: string; target: string }> }>(graph: T, systems: Set<string> | undefined): T {
+  if (!systems) return graph;
+  const nodes = (graph.nodes ?? []).filter((node) => systems.has(node.id));
+  const allowed = new Set(nodes.map((node) => node.id));
+  const edges = (graph.edges ?? []).filter((edge) => allowed.has(edge.source) && allowed.has(edge.target));
+  return { ...graph, nodes, edges };
+}
+
+function scopedTalkMessages(store: SqliteStore, limit: number, principal: AuthPrincipal | undefined, systems: Set<string> | undefined) {
+  const messages = store.recentTalk(Math.max(limit * 4, limit));
+  if (!systems) return messages.slice(-limit);
+  return messages.filter((message) => {
+    const metadata = store.talkMessageMetadata(message.id);
+    const projectId = typeof metadata.project_id === "string" ? metadata.project_id : undefined;
+    if (projectId) return canAccessProject(principal!, store, projectId);
+    const systemId = typeof metadata.business_system_id === "string" ? metadata.business_system_id : undefined;
+    return Boolean(systemId && systems.has(systemId));
+  }).slice(-limit);
+}
+
+function scopedAssets(store: SqliteStore, limit: number, projectIds: Set<string> | undefined) {
+  if (!projectIds) return webAssets(store, limit);
+  const records = store.listAllArtifacts().filter((record) => projectIds.has(record.projectId));
+  return projectWebAssets(store, records.slice(-limit), []);
+}
+
+function scopedAssetPage(store: SqliteStore, limit: number, older: AssetCursor | undefined, projectIds: Set<string> | undefined) {
+  if (!projectIds) return undefined;
+  const records = store.listAllArtifacts()
+    .filter((record) => projectIds.has(record.projectId))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const eligible = older?.source === "business"
+    ? records.filter((record) => record.createdAt < older.createdAt || (record.createdAt === older.createdAt && record.id < older.id))
+    : records;
+  const selected = eligible.slice(-limit);
+  const first = selected[0];
+  const next = first && eligible.length > selected.length ? { source: "business" as const, createdAt: first.createdAt, id: first.id } : null;
+  return { items: projectWebAssets(store, selected, []), total: records.length, older: next };
 }
 
 function talkScopeMetadata(body: Record<string, unknown>, principal: AuthPrincipal | undefined, store: SqliteStore): {
@@ -127,7 +190,7 @@ function talkScopeMetadata(body: Record<string, unknown>, principal: AuthPrincip
   }
   const systemId = requestedSystem ?? project?.businessSystemId;
   if (principal?.scoped) {
-    if (systemId && !canAccessSystem(principal, systemId)) return { error: { code: "FORBIDDEN_SCOPE", message: "当前凭据没有该业务系统权限" }, status: 403 };
+    if (systemId && !canAccessBusinessSystem(principal, store, systemId)) return { error: { code: "FORBIDDEN_SCOPE", message: "当前凭据没有该业务系统权限" }, status: 403 };
     if (requestedProject && !canAccessProject(principal, store, requestedProject)) return { error: { code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, status: 403 };
     if (principal.role !== "admin" && !systemId && !requestedProject) {
       return { error: { code: "SCOPE_REQUIRED", message: "范围凭据的厂长消息需要业务系统或项目上下文" }, status: 400 };
@@ -142,7 +205,7 @@ function talkEnvelopeVisible(principal: AuthPrincipal, store: SqliteStore, envel
   const projectId = typeof metadata.project_id === "string" ? metadata.project_id : undefined;
   if (projectId) return canAccessProject(principal, store, projectId);
   const systemId = typeof metadata.business_system_id === "string" ? metadata.business_system_id : undefined;
-  return Boolean(systemId && canAccessSystem(principal, systemId));
+  return Boolean(systemId && canAccessBusinessSystem(principal, store, systemId));
 }
 
 function corsHeaders(request: Request): Record<string, string> {
@@ -606,20 +669,20 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         const run = decodeSegment(runPath[1]) ? store.getBusinessRun(decodeSegment(runPath[1])!) : undefined;
         if (run && !canAccessSystem(principal, run.businessSystemId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该运行权限" }, 403);
       }
-      if ((url.pathname === "/api/v1/business-systems" || url.pathname === "/api/v1/projects" || url.pathname === "/api/web/bootstrap" || url.pathname === "/api/web/assets" || url.pathname === "/api/web/assets/page" || url.pathname === "/api/web/logs" || url.pathname === "/api/web/constitution") && principal.role !== "admin") {
+      if ((url.pathname === "/api/v1/business-systems" || url.pathname === "/api/v1/projects" || url.pathname === "/api/web/constitution") && principal.role !== "admin") {
         return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据需要明确的业务系统范围" }, 403);
       }
       if (url.pathname === "/api/web/graph" && principal.role !== "admin") {
         const requestedScope = url.searchParams.get("scope");
         const requestedWorkarea = url.searchParams.get("workarea");
-        if (requestedScope !== "workarea" || !requestedWorkarea || !canAccessSystem(principal, requestedWorkarea)) {
+        if (requestedScope !== "workarea" || !requestedWorkarea || !canAccessBusinessSystem(principal, store, requestedWorkarea)) {
           return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据只能读取已授权厂区图" }, 403);
         }
       }
       if ((url.pathname.startsWith("/api/v1/foreman/") || url.pathname.startsWith("/api/v1/talk") || url.pathname === "/api/web/talk") && !canMutate(principal, "foreman")) {
         return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有厂长控制权限" }, 403);
       }
-      if (principal.role === "foreman" && (url.pathname === "/api/v1/talk" || url.pathname === "/api/v1/foreman/inbox" || url.pathname === "/api/web/talk") && request.method === "GET") {
+      if (principal.role === "foreman" && (url.pathname === "/api/v1/talk" || url.pathname === "/api/v1/foreman/inbox") && request.method === "GET") {
         return response({ code: "FORBIDDEN_SCOPE", message: "范围厂长需要通过具体业务系统上下文读取对话" }, 403);
       }
     }
@@ -843,7 +906,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         body.uploaded_file_refs = form.getAll("uploaded_file_refs").filter((ref): ref is string => typeof ref === "string" && Boolean(ref.trim()));
       } else body = await readJson(request);
       if (principal?.scoped) {
-        if (typeof body.business_system_id === "string" && !canAccessSystem(principal, body.business_system_id)) {
+        if (typeof body.business_system_id === "string" && !canAccessBusinessSystem(principal, store, body.business_system_id)) {
           return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该业务系统权限" }, 403);
         }
         if (typeof body.business_system_id !== "string" && !canMutate(principal, "foreman")) {
@@ -1088,14 +1151,15 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (url.pathname === "/api/web/talk" && request.method === "GET") {
       const requested = Number(url.searchParams.get("limit") ?? 80);
       const limit = Number.isFinite(requested) ? Math.max(1, Math.min(1000, Math.trunc(requested))) : 80;
-      return response(store.recentTalk(limit));
+      return response(scopedTalkMessages(store, limit, principal, visibleBusinessSystemIds(principal, store)));
     }
     if (url.pathname === "/api/web/logs" && request.method === "GET") {
       const requested = Number(url.searchParams.get("limit") ?? 100);
       const limit = Number.isSafeInteger(requested) ? Math.max(1, Math.min(1000, requested)) : 100;
       const since = url.searchParams.get("since");
       if (since !== null && (!/^\d+$/.test(since) || Number(since) > Number.MAX_SAFE_INTEGER)) return response({ code: "INVALID_CURSOR", message: "日志游标无效" }, 400);
-      return response(webLogs(store, limit, since === null ? undefined : Number(since)));
+      const systems = visibleBusinessSystemIds(principal, store);
+      return response(systems ? scopedLogs(store, limit, principal, since === null ? undefined : Number(since)) : webLogs(store, limit, since === null ? undefined : Number(since)));
     }
     if (url.pathname === "/api/web/graph" && request.method === "GET") {
       const scope = url.searchParams.get("scope") ?? "factory";
@@ -1177,13 +1241,20 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     if (url.pathname === "/api/web/assets" && request.method === "GET") {
       const limit = Math.trunc(Math.max(1, Number(url.searchParams.get("limit") ?? 100)));
-      return response(webAssets(store, Number.isSafeInteger(limit) ? limit : undefined));
+      const systems = visibleBusinessSystemIds(principal, store);
+      return response(scopedAssets(store, Number.isSafeInteger(limit) ? limit : 100, visibleProjectIds(store, systems)));
     }
     if (url.pathname === "/api/web/assets/page" && request.method === "GET") {
       const limit = assetPageLimit(url.searchParams.get("limit") ?? "100");
       const token = url.searchParams.get("older");
       const older = token ? decodeAssetCursor(token) : undefined;
       if (limit === undefined || (token && !older)) return response({ error: "invalid asset page limit or cursor" }, 400);
+      const systems = visibleBusinessSystemIds(principal, store);
+      if (systems) {
+        const page = scopedAssetPage(store, limit, older, visibleProjectIds(store, systems));
+        const olderCursor = page?.older ? Buffer.from(JSON.stringify({ v: 1, ...page.older })).toString("base64url") : null;
+        return response({ items: page?.items ?? [], total: page?.total ?? 0, olderCursor });
+      }
       return response(webAssetPage(store, limit, older));
     }
     if (url.pathname === "/api/web/secrets" && request.method === "GET") {
@@ -1207,19 +1278,26 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (assetLimit !== null && limit === undefined) return response({ error: "invalid asset page limit" }, 400);
       const health = await runtimeHealth();
       const eventCursor = store.latestEventSequence();
-      const factoryGraph = await factoryGraphProjection(store, storageRoot);
+      const systems = visibleBusinessSystemIds(principal, store);
+      const projects = visibleProjectIds(store, systems);
+      const factoryGraph = systems ? scopedFactoryGraph(graphProjection(store, "factory", null), systems) : await factoryGraphProjection(store, storageRoot);
       const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
-      const talk = store.recentTalk(80);
+      const talk = scopedTalkMessages(store, 80, principal, systems);
       const foremanTurns = store.listForemanTurns(talk.map(({ id }) => id)).map((turn) => foreman.turnState(turn));
-      const assetPage = limit === undefined ? undefined : webAssetPage(store, limit);
+      const scopedPage = systems && limit !== undefined ? scopedAssetPage(store, limit, undefined, projects) : undefined;
+      const assetPage = limit === undefined ? undefined : scopedPage ?? webAssetPage(store, limit);
+      const assets = assetPage ? assetPage.items : scopedAssets(store, 100, projects);
+      const logs = systems ? scopedLogs(store, 100, principal) : webLogs(store, 100);
+      const secrets = store.listSecretRequests().filter((secret) => !projects || projects.has(secret.projectId));
+      const harnesses = systems ? officialHarnesses([]) : officialHarnesses(store.listHarnessProfiles());
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: store.timestamp() },
         eventCursor, foremanTurns, pendingForemanReplies: foreman.pendingReplies(),
         graph: { factory: factoryGraph },
-        assets: assetPage ? assetPage.items : webAssets(store), logs: webLogs(store, 100), talk,
-        ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: assetPage.olderCursor }),
-        harnesses: officialHarnesses(store.listHarnessProfiles()).map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
+        assets, logs, talk,
+        ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: "olderCursor" in assetPage ? assetPage.olderCursor : assetPage.older ? Buffer.from(JSON.stringify({ v: 1, ...assetPage.older })).toString("base64url") : null }),
+        harnesses: harnesses.map((item) => ({ ...item, configuration: systems ? null : publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: systems ? [] : store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: secrets.map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses(store.listHarnessProfiles()).map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : item.container_configured ? "configured" : "unavailable" })) },
-        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) }, constitution: await constitutionProjection(storageRoot) });
+        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: systems ? null : foremanProfile?.runtime ?? null, model: systems ? null : foremanProfile?.model ?? null, mode: systems ? null : foremanProfile?.mode ?? null, profile: systems ? null : publicProfile(foremanProfile, (ref) => vault.get(ref)) }, constitution: await constitutionProjection(storageRoot) });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") {
       const signal = AbortSignal.any([request.signal, eventStreams.signal]);
@@ -1881,6 +1959,15 @@ function webLogs(store: SqliteStore, limit: number, since?: number) {
     .map((event) => ({ id: event.id, seq: event.seq, cursor: String(event.seq), kind: event.type, at: event.createdAt, data: portableValue(event.data) }));
 }
 
+function scopedLogs(store: SqliteStore, limit: number, principal: AuthPrincipal | undefined, since?: number) {
+  return webLogs(store, Math.max(limit * 4, limit), since)
+    .filter((event) => scopedEventVisible(principal!, store, {
+      id: String(event.id), seq: Number(event.seq ?? 0), type: String(event.kind),
+      data: event.data, createdAt: String(event.at ?? ""),
+    }))
+    .slice(-limit);
+}
+
 async function constitutionProjection(root: string) {
   const configured = readGovernedRegistry(root);
   if (!configured) return { available: false, status: "unconfigured", epoch: null, version: null, recent_change: null };
@@ -1919,7 +2006,7 @@ function scopedEventVisible(principal: AuthPrincipal, store: SqliteStore, event:
   const projectId = ["projectId", "project_id"].find((key) => typeof data[key] === "string") as string | undefined;
   const scopedSystemId = systemId ?? (typeof messageMetadata.business_system_id === "string" ? messageMetadata.business_system_id : undefined);
   const scopedProjectId = projectId ?? (typeof messageMetadata.project_id === "string" ? messageMetadata.project_id : undefined);
-  if (scopedSystemId) return canAccessSystem(principal, scopedSystemId);
+  if (scopedSystemId) return canAccessBusinessSystem(principal, store, scopedSystemId);
   if (scopedProjectId) return canAccessProject(principal, store, scopedProjectId);
   const runId = ["runId", "run_id"].find((key) => typeof data[key] === "string") as string | undefined;
   if (runId) {

@@ -1,5 +1,16 @@
 import type { AssetPageData, Bootstrap, BusinessRun, ForemanTurn, Graph, EventRecord, HarnessRecord, HarnessProfile, OperatorBindingView, SecretRecord, StreamEvent, TalkMessage } from "./types";
 
+export type WebScope = { business_system_id?: string; project_id?: string };
+
+function scopeQuery(scope?: WebScope): string {
+  if (!scope) return "";
+  const query = new URLSearchParams();
+  if (scope.business_system_id) query.set("business_system_id", scope.business_system_id);
+  if (scope.project_id) query.set("project_id", scope.project_id);
+  const encoded = query.toString();
+  return encoded ? `&${encoded}` : "";
+}
+
 export class ApiError extends Error {
   status: number;
   payload: unknown;
@@ -44,13 +55,13 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return payload as T;
 }
 
-export const getBootstrap = () => api<Bootstrap>("/api/web/bootstrap?assetLimit=100");
+export const getBootstrap = (scope?: WebScope) => api<Bootstrap>(`/api/web/bootstrap?assetLimit=100${scopeQuery(scope)}`);
 export const getGraph = (scope: "factory" | "workarea", workarea?: string) =>
   api<Graph>(`/api/web/graph?scope=${scope}${workarea ? `&workarea=${encodeURIComponent(workarea)}` : ""}`);
-export const getTalk = () => api<TalkMessage[]>("/api/web/talk?limit=80");
-export const getAssetsPage = (olderCursor?: string, signal?: AbortSignal) =>
-  api<AssetPageData>(`/api/web/assets/page?limit=100${olderCursor ? `&older=${encodeURIComponent(olderCursor)}` : ""}`, { signal });
-export const getLogs = () => api<EventRecord[]>("/api/web/logs?limit=100");
+export const getTalk = (scope?: WebScope) => api<TalkMessage[]>(`/api/web/talk?limit=80${scopeQuery(scope)}`);
+export const getAssetsPage = (olderCursor?: string, signal?: AbortSignal, scope?: WebScope) =>
+  api<AssetPageData>(`/api/web/assets/page?limit=100${olderCursor ? `&older=${encodeURIComponent(olderCursor)}` : ""}${scopeQuery(scope)}`, { signal });
+export const getLogs = (scope?: WebScope) => api<EventRecord[]>(`/api/web/logs?limit=100${scopeQuery(scope)}`);
 export const getHarnesses = () => api<HarnessRecord[]>("/api/web/harnesses");
 export const configureHarness = (config: Record<string, unknown>) => api<{ profile: HarnessProfile; foreman: Bootstrap["foreman"] }>("/api/web/harnesses/configure", {
   method: "POST",
@@ -73,10 +84,10 @@ export const ensureRuntime = () => api<{ dependency: { state: string; message?: 
   method: "POST",
   headers: { "Content-Type": "application/json" },
 });
-export const sendTalk = (text: string) => api<{ state: string; message: TalkMessage; foremanTurn: ForemanTurn }>("/api/web/talk", {
+export const sendTalk = (text: string, scope?: WebScope) => api<{ state: string; message: TalkMessage; foremanTurn: ForemanTurn }>("/api/web/talk", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ text }),
+  body: JSON.stringify({ text, ...scope }),
 });
 export const cancelForemanTurn = (id: string) =>
   api<{ foremanTurn: ForemanTurn }>(`/api/v1/foreman/inbox/${encodeURIComponent(id)}/cancel`, { method: "POST" });

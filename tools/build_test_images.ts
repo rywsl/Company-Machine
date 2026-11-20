@@ -11,7 +11,7 @@ const repo = resolve(import.meta.dir, "..");
 const imagesRoot = join(repo, "tests", "fixtures", "images");
 const fakesRoot = join(repo, "tests", "fakes");
 const names = ["tool", "studio", "operator"] as const;
-const DEFAULT_BASE = "oven/bun:1.3-alpine";
+const DEFAULT_BASE = "oven/bun:1.3.14-alpine";
 const textExtensions = new Set([".ts", ".sh", ".txt", ".json", ".yaml", ".yml", ".md", ".factory", ""]);
 
 type CommandResult = { code: number; stdout: string; stderr: string };
@@ -21,7 +21,7 @@ function usage(): void {
   [--save-to DIRECTORY | --load-from DIRECTORY] [--build-timeout SECONDS]
 
 Without --base, mainland-China GeoIP selects the fastest reachable Docker Hub mirror
-for the default oven/bun base image. MAO_GEOIP_COUNTRY, MAO_GEOIP_URL and
+for the default oven/bun:1.3.14-alpine base image. MAO_GEOIP_COUNTRY, MAO_GEOIP_URL and
 MAO_DOCKERHUB_MIRRORS override discovery.`);
 }
 

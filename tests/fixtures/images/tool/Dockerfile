@@ -1,6 +1,6 @@
 # 夹具镜像：工具型机器 toolbox@1 与全部夹具 validator（spec/system/testing.md 第 5 节）。
 # 构建上下文由 tools/build_test_images.ts 组装：本目录 + tests/fakes（放在 fakes/ 下）。
-ARG BASE=oven/bun:1.3-alpine
+ARG BASE=oven/bun:1.3.14-alpine
 FROM ${BASE}
 COPY fakes/tools/upper_text.ts /usr/local/bin/upper-text
 COPY fakes/tools/count_text.ts /usr/local/bin/count-text

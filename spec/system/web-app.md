@@ -238,6 +238,7 @@ M18 的正式用户入口由 `factory web` 启动。默认服务绑定 `127.0.0.
 真实前端通过以下同源 API 读取现有控制面事实。
 
 - `GET /api/web/bootstrap` 返回版本、运行连接状态、工厂图、厂区图、看板摘要、资产摘要、日志摘要、Harness 能力和当前宪法版本
+- 受保护的范围凭据可以读取同一个 bootstrap，但只得到其授权业务系统和项目的工厂图、资产、日志、对话与项目资源状态。控制面按 `business_system_id` 过滤业务事实，范围凭据不能看到全局 Harness 配置、其他业务系统或其他项目的对话。
 - `GET /healthz` 返回控制面进程存活状态。`GET /readyz` 同时检查 SQLite 和当前 Podman/Kiri 运行时，运行时未就绪时返回 `503` 和恢复诊断
 - `GET /api/web/graph?scope=factory` 返回工厂层聚合图
 - `GET /api/web/graph?scope=workarea&workarea=<line-key>` 返回指定厂区内部图
@@ -247,7 +248,8 @@ M18 的正式用户入口由 `factory web` 启动。默认服务绑定 `127.0.0.
 - `GET /api/web/assets/page?limit=100&older=<cursor>` 返回 `items`、`total` 与 `olderCursor`。页大小接受 1 至 100，游标为空时读取最新一页。资产按历史库和业务库的展示顺序分页。在浏览较早资产期间新增的较新记录可回到最新页查看，继续翻页仍从当前游标读取更早的记录。
 - `GET /api/web/logs?limit=<n>&since=<cursor>` 返回事件、运行、验证、修复、资源请求和异常摘要
 - `GET /api/web/talk` 返回最近的 Foreman 对话，默认 80 条，`limit` 接受 1 到 1000。查询先取活动消息，条数不足时从归档对话补齐。页面引导响应使用相同查询。
-- `POST /api/web/talk` 接受 `{ "text": "..." }`，使用本地用户身份调用现有 `talk.post_human`，把消息投递给常驻 Foreman。控制面不在此请求中调用模型 API
+- `GET /api/web/talk` 对范围凭据返回已授权业务上下文内的对话。进入具体厂区后，前端附带 `business_system_id`，以便保持当前 Foreman 线程上下文。
+- `POST /api/web/talk` 接受 `{ "text": "...", "business_system_id": "...", "project_id": "..." }`，使用本地用户身份调用现有 `talk.post_human`，把消息投递给常驻 Foreman。范围凭据必须提供已授权的业务系统或项目上下文。控制面不在此请求中调用模型 API
 - Foreman 尚未配置时，消息仍持久化进入队列，响应状态为 `waiting_foreman` 并带 `setup_required=true`。页面把它显示为配置前等待，不能显示为已完成
 - 页面引导响应附带 SSE 游标和进行中的厂长回复。浏览器按邮箱消息 ID 累积 `foreman.reply.delta`，完成后用持久化消息替换流式内容，重连从已接收的事件继续。
 - 从同一 Harness 更新提取的会话事件与可见回复增量按顺序写入同一个 SQLite 事务，提交后通知 SSE 连接。刷新页面或断线重连使用相同的增量记录。
@@ -325,7 +327,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，每个新领用的 Operator 单元在 SQLite 保存执行进程归属。Linux 服务启动时在同一内核启动和 PID 命名空间内检查归属，只有系统确认原 PID 已退出才将其置为 `failed` 并记录 `CONTROL_PLANE_RESTART`，保留已登记产物与会话编号。外部执行结果由用户核对后决定后续动作。活跃、无法核实以及历史没有归属记录的 `running` 单元保留原状态。等待资源的单元继续通过现有资源请求流程恢复。容器化 Operator 在领取单元前检查运行时。检查失败、超时或服务停止时，单元保留 `queued` 状态。成功执行 `POST /api/v1/runtime/ensure-ready` 后，通过正常 DAG 就绪规则恢复已授权的排队工作。服务在五秒内复用确认在线的运行时状态。
 - kernel 绑定的 Machine 运行在 `unit_run.session_id=legacy:<unit-run-id>` 下，并在 BusinessRun metadata 保存 legacy Run ID。控制面重启后按该 Run ID 调用既有 `LineRunner` 恢复，避免重新提交 Job；若崩溃发生在 Run ID 持久化之前，则启动一个新的 legacy Run 并把旧的 Machine 运行标为失败或由用户重试。
 - Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
-- ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环。Pi 的官方 CLI 使用 `--print --mode json`，Qwen Code 的官方 CLI 使用 `-p PROMPT --output-format stream-json`，两者均由控制面解析 stdout JSONL。DeepSeek Harness、Kimi Code 和 ZCode 没有可用 ACP 时必须直接报告 Harness 不可用，不能回退到未确认的通用 CLI 参数。Operator 和 Foreman profile 提供 digest 固定的容器镜像时，镜像内的官方 ACP 入口属于该轮的 ACP 能力，不要求宿主 PATH 另有 ACP 可执行文件
+- ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环。Pi 的官方 CLI 使用 `--print --mode json`，Qwen Code 的官方 CLI 使用 `-p PROMPT --output-format stream-json`，两者均由控制面解析 stdout JSONL。DeepSeek Harness、Kimi Code 和 ZCode 没有可用 ACP 时必须直接报告 Harness 不可用，不能回退到未确认的通用 CLI 参数。没有容器镜像时，Operator 和 Foreman 都可以发现宿主 PATH 中与声明 Harness 相匹配的官方 ACP 可执行文件。Operator 和 Foreman profile 提供 digest 固定的容器镜像时，镜像内的官方 ACP 入口属于该轮的 ACP 能力，不要求宿主 PATH 另有 ACP 可执行文件
 - ACP 使用官方 `sessionId`。只有 Harness 在初始化中声明 `loadSession` 时才请求恢复会话，恢复时收到的历史通知不进入当前回复。`session/prompt` 响应中的 `end_turn` 结束当前轮，无须等待 stdout 关闭。其他停止原因、JSON-RPC 错误和提前 EOF 终止当前轮并保留原因。握手限时 30 秒，单条消息最大 1 MiB，启动前暂存最多 128 条通知和 4 MiB。
 - Harness profile 提供 digest 固定的 `image` 时，官方 CLI 和 ACP 使用活动容器运行时。启动前控制面检查本地镜像，缺失时按 GeoIP 选择 Docker Hub 镜像源拉取并再次校验原始 digest。拉取失败或摘要不一致时，运行保持未启动并返回明确的镜像诊断。Linux Kiri 默认以 `docker --host unix:///run/kiri/docker.sock run` 启动。沙箱使用非 root、只读根文件系统、`--init`、`--pids-limit 256`、`--tmpfs /tmp` 和 `cap-drop ALL`，默认网络为 `none`。官方 Harness 子进程的 stderr 只保留有界诊断，并在进入事件、日志和错误状态前替换部署凭据及常见密钥字段
 - 容器内的 `HOME`、XDG 配置和缓存使用本轮的 `/tmp`。控制面给每个容器分配名称，会话停止时清理该名称对应的容器。

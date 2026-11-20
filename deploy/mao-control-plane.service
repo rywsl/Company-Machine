@@ -1,7 +1,7 @@
 [Unit]
 Description=MAO Bun control plane
-Wants=network-online.target podman.socket
-After=network-online.target podman.socket
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
@@ -11,9 +11,7 @@ Environment=PATH=%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 Environment=FACTORY_ROOT=%h/.local/share/mao
 Environment=FACTORY_DB_PATH=%h/.local/share/mao/factory.db
 Environment=BUSINESS_DB_PATH=%h/.local/share/mao/factory.db
-Environment=MAO_CONTAINER_RUNTIME=podman
 Environment=MAO_WEB_DIST=%h/mao/frontend/dist
-ExecStartPre=/usr/bin/podman info --format '{{.Host.Os}}'
 ExecStart=/usr/bin/env bun run backend/src/index.ts
 Restart=always
 RestartSec=5

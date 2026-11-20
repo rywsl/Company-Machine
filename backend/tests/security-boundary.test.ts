@@ -41,7 +41,11 @@ test("scoped credentials cannot cross business systems or mutate global control"
     process.env.MAO_AUTH_SCOPES_JSON = JSON.stringify({
       "scope-token": { role: "viewer", business_systems: [allowed.id], projects: [allowedProject.id] },
     });
-    expect((await app.fetch(new Request("http://localhost/api/web/talk", { headers }))).status).toBe(403);
+    const bootstrap = await app.fetch(new Request("http://localhost/api/web/bootstrap", { headers }));
+    expect(bootstrap.status).toBe(200);
+    const bootstrapBody = await bootstrap.json() as { graph: { factory: { nodes: Array<{ id: string }> } }; talk: Array<{ body?: string }> };
+    expect(bootstrapBody.graph.factory.nodes.map(({ id }) => id)).toEqual([allowed.id]);
+    expect(bootstrapBody.talk).toEqual([]);
     expect((await app.fetch(new Request(`http://localhost/api/v1/business-systems/${allowed.id}/runs`, {
       method: "POST", headers, body: JSON.stringify({ dispatch: false }),
     }))).status).toBe(403);
@@ -100,7 +104,11 @@ test("scoped Foreman talk requires and enforces a business context", async () =>
     expect(accepted.status).toBe(201);
     const foreign = await app.fetch(new Request("http://localhost/api/web/talk", { method: "POST", headers, body: JSON.stringify({ text: "foreign scope", business_system_id: "denied" }) }));
     expect(foreign.status).toBe(403);
-    expect((await app.fetch(new Request("http://localhost/api/web/talk", { headers }))).status).toBe(403);
+    const visibleTalk = await app.fetch(new Request("http://localhost/api/web/talk", { headers }));
+    expect(visibleTalk.status).toBe(200);
+    const visibleTalkBody = await visibleTalk.json() as Array<{ body?: string }>;
+    expect(visibleTalkBody.some(({ body }) => body === "allowed scope")).toBe(true);
+    expect(visibleTalkBody.some(({ body }) => body === "foreign scope")).toBe(false);
   } finally {
     app.stop();
     if (previous.scopes === undefined) delete process.env.MAO_AUTH_SCOPES_JSON; else process.env.MAO_AUTH_SCOPES_JSON = previous.scopes;

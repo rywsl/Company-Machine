@@ -16,7 +16,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from "@xyflow/react";
-import { ApiError, cancelBusinessRun, cancelForemanTurn, configureHarness, createBusinessRun, dispatchBusinessRun, ensureRuntime, getAssetsPage, getBootstrap, getBusinessRuns, getGraph, getLogs, getTalk, putProjectSecret, retryBusinessRun, sendTalk, submitProjectIntake, subscribeToEvents, verifyHarness } from "./api";
+import { ApiError, cancelBusinessRun, cancelForemanTurn, configureHarness, createBusinessRun, dispatchBusinessRun, ensureRuntime, getAssetsPage, getBootstrap, getBusinessRuns, getGraph, getLogs, getTalk, putProjectSecret, retryBusinessRun, sendTalk, submitProjectIntake, subscribeToEvents, verifyHarness, type WebScope } from "./api";
 import { OperatorBindingForm } from "./OperatorBindingForm";
 import { WorkareaConversions } from "./WorkareaConversions";
 import type { AssetPageData, AssetRecord, Bootstrap, BusinessRun, DependencyStatus, EventRecord, ForemanTurn, Graph, GraphNode, HarnessProfile, LayoutGraph, LayoutState, OperatorBindingView, Page, Scope, SecretRecord, TalkMessage } from "./types";
@@ -470,7 +470,7 @@ function assetRecordLabel(asset: AssetRecord): string {
   return asset.record_type === "material" ? "物料" : "产物";
 }
 
-function AssetsPage({ bootstrap, onOpen }: { bootstrap: Bootstrap; onOpen: (asset: AssetRecord) => void }): ReactElement {
+function AssetsPage({ bootstrap, onOpen, scope }: { bootstrap: Bootstrap; onOpen: (asset: AssetRecord) => void; scope?: WebScope }): ReactElement {
   const [olderPage, setOlderPage] = useState<AssetPageData>();
   const [pendingCursor, setPendingCursor] = useState<string>();
   const [failed, setFailed] = useState(false);
@@ -481,7 +481,7 @@ function AssetsPage({ bootstrap, onOpen }: { bootstrap: Bootstrap; onOpen: (asse
   useEffect(() => {
     if (!pendingCursor) return;
     const controller = new AbortController();
-    void getAssetsPage(pendingCursor, controller.signal).then((page) => {
+    void getAssetsPage(pendingCursor, controller.signal, scope).then((page) => {
       if (!controller.signal.aborted) setOlderPage(page);
     }).catch(() => {
       if (!controller.signal.aborted) setFailed(true);
@@ -489,7 +489,7 @@ function AssetsPage({ bootstrap, onOpen }: { bootstrap: Bootstrap; onOpen: (asse
       if (!controller.signal.aborted) setPendingCursor(undefined);
     });
     return () => controller.abort();
-  }, [pendingCursor]);
+  }, [pendingCursor, scope]);
 
   return <section className="page list-page">
     <div className="page-heading">
@@ -619,6 +619,7 @@ export function App(): ReactElement {
   const [assetRevision, setAssetRevision] = useState(0);
   const activeWorkarea = useRef<string | null>(null);
   const startedEvents = useRef(false);
+  const activeWebScope = useCallback((): WebScope | undefined => scope === "workarea" && workarea ? { business_system_id: workarea } : undefined, [scope, workarea]);
   const rememberTurn = useCallback((turn: ForemanTurn) => {
     if (turn.status === "cancelled") {
       cancelledTurns.current.add(turn.id);
@@ -634,7 +635,7 @@ export function App(): ReactElement {
     setError("");
     setConnection("connecting");
     try {
-      const next = await getBootstrap();
+      const next = await getBootstrap(activeWebScope());
       setBootstrap(next);
       setTalk(next.talk ?? []);
       for (const turn of next.foremanTurns ?? []) rememberTurn(turn);
@@ -650,7 +651,7 @@ export function App(): ReactElement {
       setConnection("exception");
       setError(cause instanceof Error ? cause.message : "无法连接本地服务");
     }
-  }, [rememberTurn]);
+  }, [activeWebScope, rememberTurn]);
   const updateOperatorNode = useCallback((unitId: string, binding: OperatorBindingView) => {
     setWorkareaGraph((current) => current && current.id === binding.businessSystemId ? {
       ...current,
@@ -731,19 +732,19 @@ export function App(): ReactElement {
         return;
       }
       if (normalized.includes("talk")) {
-        const messages = await getTalk();
+        const messages = await getTalk(activeWebScope());
         setTalk(messages);
         setBootstrap((current) => current ? { ...current, talk: messages } : current);
         return;
       }
       if (normalized.includes("event") || normalized.includes("log") || normalized.includes("run") || normalized.includes("job")) {
         if (normalized.includes("run") || normalized.includes("job")) setRunRevision((revision) => revision + 1);
-        const logs = await getLogs();
+        const logs = await getLogs(activeWebScope());
         setBootstrap((current) => current ? { ...current, logs } : current);
         return;
       }
       if (normalized.includes("graph") || normalized.includes("asset") || normalized.includes("secret") || normalized.includes("bootstrap") || normalized.includes("project") || normalized.includes("intake") || normalized.includes("business-system") || normalized.includes("conversion")) {
-        const next = await getBootstrap();
+        const next = await getBootstrap(activeWebScope());
         setBootstrap(next);
         setTalk(next.talk ?? []);
         for (const turn of next.foremanTurns ?? []) rememberTurn(turn);
@@ -752,7 +753,7 @@ export function App(): ReactElement {
     } catch {
       // SSE is an enhancement. The initial page remains usable while a later event is retried.
     }
-  }, [rememberTurn, updateOperatorNode]);
+  }, [activeWebScope, rememberTurn, updateOperatorNode]);
   useEffect(() => { void retry(); }, [retry]);
   useEffect(() => eventCursor === undefined ? undefined : subscribeToEvents((event) => { void refreshLive(event.type, event.data); }, () => {
     setConnection((current) => current === "exception" ? current : "degraded");
@@ -761,7 +762,7 @@ export function App(): ReactElement {
     if (!assetRevision) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void getAssetsPage(undefined, controller.signal).then(({ items, total, olderCursor }) => {
+      void getAssetsPage(undefined, controller.signal, activeWebScope()).then(({ items, total, olderCursor }) => {
         if (controller.signal.aborted) return;
         setBootstrap((current) => current ? {
           ...current, assets: items, assetTotal: total, assetOlderCursor: olderCursor,
@@ -774,7 +775,7 @@ export function App(): ReactElement {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [assetRevision]);
+  }, [activeWebScope, assetRevision]);
   useEffect(() => {
     activeWorkarea.current = page === "compose" && scope === "workarea" ? workarea : null;
     if (!activeWorkarea.current) return;
@@ -800,7 +801,7 @@ export function App(): ReactElement {
   const updateGraphLayout = useCallback((graph: Graph, nodes: FlowNode[], viewport: Viewport) => { const current = { ...layout, graphs: { ...(layout.graphs ?? {}) } }; current.graphs![graphKey(graph)] = { nodes: Object.fromEntries(nodes.map((node) => [node.id, { x: node.position.x, y: node.position.y }])), viewport: { x: viewport.x, y: viewport.y, zoom: viewport.zoom } }; persistLayout(current); }, [layout, persistLayout]);
   const sendToForeman = async (text: string) => {
     try {
-      const response = await sendTalk(text);
+      const response = await sendTalk(text, activeWebScope());
       if (response.foremanTurn) rememberTurn(response.foremanTurn);
       setTalk((items) => items.some((item) => item.id === response.message.id) ? items : [...items, response.message]);
     } catch (cause) {
@@ -821,5 +822,5 @@ export function App(): ReactElement {
     }
   };
   if (!bootstrap && connection === "connecting") return <div className="boot-screen"><div className="boot-mark">M</div><strong>正在连接本地工厂</strong><span>读取真实执行图与运行上下文…</span></div>;
-  return <div className={`app-shell dock-${sidebarDock}`}><Sidebar open={sidebarOpen} dock={sidebarDock} page={page} connection={connection} onClose={() => setSidebarOpen(false)} onNavigate={navigate} /><MaoButton dock={sidebarDock} top={maoTop} onToggle={() => setSidebarOpen((value) => !value)} onDock={(dock, top) => { setSidebarDock(dock); setMaoTop(top); }} /><main className="app-main">{error && <ErrorBanner message={error} onRetry={retry} />}{page === "dashboard" && bootstrap && <Dashboard bootstrap={bootstrap} onCompose={() => navigate("compose")} onIntake={() => setIntake({})} onSecrets={() => setActiveSecret(bootstrap.secrets.find((item) => !item.configured) ?? bootstrap.secrets[0] ?? null)} onConstitution={() => setConstitutionOpen(true)} onWorkarea={openWorkarea} onForemanConfig={openForemanConfig} />}{page === "compose" && bootstrap && activeGraph && <ComposePage bootstrap={bootstrap} graph={activeGraph} scope={scope} layout={layout} foremanOpen={foremanOpen} selected={selectedNode} talk={[...talk, ...Object.values(liveReplies)]} foremanTurns={foremanTurns} foremanActivity={foremanActivity} runRevision={runRevision} onCancelTalk={cancelTalk} harnessConfigRole={harnessConfigRole} harnessConfigRuntime={harnessConfigRuntime} onToggleForeman={() => setForemanOpen((value) => !value)} onBack={returnFactory} onLayout={updateGraphLayout} onSelect={setSelected} onOpenWorkarea={openWorkarea} onConfigureForeman={openForemanConfig} onConfigureOperator={openOperatorConfig} onBindingSaved={updateOperatorNode} onCloseHarnessConfig={closeHarnessConfig} onHarnessProfileSaved={updateHarnessProfile} onSendTalk={sendToForeman} onOpenSecret={setActiveSecret} materialConversions={workarea === activeGraph.id && <WorkareaConversions key={activeGraph.id} businessSystemId={activeGraph.id} revision={conversionRevision} />} onAddProject={() => { if (workarea === activeGraph.id) setIntake({ system: { id: activeGraph.id, title: activeGraph.title } }); }} />}{page === "settings" && bootstrap && <SettingsPage bootstrap={bootstrap} onRuntimeReady={retry} />}{page === "assets" && bootstrap && <AssetsPage bootstrap={bootstrap} onOpen={setActiveAsset} />}{page === "logs" && bootstrap && <LogsPage logs={bootstrap.logs} active={activeLog} onOpen={setActiveLog} />}</main>{intake && <IntakePanel system={intake.system} onClose={() => setIntake(null)} onSaved={retry} />}{activeSecret && <SecretDrawer key={activeSecret.id} secret={bootstrap?.secrets.find((item) => item.id === activeSecret.id) ?? activeSecret} requests={bootstrap?.secrets ?? []} onSelect={setActiveSecret} onClose={() => setActiveSecret(null)} onSaved={retry} />}{activeAsset && <AssetDrawer asset={activeAsset} onClose={() => setActiveAsset(null)} />}{constitutionOpen && bootstrap && <ConstitutionDrawer bootstrap={bootstrap} onClose={() => setConstitutionOpen(false)} />}</div>;
+  return <div className={`app-shell dock-${sidebarDock}`}><Sidebar open={sidebarOpen} dock={sidebarDock} page={page} connection={connection} onClose={() => setSidebarOpen(false)} onNavigate={navigate} /><MaoButton dock={sidebarDock} top={maoTop} onToggle={() => setSidebarOpen((value) => !value)} onDock={(dock, top) => { setSidebarDock(dock); setMaoTop(top); }} /><main className="app-main">{error && <ErrorBanner message={error} onRetry={retry} />}{page === "dashboard" && bootstrap && <Dashboard bootstrap={bootstrap} onCompose={() => navigate("compose")} onIntake={() => setIntake({})} onSecrets={() => setActiveSecret(bootstrap.secrets.find((item) => !item.configured) ?? bootstrap.secrets[0] ?? null)} onConstitution={() => setConstitutionOpen(true)} onWorkarea={openWorkarea} onForemanConfig={openForemanConfig} />}{page === "compose" && bootstrap && activeGraph && <ComposePage bootstrap={bootstrap} graph={activeGraph} scope={scope} layout={layout} foremanOpen={foremanOpen} selected={selectedNode} talk={[...talk, ...Object.values(liveReplies)]} foremanTurns={foremanTurns} foremanActivity={foremanActivity} runRevision={runRevision} onCancelTalk={cancelTalk} harnessConfigRole={harnessConfigRole} harnessConfigRuntime={harnessConfigRuntime} onToggleForeman={() => setForemanOpen((value) => !value)} onBack={returnFactory} onLayout={updateGraphLayout} onSelect={setSelected} onOpenWorkarea={openWorkarea} onConfigureForeman={openForemanConfig} onConfigureOperator={openOperatorConfig} onBindingSaved={updateOperatorNode} onCloseHarnessConfig={closeHarnessConfig} onHarnessProfileSaved={updateHarnessProfile} onSendTalk={sendToForeman} onOpenSecret={setActiveSecret} materialConversions={workarea === activeGraph.id && <WorkareaConversions key={activeGraph.id} businessSystemId={activeGraph.id} revision={conversionRevision} />} onAddProject={() => { if (workarea === activeGraph.id) setIntake({ system: { id: activeGraph.id, title: activeGraph.title } }); }} />}{page === "settings" && bootstrap && <SettingsPage bootstrap={bootstrap} onRuntimeReady={retry} />}{page === "assets" && bootstrap && <AssetsPage bootstrap={bootstrap} scope={activeWebScope()} onOpen={setActiveAsset} />}{page === "logs" && bootstrap && <LogsPage logs={bootstrap.logs} active={activeLog} onOpen={setActiveLog} />}</main>{intake && <IntakePanel system={intake.system} onClose={() => setIntake(null)} onSaved={retry} />}{activeSecret && <SecretDrawer key={activeSecret.id} secret={bootstrap?.secrets.find((item) => item.id === activeSecret.id) ?? activeSecret} requests={bootstrap?.secrets ?? []} onSelect={setActiveSecret} onClose={() => setActiveSecret(null)} onSaved={retry} />}{activeAsset && <AssetDrawer asset={activeAsset} onClose={() => setActiveAsset(null)} />}{constitutionOpen && bootstrap && <ConstitutionDrawer bootstrap={bootstrap} onClose={() => setConstitutionOpen(false)} />}</div>;
 }

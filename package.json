@@ -18,5 +18,8 @@
     "backend:test": "bun test backend/tests",
     "acceptance:bun": "bun run tools/harness.ts acceptance",
     "verify:bun": "bun run tools/harness.ts verify"
-  }
+  },
+  "workspaces": [
+    "frontend"
+  ]
 }

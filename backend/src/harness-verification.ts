@@ -31,7 +31,11 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
   } catch {
     return failed("Harness Base URL 无效");
   }
-  const useAcp = requireDeclaredTransport(definition, Boolean(options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1" || profile.image)) === "acp";
+  const acpAvailable = Boolean(
+    options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1" || profile.image
+      || (definition.transportPreference === "acp" && Bun.which(definition.executable)),
+  );
+  const useAcp = requireDeclaredTransport(definition, acpAvailable) === "acp";
 
   let stopped = false;
   let workspace: string | undefined;
