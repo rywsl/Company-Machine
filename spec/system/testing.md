@@ -118,7 +118,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/cli.test.ts` | Bun 工厂命令、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
-| `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
+| `backend/tests/foreman.test.ts` | 厂长队列、官方 Harness 回复事件、容器邮箱的业务持久化、项目范围和目录清理 |
 | `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |

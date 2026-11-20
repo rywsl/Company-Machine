@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ManagedDatabase } from "./sqlite";
 import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
+import { defaultSessionTimeoutSeconds, validSessionTimeout } from "./harness-turn";
 import type { OperatorBinding } from "./operator-binding";
 import type {
   Artifact,
@@ -112,7 +113,8 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS harness_profiles (
         id TEXT PRIMARY KEY, runtime TEXT NOT NULL, role TEXT NOT NULL, base_url TEXT NOT NULL,
         model TEXT NOT NULL, mode TEXT NOT NULL, image TEXT, network TEXT, secret_ref TEXT,
-        verification TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL
+        verification TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL,
+        session_timeout_s INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}
       );
       CREATE TABLE IF NOT EXISTS business_events (
         seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
@@ -173,6 +175,14 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS unit_runs_pending_dispatch ON unit_runs(run_id) WHERE status='queued';
       CREATE INDEX IF NOT EXISTS business_conversions_system ON business_conversions(business_system_id, created_at, id);
     `);
+    const columns = () => this.db.query<{ name: string }>("PRAGMA table_info(harness_profiles)").all();
+    if (!columns().some(({ name }) => name === "session_timeout_s")) {
+      this.db.transaction(() => {
+        if (!columns().some(({ name }) => name === "session_timeout_s")) {
+          this.db.exec(`ALTER TABLE harness_profiles ADD COLUMN session_timeout_s INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}`);
+        }
+      }).immediate();
+    }
   }
 
   listBusinessSystems(): BusinessSystem[] {
@@ -258,6 +268,7 @@ export class SqliteStore {
       baseUrl: row.base_url,
       model: row.model,
       mode: row.mode,
+      sessionTimeoutSeconds: row.session_timeout_s,
       image: row.image ?? undefined,
       network: row.network ?? undefined,
       secretRef: row.secret_ref ?? undefined,
@@ -266,12 +277,22 @@ export class SqliteStore {
     }));
   }
 
-  saveHarnessProfile(input: Omit<HarnessProfile, "updatedAt" | "id"> & { id?: string }): HarnessProfile {
+  saveHarnessProfile(input: Omit<HarnessProfile, "updatedAt" | "id" | "sessionTimeoutSeconds"> & { id?: string; sessionTimeoutSeconds?: number }): HarnessProfile {
+    const timeout = input.sessionTimeoutSeconds;
+    if (timeout !== undefined && !validSessionTimeout(timeout)) throw new RangeError("invalid Harness session timeout");
     const updatedAt = this.timestamp();
-    const value: HarnessProfile = { ...input, id: input.id ?? `${input.role}:${input.runtime}`, updatedAt };
-    this.db.query("INSERT INTO harness_profiles (id,runtime,role,base_url,model,mode,image,network,secret_ref,verification,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET runtime=excluded.runtime, role=excluded.role, base_url=excluded.base_url, model=excluded.model, mode=excluded.mode, image=excluded.image, network=excluded.network, secret_ref=excluded.secret_ref, verification=excluded.verification, updated_at=excluded.updated_at")
-      .run(value.id, value.runtime, value.role, value.baseUrl, value.model, value.mode, value.image ?? null, value.network ?? null, value.secretRef ?? null, json(value.verification ?? {}), updatedAt);
-    return value;
+    const value = { ...input, id: input.id ?? `${input.role}:${input.runtime}`, updatedAt };
+    const row = this.db.query<{ session_timeout_s: number }>(`INSERT INTO harness_profiles (
+        id,runtime,role,base_url,model,mode,image,network,secret_ref,verification,updated_at,session_timeout_s
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+        runtime=excluded.runtime, role=excluded.role, base_url=excluded.base_url, model=excluded.model,
+        mode=excluded.mode, image=excluded.image, network=excluded.network, secret_ref=excluded.secret_ref,
+        verification=excluded.verification, updated_at=excluded.updated_at,
+        session_timeout_s=COALESCE(?, harness_profiles.session_timeout_s)
+      RETURNING session_timeout_s`)
+      .get(value.id, value.runtime, value.role, value.baseUrl, value.model, value.mode, value.image ?? null, value.network ?? null,
+        value.secretRef ?? null, json(value.verification ?? {}), updatedAt, timeout ?? defaultSessionTimeoutSeconds, timeout ?? null)!;
+    return { ...value, sessionTimeoutSeconds: row.session_timeout_s };
   }
 
   markHarnessVerification(id: string, state: string, reason?: string): HarnessProfile | undefined {

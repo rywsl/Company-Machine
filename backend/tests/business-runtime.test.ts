@@ -21,6 +21,28 @@ function processForFailure(): OfficialProcess {
 }
 
 describe("Bun business execution loop", () => {
+  test("times out an Operator during ACP startup and releases the child", async () => {
+    let killed = 0;
+    let readsCancelled = 0;
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, operator: { acpSpawn: () => ({
+      stdout: new ReadableStream({ cancel() { readsCancelled++; } }), stdin: { write() {} },
+      kill: () => { killed++; },
+    }) } });
+    try {
+      const system = app.store.createBusinessSystem({ name: "ACP startup" });
+      const project = app.store.createIntake({ business_system_id: system.id, name: "Example", repo_url: "https://example.test/project.git" });
+      app.store.saveHarnessProfile({ runtime: "kimi-code", role: "operator", baseUrl: "", model: "fixture", mode: "session", sessionTimeoutSeconds: 1 });
+      app.store.updateOperatorBinding(system.id, `${project.id}:operator`, { harnessRuntime: "kimi-code" });
+      const run = app.store.createBusinessRun(system.id)!;
+      await app.operator.dispatch(run.id);
+      expect(app.store.getBusinessRun(run.id)?.status).toBe("failed");
+      expect(app.store.listUnitRuns(run.id)[0]).toMatchObject({ status: "failed", error: "SESSION_TIMEOUT" });
+      expect(app.events.after().filter(({ type }) => type === "operator.run.failed")).toHaveLength(1);
+      expect(killed).toBe(1);
+      expect(readsCancelled).toBe(1);
+    } finally { app.stop(); }
+  });
+
   test("reserves engine connection and registry configuration for the deployment", () => {
     for (const name of ["CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_CONF", "REGISTRY_AUTH_FILE"]) {
       expect(projectCredentialName(name)).toBe(false);

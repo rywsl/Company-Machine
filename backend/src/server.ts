@@ -15,6 +15,7 @@ import { OperatorCoordinator, projectCredentialName } from "./operator";
 import { operatorBindingView, parseOperatorBinding } from "./operator-binding";
 import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, type OfficialSpawn } from "./harness";
 import type { AcpSpawn } from "./acp";
+import { validSessionTimeout } from "./harness-turn";
 
 const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
@@ -121,6 +122,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   const foreman = new ForemanCoordinator({
     store, events, ...options.foreman, ensureRuntime,
     factoryEnv: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: databasePath(store.legacyPath), BUSINESS_DB_PATH: databasePath(store.dbPath) },
+    fetchBusiness: (request) => fetch(request),
   });
   let stopped = false;
   const runInBackground = (work: Promise<void>) => {
@@ -449,8 +451,13 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       catch { return response({ error: "invalid Harness base URL" }, 400); }
       const image = typeof body.image === "string" ? body.image.trim() : "";
       if (image && !/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(image)) return response({ error: "Harness image must be pinned by digest" }, 400);
+      const sessionTimeoutSeconds = body.session_timeout_s;
+      if (sessionTimeoutSeconds !== undefined && !validSessionTimeout(sessionTimeoutSeconds)) {
+        return response({ error: "Harness session timeout must be a whole number of seconds from 1 to 2147483" }, 400);
+      }
       const profile = store.saveHarnessProfile({
         runtime: definition.id, role: body.role, baseUrl, model: body.model.trim(), mode: typeof body.mode === "string" ? body.mode : "session",
+        sessionTimeoutSeconds,
         image: image || undefined, network: image ? body.network === "egress" ? "egress" : "none" : undefined,
         verification: { state: "pending", checkedAt: store.timestamp() },
       });
@@ -554,7 +561,7 @@ function officialHarnesses() {
 
 function publicProfile(profile: any) {
   if (!profile) return null;
-  return { ...profile, base_url: profile.baseUrl, api_key_configured: Boolean(profile.secretRef), updated_at: profile.updatedAt, verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined };
+  return { ...profile, base_url: profile.baseUrl, session_timeout_s: profile.sessionTimeoutSeconds, api_key_configured: Boolean(profile.secretRef), updated_at: profile.updatedAt, verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined };
 }
 
 function publicUnit(unit: any) {

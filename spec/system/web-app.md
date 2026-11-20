@@ -309,6 +309,8 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - 容器 Harness 选择 `egress` 时，启动器先确认隔离代理就绪，再把官方 CLI 的 JSONL 或 ACP 的双向标准流接入会话。出网目标取已保存的 Base URL 主机和部署方配置的 `MAO_HARNESS_EGRESS_HOSTS`。该路径使用本地固定的 `MAO_EGRESS_RELAY_IMAGE`。会话结束或取消时清理隔离代理及容器。 [出网规范](egress.md)
 - 取消 Windows 原生 Harness 会终止控制面本次启动且仍在运行的进程树。取消官方 CLI 会话也会取消正在等待的输出读取，避免 npm 命令包装器的子进程持有管道导致会话无法结束。
 - 带 `image` 的 Foreman 和 Operator 会在启动官方 Harness 前调用当前 ContainerProvider 的 readiness。并发启动共享一次 readiness promise，失败时不会启动 Harness
+- Linux Kiri 与 Podman 中的容器厂长通过当前轮的文件邮箱管理业务。容器获得 `/mao/foreman/requests` 写入权限和 `/mao/foreman/responses` 读取权限。请求包含 `id`、`op` 和 `args`，写入临时文件后以 0644 权限原子重命名为 `<id>.json`。MAO 调用固定的业务 API 来查询工位、更新 DAG、绑定 Operator、登记产物与转换、派发运行，并在同名响应文件返回结果。项目接收轮的操作范围是该项目及其所属业务系统，普通厂长轮可操作当轮列出的业务系统。文件通过引用登记。正常结束后处理已提交请求，取消时停止接收新请求，然后清理本轮目录。
+- Harness 配置的 `session_timeout_s` 为单轮会话的超时秒数，适用于 Foreman 与 Operator 启动官方 CLI、建立 ACP 会话和读取回复。现有配置与新建时省略此值的配置默认 600 秒。接口接受 1 至 2147483 的整数，更新时省略该项保留已保存值。超时记录 `SESSION_TIMEOUT` 并取消本轮子进程，后续已排队的工作继续处理。配置页的连通性验证有独立超时。
 - 启动官方 Harness 时只继承运行所需的基础环境和显式声明的变量。宿主环境中的其他密钥不会被批量转发
 - `POST /api/web/harnesses/verify` 为配置创建一次连通性检查，返回 `202` 和 `requested` 状态。同一配置的并发请求复用当前检查。检查通过官方 CLI 或 ACP 开一个新会话，在临时工作目录请求固定的简短文本。项目数据、保险箱凭据和已有会话都不进入检查。启动带 `image` 的 Harness 前同样检查运行时就绪。
 - 连接就绪、会话启动及响应共用 45 秒时限。收到预期文本且会话正常结束后保存 `verified`，其他情况保存 `failed` 和固定说明。`harness.profile.verification.completed` 事件和配置读模型只提供验证状态、说明和时间。重新保存配置将取消原检查，旧结果不会覆盖新配置。

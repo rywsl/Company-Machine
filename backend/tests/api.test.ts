@@ -13,6 +13,32 @@ async function jsonResponse(response: Response) {
 }
 
 describe("Bun business backend", () => {
+  test("persists and reloads a validated Harness timeout from an older SQLite profile", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-harness-timeout-"));
+    const dbPath = join(root, "factory.db");
+    const old = new SqliteStore(dbPath, dbPath);
+    old.saveHarnessProfile({ runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+    old.db.exec("ALTER TABLE harness_profiles DROP COLUMN session_timeout_s");
+    old.close();
+    const app = createApp({ dbPath, legacyPath: dbPath, storageRoot: root, dispatchWork: false });
+    const configure = (fields: object) => app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ runtime: "claude-code", role: "foreman", model: "fixture", ...fields }),
+    }));
+    try {
+      expect(app.store.listHarnessProfiles()[0].sessionTimeoutSeconds).toBe(600);
+      for (const value of [0, 2_147_484, 1.5, "2", null]) {
+        expect((await configure({ session_timeout_s: value })).status).toBe(400);
+      }
+      const saved = await configure({ session_timeout_s: 45 });
+      expect((await jsonResponse(saved)).profile.session_timeout_s).toBe(45);
+      expect((await jsonResponse(await configure({ model: "other" }))).profile.session_timeout_s).toBe(45);
+      const reopened = new SqliteStore(dbPath, dbPath);
+      try { expect(reopened.listHarnessProfiles()[0]).toMatchObject({ sessionTimeoutSeconds: 45, model: "other" }); }
+      finally { reopened.close(); }
+    } finally { app.stop(); await rm(root, { recursive: true, force: true }); }
+  });
+
   test("uses the injected clock and UUID generator for business records and events", () => {
     const clock = new FakeClock(new Date("2026-01-02T03:04:05Z"));
     const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"];

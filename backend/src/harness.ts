@@ -4,10 +4,11 @@
  * provider authentication remain inside the official Harness.
  */
 
-import { resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { resolveKiriClient } from "../runtime/kiri";
 import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
 import { prepareHarnessEgress } from "./harness-sandbox";
+import { foremanMailboxTarget } from "./foreman-mailbox";
 import { SystemClock, type Clock } from "./legacy/foundation";
 
 export const harnessControlPlaneRoot = resolve(import.meta.dir, "../..");
@@ -35,6 +36,7 @@ export interface HarnessSessionRequest {
   containerImage?: string;
   network?: "none" | "egress";
   egressBaseUrl?: string;
+  foremanMailbox?: string;
 }
 
 export interface HarnessEvent {
@@ -64,7 +66,7 @@ export type OfficialProcess = {
   kill(): void | Promise<void>;
 };
 
-type SpawnOptions = { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string };
+type SpawnOptions = { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string };
 type HarnessRelay = Awaited<ReturnType<typeof prepareHarnessEgress>>;
 export type OfficialSpawn = (argv: string[], options: SpawnOptions) => OfficialProcess | Promise<OfficialProcess>;
 
@@ -218,7 +220,7 @@ export class OfficialCliTransport implements HarnessTransport {
   constructor(private readonly definition: HarnessDefinition, private readonly spawn: OfficialSpawn = defaultOfficialSpawn, private readonly clock: Clock = new SystemClock()) {}
 
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
-    const process = await this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network, egressBaseUrl: request.egressBaseUrl });
+    const process = await this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network, egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox });
     return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${this.clock.now().getTime()}`);
   }
 }
@@ -234,7 +236,7 @@ function validateImage(image?: string): void {
 }
 
 function processCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network">, relay?: HarnessRelay,
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox">, relay?: HarnessRelay,
 ): { command: string[]; env: Record<string, string> } {
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
   const env: Record<string, string> = {};
@@ -253,13 +255,25 @@ function processCommand(
   const kiri = image && hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
     ? resolveKiriClient()
     : undefined;
+  const mounts: string[] = [];
+  if (options.foremanMailbox !== undefined) {
+    const root = options.foremanMailbox;
+    if (!image || process.platform !== "linux" || !isAbsolute(root) || /[,\u0000]/.test(root)
+        || (kiri ? kiri.mode !== "linux-socket" : hostEnv.CONTAINER_HOST || hostEnv.CONTAINER_CONNECTION)) {
+      throw new Error("Foreman mailbox requires a local Linux container runtime");
+    }
+    mounts.push(
+      "--mount", "type=bind,source=" + join(root, "requests") + ",target=" + foremanMailboxTarget + "/requests",
+      "--mount", "type=bind,source=" + join(root, "responses") + ",target=" + foremanMailboxTarget + "/responses,readonly",
+    );
+  }
   const envFlags = envNames.flatMap((name) => ["--env", name]);
   const engine = kiri?.argv ?? [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE)];
   const command = image
     ? [
       ...engine, "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m",
       "--network", relay?.network ?? "none", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-      "--read-only", ...(relay ? ["--name", relay.name, "--pull=never"] : []), ...envFlags, relay?.image ?? image, ...argv,
+      "--read-only", ...(relay ? ["--name", relay.name, "--pull=never"] : []), ...mounts, ...envFlags, relay?.image ?? image, ...argv,
     ]
     : argv;
   if (kiri) Object.assign(env, kiri.env);

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as fsModule from "node:fs";
-import { constants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { copyFile, readdir } from "node:fs/promises";
 import { dirname, join, basename, resolve } from "node:path";
 import { FactoryError } from "./errors";
@@ -304,6 +304,7 @@ export interface CtlHandler {
 }
 interface CtlServerOptions {
   afterResponse?: (request: CtlRequest, response: CtlResponse) => void | Promise<void>;
+  responseMode?: number;
 }
 
 const REQUEST_NAME = /^(r-[0-9a-f]{8}(?:[0-9a-f]{24})?)\.json$/;
@@ -378,9 +379,10 @@ function validResponse(value: unknown, id: string, allowMissingId = false): valu
     : object(value.error) && typeof value.error.code === "string" && typeof value.error.message === "string";
 }
 
-async function writeMailboxJson(path: string, body: object): Promise<void> {
+async function writeMailboxJson(path: string, body: object, mode?: number): Promise<void> {
   await stagedWrite(path, (scratch) => {
     writeFileSync(scratch, JSON.stringify(body) + "\n", { encoding: "utf8", flag: "wx" });
+    if (mode !== undefined) chmodSync(scratch, mode);
   });
 }
 
@@ -421,7 +423,7 @@ export class CtlServer {
         try { body = readMailboxJson(join(requests.path, name)); }
         catch { body = undefined; }
         if (!object(body) || body.id !== id || typeof body.op !== "string" || !body.op || !object(body.args)) {
-          await writeMailboxJson(responsePath, mailboxError(id, "CTL_REQUEST_INVALID", "请求文件不合法"));
+          await writeMailboxJson(responsePath, mailboxError(id, "CTL_REQUEST_INVALID", "请求文件不合法"), this.options.responseMode);
           written += 1;
           continue;
         }
@@ -434,7 +436,7 @@ export class CtlServer {
         } catch {
           response = mailboxError(id, "CTL_HANDLER_ERROR", "宿主处理请求失败");
         }
-        await writeMailboxJson(responsePath, response);
+        await writeMailboxJson(responsePath, response, this.options.responseMode);
         written += 1;
         await this.options.afterResponse?.(request, response);
       }

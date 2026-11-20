@@ -165,6 +165,7 @@ export interface HarnessProfile {
   baseUrl: string;
   model: string;
   mode: string;
+  sessionTimeoutSeconds: number;
   image?: string;
   network?: string;
   secretRef?: string;

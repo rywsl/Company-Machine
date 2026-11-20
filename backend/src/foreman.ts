@@ -1,8 +1,10 @@
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import { projectSourceFacts } from "./project-sources";
+import { foremanMailboxContract, openForemanMailbox } from "./foreman-mailbox";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
-import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, resolveOfficialHarness, type HarnessSession, type OfficialSpawn } from "./harness";
+import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, resolveOfficialHarness, type OfficialSpawn } from "./harness";
+import { HarnessTurn } from "./harness-turn";
 
 export interface ForemanCoordinatorOptions {
   store: SqliteStore;
@@ -12,12 +14,13 @@ export interface ForemanCoordinatorOptions {
   acpSpawn?: AcpSpawn;
   ensureRuntime?: () => Promise<void>;
   factoryEnv?: Record<string, string>;
+  fetchBusiness?: (request: Request) => Promise<Response>;
 }
 
 /** Dispatches persisted user intent to an external official Harness process. */
 export class ForemanCoordinator {
   private readonly active = new Map<string, Promise<void>>();
-  private readonly sessions = new Map<string, HarnessSession>();
+  private readonly turns = new Map<string, HarnessTurn>();
   private readonly replies = new Map<string, string>();
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
@@ -40,12 +43,12 @@ export class ForemanCoordinator {
 
   stop(): void {
     this.closed = true;
-    for (const session of this.sessions.values()) void session.close().catch(() => {});
+    for (const turn of this.turns.values()) void turn.close();
   }
 
   async close(): Promise<void> {
     this.stop();
-    await Promise.allSettled([...this.sessions.values()].map((session) => session.close()));
+    await Promise.allSettled([...this.turns.values()].map((turn) => turn.close()));
     await Promise.allSettled(this.active.values());
   }
 
@@ -74,11 +77,13 @@ export class ForemanCoordinator {
     this.options.events.publish("foreman.message.claim", claimed);
     const sessionId = `${definition.id}:${claimed.messageId}`;
     this.options.events.publish("foreman.session.started", { inboxId: id, sessionId, harness: definition.id });
+    const turn = new HarnessTurn(profile.sessionTimeoutSeconds);
+    this.turns.set(id, turn);
     const useAcp = chooseTransport(definition, Boolean(definition.id === "kimi-code" || this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
     const transport = useAcp
-      ? new AcpTransport(definition, this.options.acpSpawn ?? defaultAcpSpawn)
-      : new OfficialCliTransport(definition, this.options.spawn, this.options.store.clock);
-    let session;
+      ? new AcpTransport(definition, turn.ownProcess(this.options.acpSpawn ?? defaultAcpSpawn))
+      : new OfficialCliTransport(definition, turn.ownCliProcess(this.options.spawn), this.options.store.clock);
+    let mailbox: ReturnType<typeof openForemanMailbox> | undefined;
     try {
       const persistent = !profile.image && (useAcp || definition.id === "codex" || definition.id === "claude-code");
       const resumeId = persistent ? this.options.store.foremanSession(profile.id) : undefined;
@@ -86,9 +91,18 @@ export class ForemanCoordinator {
       const message = this.options.store.talkMessageMetadata(claimed.messageId);
       const project = message.source === "project-intake" && typeof message.project_id === "string" ? this.options.store.getProject(message.project_id) : undefined;
       const sources = project ? projectSourceFacts(project, !profile.image) : undefined;
-      session = await transport.start({
-        task: `${claimed.text}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${this.options.store.listBusinessSystems().map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
-        contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。需要写入业务事实时，在 MAO 仓库根目录使用 `bun run backend/src/cli.ts business graph <business-system-id> --file <path>`、`business artifact <project-id> --file <path>`、`business conversion <business-system-id> --kind <kind> --summary <summary>` 或 `business run <business-system-id>`。先通过 `business units <business-system-id>` 找到工位，再使用 `business bind <business-system-id> <operator-id> --harness <官方 Harness ID> [--model <模型 ID>]` 修改绑定。文件内容通过引用传递，密钥通过项目资源请求流程处理。",
+      const systems = this.options.store.listBusinessSystems().filter((system) =>
+        !profile.image || message.source !== "project-intake" || system.id === project?.businessSystemId);
+      if (profile.image && this.options.fetchBusiness) {
+        mailbox = openForemanMailbox({
+          systems: new Set(systems.map(({ id }) => id)), projectId: project?.id,
+          projectSystem: (id) => this.options.store.getProject(id)?.businessSystemId,
+        }, this.options.fetchBusiness);
+      }
+      const session = await turn.start(transport, {
+        task: `${claimed.text}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${systems.map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
+        contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。"
+          + (mailbox ? foremanMailboxContract : "需要写入业务事实时，在 MAO 仓库根目录使用 `bun run backend/src/cli.ts business graph <business-system-id> --file <path>`、`business artifact <project-id> --file <path>`、`business conversion <business-system-id> --kind <kind> --summary <summary>` 或 `business run <business-system-id>`。先通过 `business units <business-system-id>` 找到工位，再使用 `business bind <business-system-id> <operator-id> --harness <官方 Harness ID> [--model <模型 ID>]` 修改绑定。文件内容通过引用传递，密钥通过项目资源请求流程处理。"),
         model: profile.model,
         env: { ...(!profile.image ? this.options.factoryEnv : undefined), ...harnessEndpointEnv(definition, profile.baseUrl) },
         cwd: this.cwd,
@@ -96,14 +110,14 @@ export class ForemanCoordinator {
         containerImage: profile.image,
         network: profile.network === "egress" ? "egress" : "none",
         egressBaseUrl: profile.baseUrl,
+        foremanMailbox: mailbox?.root,
       });
       if (this.closed) return;
       if (useAcp) officialId = session.id;
-      this.sessions.set(id, session);
       this.replies.set(id, "");
       let reply = "";
       let failed = false;
-      for await (const event of session.events()) {
+      for await (const event of turn.events(session)) {
         if (this.closed) return;
         if (event.sessionId && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(event.sessionId)) officialId = event.sessionId;
         const text = event.text?.replace(/\b(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, "$1=[REDACTED]");
@@ -121,6 +135,7 @@ export class ForemanCoordinator {
         this.options.store.failForemanMessage(id);
         return;
       }
+      if (mailbox) await turn.wait(mailbox.flush());
       if (persistent && officialId && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(officialId)) this.options.store.saveForemanSession(profile.id, officialId);
       if (reply.trim()) {
         const message = this.options.store.addTalkMessage({ role: "foreman", body: reply.trim(), metadata: { turn_id: session.id, inbox_id: id, harness: definition.id } });
@@ -134,8 +149,12 @@ export class ForemanCoordinator {
       this.options.events.publish("foreman.session.failed", { inboxId: id, sessionId, harness: definition.id, reason: error instanceof Error ? error.message : "official-harness-failed" });
     } finally {
       this.replies.delete(id);
-      this.sessions.delete(id);
-      await session?.close();
+      try {
+        await Promise.allSettled([mailbox?.stop(), turn.close()]);
+      } finally {
+        mailbox?.remove();
+        this.turns.delete(id);
+      }
     }
   }
 }

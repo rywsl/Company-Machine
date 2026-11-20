@@ -3,7 +3,8 @@ import type { SqliteStore } from "./db";
 import type { BusinessUnit, UnitRun } from "./models";
 import { projectSourceFacts } from "./project-sources";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
-import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, type HarnessEvent, type HarnessSession, type OfficialSpawn } from "./harness";
+import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, type HarnessEvent, type OfficialSpawn } from "./harness";
+import { HarnessTurn } from "./harness-turn";
 import { resolveOperatorBinding } from "./operator-binding";
 
 export interface OperatorCoordinatorOptions {
@@ -32,7 +33,7 @@ function redactCredentialValues(value: unknown, secrets: string[]): unknown {
 /** Runs a business-system operator through an external official Harness. */
 export class OperatorCoordinator {
   private readonly active = new Map<string, Promise<void>>();
-  private readonly sessions = new Map<string, HarnessSession>();
+  private readonly turns = new Map<string, HarnessTurn>();
   private closed = false;
   private readonly cwd: string;
 
@@ -57,12 +58,12 @@ export class OperatorCoordinator {
 
   stop(): void {
     this.closed = true;
-    for (const session of this.sessions.values()) void session.close().catch(() => {});
+    for (const turn of this.turns.values()) void turn.close();
   }
 
   async close(): Promise<void> {
     this.stop();
-    await Promise.allSettled([...this.sessions.values()].map((session) => session.close()));
+    await Promise.allSettled([...this.turns.values()].map((turn) => turn.close()));
     await Promise.allSettled(this.active.values());
   }
 
@@ -93,16 +94,17 @@ export class OperatorCoordinator {
     const claimed = this.options.store.claimUnitRun(runId, unit.id, sessionId);
     if (!claimed || claimed.status !== "running") return;
     this.options.events.publish("operator.run.claimed", { runId, unitRunId, unitId: unit.id, sessionId, harness: definition.id, model });
+    const turn = new HarnessTurn(profile.sessionTimeoutSeconds);
+    this.turns.set(unitRun.id, turn);
     const transport = useAcp
-      ? new AcpTransport(definition, this.options.acpSpawn ?? this.options.spawn ?? defaultAcpSpawn)
-      : new OfficialCliTransport(definition, this.options.spawn, this.options.store.clock);
-    let session: HarnessSession | undefined;
+      ? new AcpTransport(definition, turn.ownProcess(this.options.acpSpawn ?? this.options.spawn ?? defaultAcpSpawn))
+      : new OfficialCliTransport(definition, turn.ownCliProcess(this.options.spawn), this.options.store.clock);
     const outputIds = new Set(unitRun.outputs);
     const credentials: Record<string, string> = Object.create(null);
     const requested = new Set<string>();
     let recordedSessionId = sessionId;
     try {
-      if (profile.image) await this.options.ensureRuntime?.();
+      if (profile.image && this.options.ensureRuntime) await turn.wait(this.options.ensureRuntime());
       if (this.closed) return;
       for (const resource of this.options.store.unitSecretRequests(unitRun.id)) {
         if (resource.projectId !== unit.projectId || resource.status !== "available" || !projectCredentialName(resource.name)) continue;
@@ -110,7 +112,7 @@ export class OperatorCoordinator {
         if (!value) throw new Error("project-credential-vault-entry-missing");
         credentials[resource.name] = value;
       }
-      session = await transport.start({
+      const session = await turn.start(transport, {
         task: this.taskFor(unit, runId, unitRun, !profile.image),
         contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。缺少项目资源时输出 {\"type\":\"mao.secret_request\",\"name\":\"...\",\"purpose\":\"...\",\"scope\":\"...\"}，由项目资源请求流程向用户呈现。",
         model,
@@ -122,14 +124,13 @@ export class OperatorCoordinator {
         egressBaseUrl: profile.baseUrl,
       });
       if (this.closed) return;
-      this.sessions.set(unitRun.id, session);
       if (useAcp) {
         this.options.store.noteUnitSession(unitRun.id, session.id);
         recordedSessionId = session.id;
       }
       const secretValues = Object.values(credentials);
       let failed = false;
-      for await (const emitted of session.events()) {
+      for await (const emitted of turn.events(session)) {
         if (this.closed) return;
         const event = redactCredentialValues(emitted, secretValues) as HarnessEvent;
         if (event.sessionId && event.sessionId !== recordedSessionId) {
@@ -176,8 +177,8 @@ export class OperatorCoordinator {
       const completed = this.options.store.completeUnitRun(unitRun.id, "failed", [...outputIds], message);
       if (completed) this.options.events.publish("operator.run.failed", completed);
     } finally {
-      this.sessions.delete(unitRun.id);
-      await session?.close();
+      await turn.close();
+      this.turns.delete(unitRun.id);
     }
   }
 

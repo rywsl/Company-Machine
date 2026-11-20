@@ -1,5 +1,6 @@
 import type { HarnessDefinition, HarnessEvent, HarnessSession, HarnessSessionRequest, HarnessTransport } from "./harness";
 import { spawnOfficialProcess } from "./harness";
+import { waitForHarness } from "./harness-turn";
 
 export type AcpProcess = {
   stdout: ReadableStream<Uint8Array>;
@@ -12,7 +13,7 @@ export type AcpInput = {
   end?(): Promise<void> | void;
 };
 
-export type AcpSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string }) => AcpProcess | Promise<AcpProcess>;
+export type AcpSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string }) => AcpProcess | Promise<AcpProcess>;
 
 const PROMPT_ID = 3;
 const START_TIMEOUT_MS = 30_000;
@@ -279,18 +280,19 @@ class AcpSession implements HarnessSession {
 export class AcpTransport implements HarnessTransport {
   constructor(private readonly definition: HarnessDefinition, private readonly spawn: AcpSpawn, private readonly argvSuffix: string[] = []) {}
 
-  async start(request: HarnessSessionRequest): Promise<HarnessSession> {
+  async start(request: HarnessSessionRequest, signal?: AbortSignal): Promise<HarnessSession> {
     const nativeModel = !this.argvSuffix.length && this.definition.id === "kimi-code";
     const args = this.argvSuffix.length ? this.argvSuffix
       : nativeModel ? ["--model", request.model, "acp"] : [];
-    const process = await this.spawn([this.definition.executable, ...args], { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network, egressBaseUrl: request.egressBaseUrl });
+    const process = await this.spawn([this.definition.executable, ...args], { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network, egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox });
     const session = new AcpSession(process);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([
+      const startup = Promise.race([
         session.initialize(request, nativeModel),
         new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("ACP session startup timed out")), START_TIMEOUT_MS); }),
       ]);
+      await (signal ? waitForHarness(startup, signal) : startup);
       return session;
     } catch (error) {
       await session.close();
