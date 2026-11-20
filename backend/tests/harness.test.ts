@@ -70,6 +70,17 @@ test("uses exact Harness profile and deployment hosts while refusing a named net
   })).toThrow("verified isolated relay");
 });
 
+test("gives container Harness configuration a writable temporary home", () => {
+  const image = "registry.example/harness@sha256:" + "a".repeat(64);
+  const result = harnessProcessCommand(["claude"], {
+    containerImage: image, network: "none", env: { HOME: "/configured", XDG_CONFIG_HOME: "/configured" },
+  });
+  expect(result.command).toContain("HOME=/tmp");
+  expect(result.command).toContain("XDG_CONFIG_HOME=/tmp/.config");
+  expect(result.command).toContain("--read-only");
+  expect(result.env.HOME).not.toBe("/configured");
+});
+
 function frame(value: object): Uint8Array {
   return encoder.encode(JSON.stringify(value) + "\n");
 }

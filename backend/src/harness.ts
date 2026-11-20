@@ -11,7 +11,7 @@ import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
 import { prepareHarnessEgress } from "./harness-sandbox";
 import { foremanMailboxTarget } from "./foreman-mailbox";
 import { foremanSourceRoot, type ForemanSourceMount } from "./foreman-sources";
-import { SystemClock, type Clock } from "./legacy/foundation";
+import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 
 export const harnessControlPlaneRoot = resolve(import.meta.dir, "../..");
 
@@ -234,7 +234,8 @@ export class OfficialCliTransport implements HarnessTransport {
 export function harnessProcessCommand(
   argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network">,
 ): { command: string[]; env: Record<string, string> } {
-  return processCommand(argv, options);
+  const { command, env } = processCommand(argv, options);
+  return { command, env };
 }
 
 function validateImage(image?: string): void {
@@ -242,8 +243,9 @@ function validateImage(image?: string): void {
 }
 
 function processCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "foremanSources">, relay?: HarnessRelay,
-): { command: string[]; env: Record<string, string> } {
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "foremanSources">,
+  relay?: HarnessRelay, containerName?: string,
+) {
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
   const env: Record<string, string> = {};
   for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMP", "TEMP", "LANG", "LC_ALL"]) {
@@ -251,13 +253,15 @@ function processCommand(
     if (typeof value === "string") env[key] = value;
   }
   const configured = relay?.env(options.env) ?? options.env;
-  Object.assign(env, configured);
   const image = options.containerImage;
   validateImage(image);
   const network = options.network ?? "none";
   if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
   if (image && network === "egress" && !relay) throw new Error("Harness egress requires a verified isolated relay");
-  const envNames = Object.keys(configured).filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
+  const scratch = { HOME: "/tmp", XDG_CONFIG_HOME: "/tmp/.config", XDG_CACHE_HOME: "/tmp/.cache" };
+  const envNames = Object.keys(configured).filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !Object.hasOwn(scratch, name));
+  if (image) for (const name of envNames) env[name] = configured[name];
+  else Object.assign(env, configured);
   const kiri = image && hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
     ? resolveKiriClient()
     : undefined;
@@ -284,16 +288,18 @@ function processCommand(
     mounts.push("--mount", "type=bind,source=" + source + ",target=" + foremanSourceRoot + "/" + index + ",readonly");
   }
   const envFlags = envNames.flatMap((name) => ["--env", name]);
+  const scratchFlags = Object.entries(scratch).flatMap(([name, value]) => ["--env", `${name}=${value}`]);
   const engine = kiri?.argv ?? [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE)];
   const command = image
     ? [
       ...engine, "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m",
       "--network", relay?.network ?? "none", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-      "--read-only", ...(relay ? ["--name", relay.name, "--pull=never"] : []), ...mounts, ...envFlags, relay?.image ?? image, ...argv,
+      "--read-only", ...(containerName ? ["--name", containerName] : []), ...(relay ? ["--pull=never"] : []),
+      ...mounts, ...envFlags, ...scratchFlags, relay?.image ?? image, ...argv,
     ]
     : argv;
   if (kiri) Object.assign(env, kiri.env);
-  return { command, env };
+  return { command, env, engine, engineEnv: kiri?.env };
 }
 
 function defaultOfficialSpawn(argv: string[], options: SpawnOptions): Promise<OfficialProcess> {
@@ -309,16 +315,23 @@ export async function spawnOfficialProcess(
   const needsRelay = image !== undefined && options.network === "egress";
   validateImage(image);
   const relay = needsRelay ? await prepareEgress(image, options.egressBaseUrl) : undefined;
+  const containerName = relay?.name ?? (image ? `mao-harness-${randomUuid()}` : undefined);
   try {
-    const { command, env } = processCommand(argv, options, relay);
+    const { command, env, engine, engineEnv } = processCommand(argv, options, relay, containerName);
     const child = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "ignore" });
-    if (relay) void (child.exited as Promise<number>).finally(relay.close).catch(() => {});
+    let cleanup: Promise<void> | undefined;
+    const removeContainer = () => cleanup ??= (async () => {
+      if (relay) await relay.close();
+      else if (containerName) await runCommand([...engine, "rm", "-f", containerName], { timeoutMs: 15_000, env: engineEnv });
+    })().catch(() => { /* The engine can disappear during app shutdown. */ });
+    if (relay) void (child.exited as Promise<number>).finally(removeContainer).catch(() => {});
     const stdin = child.stdin && typeof child.stdin.write === "function" ? {
       write: async (data: Uint8Array) => { await child.stdin.write(data); await child.stdin.flush?.(); },
       end: async () => { await child.stdin.end?.(); },
     } : undefined;
     let stopping: Promise<void> | undefined;
     async function stop(): Promise<void> {
+      if (image && !relay && child.exitCode === 0) return; // The engine has already processed --rm.
       try {
         if (!image && process.platform === "win32" && child.exitCode === null && child.signalCode === null
             && Number.isSafeInteger(child.pid) && child.pid > 0) {
@@ -328,7 +341,7 @@ export async function spawnOfficialProcess(
           if (result?.exitCode === 0) return;
         }
         child.kill();
-      } finally { await relay?.close(); }
+      } finally { await removeContainer(); }
     }
     return {
       stdin, stdout: child.stdout as ReadableStream<Uint8Array>, exited: child.exited,

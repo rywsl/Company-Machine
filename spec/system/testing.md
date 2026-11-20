@@ -85,6 +85,15 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 
 设为 `podman` 可以复用同一套验收。夹具在 UID 10001 下执行，核对只读输入和已安装的 `factoryctl`，并经文件邮箱完成预检和自动审批。宿主收货后核对封存内容、Gate facts 和来料血缘。失败保留临时工厂目录和日志以供复查。
 
+在 Linux 宿主上通过实际容器引擎运行厂长验收。
+
+```bash
+MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --only operator
+MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
+```
+
+设置 `MAO_CONTAINER_RUNTIME=podman` 可复用这套验收。容器内的 Bun 夹具通过厂长邮箱登记仓库、查询 Operator 和 Machine 并保存 DAG。随后通过项目接收入口提交文件夹和私有 CAS 上传文件，验证两项来源的挂载只读、交付字节正确、该轮无法登记其他仓库，以及会话结束时邮箱和暂存文件已清理。夹具通过官方 CLI 的 JSONL 适配器返回回复，运行时无需模型凭证。
+
 ### 5.2 端到端
 
 活动 Bun 测试在 `backend/tests/legacy-runner.test.ts` 中用 `LocalProvider` 执行 `upper` 工位，检查已封存的输入、脚本执行和输出封存。业务 Harness 在容器启动前的就绪检查由 `backend/tests/business-runtime.test.ts` 覆盖。验证实际容器时，`MAO_CONTAINER_RUNTIME` 选择引擎，`imageIds` 提供已构建夹具的镜像 ID。用同一工位比较正文和 facts，Bean ID 可随规范化后的文件字节变化。
