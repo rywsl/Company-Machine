@@ -153,10 +153,12 @@ export interface ForemanEnvelope {
   id: string;
   messageId: string;
   text: string;
-  status: "queued" | "claimed" | "done" | "failed";
+  status: "queued" | "claimed" | "done" | "failed" | "cancelled";
   createdAt: string;
   claimedAt?: string;
 }
+
+export type ForemanTurnState = Pick<ForemanEnvelope, "id" | "messageId" | "status"> & { cancellable: boolean };
 
 export interface HarnessProfile {
   id: string;

@@ -1,4 +1,4 @@
-import type { Bootstrap, Graph, EventRecord, AssetRecord, HarnessRecord, HarnessProfile, OperatorBindingView, SecretRecord, StreamEvent, TalkMessage } from "./types";
+import type { Bootstrap, ForemanTurn, Graph, EventRecord, AssetRecord, HarnessRecord, HarnessProfile, OperatorBindingView, SecretRecord, StreamEvent, TalkMessage } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -60,11 +60,13 @@ export const ensureRuntime = () => api<{ dependency: { state: string; message?: 
   method: "POST",
   headers: { "Content-Type": "application/json" },
 });
-export const sendTalk = (text: string) => api<{ state: string; message: TalkMessage }>("/api/web/talk", {
+export const sendTalk = (text: string) => api<{ state: string; message: TalkMessage; foremanTurn: ForemanTurn }>("/api/web/talk", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ text }),
 });
+export const cancelForemanTurn = (id: string) =>
+  api<{ foremanTurn: ForemanTurn }>(`/api/v1/foreman/inbox/${encodeURIComponent(id)}/cancel`, { method: "POST" });
 
 export function submitProjectIntake(payload: {
   business_system_id?: string;

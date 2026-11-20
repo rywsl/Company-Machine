@@ -1,6 +1,7 @@
-import type { Database } from "bun:sqlite";
+import { constants, type Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { ManagedDatabase } from "./sqlite";
 import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 import { defaultSessionTimeoutSeconds, validSessionTimeout } from "./harness-turn";
@@ -82,7 +83,9 @@ export class SqliteStore {
     this.bridgeLegacy = dbPath === legacyPath && /factory\.db$/i.test(dbPath.replaceAll("\\", "/"));
     if (dbPath === legacyPath) return;
     try {
-      this.legacy = new ManagedDatabase(`file:${legacyPath}?mode=ro&immutable=1`, { readonly: true });
+      const uri = pathToFileURL(legacyPath);
+      uri.searchParams.set("immutable", "1");
+      this.legacy = new ManagedDatabase(uri.href, constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI);
     } catch {
       // A missing legacy database is normal for a new installation.
     }
@@ -184,6 +187,7 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS artifacts_ref_created ON artifacts(ref, created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS secret_requests_project ON secret_requests(project_id, created_at);
       CREATE INDEX IF NOT EXISTS foreman_outbox_status ON foreman_outbox(status, created_at, id);
+      CREATE INDEX IF NOT EXISTS foreman_outbox_message ON foreman_outbox(message_id);
       CREATE INDEX IF NOT EXISTS business_units_system ON business_units(business_system_id, kind, created_at, id);
       CREATE INDEX IF NOT EXISTS business_runs_system ON business_runs(business_system_id, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_run ON unit_runs(run_id, status, created_at, id);
@@ -735,8 +739,11 @@ export class SqliteStore {
     if (row) return { size: row.size, path: typeof row.path === "string" ? row.path : undefined };
   }
 
-  listAllArtifacts(): Artifact[] {
-    return this.db.query("SELECT * FROM artifacts ORDER BY created_at, id").all().map((row: any) => this.artifactFromRow(row));
+  listAllArtifacts(limit?: number): Artifact[] {
+    const rows = limit === undefined
+      ? this.db.query("SELECT * FROM artifacts ORDER BY created_at, id").all()
+      : this.db.query("SELECT * FROM artifacts ORDER BY created_at DESC, id DESC LIMIT ?").all(limit).reverse();
+    return rows.map((row) => this.artifactFromRow(row));
   }
 
   listBusinessSystemArtifacts(businessSystemId: string): Artifact[] {
@@ -962,6 +969,14 @@ export class SqliteStore {
     return row && { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined } || undefined;
   }
 
+  listForemanTurns(messageIds: readonly string[]): Array<Pick<ForemanEnvelope, "id" | "messageId" | "status">> {
+    if (!messageIds.length) return [];
+    return this.db.query<Pick<ForemanEnvelope, "id" | "messageId" | "status">>(`
+      SELECT id, message_id AS messageId, status FROM foreman_outbox
+      WHERE message_id IN (SELECT value FROM json_each(?)) ORDER BY rowid
+    `).all(json(messageIds));
+  }
+
   claimForemanMessage(id: string): ForemanEnvelope | undefined {
     const claimedAt = this.timestamp();
     const row = this.db.query("UPDATE foreman_outbox SET status='claimed', claimed_at=? WHERE id=? AND status='queued' RETURNING *").get(claimedAt, id) as any;
@@ -996,6 +1011,20 @@ export class SqliteStore {
     }).immediate();
   }
 
+  cancelForemanTurn(id: string, expected: "queued" | "claimed", resume?: { profileId: string; sessionId: string }) {
+    return this.db.transaction(() => {
+      const row = this.db.query<Pick<ForemanEnvelope, "id" | "messageId" | "status">>(`
+        UPDATE foreman_outbox SET status='cancelled'
+        WHERE id=? AND status=? RETURNING id, message_id AS messageId, status
+      `).get(id, expected);
+      if (!row) return undefined;
+      if (resume) this.db.query("DELETE FROM foreman_sessions WHERE profile_id=? AND session_id=?").run(resume.profileId, resume.sessionId);
+      const foremanTurn = { ...row, cancellable: false };
+      const event = this.appendEvent("foreman.message.cancelled", foremanTurn);
+      return { foremanTurn, event };
+    }).immediate();
+  }
+
   completeForemanMessage(id: string): ForemanEnvelope | undefined {
     this.db.query("UPDATE foreman_outbox SET status='done' WHERE id=? AND status IN ('queued','claimed')").run(id);
     const row = this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id) as any;
@@ -1003,8 +1032,14 @@ export class SqliteStore {
     return { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined };
   }
 
-  failForemanMessage(id: string): void {
-    this.db.query("UPDATE foreman_outbox SET status='failed' WHERE id=? AND status='claimed'").run(id);
+  failForemanMessage(id: string, failure?: { sessionId: string; harness: string; reason: string }): Event | undefined {
+    return this.db.transaction(() => {
+      const row = this.db.query<{ message_id: string }>("UPDATE foreman_outbox SET status='failed' WHERE id=? AND status='claimed' RETURNING message_id").get(id);
+      if (!row || !failure) return undefined;
+      return this.appendEvent("foreman.session.failed", {
+        ...failure, inboxId: id, id, messageId: row.message_id, status: "failed", cancellable: false,
+      });
+    }).immediate();
   }
 
   listSecretRequests(): Array<SecretRequest & { projectName?: string }> {
@@ -1069,10 +1104,17 @@ export class SqliteStore {
     }));
   }
 
-  legacyArtifacts(): Artifact[] {
+  legacyArtifacts(limit?: number): Artifact[] {
+    if (limit === 0 || !this.hasLegacyTable("asset_records")) return [];
     const source = this.legacy ?? this.db;
-    if (!this.hasLegacyTable("asset_records")) return [];
-    return source.query("SELECT id,document,created_at,by_actor FROM asset_records ORDER BY created_at").all().map((row: any) => ({
+    const rows = limit === undefined
+      ? source.query("SELECT id,document,created_at,by_actor FROM asset_records ORDER BY created_at").all()
+      : source.query(`
+        SELECT id, document, created_at, by_actor FROM asset_records
+        WHERE rowid IN (SELECT rowid FROM asset_records ORDER BY created_at DESC, rowid DESC LIMIT ?)
+        ORDER BY created_at, rowid
+      `).all(limit);
+    return rows.map((row: any) => ({
       id: row.id, projectId: "legacy", kind: "asset", ref: row.id, metadata: { document: parseJson(row.document), byActor: row.by_actor }, createdAt: row.created_at,
     }));
   }

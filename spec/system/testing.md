@@ -122,7 +122,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 
 | 文件 | 验证 |
 |---|---|
-| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱的原子发布与异常保护、资源恢复事务、对话入队与事件事务、SSE 分页回放与跨进程写入 |
+| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱与资源恢复、资产限量与归档排序、对话入队及取消、SSE 分页回放与跨进程写入 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、Operator 来源只读交接、暂存物料的成功登记和下游挂载、文件下载授权、超时清理和启动前的运行时就绪 |
@@ -131,7 +131,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
 | `backend/tests/business-package.test.ts` | 业务包 CLI 跨目录移交、字节闭包校验、回滚和已知密钥拒绝 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
-| `backend/tests/foreman.test.ts` | 厂长队列、官方 Harness 回复与完成事务、容器邮箱的业务持久化、向轮内可见的厂区登记仓库、单个项目密钥请求、登记来源只读交接和暂存文件清理 |
+| `backend/tests/foreman.test.ts` | 厂长队列、运行中取消、官方 Harness 回复与完成事务、容器邮箱的业务持久化、厂区登记、单个项目密钥请求、项目来源交接和暂存文件清理 |
 | `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列及密钥全部就绪的已授权工位，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/harness.test.ts` | 官方 CLI、Windows 原生 Claude Code 路径、ACP 会话和事件流 |

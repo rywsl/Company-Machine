@@ -76,6 +76,12 @@ def answer(ctx: Any, message_id: str, *, by: str, confirm: bool) -> TalkMessage
 
 Bun Web App 通过同源 API 使用这条线程。人的消息经 `/api/v1/talk` 写入，外部 Foreman 从 `/api/v1/foreman/inbox` claim 消息并经 `/api/v1/talk/reply` 写入回复。使用现有 `.factory/factory.db` 时，Bun 同时把人的 talk 投影到兼容的 `talk_messages` 和 `agent_messages`，让现有 Foreman 继续接收同一意图。两类写入都会产生事件，页面通过 `/api/v1/events` 的 SSE 流增量刷新，不需要控制面调用模型。
 
+发送消息的 Web 和 v1 接口返回 `foremanTurn`，包含轮次 ID、用户消息 ID、状态及当前进程是否可以取消该轮。`/api/web/bootstrap` 的 `foremanTurns` 对应最近对话中的轮次，可用于页面重新打开后的状态恢复。
+
+`POST /api/v1/foreman/inbox/<id>/cancel` 可取消排队中的轮次，或由当前控制面进程运行的轮次。取消状态和 `foreman.message.cancelled` 事件在同一事务提交。取消运行中的轮次会同时停止接收邮箱请求、清除临时回复并请求中断其官方 Harness。已提交的业务操作继续有效。取消成功返回 `200` 和该轮状态，重复请求返回同一状态。轮次已完成、已失败或由其他进程领取时返回 `409` 和实际状态，轮次不存在时返回 `404`。
+
+取消曾复用官方会话的本机轮次后，下次轮次从新会话开始，并使用最近已完成的对话作为上下文。页面的取消状态表示控制面已停止接收该轮的回复及新邮箱请求，官方进程由现有的终止流程清理。
+
 Web、`/api/v1/talk` 和 `factory talk send` 在同一个 SQLite 事务中提交人的消息、兼容投影、厂长收件队列与对应事件。由 MAO 启动的官方 Harness 成功结束并处理完本轮邮箱后，在同一个事务中保存回复、可恢复的官方会话 ID、队列完成状态和对应事件。控制面在事务提交后通知 SSE 订阅者。服务重启只继续派发 `queued` 消息，结果未知的 `claimed` 消息保留原状态，供外部执行方核对。
 
 ### 3.2 不是页面操作的两个函数

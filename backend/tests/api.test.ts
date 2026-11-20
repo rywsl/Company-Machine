@@ -121,6 +121,47 @@ describe("Bun business backend", () => {
     } finally { app.stop(); }
   });
 
+  test("limits asset summaries before projection and preserves active and archived order", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-recent-assets-"));
+    const legacyPath = join(root, "archived assets.db");
+    const archive = new SqliteStore(legacyPath, legacyPath);
+    try {
+      archive.db.exec(`
+        CREATE TABLE asset_records (id TEXT PRIMARY KEY, document TEXT NOT NULL, by_actor TEXT NOT NULL, created_at TEXT NOT NULL);
+        INSERT INTO asset_records (id,document,by_actor,created_at) VALUES
+          ('legacy-z','{"title":"Earlier archive"}','fixture','2026-01-02'),
+          ('legacy-a','{"title":"Later archive"}','fixture','2026-01-02');
+      `);
+    } finally { archive.close(); }
+    const app = createApp({
+      dbPath: join(root, "business.db"), legacyPath, storageRoot: root, dispatchWork: false,
+      clock: new FakeClock(new Date("2026-01-01T00:00:00Z")),
+      runtime: { health: async () => ({ available: false, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
+    });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Assets" });
+      const project = app.store.createIntake({ name: "Project", business_system_id: system.id });
+      const digest = "sha256:" + "a".repeat(64);
+      const file = { digest, ref: "cas://" + digest, path: "output/report.md" };
+      const record = { projectId: project.id, kind: "report", ref: "mao://report", metadata: {}, files: [file] };
+      app.store.addArtifact(record, "active-z");
+      app.store.addArtifact(record, "active-a");
+      app.store.registerArtifactFiles("active-z", [{ position: 0, digest, size: 42 }]);
+      const request = (path: string) => app.fetch(new Request("http://localhost" + path));
+      const full = (await (await request("/api/web/bootstrap")).json() as { assets: Array<{ id: string; files: Array<{ download?: string }> }> }).assets;
+      expect(full.map(({ id }) => id)).toEqual(["legacy-z", "legacy-a", "active-a", "active-z"]);
+      expect(full.at(-1)?.files[0].download).toBe(`/api/v1/projects/${project.id}/artifacts/active-z/files/${digest}`);
+      expect(full.at(-2)?.files[0].download).toBeUndefined();
+      for (const limit of [1, 2, 3, 5, 2.9, 0]) {
+        const response = await request("/api/web/assets?limit=" + limit);
+        expect(await response.json()).toEqual(full.slice(-Math.max(1, limit)));
+      }
+    } finally {
+      app.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("stores uploaded project bytes under a digest and fetches them through their project", async () => {
     const storageRoot = mkdtempSync(join(tmpdir(), "mao-project-upload-"));
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", storageRoot });

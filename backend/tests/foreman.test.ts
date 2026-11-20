@@ -17,6 +17,10 @@ function fakeProcess(lines: string[]): OfficialProcess {
 
 type MailboxReply = { id: string; ok: boolean; result: unknown; error: { code: string } | null };
 
+async function cancelTurn(app: ReturnType<typeof createApp>, id: string): Promise<Response> {
+  return app.fetch(new Request(`http://localhost/api/v1/foreman/inbox/${id}/cancel`, { method: "POST" }));
+}
+
 async function askMailbox(root: string, index: number, op: string, args: Record<string, unknown>): Promise<MailboxReply> {
   const id = "r-" + index.toString(16).padStart(32, "0");
   const request = join(root, "requests", id + ".json");
@@ -383,6 +387,130 @@ test("gives the intake Foreman only registered upload bytes and the expressly se
 });
 
 describe("Foreman official Harness dispatch", () => {
+  test("cancels an unclaimed turn during runtime readiness and preserves the state on reload", async () => {
+    let finishReadiness!: () => void;
+    let reportCheck!: () => void;
+    const checked = new Promise<void>((resolve) => { reportCheck = resolve; });
+    const waiting = new Promise<void>((resolve) => { finishReadiness = resolve; });
+    const healthy = { available: true as const, platform: "linux" as const, executable: "fixture", machine: null, rootless: null };
+    let launches = 0;
+    const app = createApp({
+      dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
+      runtime: { health: async () => healthy, ensureReady: async () => { reportCheck(); await waiting; return healthy; } },
+      foreman: { spawn: () => { launches++; return fakeProcess([]); } },
+    });
+    try {
+      app.store.saveHarnessProfile({ runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session",
+        image: "registry.example/foreman@sha256:" + "a".repeat(64) });
+      const posted = await app.fetch(new Request("http://localhost/api/web/talk", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "wait during runtime startup" }),
+      }));
+      expect(posted.status).toBe(201);
+      const { message, foremanTurn } = await posted.json();
+      expect(foremanTurn).toMatchObject({ messageId: message.id, status: "queued", cancellable: true });
+      const work = app.foreman.dispatch(foremanTurn.id);
+      await checked;
+      const response = await cancelTurn(app, foremanTurn.id);
+      expect(response.status).toBe(200);
+      const { foremanTurn: cancelled } = await response.json();
+      expect(cancelled).toEqual({ ...foremanTurn, status: "cancelled", cancellable: false });
+      const retried = await cancelTurn(app, foremanTurn.id);
+      expect(retried.status).toBe(200);
+      expect(await retried.json()).toEqual({ foremanTurn: cancelled });
+      finishReadiness();
+      await work;
+      expect(launches).toBe(0);
+      const bootstrap = await (await app.fetch(new Request("http://localhost/api/web/bootstrap"))).json();
+      expect(bootstrap.foremanTurns).toContainEqual(cancelled);
+      expect(bootstrap.talk).toContainEqual(message);
+      expect(app.events.after().filter(({ type }) => type === "foreman.message.cancelled").map(({ data }) => data)).toEqual([cancelled]);
+      const done = await app.fetch(new Request(`http://localhost/api/v1/foreman/inbox/${foremanTurn.id}/done`, { method: "POST" }));
+      expect(done.status).toBe(409);
+      expect(app.events.after().some(({ type }) => type === "foreman.message.done")).toBe(false);
+    } finally { finishReadiness(); await app.foreman.close(); app.stop(); }
+  });
+
+  test("interrupts a locally owned streaming turn while preserving earlier committed replies", async () => {
+    const calls: string[][] = [];
+    let killed = 0;
+    let reportStreaming!: (id: string) => void;
+    const streaming = new Promise<string>((resolve) => { reportStreaming = resolve; });
+    const app = createApp({
+      dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
+      foreman: { spawn: (argv) => {
+        calls.push(argv);
+        if (calls.length === 2) return {
+          stdout: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(
+            JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "未完成的回复" } }) + "\n",
+          )); } }),
+          kill: () => { killed++; },
+        };
+        return fakeProcess([
+          JSON.stringify({ type: "thread.started", thread_id: calls.length === 1 ? "first-session" : "new-session" }),
+          JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: calls.length === 1 ? "保留第一条" : "后续完成" } }),
+          JSON.stringify({ type: "turn.completed" }),
+        ]);
+      } },
+    });
+    const post = async (text: string) => (await (await app.fetch(new Request("http://localhost/api/v1/talk", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }),
+    }))).json()).foremanTurn;
+    const stopListening = app.events.subscribe(({ type, data }) => {
+      if (type === "foreman.reply.delta" && (data as { text: string }).text === "未完成的回复") reportStreaming((data as { inboxId: string }).inboxId);
+    });
+    try {
+      const profile = app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      const first = await post("第一条已完成");
+      await app.foreman.dispatch(first.id);
+      const noCancel = await cancelTurn(app, first.id);
+      expect(noCancel.status).toBe(409);
+      expect(await noCancel.json()).toMatchObject({ foremanTurn: { id: first.id, status: "done", cancellable: false } });
+      expect(app.store.foremanSession(profile.id)).toBe("first-session");
+
+      const cancelled = await post("取消这一条");
+      const work = app.foreman.dispatch(cancelled.id);
+      expect(await streaming).toBe(cancelled.id);
+      expect(app.foreman.pendingReplies()[cancelled.id]).toEqual("未完成的回复");
+      const response = await cancelTurn(app, cancelled.id);
+      expect(response.status).toBe(200);
+      expect(app.foreman.pendingReplies()[cancelled.id]).toBeUndefined();
+      await work;
+      expect(killed).toBe(1);
+      expect(app.store.foremanSession(profile.id)).toBeUndefined();
+      expect(app.store.getForemanMessage(cancelled.id)?.status).toBe("cancelled");
+      expect(app.events.after().some(({ type, data }) => type === "foreman.session.failed" && (data as { inboxId: string }).inboxId === cancelled.id)).toBe(false);
+      expect(app.store.listTalkMessages().filter(({ role }) => role === "foreman").map(({ body }) => body)).toEqual(["保留第一条"]);
+
+      const next = await post("继续下一条");
+      await app.foreman.dispatch(next.id);
+      expect(calls[1]).toContain("first-session");
+      expect(calls[2]).not.toContain("resume");
+      expect(calls[2].at(-1)).toContain("保留第一条");
+      expect(calls[2].at(-1)).not.toContain("取消这一条");
+      expect(app.store.foremanSession(profile.id)).toBe("new-session");
+      expect(app.store.getForemanMessage(next.id)?.status).toBe("done");
+    } finally { stopListening(); await app.foreman.close(); app.stop(); }
+  });
+
+  test("reports a conflict for another process's claim and leaves its turn available to finish", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-foreman-owner-"));
+    const path = join(root, "business.db");
+    const app = createApp({ dbPath: path, legacyPath: path, storageRoot: root, dispatchWork: false });
+    const other = createApp({ dbPath: path, legacyPath: path, storageRoot: root, dispatchWork: false });
+    try {
+      const envelope = app.store.queueForemanMessage("cross-process", "别的进程处理");
+      expect(other.store.claimForemanMessage(envelope.id)?.status).toBe("claimed");
+      const response = await cancelTurn(app, envelope.id);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ foremanTurn: { id: envelope.id, status: "claimed", cancellable: false } });
+      expect(await cancelTurn(app, "unknown").then(({ status }) => status)).toBe(404);
+      expect(other.store.getForemanMessage(envelope.id)?.status).toBe("claimed");
+      expect(other.store.finishForemanTurn(envelope.id, { reply: { body: "仍然可完成", metadata: {} } })).toHaveLength(2);
+      expect(app.store.getForemanMessage(envelope.id)?.status).toBe("done");
+      expect(app.events.after().some(({ type }) => type === "foreman.message.cancelled")).toBe(false);
+    } finally { other.stop(); app.stop(); await rm(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 75 }); }
+  });
+
   test("provides causal and bounded general chat history only to image-backed turns", async () => {
     const prompts: string[] = [];
     let nextId = 1_000;

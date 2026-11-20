@@ -238,7 +238,7 @@ M18 的正式用户入口由 `factory web` 启动。服务只绑定 `127.0.0.1`�
 - `GET /api/web/bootstrap` 返回版本、运行连接状态、工厂图、厂区图、看板摘要、资产摘要、日志摘要、Harness 能力和当前宪法版本
 - `GET /api/web/graph?scope=factory` 返回工厂层聚合图
 - `GET /api/web/graph?scope=workarea&workarea=<line-key>` 返回指定厂区内部图
-- `GET /api/web/assets?limit=<n>` 返回脱敏后的资产摘要和来源引用
+- `GET /api/web/assets?limit=<n>` 返回脱敏后的资产摘要和来源引用，默认读取最近 100 条。SQLite 先按时间和标识倒序选择所需的业务资产，再用历史资产补足额度。响应沿用历史资产在前的展示顺序，附件授权只查询入选的资产。
 - `GET /api/web/logs?limit=<n>&since=<cursor>` 返回事件、运行、验证、修复、资源请求和异常摘要
 - `GET /api/web/talk` 返回最近的 Foreman 对话，默认 80 条，`limit` 接受 1 到 1000。查询先取活动消息，条数不足时从归档对话补齐。页面引导响应使用相同查询。
 - `POST /api/web/talk` 接受 `{ "text": "..." }`，使用本地用户身份调用现有 `talk.post_human`，把消息投递给常驻 Foreman。控制面不在此请求中调用模型 API
@@ -278,7 +278,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 
 ### 11.5 Bun 业务控制面
 
-生产 Web API 使用 Bun 与 TypeScript。默认数据库为 `.factory/factory.db`，新增业务表与旧 SQLite 数据共存，旧事件、资产和 talk 数据通过只读兼容投影进入 Web App。
+生产 Web API 使用 Bun 与 TypeScript。默认数据库为 `.factory/factory.db`，新增业务表与旧 SQLite 数据共存，旧事件、资产和 talk 数据通过只读兼容投影进入 Web App。使用独立历史库时，控制面以只读 SQLite URI 打开已归档的数据库文件，支持包含空格的本机路径。
 
 - `GET /api/v1/business-systems` 与 `POST /api/v1/business-systems` 管理业务系统聚合
 - `GET /api/v1/projects` 与 `POST /api/v1/projects/intake` 接收仓库链接、项目文件引用或本地文件夹来源。Intake 成功后自动写入一条 Foreman 输入队列，厂长可继续识别项目、创建基础单元和搭建 DAG，即使当前还没有配置 Harness 也不能丢失这条意图

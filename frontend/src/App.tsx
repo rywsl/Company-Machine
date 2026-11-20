@@ -16,10 +16,10 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from "@xyflow/react";
-import { configureHarness, ensureRuntime, getAssets, getBootstrap, getGraph, getLogs, getTalk, putProjectSecret, sendTalk, submitProjectIntake, subscribeToEvents, verifyHarness } from "./api";
+import { ApiError, cancelForemanTurn, configureHarness, ensureRuntime, getAssets, getBootstrap, getGraph, getLogs, getTalk, putProjectSecret, sendTalk, submitProjectIntake, subscribeToEvents, verifyHarness } from "./api";
 import { OperatorBindingForm } from "./OperatorBindingForm";
 import { WorkareaConversions } from "./WorkareaConversions";
-import type { AssetRecord, Bootstrap, DependencyStatus, EventRecord, Graph, GraphNode, HarnessProfile, LayoutGraph, LayoutState, OperatorBindingView, Page, Scope, SecretRecord, TalkMessage } from "./types";
+import type { AssetRecord, Bootstrap, DependencyStatus, EventRecord, ForemanTurn, Graph, GraphNode, HarnessProfile, LayoutGraph, LayoutState, OperatorBindingView, Page, Scope, SecretRecord, TalkMessage } from "./types";
 
 type FlowNodeData = { source: GraphNode };
 type FlowNode = Node<FlowNodeData>;
@@ -227,22 +227,45 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
   return <aside className="detail-panel harness-config-panel"><button className="icon-button" onClick={onClose} aria-label="关闭 Harness 配置">×</button><span className="eyebrow">HARNESS CONFIGURATION</span><h2>{role === "foreman" ? "配置厂长 Harness" : "配置 Operator Harness"}</h2><p className="config-intro">项目只申请实际需要的密钥。密钥值通过项目资源请求写入保险箱，Foreman 负责后续启动和连通性验证。</p>{profiles.length > 0 && <label className="config-field"><span>已保存配置</span><select value={selectedProfile} onChange={(event) => loadProfile(event.target.value)}><option value="">新建配置</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.runtime} · {item.model}</option>)}</select></label>}<form onSubmit={save}><label className="config-field"><span>Harness Runtime</span><select value={form.runtime} onChange={(event) => update("runtime", event.target.value)} required><option value="">选择 agent-cli runtime</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.name}{item.version ? ` · ${item.version}` : ""}</option>)}</select></label><label className="config-field"><span>Base URL</span><input value={form.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="使用官方 Harness 默认地址" /></label><label className="config-field"><span>Model</span><input value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="claude-sonnet-5-5" required /></label><div className="context-note">密钥由项目主动请求。保存 Harness 配置后，缺失资源会在资源请求卡片中出现。</div><div className="config-grid"><label className="config-field"><span>Thinking effort</span><select value={form.thinking_effort} onChange={(event) => update("thinking_effort", event.target.value)}>{["minimal", "low", "medium", "high", "max"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="config-field"><span>Context</span><input type="number" min="1" value={form.context} onChange={(event) => update("context", event.target.value)} /></label></div><label className="config-field"><span>Harness image</span><input value={form.image} onChange={(event) => update("image", event.target.value)} placeholder="留空使用本机官方 Harness" /></label><div className="config-grid"><label className="config-field"><span>Network</span><select value={form.network} onChange={(event) => update("network", event.target.value)}><option value="egress">egress</option><option value="none">none</option></select></label><label className="config-field"><span>Mode</span><select value={form.mode} onChange={(event) => update("mode", event.target.value)}><option value="session">session</option><option value="resident">resident</option></select></label></div><div className="config-grid"><label className="config-field"><span>Max turns</span><input type="number" min="1" value={form.max_turns} onChange={(event) => update("max_turns", event.target.value)} /></label><label className="config-field"><span>Timeout seconds</span><input type="number" min="1" value={form.session_timeout_s} onChange={(event) => update("session_timeout_s", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Session budget</span><input type="number" min="0" step="0.01" value={form.session_budget_usd} onChange={(event) => update("session_budget_usd", event.target.value)} /></label><label className="config-field"><span>Daily budget</span><input type="number" min="0" step="0.01" value={form.daily_budget_usd} onChange={(event) => update("daily_budget_usd", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Max attempts</span><input type="number" min="1" value={form.max_attempts} onChange={(event) => update("max_attempts", event.target.value)} /></label><label className="config-field"><span>Backoff seconds</span><input type="number" min="0" value={form.backoff_s} onChange={(event) => update("backoff_s", event.target.value)} /></label></div><div className="config-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存配置"}</button><button className="secondary-button" type="button" onClick={() => void verify()} disabled={checking || !savedProfile}>{checking ? "请求中…" : "验证连通性"}</button></div></form>{message && <div className="context-note">{message}</div>}{verification && <div className="context-line"><span>验证状态</span><strong>{display(verification.reason ?? verification.state, "待验证")}</strong></div>}</aside>;
 }
 
-function ForemanPanel({ open, bootstrap, talk, onConfigureForeman, onOpenSecret, onClose, onSend }: {
+const foremanTurnStatus = {
+  queued: { rank: 0, label: "排队中" },
+  claimed: { rank: 1, label: "处理中" },
+  done: { rank: 2, label: "已完成" },
+  failed: { rank: 2, label: "会话失败" },
+  cancelled: { rank: 2, label: "已取消" },
+} satisfies Record<ForemanTurn["status"], { rank: number; label: string }>;
+
+function readForemanTurn(input: unknown): ForemanTurn | undefined {
+  if (!input || typeof input !== "object") return;
+  const { id, messageId, status, cancellable } = input as Record<string, unknown>;
+  if (typeof id !== "string" || typeof messageId !== "string" || typeof status !== "string" || !Object.hasOwn(foremanTurnStatus, status)) return;
+  return { id, messageId, status: status as ForemanTurn["status"], cancellable: cancellable === true || (cancellable === undefined && status === "queued") };
+}
+
+function ForemanPanel({ open, bootstrap, talk, turns, onConfigureForeman, onOpenSecret, onClose, onSend, onCancel }: {
   open: boolean;
   bootstrap: Bootstrap;
   talk: TalkMessage[];
+  turns: Record<string, ForemanTurn>;
   onConfigureForeman: () => void;
   onOpenSecret: (request: SecretRecord) => void;
   onClose: () => void;
   onSend: (text: string) => Promise<void>;
+  onCancel: (id: string) => Promise<void>;
 }): ReactElement | null {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [cancelling, setCancelling] = useState<string>();
   if (!open) return null;
   const foreman = bootstrap.foreman;
   const profile = foreman.profile;
   const pending = bootstrap.secrets.filter((item) => item.request?.id && !item.configured);
   const firstRequest = pending[0];
+  const cancel = async (id: string) => {
+    setCancelling(id);
+    try { await onCancel(id); }
+    finally { setCancelling(undefined); }
+  };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!text.trim() || sending) return;
@@ -278,10 +301,15 @@ function ForemanPanel({ open, bootstrap, talk, onConfigureForeman, onOpenSecret,
     <div className="talk-list">
       {talk.length ? talk.map((item, index) => {
         const human = item.role === "human" || item.role === "user";
+        const turn = human && item.id ? turns[item.id] : undefined;
         return <div className={`talk-message ${human ? "human" : "agent"}`} key={item.id ?? `${item.at}-${index}`}>
           <span className="talk-role">{human ? "你" : "Foreman"}</span>
           <p>{display(item.body)}</p>
-          <small>{display(item.state, "observed")}</small>
+          <small>{turn ? foremanTurnStatus[turn.status].label : display(item.state, "已接收")}</small>
+          {turn?.cancellable && foremanTurnStatus[turn.status].rank < 2 && <button type="button" className="text-button"
+            disabled={Boolean(cancelling)} onClick={() => void cancel(turn.id)}>
+            {cancelling === turn.id ? "取消中…" : "取消本轮"}
+          </button>}
         </div>;
       }) : <div className="talk-empty"><span className="signal good" /><p>描述目标，Foreman 会创建厂区、管理员工并继续运行。</p></div>}
     </div>
@@ -304,8 +332,8 @@ function NodeDetail({ node, bootstrap, onConfigureOperator, onBindingSaved, onCl
   return <aside className="detail-panel"><button className="icon-button" onClick={onClose} aria-label="关闭节点详情">×</button><span className="eyebrow">{operator ? "OPERATOR" : machine ? "MACHINE" : "WORKAREA"}</span><h2>{node.label}</h2><div className="detail-status"><span className={`status-dot ${statusTone(node.status)}`} /><strong>{statusLabel(node.status)}</strong><small>{display(metadata.recent_status, "最近状态待观测")}</small></div><div className="context-line"><span>输入</span><strong>{display(metadata.inputs, "由 Operator 管理")}</strong></div><div className="context-line"><span>输出</span><strong>{display(metadata.outputs, "由项目配置决定")}</strong></div>{(operator || machine) && <><div className="context-line"><span>项目摘要</span><strong>{display(metadata.project_summary ?? metadata.project, "由项目配置决定")}</strong></div><div className="context-line"><span>内部步骤</span><strong>{display(metadata.step_count, "0")}</strong></div></>}{operator && <>{node.operatorBinding ? <OperatorBindingForm key={node.id} unitId={node.id} binding={node.operatorBinding} harnesses={bootstrap.harnesses} profiles={bootstrap.harness_profiles ?? []} onConfigure={onConfigureOperator} onSaved={onBindingSaved} /> : <div className="detail-section"><span className="eyebrow">HARNESS CLI</span><div className="config-summary"><strong>{profile ? `${profile.runtime} · ${profile.model}` : "未配置"}</strong><small>{profile?.api_key_configured ? "API key 已配置" : "API key 待配置"} · {display(profile?.verification?.state, "未验证")}</small></div><button className="secondary-button" onClick={() => onConfigureOperator(harness || undefined)}>打开完整配置</button></div>}<div className="context-line"><span>职责</span><strong>{display(metadata.project, "由 Operator 与 Foreman 管理")}</strong></div><div className="context-line"><span>交付判断</span><strong>{display(metadata.delivery, "由 Foreman、Operator 和项目配置判断")}</strong></div></>}{machine && <><div className="context-line"><span>真实 Machine</span><strong>{display(metadata.machine_count, "0")}</strong></div><div className="context-line"><span>项目工具</span><strong>{display(metadata.project, "待识别")}</strong></div><div className="context-line"><span>Git 地址</span><strong className="mono breakable">{display(metadata.repos ?? metadata.repo, "未提供")}</strong></div><div className="context-line"><span>工作流文件</span><strong>{display(metadata.workflows ?? metadata.workflow, "由项目配置决定")}</strong></div><div className="context-note">{display(metadata.delivery, "Machine 是否承担交付由 Foreman、Operator 和项目配置判断")}</div></>}{node.type === "workarea" && <><div className="context-line"><span>活动节点</span><strong>{display(metadata.active, "0")}</strong></div><div className="context-line"><span>最近输出</span><strong>{display(metadata.latest, "暂无")}</strong></div></>}{internalSteps.length > 0 && <details className="detail-collapse" open><summary>内部步骤上下文</summary><ul className="check-list">{internalSteps.map((step, index) => <li key={`${display(step.name, "step")}-${index}`}><strong>{display(step.name, "未命名步骤")}</strong><small>{display(step.station, "未声明工位")} · {display(step.status, "待观测")}</small></li>)}</ul></details>}<details className="detail-collapse"><summary>节点标识与运行上下文</summary><div className="semantic-list"><div className="context-line"><span>节点标识</span><strong className="mono breakable">{node.id}</strong></div><div className="context-line"><span>所属图层</span><strong className="mono breakable">{node.group}</strong></div>{semanticEntries(metadata).map(([key, value]) => <div className="context-line" key={key}><span>{key}</span><strong>{value}</strong></div>)}</div></details></aside>;
 }
 
-function ComposePage({ bootstrap, graph, scope, layout, foremanOpen, selected, talk, harnessConfigRole, harnessConfigRuntime, onToggleForeman, onBack, onLayout, onSelect, onOpenWorkarea, onConfigureForeman, onConfigureOperator, onBindingSaved, onCloseHarnessConfig, onHarnessProfileSaved, onSendTalk, onOpenSecret, onAddProject, materialConversions }: { bootstrap: Bootstrap; graph: Graph; scope: Scope; layout: LayoutState; foremanOpen: boolean; selected: GraphNode | null; talk: TalkMessage[]; harnessConfigRole: "operator" | "foreman" | null; harnessConfigRuntime: string; onToggleForeman: () => void; onBack: () => void; onLayout: (graph: Graph, nodes: FlowNode[], viewport: Viewport) => void; onSelect: (node: GraphNode | null) => void; onOpenWorkarea: (id: string) => void; onConfigureForeman: () => void; onConfigureOperator: (runtime?: string) => void; onBindingSaved: (unitId: string, binding: OperatorBindingView) => void; onCloseHarnessConfig: () => void; onHarnessProfileSaved: (profile: HarnessProfile, foreman: Bootstrap["foreman"]) => void; onSendTalk: (text: string) => Promise<void>; onOpenSecret: (request: SecretRecord) => void; onAddProject: () => void; materialConversions: ReactNode }): ReactElement {
-  return <section className="compose-page"><div className="compose-head"><div><span className="eyebrow">{scope === "factory" ? "FACTORY TOPOLOGY" : "WORKAREA TOPOLOGY"}</span><h1>{scope === "factory" ? "工厂" : graph.title}</h1><p>{scope === "factory" ? "厂区是现有执行图的聚合节点。双击进入内部。" : "每个项目有自己的 Operator 和 Machine。"}</p></div><div className="compose-actions">{scope === "workarea" && <><button className="secondary-button" onClick={onBack}>← 返回工厂</button><button className="secondary-button" onClick={onAddProject}>添加项目</button>{materialConversions}</>}<button className={`foreman-toggle ${foremanOpen ? "active" : ""}`} onClick={onToggleForeman}><span className={`status-dot ${bootstrap.foreman.configured ? "good" : "warn"}`} />{foremanOpen ? "隐藏厂长" : "打开厂长"}</button></div></div><div className="compose-body"><CanvasView graph={graph} layout={layout} onLayout={onLayout} onSelect={onSelect} onOpenWorkarea={onOpenWorkarea} />{foremanOpen && <ForemanPanel open={foremanOpen} bootstrap={bootstrap} talk={talk} onConfigureForeman={onConfigureForeman} onClose={onToggleForeman} onSend={onSendTalk} onOpenSecret={onOpenSecret} />}{selected && !harnessConfigRole && <NodeDetail node={selected} bootstrap={bootstrap} onConfigureOperator={onConfigureOperator} onBindingSaved={onBindingSaved} onClose={() => onSelect(null)} />}{harnessConfigRole && <HarnessConfigPanel open role={harnessConfigRole} bootstrap={bootstrap} initialRuntime={harnessConfigRuntime} onClose={onCloseHarnessConfig} onSaved={onHarnessProfileSaved} />}</div></section>;
+function ComposePage({ bootstrap, graph, scope, layout, foremanOpen, selected, talk, foremanTurns, onCancelTalk, harnessConfigRole, harnessConfigRuntime, onToggleForeman, onBack, onLayout, onSelect, onOpenWorkarea, onConfigureForeman, onConfigureOperator, onBindingSaved, onCloseHarnessConfig, onHarnessProfileSaved, onSendTalk, onOpenSecret, onAddProject, materialConversions }: { bootstrap: Bootstrap; graph: Graph; scope: Scope; layout: LayoutState; foremanOpen: boolean; selected: GraphNode | null; talk: TalkMessage[]; foremanTurns: Record<string, ForemanTurn>; onCancelTalk: (id: string) => Promise<void>; harnessConfigRole: "operator" | "foreman" | null; harnessConfigRuntime: string; onToggleForeman: () => void; onBack: () => void; onLayout: (graph: Graph, nodes: FlowNode[], viewport: Viewport) => void; onSelect: (node: GraphNode | null) => void; onOpenWorkarea: (id: string) => void; onConfigureForeman: () => void; onConfigureOperator: (runtime?: string) => void; onBindingSaved: (unitId: string, binding: OperatorBindingView) => void; onCloseHarnessConfig: () => void; onHarnessProfileSaved: (profile: HarnessProfile, foreman: Bootstrap["foreman"]) => void; onSendTalk: (text: string) => Promise<void>; onOpenSecret: (request: SecretRecord) => void; onAddProject: () => void; materialConversions: ReactNode }): ReactElement {
+  return <section className="compose-page"><div className="compose-head"><div><span className="eyebrow">{scope === "factory" ? "FACTORY TOPOLOGY" : "WORKAREA TOPOLOGY"}</span><h1>{scope === "factory" ? "工厂" : graph.title}</h1><p>{scope === "factory" ? "厂区是现有执行图的聚合节点。双击进入内部。" : "每个项目有自己的 Operator 和 Machine。"}</p></div><div className="compose-actions">{scope === "workarea" && <><button className="secondary-button" onClick={onBack}>← 返回工厂</button><button className="secondary-button" onClick={onAddProject}>添加项目</button>{materialConversions}</>}<button className={`foreman-toggle ${foremanOpen ? "active" : ""}`} onClick={onToggleForeman}><span className={`status-dot ${bootstrap.foreman.configured ? "good" : "warn"}`} />{foremanOpen ? "隐藏厂长" : "打开厂长"}</button></div></div><div className="compose-body"><CanvasView graph={graph} layout={layout} onLayout={onLayout} onSelect={onSelect} onOpenWorkarea={onOpenWorkarea} />{foremanOpen && <ForemanPanel open={foremanOpen} bootstrap={bootstrap} talk={talk} turns={foremanTurns} onCancel={onCancelTalk} onConfigureForeman={onConfigureForeman} onClose={onToggleForeman} onSend={onSendTalk} onOpenSecret={onOpenSecret} />}{selected && !harnessConfigRole && <NodeDetail node={selected} bootstrap={bootstrap} onConfigureOperator={onConfigureOperator} onBindingSaved={onBindingSaved} onClose={() => onSelect(null)} />}{harnessConfigRole && <HarnessConfigPanel open role={harnessConfigRole} bootstrap={bootstrap} initialRuntime={harnessConfigRuntime} onClose={onCloseHarnessConfig} onSaved={onHarnessProfileSaved} />}</div></section>;
 }
 
 function IntakePanel({ system, onClose, onSaved }: { system?: { id: string; title: string }; onClose: () => void; onSaved: () => Promise<void> }): ReactElement {
@@ -477,11 +505,24 @@ export function App(): ReactElement {
   const [intake, setIntake] = useState<{ system?: { id: string; title: string } } | null>(null);
   const persistLayout = useCallback((next: LayoutState) => { setLayout(next); localStorage.setItem(LAYOUT_KEY, JSON.stringify(next)); }, []);
   const [liveReplies, setLiveReplies] = useState<Record<string, TalkMessage>>({});
+  const [foremanTurns, setForemanTurns] = useState<Record<string, ForemanTurn>>({});
+  const cancelledTurns = useRef(new Set<string>());
   const [eventCursor, setEventCursor] = useState<string>();
   const [workareaRevision, setWorkareaRevision] = useState(0);
   const [conversionRevision, setConversionRevision] = useState(0);
   const activeWorkarea = useRef<string | null>(null);
   const startedEvents = useRef(false);
+  const rememberTurn = useCallback((turn: ForemanTurn) => {
+    if (turn.status === "cancelled") {
+      cancelledTurns.current.add(turn.id);
+      setLiveReplies((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== turn.id)));
+    }
+    setForemanTurns((current) => {
+      const previous = current[turn.messageId];
+      if (previous && foremanTurnStatus[previous.status].rank > foremanTurnStatus[turn.status].rank) return current;
+      return { ...current, [turn.messageId]: turn };
+    });
+  }, []);
   const retry = useCallback(async () => {
     setError("");
     setConnection("connecting");
@@ -489,8 +530,9 @@ export function App(): ReactElement {
       const next = await getBootstrap();
       setBootstrap(next);
       setTalk(next.talk ?? []);
+      for (const turn of next.foremanTurns ?? []) rememberTurn(turn);
       if (!startedEvents.current) {
-        setLiveReplies(Object.fromEntries(Object.entries(next.pendingForemanReplies ?? {}).map(([id, body]) => [id, {
+        setLiveReplies(Object.fromEntries(Object.entries(next.pendingForemanReplies ?? {}).filter(([id]) => !cancelledTurns.current.has(id)).map(([id, body]) => [id, {
           id: `live-${id}`, role: "foreman", body, state: "回复中",
         }])));
         setEventCursor(String(next.eventCursor ?? 0));
@@ -501,7 +543,7 @@ export function App(): ReactElement {
       setConnection("exception");
       setError(cause instanceof Error ? cause.message : "无法连接本地服务");
     }
-  }, []);
+  }, [rememberTurn]);
   const updateOperatorNode = useCallback((unitId: string, binding: OperatorBindingView) => {
     setWorkareaGraph((current) => current && current.id === binding.businessSystemId ? {
       ...current,
@@ -511,6 +553,11 @@ export function App(): ReactElement {
   const refreshLive = useCallback(async (eventType: string, eventData?: Record<string, unknown>) => {
     const type = typeof eventData?.type === "string" ? eventData.type : eventType;
     const inboxId = eventData?.inboxId;
+    if (type.startsWith("foreman.message.")) {
+      const turn = readForemanTurn(eventData);
+      if (turn) rememberTurn(turn);
+      return;
+    }
     if (type === "business-unit.binding.changed" && typeof eventData?.unitId === "string"
       && eventData.binding && typeof eventData.binding === "object") {
       updateOperatorNode(eventData.unitId, eventData.binding as OperatorBindingView);
@@ -541,6 +588,7 @@ export function App(): ReactElement {
       return;
     }
     if (type === "foreman.reply.delta" && typeof inboxId === "string" && typeof eventData?.text === "string") {
+      if (cancelledTurns.current.has(inboxId)) return;
       const text = eventData.text;
       setLiveReplies((current) => ({ ...current, [inboxId]: {
         id: `live-${inboxId}`, role: "foreman", body: (current[inboxId]?.body ?? "") + text, state: "回复中",
@@ -548,6 +596,7 @@ export function App(): ReactElement {
       return;
     }
     if (type === "foreman.session.failed" && typeof inboxId === "string") {
+      if (cancelledTurns.current.has(inboxId)) return;
       const reason = typeof eventData?.reason === "string" ? eventData.reason : "厂长会话中断";
       setLiveReplies((current) => ({ ...current, [inboxId]: {
         id: `live-${inboxId}`, role: "foreman", body: current[inboxId]?.body || reason, state: "会话失败",
@@ -579,12 +628,13 @@ export function App(): ReactElement {
         const next = await getBootstrap();
         setBootstrap(next);
         setTalk(next.talk ?? []);
+        for (const turn of next.foremanTurns ?? []) rememberTurn(turn);
         setConnection(next.connection.state);
       }
     } catch {
       // SSE is an enhancement. The initial page remains usable while a later event is retried.
     }
-  }, [updateOperatorNode]);
+  }, [rememberTurn, updateOperatorNode]);
   useEffect(() => { void retry(); }, [retry]);
   useEffect(() => eventCursor === undefined ? undefined : subscribeToEvents((event) => { void refreshLive(event.type, event.data); }, undefined, eventCursor), [eventCursor, refreshLive]);
   useEffect(() => {
@@ -610,7 +660,25 @@ export function App(): ReactElement {
   const closeHarnessConfig = () => setHarnessConfigRole(null);
   const updateHarnessProfile = (profile: HarnessProfile, foreman: Bootstrap["foreman"]) => { setBootstrap((current) => { if (!current) return current; const profiles = [...(current.harness_profiles ?? []).filter((item) => item.id !== profile.id), profile]; return { ...current, harness_profiles: profiles, foreman }; }); };
   const updateGraphLayout = useCallback((graph: Graph, nodes: FlowNode[], viewport: Viewport) => { const current = { ...layout, graphs: { ...(layout.graphs ?? {}) } }; current.graphs![graphKey(graph)] = { nodes: Object.fromEntries(nodes.map((node) => [node.id, { x: node.position.x, y: node.position.y }])), viewport: { x: viewport.x, y: viewport.y, zoom: viewport.zoom } }; persistLayout(current); }, [layout, persistLayout]);
-  const sendToForeman = async (text: string) => { try { const response = await sendTalk(text); setTalk((items) => items.some((item) => item.id === response.message.id) ? items : [...items, response.message]); } catch (cause) { setError(cause instanceof Error ? cause.message : "Foreman 对话不可用"); } };
+  const sendToForeman = async (text: string) => {
+    try {
+      const response = await sendTalk(text);
+      if (response.foremanTurn) rememberTurn(response.foremanTurn);
+      setTalk((items) => items.some((item) => item.id === response.message.id) ? items : [...items, response.message]);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Foreman 对话不可用"); }
+  };
+  const cancelTalk = async (id: string) => {
+    try {
+      const result = await cancelForemanTurn(id);
+      rememberTurn(result.foremanTurn);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409 && cause.payload && typeof cause.payload === "object") {
+        const turn = readForemanTurn((cause.payload as { foremanTurn?: unknown }).foremanTurn);
+        if (turn) rememberTurn(turn);
+      }
+      setError(cause instanceof Error ? cause.message : "无法取消本轮");
+    }
+  };
   if (!bootstrap && connection === "connecting") return <div className="boot-screen"><div className="boot-mark">M</div><strong>正在连接本地工厂</strong><span>读取真实执行图与运行上下文…</span></div>;
-  return <div className={`app-shell dock-${sidebarDock}`}><Sidebar open={sidebarOpen} dock={sidebarDock} page={page} connection={connection} onClose={() => setSidebarOpen(false)} onNavigate={navigate} /><MaoButton dock={sidebarDock} top={maoTop} onToggle={() => setSidebarOpen((value) => !value)} onDock={(dock, top) => { setSidebarDock(dock); setMaoTop(top); }} /><main className="app-main">{error && <ErrorBanner message={error} onRetry={retry} />}{page === "dashboard" && bootstrap && <Dashboard bootstrap={bootstrap} onCompose={() => navigate("compose")} onIntake={() => setIntake({})} onSecrets={() => setActiveSecret(bootstrap.secrets.find((item) => !item.configured) ?? bootstrap.secrets[0] ?? null)} onConstitution={() => setConstitutionOpen(true)} onWorkarea={openWorkarea} onForemanConfig={openForemanConfig} />}{page === "compose" && bootstrap && activeGraph && <ComposePage bootstrap={bootstrap} graph={activeGraph} scope={scope} layout={layout} foremanOpen={foremanOpen} selected={selectedNode} talk={[...talk, ...Object.values(liveReplies)]} harnessConfigRole={harnessConfigRole} harnessConfigRuntime={harnessConfigRuntime} onToggleForeman={() => setForemanOpen((value) => !value)} onBack={returnFactory} onLayout={updateGraphLayout} onSelect={setSelected} onOpenWorkarea={openWorkarea} onConfigureForeman={openForemanConfig} onConfigureOperator={openOperatorConfig} onBindingSaved={updateOperatorNode} onCloseHarnessConfig={closeHarnessConfig} onHarnessProfileSaved={updateHarnessProfile} onSendTalk={sendToForeman} onOpenSecret={setActiveSecret} materialConversions={workarea === activeGraph.id && <WorkareaConversions key={activeGraph.id} businessSystemId={activeGraph.id} revision={conversionRevision} />} onAddProject={() => { if (workarea === activeGraph.id) setIntake({ system: { id: activeGraph.id, title: activeGraph.title } }); }} />}{page === "settings" && bootstrap && <SettingsPage bootstrap={bootstrap} onRuntimeReady={retry} />}{page === "assets" && bootstrap && <AssetsPage assets={bootstrap.assets} onOpen={setActiveAsset} />}{page === "logs" && bootstrap && <LogsPage logs={bootstrap.logs} active={activeLog} onOpen={setActiveLog} />}</main>{intake && <IntakePanel system={intake.system} onClose={() => setIntake(null)} onSaved={retry} />}{activeSecret && <SecretDrawer key={activeSecret.id} secret={bootstrap?.secrets.find((item) => item.id === activeSecret.id) ?? activeSecret} requests={bootstrap?.secrets ?? []} onSelect={setActiveSecret} onClose={() => setActiveSecret(null)} />}{activeAsset && <AssetDrawer asset={activeAsset} onClose={() => setActiveAsset(null)} />}{constitutionOpen && bootstrap && <ConstitutionDrawer bootstrap={bootstrap} onClose={() => setConstitutionOpen(false)} />}</div>;
+  return <div className={`app-shell dock-${sidebarDock}`}><Sidebar open={sidebarOpen} dock={sidebarDock} page={page} connection={connection} onClose={() => setSidebarOpen(false)} onNavigate={navigate} /><MaoButton dock={sidebarDock} top={maoTop} onToggle={() => setSidebarOpen((value) => !value)} onDock={(dock, top) => { setSidebarDock(dock); setMaoTop(top); }} /><main className="app-main">{error && <ErrorBanner message={error} onRetry={retry} />}{page === "dashboard" && bootstrap && <Dashboard bootstrap={bootstrap} onCompose={() => navigate("compose")} onIntake={() => setIntake({})} onSecrets={() => setActiveSecret(bootstrap.secrets.find((item) => !item.configured) ?? bootstrap.secrets[0] ?? null)} onConstitution={() => setConstitutionOpen(true)} onWorkarea={openWorkarea} onForemanConfig={openForemanConfig} />}{page === "compose" && bootstrap && activeGraph && <ComposePage bootstrap={bootstrap} graph={activeGraph} scope={scope} layout={layout} foremanOpen={foremanOpen} selected={selectedNode} talk={[...talk, ...Object.values(liveReplies)]} foremanTurns={foremanTurns} onCancelTalk={cancelTalk} harnessConfigRole={harnessConfigRole} harnessConfigRuntime={harnessConfigRuntime} onToggleForeman={() => setForemanOpen((value) => !value)} onBack={returnFactory} onLayout={updateGraphLayout} onSelect={setSelected} onOpenWorkarea={openWorkarea} onConfigureForeman={openForemanConfig} onConfigureOperator={openOperatorConfig} onBindingSaved={updateOperatorNode} onCloseHarnessConfig={closeHarnessConfig} onHarnessProfileSaved={updateHarnessProfile} onSendTalk={sendToForeman} onOpenSecret={setActiveSecret} materialConversions={workarea === activeGraph.id && <WorkareaConversions key={activeGraph.id} businessSystemId={activeGraph.id} revision={conversionRevision} />} onAddProject={() => { if (workarea === activeGraph.id) setIntake({ system: { id: activeGraph.id, title: activeGraph.title } }); }} />}{page === "settings" && bootstrap && <SettingsPage bootstrap={bootstrap} onRuntimeReady={retry} />}{page === "assets" && bootstrap && <AssetsPage assets={bootstrap.assets} onOpen={setActiveAsset} />}{page === "logs" && bootstrap && <LogsPage logs={bootstrap.logs} active={activeLog} onOpen={setActiveLog} />}</main>{intake && <IntakePanel system={intake.system} onClose={() => setIntake(null)} onSaved={retry} />}{activeSecret && <SecretDrawer key={activeSecret.id} secret={bootstrap?.secrets.find((item) => item.id === activeSecret.id) ?? activeSecret} requests={bootstrap?.secrets ?? []} onSelect={setActiveSecret} onClose={() => setActiveSecret(null)} />}{activeAsset && <AssetDrawer asset={activeAsset} onClose={() => setActiveAsset(null)} />}{constitutionOpen && bootstrap && <ConstitutionDrawer bootstrap={bootstrap} onClose={() => setConstitutionOpen(false)} />}</div>;
 }

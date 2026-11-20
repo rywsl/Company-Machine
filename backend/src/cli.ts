@@ -260,6 +260,7 @@ async function runCommand(argv: string[]): Promise<number> {
         if (!id) throw new CliUsageError("message id is required");
         const result = args[0] === "claim" ? app.store.claimForemanMessage(id) : app.store.completeForemanMessage(id);
         if (!result) throw new Error("message not found");
+        if (args[0] === "done" && result.status !== "done") throw new Error("厂长轮次已结束");
         console.log(JSON.stringify(result, null, 2));
         return 0;
       }

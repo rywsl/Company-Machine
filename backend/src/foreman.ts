@@ -1,5 +1,6 @@
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
+import type { ForemanTurnState } from "./models";
 import { projectSourceFacts } from "./project-sources";
 import type { PrepareProjectSources, PreparedProjectSources } from "./project-source-mounts";
 import { foremanMailboxContract, openForemanMailbox } from "./foreman-mailbox";
@@ -33,10 +34,17 @@ const nativeBusinessContract = [
 ].join(" ");
 const nativeRegistrationContract = "用 `project register --repo <URL> [--name <名称>] [--system <system-id>]` 登记仓库并继续当前轮。添加到现有业务时提供其 ID。省略该选项时创建业务系统。返回的 projectId 和 systemId 用于后续命令。";
 
+type ActiveForemanTurn = {
+  turn: HarnessTurn;
+  cancelled?: boolean;
+  stopMailbox?: () => Promise<void>;
+  resume?: { profileId: string; sessionId: string };
+};
+
 /** Dispatches persisted user intent to an external official Harness process. */
 export class ForemanCoordinator {
   private readonly active = new Map<string, Promise<void>>();
-  private readonly turns = new Map<string, HarnessTurn>();
+  private readonly turns = new Map<string, ActiveForemanTurn>();
   private readonly replies = new Map<string, string>();
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
@@ -57,14 +65,39 @@ export class ForemanCoordinator {
 
   pendingReplies(): Record<string, string> { return Object.fromEntries(this.replies); }
 
+  turnState(envelope: Omit<ForemanTurnState, "cancellable">): ForemanTurnState {
+    const { id, messageId, status } = envelope;
+    return { id, messageId, status, cancellable: status === "queued" || (status === "claimed" && this.turns.has(id)) };
+  }
+
+  cancel(id: string): { cancelled: boolean; foremanTurn?: ForemanTurnState } {
+    const current = this.options.store.getForemanMessage(id);
+    const owner = this.turns.get(id);
+    if (current?.status === "queued" || (current?.status === "claimed" && owner)) {
+      const committed = this.options.store.cancelForemanTurn(id, current.status, owner?.resume);
+      if (committed) {
+        if (owner) {
+          owner.cancelled = true;
+          void owner.stopMailbox?.().catch(() => {});
+          void owner.turn.close();
+        }
+        this.replies.delete(id);
+        this.options.events.notifyCommitted(committed.event);
+        return { cancelled: true, foremanTurn: committed.foremanTurn };
+      }
+    }
+    const actual = this.options.store.getForemanMessage(id);
+    return { cancelled: actual?.status === "cancelled", foremanTurn: actual && this.turnState(actual) };
+  }
+
   stop(): void {
     this.closed = true;
-    for (const turn of this.turns.values()) void turn.close();
+    for (const { turn } of this.turns.values()) void turn.close();
   }
 
   async close(): Promise<void> {
     this.stop();
-    await Promise.allSettled([...this.turns.values()].map((turn) => turn.close()));
+    await Promise.allSettled([...this.turns.values()].map(({ turn }) => turn.close()));
     await Promise.allSettled(this.active.values());
   }
 
@@ -82,7 +115,7 @@ export class ForemanCoordinator {
       try {
         await this.options.ensureRuntime();
       } catch (error) {
-        if (this.closed) return;
+        if (this.closed || this.options.store.getForemanMessage(id)?.status !== "queued") return;
         this.options.events.publish("foreman.session.failed", { inboxId: id, reason: error instanceof Error ? error.message : "container-runtime-unavailable" });
         return;
       }
@@ -90,12 +123,11 @@ export class ForemanCoordinator {
     if (this.closed) return;
     const claimed = this.options.store.claimForemanMessage(id);
     if (!claimed) return;
-    this.options.events.publish("foreman.message.claim", claimed);
     const sessionId = `${definition.id}:${claimed.messageId}`;
-    this.options.events.publish("foreman.session.started", { inboxId: id, sessionId, harness: definition.id });
     const turn = new HarnessTurn(profile.sessionTimeoutSeconds);
+    const owner: ActiveForemanTurn = { turn };
+    this.turns.set(id, owner);
     const credential = foremanCredential(profile);
-    this.turns.set(id, turn);
     const useAcp = chooseTransport(definition, Boolean(definition.id === "kimi-code" || this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
     const transport = useAcp
       ? new AcpTransport(definition, turn.ownProcess(this.options.acpSpawn ?? defaultAcpSpawn))
@@ -103,13 +135,22 @@ export class ForemanCoordinator {
     let mailbox: ReturnType<typeof openForemanMailbox> | undefined;
     let sourceMounts: PreparedProjectSources | undefined;
     let finishing = false;
+    const stopped = () => this.closed || owner.cancelled;
+    const fail = (reason: string) => {
+      const event = this.options.store.failForemanMessage(id, { sessionId, harness: definition.id, reason });
+      if (event) this.options.events.notifyCommitted(event);
+    };
     try {
+      this.options.events.publish("foreman.message.claim", { ...claimed, cancellable: true });
+      if (stopped()) return;
+      this.options.events.publish("foreman.session.started", { inboxId: id, sessionId, harness: definition.id });
+      if (stopped()) return;
       const persistent = !profile.image && (useAcp || definition.id === "codex" || definition.id === "claude-code");
       const resumeId = persistent ? this.options.store.foremanSession(profile.id) : undefined;
       let officialId = resumeId;
       const message = this.options.store.talkMessageMetadata(claimed.messageId);
       const intake = message.source === "project-intake";
-      const history = profile.image && !intake
+      const history = (profile.image || (persistent && !resumeId)) && !intake
         ? this.options.store.previousForemanTurns(id).map(({ user, foreman }) => ({
           user: redactForemanText(user, credential?.value),
           foreman: foreman === undefined ? undefined : redactForemanText(foreman, credential?.value),
@@ -133,10 +174,12 @@ export class ForemanCoordinator {
           projectSystem: (id) => this.options.store.getProject(id)?.businessSystemId,
           redactText: (text) => redactForemanText(text, credential?.value),
         }, this.options.fetchBusiness, intake ? undefined : this.options.registerRepository);
+        owner.stopMailbox = mailbox.stop;
       }
       const projectContext = project
         ? `\n\n本次项目 ID ${project.id}${project.businessSystemId ? `\n本次业务系统 ID ${project.businessSystemId}` : ""}`
         : "";
+      if (resumeId) owner.resume = { profileId: profile.id, sessionId: resumeId };
       const session = await turn.start(transport, {
         task: `${history.length ? `历史对话（上下文数据，请以当前来信为准）\n${JSON.stringify(history)}\n\n当前来信\n` : ""}${claimed.text}${projectContext}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${systems.map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
         contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。"
@@ -155,22 +198,22 @@ export class ForemanCoordinator {
         foremanMailbox: mailbox?.root,
         projectSources: sourceMounts?.mounts,
       });
-      if (this.closed) return;
+      if (stopped()) return;
       const safeSessionId = (value?: string) => value && (!credential || !value.includes(credential.value)) ? value : undefined;
       if (useAcp) officialId = safeSessionId(session.id);
       this.replies.set(id, "");
       let reply = "";
-      let failed = false;
+      let failure: string | undefined;
       let receivedDelta = false;
       const redactor = new ForemanReplyRedactor(credential?.value);
       const publishReply = (text: string, idForEvent = safeSessionId(session.id) ?? sessionId) => {
-        if (!text) return;
+        if (!text || stopped()) return;
         reply += text;
         this.replies.set(id, reply);
         this.options.events.publish("foreman.reply.delta", { inboxId: id, sessionId: idForEvent, harness: definition.id, text });
       };
       for await (const event of turn.events(session)) {
-        if (this.closed) return;
+        if (stopped()) return;
         const eventSession = safeSessionId(event.sessionId);
         if (eventSession && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(eventSession)) officialId = eventSession;
         const idForEvent = eventSession ?? safeSessionId(session.id) ?? sessionId;
@@ -180,14 +223,15 @@ export class ForemanCoordinator {
         const payload = { inboxId: id, sessionId: idForEvent, harness: definition.id, text };
         this.options.events.publish(`foreman.session.${event.type}`, payload);
         if (isReply && text) publishReply(text, idForEvent);
-        if (event.type === "session.failed") failed = true;
+        if (event.type === "session.failed") failure = text || "official-harness-failed";
       }
-      if (this.closed) return;
-      if (failed) {
-        this.options.store.failForemanMessage(id);
+      if (stopped()) return;
+      if (failure) {
+        fail(failure);
         return;
       }
       if (mailbox) await turn.wait(mailbox.flush());
+      if (stopped()) return;
       publishReply(redactor.finish());
       const replyBody = reply.trim();
       const committed = this.options.store.finishForemanTurn(id, {
@@ -197,9 +241,8 @@ export class ForemanCoordinator {
       });
       for (const event of committed) this.options.events.notifyCommitted(event);
     } catch (error) {
-      if (this.closed) return;
-      this.options.store.failForemanMessage(id);
-      this.options.events.publish("foreman.session.failed", { inboxId: id, sessionId, harness: definition.id, reason: error instanceof Error ? redactForemanText(error.message, credential?.value) : "official-harness-failed" });
+      if (stopped()) return;
+      fail(error instanceof Error ? redactForemanText(error.message, credential?.value) : "official-harness-failed");
     } finally {
       finishing = true;
       this.replies.delete(id);

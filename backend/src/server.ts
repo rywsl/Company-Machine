@@ -415,7 +415,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const { message, envelope, events: committed } = store.enqueueForemanTalk({ ...body, body: redactText(text) });
       for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
-      return response({ state: "accepted", message }, 201);
+      return response({ state: "accepted", message, foremanTurn: foreman.turnState(envelope) }, 201);
     }
     if (url.pathname === "/api/v1/talk" && request.method === "GET") return response([...store.legacyTalk(), ...store.listTalkMessages()]);
     if (url.pathname === "/api/v1/talk/reply" && request.method === "POST") {
@@ -434,8 +434,19 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (foremanAck && request.method === "POST") {
       const envelope = foremanAck[2] === "claim" ? store.claimForemanMessage(foremanAck[1]) : store.completeForemanMessage(foremanAck[1]);
       if (!envelope) return response({ error: "foreman message was not found" }, 404);
-      events.publish(`foreman.message.${foremanAck[2]}`, envelope);
+      if (foremanAck[2] === "done" && envelope.status !== "done") {
+        return response({ error: "厂长轮次已结束", foremanTurn: foreman.turnState(envelope) }, 409);
+      }
+      events.publish(`foreman.message.${foremanAck[2]}`, { ...envelope, cancellable: foreman.turnState(envelope).cancellable });
       return response(envelope, 200);
+    }
+    const foremanCancel = url.pathname.match(/^\/api\/v1\/foreman\/inbox\/([^/]+)\/cancel$/);
+    if (foremanCancel && request.method === "POST") {
+      const { cancelled, foremanTurn } = foreman.cancel(foremanCancel[1]);
+      if (!foremanTurn) return response({ error: "厂长轮次不存在" }, 404);
+      if (cancelled) return response({ foremanTurn });
+      const error = foremanTurn.status === "claimed" && !foremanTurn.cancellable ? "厂长轮次由另一个进程领取" : "厂长轮次状态已改变";
+      return response({ error, foremanTurn }, 409);
     }
     const foremanDispatch = url.pathname.match(/^\/api\/v1\/foreman\/inbox\/([^/]+)\/dispatch$/);
     if (foremanDispatch && request.method === "POST") {
@@ -538,8 +549,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response({ profile: publicProfile(profile) }, 202);
     }
     if (url.pathname === "/api/web/assets" && request.method === "GET") {
-      const limit = Number(url.searchParams.get("limit") ?? 100);
-      return response(webAssets(store).slice(-Math.max(1, limit)));
+      const limit = Math.trunc(Math.max(1, Number(url.searchParams.get("limit") ?? 100)));
+      return response(webAssets(store, Number.isSafeInteger(limit) ? limit : undefined));
     }
     if (url.pathname === "/api/web/secrets" && request.method === "GET") {
       return response(store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, usage_scope: secret.metadata.scope, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })));
@@ -551,17 +562,19 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const { message, envelope, events: committed } = store.enqueueForemanTalk({ body: redactText(text) });
       for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
-      return response({ state: "accepted", message }, 201);
+      return response({ state: "accepted", message, foremanTurn: foreman.turnState(envelope) }, 201);
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
       const health = await runtimeHealth();
       const eventCursor = store.latestEventSequence();
       const factoryGraph = graphProjection(store, "factory", null);
       const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
+      const talk = store.recentTalk(80);
+      const foremanTurns = store.listForemanTurns(talk.map(({ id }) => id)).map((turn) => foreman.turnState(turn));
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: store.timestamp() },
-        eventCursor, pendingForemanReplies: foreman.pendingReplies(),
+        eventCursor, foremanTurns, pendingForemanReplies: foreman.pendingReplies(),
         graph: { factory: factoryGraph },
-        assets: webAssets(store), logs: webLogs(store, 100), talk: store.recentTalk(80),
+        assets: webAssets(store), logs: webLogs(store, 100), talk,
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });
@@ -643,8 +656,9 @@ function publicArtifact(record: any) {
   return { ...record, project_id: record.projectId, source_id: record.sourceId, record_type: record.recordType, created_at: record.createdAt };
 }
 
-function webAssets(store: SqliteStore) {
-  const legacy = store.legacyArtifacts().map((record) => {
+function webAssets(store: SqliteStore, limit?: number) {
+  const records = store.listAllArtifacts(limit);
+  const legacy = store.legacyArtifacts(limit === undefined ? undefined : limit - records.length).map((record) => {
     const document = record.metadata?.document && typeof record.metadata.document === "object" ? record.metadata.document as Record<string, unknown> : {};
     return {
       id: record.id,
@@ -666,7 +680,6 @@ function webAssets(store: SqliteStore) {
       source: { node: typeof document.producer === "object" && document.producer ? (document.producer as Record<string, unknown>).operator : undefined },
     };
   });
-  const records = store.listAllArtifacts();
   const grants = new Map(store.artifactFileGrants(null, records.map(({ id }) => id))
     .map(({ artifactId, position, digest }) => [`${artifactId}:${position}`, digest]));
   const business = records.map((record) => ({

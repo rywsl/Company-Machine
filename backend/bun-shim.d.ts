@@ -4,6 +4,7 @@ declare module "*.mrl" {
 }
 
 declare module "bun:sqlite" {
+  export const constants: { SQLITE_OPEN_READONLY: number; SQLITE_OPEN_URI: number };
   export interface Statement<T = any> {
     readonly isFinalized: boolean;
     all(...args: any[]): T[];
@@ -13,13 +14,17 @@ declare module "bun:sqlite" {
   }
 
   export class Database {
-    constructor(path: string, options?: { create?: boolean; readonly?: boolean });
+    constructor(path: string, options?: number | { create?: boolean; readonly?: boolean });
     exec(sql: string): void;
     transaction<T>(callback: () => T): { (): T; immediate(): T };
     prepare<T = any>(sql: string): Statement<T>;
     query<T = any>(sql: string): Statement<T>;
     close(force?: boolean): void;
   }
+}
+
+declare module "node:url" {
+  export function pathToFileURL(path: string): URL;
 }
 
 declare module "node:crypto" {

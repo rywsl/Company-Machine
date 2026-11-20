@@ -141,6 +141,7 @@ export interface Bootstrap {
   version: string;
   eventCursor?: number;
   pendingForemanReplies?: Record<string, string>;
+  foremanTurns?: ForemanTurn[];
   connection: { state: string; message?: string };
   status: {
     at?: string;
@@ -174,6 +175,13 @@ export interface TalkMessage {
   at?: string;
   card?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export interface ForemanTurn {
+  id: string;
+  messageId: string;
+  status: "queued" | "claimed" | "done" | "failed" | "cancelled";
+  cancellable: boolean;
 }
 
 export interface LayoutGraph {
