@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { listFiles } from "../backend/mrl/factory/paths";
 import { standardFunctions } from "../backend/mrl/evaluator";
+import { modulePolicyProblems } from "./module-policy";
 import { registryFixtureNames, registryLiteralProblems } from "./registry-policy";
 
 export const acceptanceRoots = ["backend/tests", "backend/runtime", "backend/mrl", "tests/fakes"];
@@ -155,8 +156,10 @@ export function activePolicyProblems(root: string): string[] {
   const fixtureRoots = ["tests/", "spec/examples/", "removed/"];
   const builtIn = /^(?:node:|bun:sqlite$)/;
   const fixtureNames = registryFixtureNames(root);
+  const productionFiles: string[] = [];
   for (const path of sources) {
     for (const file of listFiles(join(root, path)).filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))) {
+      productionFiles.push(file);
       const source = readFileSync(file, "utf8");
       problems.push(...registryLiteralProblems(relativePath(root, file), source, fixtureNames));
       for (const entry of transpiler.scanImports(source)) {
@@ -174,6 +177,7 @@ export function activePolicyProblems(root: string): string[] {
       }
     }
   }
+  problems.push(...modulePolicyProblems(root, productionFiles));
   for (const path of ["backend", "tools", "tests"]) {
     for (const file of listFiles(join(root, path)).filter((file) => file.endsWith(".py"))) {
       const location = relativePath(root, file);

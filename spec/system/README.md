@@ -221,8 +221,10 @@ class IdSource(Protocol):
 ### 3.5 事件与日志
 
 - 状态变化一律写入 `events` 表。表结构由 `runner.md` 定义，事件种类清单也在 `runner.md`。事件数据是规范 JSON。
-- 控制面自身的诊断输出用标准库 `logging`，logger 名为 `mao.<模块>`。日志不是接口，测试不得断言日志文本。
+- Bun 控制面通过返回值和事件公开结果。CLI、`factoryctl` 和服务进程入口可向 stdout 输出命令结果或启动信息。控制面诊断写到 stderr。日志不是接口，测试不得断言日志文本。
 - 沙箱内进程的 stdout/stderr 写入 `jobs/<job>/<attempt>/logs/`，transcript 也放在这里。
+
+模块之间通过显式导出的接口协作。TypeScript 检查未导出的模块成员和类的私有成员。生产代码禁止给导入对象打补丁，私有成员访问同样禁止用字符串下标或反射绕过。替换依赖时通过构造参数或公开的注入点传入。
 
 ### 3.6 SQLite 与迁移
 
