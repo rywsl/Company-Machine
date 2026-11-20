@@ -145,7 +145,7 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 | `backend/tests/security-boundary.test.ts` | Bearer scope 的业务系统、项目、密钥和角色边界，以及写请求的 CSRF 约束 |
 | `backend/tests/web-contract.test.ts` | Web 图查询边界、增量日志游标、Foreman 事件游标和业务记录元数据脱敏 |
 | `backend/tests/operator-recovery.test.ts` | Operator 领取归属、会话更新和结果提交的归属校验、Linux 确认原进程退出后的恢复及其他环境保留未知状态 |
-| `backend/tests/harness.test.ts` | 七个官方 Harness 的目录、Pi 与 Qwen Code CLI 参数、Windows 原生 Claude Code 路径、ACP 会话、事件流和有界脱敏 stderr 诊断 |
+| `backend/tests/harness.test.ts` | 七个官方 Harness 的目录、Pi 与 Qwen Code CLI 参数、Windows 原生 Claude Code 路径、ACP 会话、事件流、有界脱敏 stderr，以及可信 Foreman 的 root 工作区和隔离 bridge 网络边界 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
 | `backend/tests/deployment.test.ts` | 生产 systemd user service 不固定 Podman，Podman/Kiri readiness 由 Bun 控制面选择 |
 | `backend/tests/source-fetcher.test.ts` | 持久化源码缓存、GitHub archive fallback、归档路径校验和无 Git 工具诊断 |
