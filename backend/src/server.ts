@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import type { BusinessConversion, BusinessSystem } from "./models";
 import { PodmanProvider, type RuntimeHealth } from "../runtime/podman";
+import { KiriProvider } from "../runtime/kiri";
 import { ForemanCoordinator } from "./foreman";
 import { OperatorCoordinator } from "./operator";
 import type { OfficialSpawn } from "./harness";
@@ -27,16 +28,22 @@ export interface BackendApp {
 }
 
 export interface RuntimeProbe {
+  readonly name?: string;
   health(): Promise<RuntimeHealth>;
   ensureReady?(): Promise<RuntimeHealth>;
 }
 
-function runtimeDependency(health: RuntimeHealth) {
+function runtimeProvider(runtime: RuntimeProbe): string {
+  return typeof runtime.name === "string" && runtime.name.length > 0 ? runtime.name : "podman";
+}
+
+function runtimeDependency(health: RuntimeHealth, provider = "podman") {
+  const label = provider === "kiri" ? "Kiri" : "Podman";
   return {
     state: health.available ? "online" : "offline",
     version: health.available ? "available" : null,
-    message: health.available ? "Podman 运行时在线" : `Podman 运行时不可用：${health.reason ?? "unknown"}`,
-    provider: "podman",
+    message: health.available ? `${label} 运行时在线` : `${label} 运行时不可用：${health.reason ?? "unknown"}`,
+    provider,
     machine: health.machine,
     rootless: health.rootless,
   };
@@ -49,10 +56,10 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
   const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn });
   let dispatchOperatorRun = (_runId: string) => {};
   const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId) });
-  const runtime = options.runtime ?? new PodmanProvider({
-    egressNetwork: process.env.MAO_EGRESS_NETWORK,
-    egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])),
-  });
+  const runtime = options.runtime ?? (process.env.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
+    ? new KiriProvider({ context: process.env.MAO_KIRI_CONTEXT, egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) })
+    : new PodmanProvider({ egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) }));
+  const provider = runtimeProvider(runtime);
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
   const runtimeHealth = async (refresh = false) => {
     const current = Date.now();
@@ -73,14 +80,14 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     if (url.pathname === "/healthz" && request.method === "GET") return response({ ok: true });
     if (url.pathname === "/api/v1/runtime" && request.method === "GET") {
       const health = await runtimeHealth();
-      return response({ provider: "podman", health, dependency: runtimeDependency(health) });
+      return response({ provider, health, dependency: runtimeDependency(health, provider) });
     }
     if (url.pathname === "/api/v1/runtime/ensure-ready" && request.method === "POST") {
       if (!runtime.ensureReady) return response({ error: "runtime readiness is unavailable" }, 501);
       const health = await runtime.ensureReady();
       runtimeCache = { at: Date.now(), health };
-      events.publish("runtime.podman.checked", runtimeDependency(health));
-      return response({ provider: "podman", health, dependency: runtimeDependency(health) }, health.available ? 200 : 503);
+      events.publish(`runtime.${provider}.checked`, runtimeDependency(health, provider));
+      return response({ provider, health, dependency: runtimeDependency(health, provider) }, health.available ? 200 : 503);
     }
     if (url.pathname === "/api/v1/business-systems/import" && request.method === "POST") {
       const document = await readJson(request);
@@ -334,7 +341,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
         graph: { factory: factoryGraph },
         assets: webAssets(store), logs: store.legacyEvents(), talk: [...store.legacyTalk(), ...store.listTalkMessages()],
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
-        dependencies: { podman: runtimeDependency(health), harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
+        dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") return eventsResponse(request, events, url.searchParams.get("cursor") ?? undefined);
@@ -345,7 +352,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
 }
 
 function staticResponse(pathname: string): Response {
-  const root = process.env.MAO_WEB_DIST ?? "src/mao/webapp/static/dist";
+  const root = process.env.MAO_WEB_DIST ?? "frontend/dist";
   const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const candidate = normalize(join(root, relative));
   const normalizedRoot = normalize(root);

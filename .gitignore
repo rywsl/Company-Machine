@@ -5,10 +5,9 @@ __pycache__/
 .ruff_cache/
 .factory/
 .factory-test/
-dist/
 build/
 
 node_modules/
 
-!src/mao/webapp/static/dist/
-!src/mao/webapp/static/dist/**
+!frontend/dist/
+!frontend/dist/**
