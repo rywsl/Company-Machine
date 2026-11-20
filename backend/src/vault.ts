@@ -1,7 +1,7 @@
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { SystemClock, utcIso, type Clock } from "./legacy/foundation";
+import { randomUuid, SystemClock, utcIso, type Clock } from "./legacy/foundation";
 
 type VaultRecord = { ref: string; iv: string; tag: string; ciphertext: string; updatedAt: string };
 
@@ -54,7 +54,19 @@ export class VaultStore {
       ciphertext: ciphertext.toString("base64"),
       updatedAt: utcIso(this.clock.now()),
     };
-    writeFileSync(this.path, JSON.stringify(records), { encoding: "utf8", mode: 0o600 });
+    const temporary = `${this.path}.${randomUuid()}.part`;
+    let staged = false;
+    try {
+      writeFileSync(temporary, JSON.stringify(records), { encoding: "utf8", mode: 0o600, flag: "wx" });
+      staged = true;
+      renameSync(temporary, this.path);
+    } catch (error) {
+      if (staged || (error as { code?: string }).code !== "EEXIST") {
+        try { rmSync(temporary, { force: true }); }
+        catch { /* Keep the primary write or publication error. */ }
+      }
+      throw error;
+    }
   }
 
   has(ref: string): boolean {
@@ -70,11 +82,26 @@ export class VaultStore {
   }
 
   private read(): Record<string, VaultRecord> {
+    let content: string;
     try {
-      const value = JSON.parse(readFileSync(this.path, "utf8"));
-      return value && typeof value === "object" ? value as Record<string, VaultRecord> : {};
-    } catch {
-      return {};
+      content = readFileSync(this.path, "utf8");
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return Object.create(null);
+      throw error;
     }
+    let value: unknown;
+    try {
+      value = JSON.parse(content);
+    } catch {
+      throw new Error("vault file is invalid");
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("vault file is invalid");
+    for (const [ref, record] of Object.entries(value)) {
+      if (!ref.startsWith("vault://") || record?.ref !== ref || typeof record.iv !== "string"
+          || typeof record.tag !== "string" || typeof record.ciphertext !== "string" || typeof record.updatedAt !== "string") {
+        throw new Error("vault record is invalid");
+      }
+    }
+    return Object.assign(Object.create(null), value);
   }
 }

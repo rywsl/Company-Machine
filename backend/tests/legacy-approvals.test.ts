@@ -98,9 +98,54 @@ describe("Bun in-run approval storage", () => {
       const noRule = start("Station:upper@1");
       const denied = approvals.openRequest({ jobId: noRule.id, attempt: 1, payload });
       expect(denied).toMatchObject({ status: "denied", route: "missing", decidedBy: "auto" });
-      expect(approvals.ctlResult(denied)?.code).toBe("APPROVAL_DENIED");
+      expect(approvals.ctlResult(denied)).toMatchObject({ decision: "deny", code: "APPROVAL_RULE_MISSING" });
+      expect(approvals.ctlResult({ ...denied, note: "APPROVAL_DENIED" })?.code).toBe("APPROVAL_RULE_MISSING");
+      expect(approvals.list({ jobId: noRule.id, status: "pending" })).toEqual([]);
       expect(Date.parse(denied.deadline!) - Date.parse(denied.createdAt)).toBe(600_000);
       expect(jobs.get(noRule.id).state).toBe("RUNNING");
+    } finally { db.close(); }
+  });
+
+  test("denies in-run review without a quorum and requires distinct Runtime votes when configured", async () => {
+    const db = new Database(":memory:");
+    const clock = new FakeClock();
+    const ids = new CounterIds();
+    try {
+      const snapshot = await loadSnapshot("tests/fixtures/registry-m2");
+      const station = "Station:quote@1";
+      snapshot.docs[station].spec.approval.in_run = "review";
+      const jobs = new JobStore(db, clock, ids);
+      const approvals = new Approvals({ db, clock, ids }, snapshot, jobs);
+      const job = jobs.create({ station, epoch: snapshot.epoch, inputs: {}, params: {} });
+      jobs.transition(job.id, "PROVISIONING");
+      jobs.transition(job.id, "RUNNING");
+      const request = (requestId: string) => ({
+        jobId: job.id, attempt: 1, requestId, payload: { kind: "expense", summary: "Publish", cost_usd: 1 },
+      });
+
+      const noQuorum = approvals.openRequest(request("missing-quorum"));
+      expect(noQuorum).toMatchObject({ phase: "in_run", route: "review", status: "denied" });
+      expect(approvals.ctlResult(noQuorum)).toMatchObject({ decision: "deny", code: "REVIEW_QUORUM_UNSET" });
+      expect(approvals.openRequest(request("missing-quorum"))).toEqual(noQuorum);
+      expect(approvals.list({ jobId: job.id, status: "pending" })).toEqual([]);
+      expect(jobs.get(job.id).state).toBe("RUNNING");
+
+      snapshot.result.registry.constitution[0].source += '\nlimit("approval_review_quorum", 2.0).\n';
+      const pending = approvals.openRequest(request("approval"));
+      expect(pending.status).toBe("pending");
+      expectCode(() => approvals.applyDecision(pending.id, "approve", { by: "operator" }), "APPROVAL_BY_INVALID");
+      const first = approvals.applyDecision(pending.id, "approve", { by: "runtime:first@1" });
+      expect(first.status).toBe("pending");
+      expect(approvals.ctlResult(first)).toBeNull();
+      expectCode(() => approvals.applyDecision(pending.id, "approve", { by: "runtime:first@2" }), "APPROVAL_STATE_INVALID");
+      const approved = approvals.applyDecision(pending.id, "approve", { by: "runtime:second@1" });
+      expect(approved).toMatchObject({ status: "approved", decidedBy: "runtime:first@1,runtime:second@1" });
+      expect(approvals.votes(pending.id).map(({ runtime }) => runtime)).toEqual(["first", "second"]);
+
+      const split = approvals.openRequest(request("split"));
+      approvals.applyDecision(split.id, "approve", { by: "runtime:first@1" });
+      const denied = approvals.applyDecision(split.id, "deny", { by: "runtime:second@1" });
+      expect(approvals.ctlResult(denied)).toMatchObject({ decision: "deny", code: "APPROVAL_REVIEW_SPLIT" });
     } finally { db.close(); }
   });
 });

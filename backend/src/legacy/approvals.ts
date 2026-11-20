@@ -192,7 +192,10 @@ export class Approvals {
       this.event(job.id, "approval.requested", { id, job: job.id, phase: "in_run", route, deadline }, created);
       const approval = this.get(id);
       if (route === "auto") return this.settle(approval, "approve", "auto", note, created);
-      if (route === "missing") return this.settle(approval, "deny", "auto", "APPROVAL_DENIED", created);
+      if (route === "missing") return this.settle(approval, "deny", "auto", "APPROVAL_RULE_MISSING", created);
+      if (route === "review" && this.reviewQuorum() === undefined) {
+        return this.settle(approval, "deny", "auto", "REVIEW_QUORUM_UNSET", created);
+      }
       return approval;
     }).immediate();
   }
@@ -310,7 +313,7 @@ export class Approvals {
         return { expired: true, approval: this.settle(approval, "deny", "timeout", "APPROVAL_TIMEOUT", now) };
       }
       const note = redact(options.note ?? "");
-      const decided = approval.phase === "propose" && approval.route === "review"
+      const decided = approval.route === "review"
         ? this.vote(approval, decision, by, note, now)
         : this.settle(approval, decision, by, note, now);
       return { expired: false, approval: decided };
@@ -354,7 +357,12 @@ export class Approvals {
     if (approval.status === "pending") return null;
     if (approval.decidedBy === "timeout") return { decision: "timeout", note: approval.note, code: "APPROVAL_TIMEOUT" };
     if (approval.status === "approved") return { decision: "approve", note: approval.note, code: "" };
-    const code = approval.phase === "propose" && approval.route === "review" ? "APPROVAL_REVIEW_SPLIT" : "APPROVAL_DENIED";
+    if (approval.route === "missing") return { decision: "deny", note: "APPROVAL_RULE_MISSING", code: "APPROVAL_RULE_MISSING" };
+    if (approval.route === "review" && approval.decidedBy === "auto" && approval.note === "REVIEW_QUORUM_UNSET") {
+      return { decision: "deny", note: approval.note, code: "REVIEW_QUORUM_UNSET" };
+    }
+    const reviewDenial = approval.route === "review" && (approval.phase === "propose" || approval.decidedBy?.startsWith("runtime:"));
+    const code = reviewDenial ? "APPROVAL_REVIEW_SPLIT" : "APPROVAL_DENIED";
     return { decision: "deny", note: approval.note, code };
   }
 

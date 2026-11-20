@@ -120,7 +120,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 
 | 文件 | 验证 |
 |---|---|
-| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱及恢复事务、对话入队与事件事务、SSE 分页回放与跨进程写入 |
+| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱的原子发布与异常保护、资源恢复事务、对话入队与事件事务、SSE 分页回放与跨进程写入 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |
@@ -133,7 +133,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列及密钥全部就绪的已授权工位，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/harness.test.ts` | 官方 CLI、Windows 原生 Claude Code 路径、ACP 会话和事件流 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
-| `backend/tests/legacy-approvals.test.ts` | 工位审批的费用规则、尝试隔离、到期与拒绝 |
+| `backend/tests/legacy-approvals.test.ts` | 工位审批的费用规则、尝试隔离、到期、缺失规则和不同 Runtime 的复核票数 |
 | `backend/tests/legacy-contract.test.ts` | validator 正反样例、GoldenSet、Baseline、转换等价、差分及 Sink 方案试运行恢复 |
 | `backend/tests/legacy-cache.test.ts` | 缓存键、候选可用性、失效范围与审计 |
 | `backend/tests/legacy-core.test.ts` | 规范 JSON、SQLite 仓库、并发 CAS 提交、快照和值投影 |
@@ -154,7 +154,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/dynamic-map-literal.test.ts` | 字面 Map 编译、实例转换、预算预留、持久化执行、分支跳过与存量计划恢复 |
 | `backend/tests/dynamic-plan.test.ts` | Plan schema、展开限额和当前 Run 预算，Planner 退回重试、封存、附加子节点和重启恢复 |
 | `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
-| `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
+| `backend/tests/legacy-two-phase.test.ts` | 方案审批、运行中拒绝与恢复、按工位配置到期及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
 | `backend/tests/legacy-sandbox.test.ts` | 本地夹具执行、超时和文件邮箱 |
 | `backend/tests/legacy-scheduler.test.ts` | 任务准入、资源与隔舱配额、熔断探针、自动隔离、死信和审批到期 |
@@ -384,6 +384,10 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_machine_needs_do_not_expand_policy` | `backend/tests/legacy-egress.test.ts` | `leaves none isolated and expands only explicitly delegated Machine tiers` | Machine 声明只在策略显式委托的等级生效 |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_connect_without_ca_rejected_when_methods_limited` | `backend/tests/legacy-egress-forwarder.test.ts` | `rejects a CONNECT if the HTTPS method is opaque or a monitor must authorize it` | 方法受限时以 403 拒绝不透明 CONNECT |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_unproxied_still_denied` | `backend/runtime/podman.test.ts` | `rejects Registry egress before querying an engine with only a configured bridge` | 缺少隔离代理时在访问容器引擎前拒绝 |
+| `removed/python/tests/acceptance/m2/test_m2_06_approvals.py::test_in_run_deny_returns_to_running` | `backend/tests/legacy-two-phase.test.ts` | `delivers in-run review denial through the mailbox and returns the Job to RUNNING` | 运行中拒绝经邮箱返回，Job 回到 RUNNING |
+| `removed/python/tests/acceptance/m2/test_m2_06_approvals.py::test_in_run_missing_rule_rejects` | `backend/tests/legacy-two-phase.test.ts` | `delivers in-run review denial through the mailbox and returns the Job to RUNNING` | 无规则时邮箱返回 APPROVAL_RULE_MISSING，Job 不进入待审批 |
+| `removed/python/tests/acceptance/m2/test_m2_06_approvals.py::test_timeout_uses_spec_not_default` | `backend/tests/legacy-two-phase.test.ts` | `resumes an expired proposal as an approval timeout and leaves no-deadline proposals waiting` | 按工位超时重入并记录 FAILED，未设置时保留等待 |
+| `removed/python/tests/acceptance/m2/test_m2_06_approvals.py::test_sink_propose_does_not_claim` | `backend/tests/legacy-two-phase.test.ts` | `Runner preserves pending Sink proposals without claiming or executing until a durable approval` | 待审批的 Sink 方案无认领回执 |
 | `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_sink_publishes_and_verifies` | `backend/tests/legacy-connectors.test.ts` | `Sink verifies once, suppresses duplicate jobs and can be reaudited or voided` | 真实发布后核验回执并封存作业 |
 | `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_duplicate_publish_is_suppressed` | `backend/tests/legacy-connectors.test.ts` | `Sink verifies once, suppresses duplicate jobs and can be reaudited or voided` | 已核验回执抑制重复发布 |
 | `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_line_rerun_succeeds` | `backend/tests/legacy-connectors.test.ts` | `reruns a Line successfully without executing the already verified Sink again` | 两次 Run 都完成，作业事件记录第二次跳过发布 |

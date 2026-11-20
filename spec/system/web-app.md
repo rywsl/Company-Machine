@@ -331,6 +331,8 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱。保险箱写入成功后，SQLite 在同一事务内更新请求状态、记录可用事件并重新排队所需请求均已可用的工位。事件推送与派发在提交后执行。若保险箱已写入而 SQLite 提交失败，用户可重新提交同一请求。
 - 服务启动恢复时，已授权运行中等待资源的工位在所有已绑定的本项目请求均为可用时重新排队，再按 DAG 派发。缺少资源关联、请求仍未完成或归属其他项目的工位继续等待。
 
+本地保险箱将加密记录写入同目录的私有临时文件，再原子替换正式文件。首次写入时允许正式文件缺失。读取出错或记录格式损坏时停止写入，保留正式文件供恢复。
+
 密钥值只在保险箱写入请求中出现。数据库、事件、Harness、Foreman 和普通 UI 只接触保险箱引用与状态。UI 展示语义化字段、图表、时间线和文件引用，底层 JSON 不作为用户详情内容渲染。
 
 业务记录的 JSON 契约保留 `record_type`（`artifact` 或 `material`）、`kind`、`ref`、`title`、`description`、`summary`、`purpose`、`status`、`producer`、`files`、`inputs`、`outputs` 和 `lineage`。`title`、`description` 或 `summary` 至少有一个面向人的说明。`files` 只保存引用、路径、媒体类型和摘要，不内嵌文件字节。记录由官方 Harness 产生或转换后写入，控制面只保存和分发这些描述，不执行记录中的指令。

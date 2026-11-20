@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
@@ -319,6 +319,63 @@ describe("Bun business backend", () => {
     } finally {
       reader.close();
       app.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves committed vault values when publication fails or the vault is damaged", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-vault-publication-"));
+    const path = join(root, "vault.json");
+    const previous = join(root, "previous.json");
+    const key = join(root, "vault.key");
+    const first = "vault://fixture/first";
+    const second = "vault://fixture/second";
+    const clock = new FakeClock();
+    try {
+      const vault = new VaultStore(path, key, clock);
+      expect(vault.get(first)).toBeUndefined();
+      expect(vault.has(first)).toBe(false);
+      vault.put(first, "first-value");
+      vault.put(second, "second-value");
+      const committed = readFileSync(path, "utf8");
+      expect(committed).not.toContain("first-value");
+      if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
+      const incomplete = path + ".unrelated.part";
+      writeFileSync(incomplete, "incomplete", "utf8");
+      expect(new VaultStore(path, key).get(first)).toBe("first-value");
+      expect(new VaultStore(path, key).get(second)).toBe("second-value");
+
+      const failedPublication = new VaultStore(path, key, {
+        now() {
+          renameSync(path, previous);
+          mkdirSync(path);
+          return clock.now();
+        },
+        monotonic: () => clock.monotonic(),
+        sleep: (seconds) => clock.sleep(seconds),
+      });
+      expect(() => failedPublication.put(first, "must-not-replace")).toThrow();
+      expect(readFileSync(previous, "utf8")).toBe(committed);
+      expect(readdirSync(root).sort()).toEqual(["previous.json", "vault.json", "vault.json.unrelated.part", "vault.key"]);
+      expect(() => vault.has(first)).toThrow();
+      rmdirSync(path);
+      renameSync(previous, path);
+      expect(vault.get(first)).toBe("first-value");
+
+      for (const damaged of ["{", "[]", JSON.stringify({ [first]: { ref: first } })]) {
+        writeFileSync(path, damaged, "utf8");
+        expect(() => vault.get(second)).toThrow(/vault (file|record) is invalid/);
+        expect(() => vault.has(second)).toThrow(/vault (file|record) is invalid/);
+        expect(() => vault.put(second, "must-not-overwrite")).toThrow(/vault (file|record) is invalid/);
+        expect(readFileSync(path, "utf8")).toBe(damaged);
+      }
+      writeFileSync(path, committed, "utf8");
+      vault.put(first, "rotated");
+      const restored = new VaultStore(path, key);
+      expect(restored.get(first)).toBe("rotated");
+      expect(restored.get(second)).toBe("second-value");
+      expect(readFileSync(incomplete, "utf8")).toBe("incomplete");
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
