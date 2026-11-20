@@ -37,7 +37,7 @@ export MAO_KIRI_EXECUTABLE=kiri
 bun run backend/src/index.ts
 ```
 
-Kiri readiness may start `kiri daemon` without a UI, or reuse a systemd-managed daemon. `MAO_KIRI_MODE=docker-context` selects Kiri's Docker Engine API context when the installation exposes `docker --context kiri`.
+Kiri readiness may start `kiri daemon` without a UI, or reuse a systemd-managed daemon. Set `MAO_KIRI_SOCKET=/run/kiri/docker.sock` and optionally `MAO_KIRI_DATA_DIR=/var/lib/kiri-daemon` for the official Linux service. `MAO_KIRI_MODE=docker-context` selects Kiri's Docker Engine API context when the installation exposes `docker --context kiri`.
 
 ## Engineering rules
 

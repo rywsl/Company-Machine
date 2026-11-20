@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { KiriProvider } from "./kiri";
+import { KiriProvider, resolveKiriEnvironment } from "./kiri";
 import type { CommandResult, SandboxSpec } from "./podman";
 
 const ok = (stdout = "", stderr = ""): CommandResult => ({
@@ -40,6 +40,24 @@ describe("KiriProvider", () => {
     const health = await provider.health();
     expect(health.available).toBe(true);
     expect(calls[0]).toEqual(["kiri-test", "ps", "--format", "json"]);
+  });
+
+  test("passes the Linux headless socket and data directory to Kiri", async () => {
+    let commandOptions: { env?: Record<string, string> } | undefined;
+    const provider = new KiriProvider({
+      kiriExecutable: "kiri-test",
+      socket: "/run/kiri/docker.sock",
+      dataDir: "/var/lib/kiri-daemon",
+      runner: async (_argv, options) => { commandOptions = options; return ok("[]"); },
+    });
+    await provider.health();
+    expect(commandOptions?.env).toEqual({ KIRI_SOCKET: "/run/kiri/docker.sock", KIRI_DATA_DIR: "/var/lib/kiri-daemon" });
+    expect(provider.kiriEnvironment).toEqual(commandOptions?.env);
+  });
+
+  test("rejects empty or nul-containing headless paths", () => {
+    expect(() => resolveKiriEnvironment({ socket: "" })).toThrow("Invalid Kiri socket");
+    expect(() => resolveKiriEnvironment({ dataDir: "bad\u0000path" })).toThrow("Invalid Kiri data directory");
   });
 
   test("reports the Kiri context while using the Docker Engine API", async () => {

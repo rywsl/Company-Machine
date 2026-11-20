@@ -50,7 +50,7 @@ export MAO_KIRI_EXECUTABLE=kiri
 bun run backend/src/index.ts
 ```
 
-Linux readiness 可以在没有 UI 的情况下启动 `kiri daemon`，如果发行版已经通过 systemd 启动官方服务则直接复用。Kiri 只提供 `kiri` Docker context 时设置 `MAO_KIRI_MODE=docker-context`。
+Linux readiness 可以在没有 UI 的情况下启动 `kiri daemon`，如果发行版已经通过 systemd 启动官方服务则直接复用。官方服务使用 `/run/kiri/docker.sock` 时设置 `MAO_KIRI_SOCKET=/run/kiri/docker.sock`，状态目录可设置为 `MAO_KIRI_DATA_DIR=/var/lib/kiri-daemon`。Kiri 只提供 `kiri` Docker context 时设置 `MAO_KIRI_MODE=docker-context`。
 
 ## 交给厂长
 

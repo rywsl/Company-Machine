@@ -10,7 +10,7 @@ When a Foreman profile is configured, queued talk messages can be dispatched thr
 
 Podman and Kiri health and readiness are exposed at `/api/v1/runtime` and `/api/v1/runtime/ensure-ready`. A missing runtime dependency is reported to the Web App as an explicit runtime state. `MAO_PODMAN_EXECUTABLE` can point at a user-local Podman CLI when the parent desktop process has an older PATH snapshot.
 
-Set `MAO_CONTAINER_RUNTIME=kiri` to use Kiri's headless Linux-native CLI path. The default Kiri mode invokes `kiri ps`, `kiri run`, `kiri exec` and related commands directly. On Linux, readiness can start `kiri daemon` without opening the Kiri UI, while an existing systemd-managed daemon is reused. `MAO_KIRI_MODE=docker-context` is available for installations exposing only `docker --context kiri`. `MAO_KIRI_EXECUTABLE` selects a user-local or packaged binary.
+Set `MAO_CONTAINER_RUNTIME=kiri` to use Kiri's headless Linux-native CLI path. The default Kiri mode invokes `kiri ps`, `kiri run`, `kiri exec` and related commands directly. On Linux, readiness can start `kiri daemon` without opening the Kiri UI, while an existing systemd-managed daemon is reused. Set `MAO_KIRI_SOCKET=/run/kiri/docker.sock` and optionally `MAO_KIRI_DATA_DIR=/var/lib/kiri-daemon` when using the official Linux systemd service. `MAO_KIRI_MODE=docker-context` is available for installations exposing only `docker --context kiri`. `MAO_KIRI_EXECUTABLE` selects a user-local or packaged binary.
 
 Secret values enter through `/api/v1/secrets/requests/:id/value` and are encrypted in the local vault. The database and event stream contain only the vault reference and status.
 

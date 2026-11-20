@@ -367,7 +367,7 @@ Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都�
 
 Linux 使用 Kiri 的原生 headless 方案，官方 `kiri` 包直接在宿主 Linux 内核上运行，`kiri daemon` 提供 Docker Engine API socket。控制面在直接 CLI 模式下探测 `kiri ps`，Linux 上不可用时由 `ensure-ready` 尝试启动 `kiri daemon`，发行版已通过 systemd 启动的 daemon 由探测直接复用。Kiri 自己管理 Windows/Linux 容器后端，控制面不打开 UI。
 
-控制面只调用 Kiri CLI，不挂载 docker.sock，不使用 `--network host`，不把 Kiri 的虚拟机状态伪装成 Podman machine。`MAO_CONTAINER_RUNTIME=kiri` 选择 Kiri，`MAO_KIRI_EXECUTABLE`、`MAO_KIRI_CONTEXT` 和 `MAO_KIRI_MODE` 分别覆盖 CLI、context 和兼容模式。直接 CLI 模式的 Linux host 将 `machine` 标记为 `linux-host`，不伪装成 Podman machine 名称。未配置时，业务默认仍使用 Podman。
+控制面只调用 Kiri CLI，不挂载 docker.sock，不使用 `--network host`，不把 Kiri 的虚拟机状态伪装成 Podman machine。Linux systemd 服务使用的 `/run/kiri/docker.sock` 和状态目录可以通过 `MAO_KIRI_SOCKET`、`MAO_KIRI_DATA_DIR` 传给 CLI 与 daemon。`MAO_CONTAINER_RUNTIME=kiri` 选择 Kiri，`MAO_KIRI_EXECUTABLE`、`MAO_KIRI_CONTEXT` 和 `MAO_KIRI_MODE` 分别覆盖 CLI、context 和兼容模式。直接 CLI 模式的 Linux host 将 `machine` 标记为 `linux-host`，不伪装成 Podman machine 名称。未配置时，业务默认仍使用 Podman。
 
 ## 6. 错误
 

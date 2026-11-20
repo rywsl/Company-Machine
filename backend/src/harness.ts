@@ -4,7 +4,7 @@
  * provider authentication remain inside the official Harness.
  */
 
-import { buildKiriHarnessArgv } from "../runtime/kiri";
+import { buildKiriHarnessArgv, resolveKiriEnvironment } from "../runtime/kiri";
 
 export type OfficialHarnessName = "claude-code" | "codex" | "deepseek-harness" | "zcode" | "kimi-code" | "pi";
 export type HarnessTransportKind = "acp" | "official-cli";
@@ -159,6 +159,11 @@ function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Recor
   const network = options.network ?? "none";
   if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
   let podmanNetwork = "none";
+  if (hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri") {
+    for (const [key, value] of Object.entries(resolveKiriEnvironment())) {
+      if (env[key] === undefined) env[key] = value;
+    }
+  }
   if (network === "egress") {
     for (const key of ["MAO_EGRESS_NETWORK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) {
       const value = hostEnv[key];

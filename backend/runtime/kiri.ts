@@ -23,12 +23,32 @@ export type KiriProviderOptions = {
   context?: string;
   mode?: "kiri" | "docker-context";
   autoStart?: boolean;
+  /** Unix socket or named pipe used by the headless Kiri daemon. */
+  socket?: string;
+  /** Optional Kiri state directory, useful for a dedicated Linux service user. */
+  dataDir?: string;
   runner?: CommandRunner;
   egressNetwork?: string;
   egressEnv?: Record<string, string>;
 };
 
 const CONTEXT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
+
+export function resolveKiriEnvironment(options: { socket?: string; dataDir?: string } = {}): Record<string, string> {
+  const env = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
+  const values: Record<string, string> = {};
+  const socket = options.socket ?? env.MAO_KIRI_SOCKET ?? env.KIRI_SOCKET;
+  const dataDir = options.dataDir ?? env.MAO_KIRI_DATA_DIR ?? env.KIRI_DATA_DIR;
+  if (socket !== undefined) {
+    if (socket.length === 0 || socket.includes("\u0000")) throw new Error("Invalid Kiri socket");
+    values.KIRI_SOCKET = socket;
+  }
+  if (dataDir !== undefined) {
+    if (dataDir.length === 0 || dataDir.includes("\u0000")) throw new Error("Invalid Kiri data directory");
+    values.KIRI_DATA_DIR = dataDir;
+  }
+  return values;
+}
 
 export function resolveKiriExecutable(configured?: string): string {
   if (configured) return configured;
@@ -72,6 +92,7 @@ export class KiriProvider extends PodmanProvider {
   private readonly commandRunner: CommandRunner;
   readonly mode: "kiri" | "docker-context";
   readonly autoStart: boolean;
+  readonly kiriEnvironment: Record<string, string>;
 
   constructor(options: KiriProviderOptions = {}) {
     const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
@@ -81,12 +102,18 @@ export class KiriProvider extends PodmanProvider {
     if (!CONTEXT.test(context)) throw new Error("Invalid Kiri Docker context");
     const runner = options.runner ?? runCommand;
     const kiriExecutable = resolveKiriExecutable(options.kiriExecutable ?? hostEnv.MAO_KIRI_EXECUTABLE);
+    const kiriEnvironment = resolveKiriEnvironment(options);
     const executable = mode === "kiri" ? kiriExecutable : dockerExecutable;
     super({
       executable,
-      runner: async (argv, commandOptions) => mode === "kiri"
-        ? runner(argv, commandOptions)
-        : runner(commandFor(argv, dockerExecutable, context), commandOptions),
+      runner: async (argv, commandOptions) => {
+        const mergedOptions = Object.keys(kiriEnvironment).length === 0
+          ? commandOptions
+          : { ...(commandOptions ?? {}), env: { ...kiriEnvironment, ...(commandOptions?.env ?? {}) } };
+        return mode === "kiri"
+          ? runner(argv, mergedOptions)
+          : runner(commandFor(argv, dockerExecutable, context), mergedOptions);
+      },
       egressNetwork: options.egressNetwork,
       egressEnv: options.egressEnv,
     });
@@ -96,6 +123,7 @@ export class KiriProvider extends PodmanProvider {
     this.mode = mode;
     this.autoStart = options.autoStart ?? true;
     this.commandRunner = runner;
+    this.kiriEnvironment = kiriEnvironment;
   }
 
   buildRunArgv(spec: SandboxSpec): string[] {
@@ -106,12 +134,13 @@ export class KiriProvider extends PodmanProvider {
   async health(): Promise<RuntimeHealth> {
     if (this.mode === "kiri") {
       try {
-        const result = await this.commandRunner([this.kiriExecutable, "ps", "--format", "json"], { timeoutMs: 10_000 });
+        const result = await this.commandRunner([this.kiriExecutable, "ps", "--format", "json"], { timeoutMs: 10_000, env: this.kiriEnvironment });
+        const platform = ((globalThis as { process?: { platform?: string } }).process?.platform ?? "unknown");
         return {
           available: result.exitCode === 0,
-          platform: ((globalThis as { process?: { platform?: string } }).process?.platform ?? "unknown"),
+          platform,
           executable: this.kiriExecutable,
-          machine: null,
+          machine: platform === "linux" ? "linux-host" : null,
           rootless: null,
           reason: result.exitCode === 0 ? undefined : new TextDecoder().decode(result.stderr).trim() || "kiri-unavailable",
         };
@@ -120,7 +149,7 @@ export class KiriProvider extends PodmanProvider {
           available: false,
           platform: ((globalThis as { process?: { platform?: string } }).process?.platform ?? "unknown"),
           executable: this.kiriExecutable,
-          machine: null,
+          machine: ((globalThis as { process?: { platform?: string } }).process?.platform ?? "unknown") === "linux" ? "linux-host" : null,
           rootless: null,
           reason: error instanceof Error ? error.message : "kiri-unavailable",
         };
@@ -138,12 +167,15 @@ export class KiriProvider extends PodmanProvider {
     const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
     if (!bun) return current;
     try {
-      const daemon = bun.spawn([this.kiriExecutable, "daemon"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+      const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
+      const daemonEnv = Object.fromEntries(Object.entries(hostEnv).filter(([, value]) => typeof value === "string")) as Record<string, string>;
+      Object.assign(daemonEnv, this.kiriEnvironment);
+      const daemon = bun.spawn([this.kiriExecutable, "daemon"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true, env: daemonEnv });
       daemon.unref?.();
     } catch {
       return current;
     }
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       const ready = await this.health();
       if (ready.available) return ready;
