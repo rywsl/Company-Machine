@@ -228,6 +228,45 @@ describe("Bun business backend", () => {
     }
   });
 
+  test("projects factory graph summaries while preserving the authored DAG on the full business API", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, clock: new FakeClock() });
+    try {
+      const authored = app.store.createBusinessSystem({ name: "Authored DAG", description: "Factory summary" });
+      const empty = app.store.createBusinessSystem({ name: "Empty system" });
+      app.store.createIntake({ business_system_id: authored.id, name: "Project one" });
+      app.store.createIntake({ business_system_id: authored.id, name: "Project two" });
+      const graph = { nodes: [{ id: "operator" }, { id: "machine" }], edges: [{ source: "operator", target: "machine" }] };
+      const graphResponse = await app.fetch(new Request("http://localhost/api/v1/business-systems/" + authored.id + "/graph", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ graph }),
+      }));
+      expect(graphResponse.status).toBe(200);
+
+      const queries: string[] = [];
+      const query = app.store.db.query.bind(app.store.db);
+      app.store.db.query = <T,>(sql: string) => {
+        queries.push(sql);
+        return query<T>(sql);
+      };
+      const projected = await app.fetch(new Request("http://localhost/api/web/graph?scope=factory"));
+      expect(projected.status).toBe(200);
+      expect(await projected.json()).toEqual({
+        scope: "factory", id: "factory", title: "工厂",
+        nodes: [
+          { id: authored.id, type: "workarea", group: "factory", label: "Authored DAG", position: { x: 180, y: 160 }, status: "ready", metadata: { description: "Factory summary", project_count: 2 } },
+          { id: empty.id, type: "workarea", group: "factory", label: "Empty system", position: { x: 480, y: 160 }, status: "ready", metadata: { project_count: 0 } },
+        ],
+        edges: [],
+      });
+      expect(queries.filter((sql) => /FROM business_systems/i.test(sql))).toEqual([
+        "SELECT id, name, description, status FROM business_systems ORDER BY created_at",
+      ]);
+      const full = await app.fetch(new Request("http://localhost/api/v1/business-systems"));
+      expect(full.status).toBe(200);
+      const systems = await full.json() as Array<{ id: string; metadata: object }>;
+      expect(systems.find(({ id }) => id === authored.id)?.metadata).toMatchObject({ graph });
+    } finally { app.stop(); }
+  });
+
   test("creates a business system, intakes a project, and persists a talk event", async () => {
     const dbPath = `.factory/test-${randomUUID()}.db`;
     const app = createApp({ dbPath, legacyPath: dbPath });

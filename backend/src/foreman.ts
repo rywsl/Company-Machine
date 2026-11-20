@@ -168,7 +168,7 @@ export class ForemanCoordinator {
       }
       const sources = sourceMounts?.facts ?? (project ? projectSourceFacts(project, !profile.image) : undefined);
       const intakeSystem = intake && project?.businessSystemId ? this.options.store.getBusinessSystem(project.businessSystemId) : undefined;
-      const systems = intake ? (intakeSystem ? [intakeSystem] : []) : this.options.store.listBusinessSystems();
+      const systems = intake ? (intakeSystem ? [intakeSystem] : []) : this.options.store.listBusinessSystemSummaries();
       if (profile.image && this.options.fetchBusiness) {
         mailbox = openForemanMailbox({
           systems: new Set(systems.map(({ id }) => id)), projectId: project?.id,

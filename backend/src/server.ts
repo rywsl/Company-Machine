@@ -807,7 +807,7 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
     const edges = storedEdges.length ? storedEdges.map((edge) => ({ id: typeof edge.id === "string" ? edge.id : `${edge.source}:${edge.target}`, source: edge.source, target: edge.target, kind: edge.kind ?? "material", condition: edge.condition, status: edge.status ?? "ready" })) : operatorUnits.length ? operatorUnits.map((unit) => ({ id: `${unit.id}:operator-to-machine`, source: unit.id, target: `${unit.projectId}:machine`, kind: "material", condition: "业务物料", status: "ready" })) : selectedProjects.map((project) => ({ id: `${project.id}:operator-to-machine`, source: `${project.id}:operator`, target: `${project.id}:machine`, kind: "material", condition: "业务物料", status: "ready" }));
     return { scope: "workarea", id: workarea, title: selectedSystem?.name ?? workarea, nodes, edges };
   }
-  const systems = store.listBusinessSystems();
+  const systems = store.listBusinessSystemSummaries();
   const projectCounts = store.countProjectsByBusinessSystem();
   return { scope: "factory", id: "factory", title: "工厂", nodes: systems.map((system, index) => ({ id: system.id, type: "workarea", group: "factory", label: system.name, position: { x: 180 + (index % 3) * 300, y: 160 + Math.floor(index / 3) * 200 }, status: system.status === "active" ? "ready" : "unknown", metadata: { description: system.description, project_count: projectCounts.get(system.id) ?? 0 } })), edges: [] };
 }

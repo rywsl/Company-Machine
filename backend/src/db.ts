@@ -217,6 +217,14 @@ export class SqliteStore {
     return this.db.query("SELECT * FROM business_systems ORDER BY created_at").all().map((row) => this.businessSystemFromRow(row));
   }
 
+  listBusinessSystemSummaries() {
+    type Summary = Pick<BusinessSystem, "id" | "name" | "status">;
+    const rows = this.db.query<Summary & { description: string | null }>(
+      "SELECT id, name, description, status FROM business_systems ORDER BY created_at",
+    ).all();
+    return rows.map(({ description, ...summary }) => ({ ...summary, description: description ?? undefined }));
+  }
+
   getBusinessSystem(id: string): BusinessSystem | undefined {
     const row = this.db.query("SELECT * FROM business_systems WHERE id = ?").get(id);
     return row ? this.businessSystemFromRow(row) : undefined;
