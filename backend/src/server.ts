@@ -25,6 +25,8 @@ import { kernelRunMetadata, loadBusinessKernel } from "./business-kernel-bridge"
 import { createBusinessKernelExecution } from "./business-kernel-bridge";
 import { Context } from "./legacy/context";
 import type { ContainerProvider } from "../runtime/podman";
+import { EpochStore } from "./legacy/registry-epochs";
+import { readGovernedRegistry } from "./legacy/registry-config";
 
 function defaultHeaders(): Record<string, string> {
   return { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
@@ -285,6 +287,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     return recovered.length;
   };
   const activeKernelMachines = new Map<string, Promise<void>>();
+  const activeSourceMachines = new Map<string, Promise<void>>();
   const activeKernelContexts = new Map<string, Context>();
   const ensureMaterialToBeanConversion = (businessSystemId: string, artifact: Artifact, beanId: string): void => {
     const input = `material://${artifact.id}`;
@@ -488,9 +491,37 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     activeKernelMachines.set(unitRunId, work);
     return work;
   };
+  const dispatchSourceMachine = (runId: string, unitRunId: string): Promise<void> => {
+    const existing = activeSourceMachines.get(unitRunId);
+    if (existing) return existing;
+    const work = (async () => {
+      const unitRun = store.getUnitRun(runId, unitRunId);
+      const run = store.getBusinessRun(runId);
+      const unit = unitRun ? store.getBusinessUnit(unitRun.unitId) : undefined;
+      if (!unitRun || !run || !unit || unit.kind !== "machine" || unitRun.status !== "running") return;
+      try {
+        // A source-backed Machine is the durable project preparation boundary.
+        // The actual project work remains in the official Operator Harness.
+        const completed = store.completeUnitRun(unitRun.id, "completed", [], undefined);
+        if (completed) {
+          events.publish("machine.run.completed", { runId, unitRunId, machineId: unit.id, state: "SUCCEEDED", outputs: [] });
+          dispatchOperatorRun(runId, completed.id);
+        }
+      } catch (error) {
+        const failed = store.completeUnitRun(unitRun.id, "failed", [], error instanceof Error ? error.message : String(error));
+        if (failed) {
+          events.publish("machine.run.failed", { runId, unitRunId, machineId: unit.id, error: failed.error });
+          dispatchOperatorRun(runId, failed.id);
+        }
+      }
+    })().finally(() => { activeSourceMachines.delete(unitRunId); });
+    activeSourceMachines.set(unitRunId, work);
+    return work;
+  };
   function dispatchOperatorRun(runId: string, completedUnitRunId?: string) {
     if (stopped || options.dispatchWork === false) return;
     for (const unitRun of store.listReadyUnitRuns(runId, completedUnitRunId)) runInBackground(operator.dispatch(runId, unitRun.id));
+    for (const unitRun of store.listReadySourceMachineRuns(runId)) runInBackground(dispatchSourceMachine(runId, unitRun.id));
     for (const unitRun of store.listReadyKernelMachineRuns(runId)) runInBackground(dispatchKernelMachine(runId, unitRun.id));
   }
   const recoverQueuedWork = () => {
@@ -501,6 +532,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     store.resumeResourceRuns();
     for (const id of store.listRecoverableBusinessRunIds()) dispatchOperatorRun(id);
+    for (const { runId, unitRunId } of store.listRunningSourceMachineRuns()) runInBackground(dispatchSourceMachine(runId, unitRunId));
     for (const { runId, unitRunId } of store.listRunningKernelMachineRuns()) runInBackground(dispatchKernelMachine(runId, unitRunId, true));
   };
   const handleRequest = async (request: Request): Promise<Response> => {
@@ -523,7 +555,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         const run = decodeSegment(runPath[1]) ? store.getBusinessRun(decodeSegment(runPath[1])!) : undefined;
         if (run && !canAccessSystem(principal, run.businessSystemId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该运行权限" }, 403);
       }
-      if ((url.pathname === "/api/v1/business-systems" || url.pathname === "/api/v1/projects" || url.pathname === "/api/web/bootstrap" || url.pathname === "/api/web/graph" || url.pathname === "/api/web/assets" || url.pathname === "/api/web/assets/page" || url.pathname === "/api/web/logs") && principal.role !== "admin") {
+      if ((url.pathname === "/api/v1/business-systems" || url.pathname === "/api/v1/projects" || url.pathname === "/api/web/bootstrap" || url.pathname === "/api/web/graph" || url.pathname === "/api/web/assets" || url.pathname === "/api/web/assets/page" || url.pathname === "/api/web/logs" || url.pathname === "/api/web/constitution") && principal.role !== "admin") {
         return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据需要明确的业务系统范围" }, 403);
       }
       if ((url.pathname.startsWith("/api/v1/foreman/") || url.pathname.startsWith("/api/v1/talk") || url.pathname === "/api/web/talk") && !canMutate(principal, "foreman")) {
@@ -536,6 +568,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response({ provider, health, dependency: runtimeDependency(health, provider) });
     }
     if (url.pathname === "/api/v1/runtime/ensure-ready" && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "operator")) return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有启动运行时权限" }, 403);
       if (!runtime.ensureReady) return response({ error: "runtime readiness is unavailable" }, 501);
       let health: RuntimeHealth;
       try {
@@ -932,7 +965,11 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const body = await readJson(request);
       if (typeof body.value !== "string" || body.value.length === 0) return response({ error: "value is required" }, 400);
       if (requestRecord.status !== "requested") return response({ error: `secret request is ${requestRecord.status}` }, 409);
-      vault.put(requestRecord.vaultRef, body.value);
+      try {
+        vault.put(requestRecord.vaultRef, body.value);
+      } catch (error) {
+        return response({ error: error instanceof Error ? error.message : "secret storage failed" }, 503);
+      }
       const { runIds, event } = store.db.transaction(() => {
         const available = store.markSecretAvailable(requestRecord.id);
         if (!available) throw new Error("secret request changed while writing");
@@ -955,10 +992,21 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (url.pathname === "/api/web/logs" && request.method === "GET") {
       const requested = Number(url.searchParams.get("limit") ?? 100);
       const limit = Number.isSafeInteger(requested) ? Math.max(1, Math.min(1000, requested)) : 100;
-      return response(webLogs(store, limit));
+      const since = url.searchParams.get("since");
+      if (since !== null && (!/^\d+$/.test(since) || Number(since) > Number.MAX_SAFE_INTEGER)) return response({ code: "INVALID_CURSOR", message: "日志游标无效" }, 400);
+      return response(webLogs(store, limit, since === null ? undefined : Number(since)));
     }
     if (url.pathname === "/api/web/graph" && request.method === "GET") {
-      return response(graphProjection(store, url.searchParams.get("scope") ?? "factory", url.searchParams.get("workarea")));
+      const scope = url.searchParams.get("scope") ?? "factory";
+      const workarea = url.searchParams.get("workarea");
+      if (scope !== "factory" && scope !== "workarea") return response({ code: "INVALID_GRAPH_SCOPE", message: "scope 必须是 factory 或 workarea" }, 400);
+      if (scope === "factory" && workarea) return response({ code: "INVALID_GRAPH_SCOPE", message: "factory 图不能指定 workarea" }, 400);
+      if (scope === "workarea" && !workarea) return response({ code: "WORKAREA_REQUIRED", message: "workarea 图需要业务系统标识" }, 400);
+      if (scope === "workarea" && !store.getBusinessSystem(workarea!)) return response({ code: "WORKAREA_NOT_FOUND", message: "业务系统不存在" }, 404);
+      return response(graphProjection(store, scope, workarea));
+    }
+    if (url.pathname === "/api/web/constitution" && request.method === "GET") {
+      return response(await constitutionProjection(storageRoot));
     }
     if (url.pathname === "/api/web/harnesses" && request.method === "GET") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以读取全局 Harness 配置" }, 403);
@@ -1042,7 +1090,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const { message, envelope, events: committed } = store.enqueueForemanTalk({ body: redactText(text) });
       for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
-      return response({ state: "accepted", message, foremanTurn: foreman.turnState(envelope) }, 201);
+      return response({ state: "accepted", message, eventCursor: store.latestEventSequence(), foremanTurn: foreman.turnState(envelope) }, 201);
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
       const assetLimit = url.searchParams.get("assetLimit");
@@ -1062,10 +1110,14 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: assetPage.olderCursor }),
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
-        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) }, constitution: { available: false } });
+        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) }, constitution: await constitutionProjection(storageRoot) });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") {
       const signal = AbortSignal.any([request.signal, eventStreams.signal]);
+      if (principal?.scoped && principal.role !== "admin") {
+        return eventsResponse(events, request.headers.get("last-event-id") ?? url.searchParams.get("cursor"), signal,
+          {}, (event) => scopedEventVisible(principal, store, event));
+      }
       return eventsResponse(events, request.headers.get("last-event-id") ?? url.searchParams.get("cursor"), signal);
     }
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
@@ -1150,7 +1202,7 @@ function publicProject(project: any) {
 }
 
 function publicArtifact(record: any) {
-  return { ...record, project_id: record.projectId, source_id: record.sourceId, record_type: record.recordType, created_at: record.createdAt };
+  return { ...record, metadata: portableValue(record.metadata ?? {}), project_id: record.projectId, source_id: record.sourceId, record_type: record.recordType, created_at: record.createdAt };
 }
 
 function assetPageLimit(raw: string): number | undefined {
@@ -1285,8 +1337,15 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
       { id: `${project.id}:machine`, type: "machine", group: project.id, label: project.name, position: { x: 470, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, sources: project.sources.length } },
     ]);
     const validNodeIds = new Set(nodes.map((node) => node.id));
-    const storedEdges = Array.isArray(storedGraph?.edges) ? storedGraph.edges.filter((edge): edge is Record<string, any> => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string" && validNodeIds.has((edge as any).source) && validNodeIds.has((edge as any).target))) : [];
-    const edges = storedEdges.length ? storedEdges.map((edge) => ({ id: typeof edge.id === "string" ? edge.id : `${edge.source}:${edge.target}`, source: edge.source, target: edge.target, kind: edge.kind ?? "material", condition: edge.condition, status: edge.status ?? "ready" })) : operatorUnits.length ? operatorUnits.map((unit) => ({ id: `${unit.id}:operator-to-machine`, source: unit.id, target: `${unit.projectId}:machine`, kind: "material", condition: "业务物料", status: "ready" })) : selectedProjects.map((project) => ({ id: `${project.id}:operator-to-machine`, source: `${project.id}:operator`, target: `${project.id}:machine`, kind: "material", condition: "业务物料", status: "ready" }));
+    const alias = new Map([["operator", units.find((unit) => unit.kind === "operator")?.id], ["machine", units.find((unit) => unit.kind === "machine")?.id]]);
+    const storedEdges = Array.isArray(storedGraph?.edges) ? storedGraph.edges.flatMap((edge): Array<Record<string, any>> => {
+      if (!edge || typeof edge !== "object" || typeof (edge as any).source !== "string" || typeof (edge as any).target !== "string") return [];
+      const source = alias.get((edge as any).source) ?? (edge as any).source;
+      const target = alias.get((edge as any).target) ?? (edge as any).target;
+      return typeof source === "string" && typeof target === "string" && validNodeIds.has(source) && validNodeIds.has(target) ? [{ ...edge, source, target }] : [];
+    }) : [];
+    const authoredEdges = Array.isArray(storedGraph?.edges);
+    const edges = authoredEdges ? storedEdges.map((edge) => ({ id: typeof edge.id === "string" ? edge.id : `${edge.source}:${edge.target}`, source: edge.source, target: edge.target, kind: edge.kind ?? "material", condition: edge.condition, status: edge.status ?? "ready" })) : operatorUnits.length ? operatorUnits.map((unit) => ({ id: `${unit.id}:machine-to-operator`, source: `${unit.projectId}:machine`, target: unit.id, kind: "material", condition: "项目物料", status: "ready" })) : selectedProjects.map((project) => ({ id: `${project.id}:machine-to-operator`, source: `${project.id}:machine`, target: `${project.id}:operator`, kind: "material", condition: "项目物料", status: "ready" }));
     return { scope: "workarea", id: workarea, title: selectedSystem?.name ?? workarea, nodes, edges };
   }
   const systems = store.listBusinessSystemSummaries();
@@ -1335,19 +1394,23 @@ function validateBusinessGraph(store: SqliteStore, businessSystemId: string, val
   const graph = value as { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> };
   const units = store.listBusinessUnits(businessSystemId);
   if (!units.length) return undefined;
-  // Pre-M18 authored graphs did not carry node types and may use stable
-  // presentation IDs. Keep those snapshots readable while requiring the
-  // stricter business-unit binding as soon as a graph declares node types.
-  if (!graph.nodes.some((node) => node.type !== undefined)) return undefined;
+  // Pre-M18 authored graphs may omit node types. They can use only the two
+  // stable presentation aliases below, while every other node is rejected.
   const byId = new Map(units.map((unit) => [unit.id, unit]));
+  const aliases = new Set(["operator", "machine"]);
   for (const node of graph.nodes) {
     const id = node.id;
-    if (typeof id !== "string" || !byId.has(id)) return "graph nodes must reference business units in the current system";
+    if (typeof id !== "string" || (!byId.has(id) && !aliases.has(id))) return "graph nodes must reference business units in the current system";
     const type = node.type;
-    if (type !== undefined && type !== byId.get(id)!.kind) return "graph node type must match its business unit";
+    if (type !== undefined && aliases.has(id) && type !== id) return "graph node type must match its business unit alias";
+    if (type !== undefined && byId.has(id) && type !== byId.get(id)!.kind) return "graph node type must match its business unit";
   }
   for (const edge of graph.edges) {
     if (edge.source === edge.target) return "graph edges cannot connect a node to itself";
+    if (edge.kind !== undefined && !["material", "condition", "default", "aggregate"].includes(String(edge.kind))) return "graph edge kind must be material, condition, default, or aggregate";
+    if (typeof edge.source !== "string" || typeof edge.target !== "string" || (!byId.has(edge.source) && !aliases.has(edge.source)) || (!byId.has(edge.target) && !aliases.has(edge.target))) {
+      return "graph edges must reference business units in the current system";
+    }
   }
   return undefined;
 }
@@ -1375,14 +1438,58 @@ async function saveProjectUploads(root: string, warehouse: Warehouse, store: Sql
   }
 }
 
-function webLogs(store: SqliteStore, limit: number) {
+function webLogs(store: SqliteStore, limit: number, since?: number) {
   return [...store.legacyEvents(limit), ...store.recentEvents(limit)]
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .filter((event) => since === undefined || event.seq > since)
     .slice(-limit)
-    .map((event) => ({ id: event.id, kind: event.type, at: event.createdAt, data: event.data }));
+    .map((event) => ({ id: event.id, seq: event.seq, cursor: String(event.seq), kind: event.type, at: event.createdAt, data: portableValue(event.data) }));
 }
 
-function eventsResponse(events: EventBus, cursor: string | null, signal: AbortSignal, cors: Record<string, string> = {}): Response {
+async function constitutionProjection(root: string) {
+  const configured = readGovernedRegistry(root);
+  if (!configured) return { available: false, status: "unconfigured", epoch: null, version: null, recent_change: null };
+  let context: Context | undefined;
+  try {
+    context = Context.open(root);
+    const epochs = await EpochStore.open(context, { registry: configured.registry });
+    const active = epochs.pointers().active;
+    if (!active) return { available: false, status: "uninitialized", epoch: null, version: null, recent_change: null };
+    const row = context.db.query<{ kind: string; data: string; at: string }>(
+      "SELECT kind,data,at FROM events WHERE kind LIKE 'epoch.%' ORDER BY seq DESC LIMIT 1",
+    ).get();
+    let recentChange: Record<string, unknown> | null = null;
+    if (row) {
+      try { recentChange = { kind: row.kind, at: row.at, ...portableValue(JSON.parse(row.data)) }; }
+      catch { recentChange = { kind: row.kind, at: row.at }; }
+    }
+    return { available: true, status: "active", epoch: active, version: active, recent_change: recentChange };
+  } catch {
+    return { available: false, status: "unavailable", epoch: null, version: null, recent_change: null };
+  } finally {
+    context?.close();
+  }
+}
+
+function scopedEventVisible(principal: AuthPrincipal, store: SqliteStore, event: Event): boolean {
+  if (!principal.scoped || principal.role === "admin") return true;
+  if (principal.role === "foreman" && (event.type.startsWith("foreman.") || event.type.startsWith("talk.foreman."))) return true;
+  const data = event.data && typeof event.data === "object" && !Array.isArray(event.data) ? event.data as Record<string, unknown> : {};
+  const systemId = ["businessSystemId", "business_system_id", "systemId", "system_id"].find((key) => typeof data[key] === "string") as string | undefined;
+  const projectId = ["projectId", "project_id"].find((key) => typeof data[key] === "string") as string | undefined;
+  if (systemId) return canAccessSystem(principal, systemId);
+  if (projectId) return canAccessProject(principal, store, projectId);
+  const runId = ["runId", "run_id"].find((key) => typeof data[key] === "string") as string | undefined;
+  if (runId) {
+    const run = store.getBusinessRun(runId);
+    return Boolean(run && canAccessSystem(principal, run.businessSystemId));
+  }
+  if (event.type.startsWith("business-system.") && typeof data.id === "string") return canAccessSystem(principal, data.id);
+  if (event.type.startsWith("project.") && typeof data.id === "string") return canAccessProject(principal, store, data.id);
+  return false;
+}
+
+function eventsResponse(events: EventBus, cursor: string | null, signal: AbortSignal, cors: Record<string, string> = {}, visible?: (event: Event) => boolean): Response {
   const startSequence = Number(cursor);
   let sequence = Number.isSafeInteger(startSequence) && startSequence >= 0 ? startSequence : 0;
   let page: Event[] = [];
@@ -1414,10 +1521,11 @@ function eventsResponse(events: EventBus, cursor: string | null, signal: AbortSi
           }
           const event = page[index];
           if (event) {
-            const data = event.data && typeof event.data === "object" ? { ...event.data, type: event.type } : { type: event.type, value: event.data };
-            controller.enqueue(encoder.encode(`id: ${event.seq}\nevent: mao.event\ndata: ${JSON.stringify(data)}\n\n`));
-            sequence = event.seq;
             index++;
+            sequence = event.seq;
+            if (visible && !visible(event)) continue;
+            const data = event.data && typeof event.data === "object" ? { ...event.data, type: event.type } : { type: event.type, value: event.data };
+            controller.enqueue(encoder.encode(`id: ${event.seq}\nevent: mao.event\ndata: ${JSON.stringify(portableValue(data))}\n\n`));
             return;
           }
           // Local publishers wake immediately. A CLI writing the same database cannot notify this process.

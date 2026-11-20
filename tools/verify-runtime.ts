@@ -120,7 +120,7 @@ try {
     const input = materialInputRoot + "/1";
     assert.equal(mode(input), "ro");
     assert.equal(mode(materialInputRoot + "/2"), undefined);
-    assert.equal(mode("/mao/sources/1"), undefined);
+    assert.equal(mode("/mao/sources/1"), "ro");
     assert.deepEqual([...readFileSync(input)], producedBytes);
     assert.throws(() => writeFileSync(input, "unexpected"));
     console.log(JSON.stringify({ type: "mao.record", record_type: "material", kind: "source-check", ref: "material://consumed-file", summary: "Read the upstream file" }));
@@ -174,7 +174,9 @@ const buyerFixture = `
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 const { materialInputRoot, producedBytes, projectKey, upload } = ${JSON.stringify({ materialInputRoot, producedBytes, projectKey, upload })};
-const sources = JSON.parse(process.argv.at(-1));
+const payload = JSON.parse(process.argv.at(-1));
+const role = payload.role;
+const sources = payload.paths;
 const mounts = readFileSync("/proc/self/mountinfo", "utf8").split("\\n").map((line) => line.split(" "));
 const mode = (path) => mounts.find((fields) => fields[4] === path)?.[5].split(",")[0];
 assert.equal(process.getuid(), 10001);
@@ -184,12 +186,14 @@ assert.equal(mode(input), "ro");
 assert.equal(mode(materialInputRoot + "/2"), undefined);
 assert.deepEqual([...readFileSync(input)], producedBytes);
 assert.throws(() => writeFileSync(input, "unexpected"));
-if (sources.length) {
-  assert.equal(sources.length, 1);
-  assert.equal(mode(sources[0]), "ro");
-  assert.deepEqual([...readFileSync(sources[0])], upload);
+if (role === "producer") {
+  assert.ok(sources.length >= 1);
+  assert.ok(sources.every((source) => mode(source) === "ro"));
+  assert.ok(sources.some((source) => {
+    try { return JSON.stringify([...readFileSync(source)]) === JSON.stringify(upload); }
+    catch { return false; }
+  }));
 }
-const role = sources.length ? "producer" : "consumer";
 console.log(JSON.stringify({ type: "mao.record", record_type: "material", kind: "package-check", ref: "material://buyer-" + role, summary: "Read a file from the imported business package" }));
 console.log(JSON.stringify({ type: "result", text: "Verified imported material" }));
 `;
@@ -229,6 +233,7 @@ async function verifyBusinessTransfer(
 
   const database = join(buyerRoot, "factory.db");
   const stages: string[] = [];
+  let buyerOperatorCalls = 0;
   const buyer = createApp({
     dbPath: database, legacyPath: database, storageRoot: buyerRoot, dispatchWork: false,
     vault: new VaultStore(join(buyerRoot, "vault.json"), join(buyerRoot, "vault.key")),
@@ -240,7 +245,8 @@ async function verifyBusinessTransfer(
       stages.push(outputDirectory);
       assert.ok(argv.at(-1)?.includes("build/result.bin"));
       assert.ok(!argv.at(-1)?.includes(root));
-      return spawnOfficialProcess(["bun", "-e", buyerFixture, JSON.stringify(sources.map(({ index }) => `/mao/sources/${index}`))], { ...options, stdin: undefined });
+      const role = buyerOperatorCalls++ === 0 ? "producer" : "consumer";
+      return spawnOfficialProcess(["bun", "-e", buyerFixture, JSON.stringify({ role, paths: sources.map(({ index }) => `/mao/sources/${index}`) })], { ...options, stdin: undefined });
     } },
   });
   try {
@@ -330,16 +336,16 @@ async function verifyForeman(provider: string): Promise<void> {
       const sources = options.projectSources ?? [];
       const prompt = argv.at(-1);
       let targets;
-      if (sources.length) {
-        assert.deepEqual(inputs, []);
-        targets = { ...sourceTargets(prompt, sources), operator: true };
-      } else {
+      if (inputs.length) {
         assert.equal(inputs.length, 1);
         assert.equal(inputs[0].index, 1);
         assert.ok(prompt?.includes(materialInputRoot + "/1") && prompt.includes("build/result.bin"));
         assert.ok(!prompt.includes(root));
         inputCopies.push(inputs[0].source);
         targets = { operator: true, consumer: true };
+      } else {
+        assert.deepEqual(inputs, []);
+        targets = sources.length ? { ...sourceTargets(prompt, sources), operator: true } : { operator: true };
       }
       return spawnOfficialProcess(["bun", "-e", foremanFixture, JSON.stringify(targets)], { ...options, env: {}, stdin: undefined });
     } },

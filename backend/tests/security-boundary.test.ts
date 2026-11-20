@@ -57,3 +57,30 @@ test("scoped credentials cannot cross business systems or mutate global control"
     if (previous.csrf === undefined) delete process.env.MAO_CSRF_TOKEN; else process.env.MAO_CSRF_TOKEN = previous.csrf;
   }
 });
+
+test("scoped SSE filters foreign events and redacts event payloads", async () => {
+  const previous = { scopes: process.env.MAO_AUTH_SCOPES_JSON, csrf: process.env.MAO_CSRF_TOKEN };
+  process.env.MAO_AUTH_SCOPES_JSON = JSON.stringify({ viewer: { role: "viewer", business_systems: ["allowed"] } });
+  process.env.MAO_CSRF_TOKEN = "csrf";
+  const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+  try {
+    app.store.createBusinessSystem({ id: "allowed", name: "Allowed" });
+    app.store.createBusinessSystem({ id: "denied", name: "Denied" });
+    app.events.publish("business-system.created", { id: "denied", secret: "hidden" });
+    app.events.publish("business-system.created", { id: "allowed", api_key: "visible only as redacted" });
+    const response = await app.fetch(new Request("http://localhost/api/v1/events", { headers: { authorization: "Bearer viewer" } }));
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    await reader.cancel();
+    const text = new TextDecoder().decode(first.value);
+    expect(text).toContain('"id":"allowed"');
+    expect(text).toContain("[REDACTED]");
+    expect(text).not.toContain("denied");
+    expect(text).not.toContain("hidden");
+  } finally {
+    app.stop();
+    if (previous.scopes === undefined) delete process.env.MAO_AUTH_SCOPES_JSON; else process.env.MAO_AUTH_SCOPES_JSON = previous.scopes;
+    if (previous.csrf === undefined) delete process.env.MAO_CSRF_TOKEN; else process.env.MAO_CSRF_TOKEN = previous.csrf;
+  }
+});

@@ -92,6 +92,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --only operator
 MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 ```
 
+Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_RUNTIME=kiri bun run factory runtime doctor` 确认 headless Unix socket、Linux 容器平台和 Docker API 均可用。Windows Podman 只覆盖工位路径，不能作为容器厂长邮箱的实机证据。
+
 设置 `MAO_CONTAINER_RUNTIME=podman` 可复用这套验收。容器内的 Bun 夹具通过厂长邮箱登记仓库、查询 Operator 和 Machine、保存 DAG，并为登记的项目申请一个必需密钥。重复申请应复用同一记录。夹具再把第二个仓库加入同一业务系统并读取四个基础单元。随后通过项目接收入口提交文件夹和私有 CAS 上传文件，验证两项来源的挂载只读、交付字节正确、该轮无法登记其他仓库，以及会话结束时邮箱和暂存文件已清理。夹具通过官方 CLI 的 JSONL 适配器返回回复，运行时无需模型凭证。
 
 同一命令执行两个 Operator。上游暂存二进制产物并通过官方 CLI 的 JSONL 适配器声明文件。宿主核对 CAS 摘要、项目下载权限和所属业务系统。DAG 后继读取只读挂载并核对文件字节，结束后检查临时目录已清理。
@@ -139,6 +141,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/control-loop.test.ts` | 运行中取消停止官方 Harness、失败或取消后的单次重试，以及 JSON/SSE CORS 来源边界 |
 | `backend/tests/kernel-material-bridge.test.ts` | 业务 Material 文件转封存 legacy Bean、元数据回写、双向 Conversion 和重试幂等 |
 | `backend/tests/security-boundary.test.ts` | Bearer scope 的业务系统、项目、密钥和角色边界，以及写请求的 CSRF 约束 |
+| `backend/tests/web-contract.test.ts` | Web 图查询边界、增量日志游标、Foreman 事件游标和业务记录元数据脱敏 |
 | `backend/tests/operator-recovery.test.ts` | Operator 领取归属、会话更新和结果提交的归属校验、Linux 确认原进程退出后的恢复及其他环境保留未知状态 |
 | `backend/tests/harness.test.ts` | 七个官方 Harness 的目录、Pi 与 Qwen Code CLI 参数、Windows 原生 Claude Code 路径、ACP 会话和事件流 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |

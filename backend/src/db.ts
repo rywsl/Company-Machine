@@ -610,6 +610,16 @@ export class SqliteStore {
     `).all(runId).map((row: any) => this.unitRunFromRow(row));
   }
 
+  listReadySourceMachineRuns(runId: string): UnitRun[] {
+    return this.db.query(`
+      SELECT unit_run.* FROM unit_runs AS unit_run
+      JOIN business_units AS unit ON unit.id=unit_run.unit_id
+      WHERE unit_run.run_id=? AND unit_run.status='running' AND unit.kind='machine'
+        AND unit_run.session_id LIKE 'machine:%'
+      ORDER BY unit_run.created_at, unit_run.id
+    `).all(runId).map((row: any) => this.unitRunFromRow(row));
+  }
+
   listRunningKernelMachineRuns(): Array<{ runId: string; unitRunId: string }> {
     return this.db.query<{ runId: string; unitRunId: string }>(`
       SELECT unit_run.run_id AS runId, unit_run.id AS unitRunId
@@ -622,6 +632,18 @@ export class SqliteStore {
     `).all();
   }
 
+  listRunningSourceMachineRuns(): Array<{ runId: string; unitRunId: string }> {
+    return this.db.query<{ runId: string; unitRunId: string }>(`
+      SELECT unit_run.run_id AS runId, unit_run.id AS unitRunId
+      FROM unit_runs AS unit_run
+      JOIN business_runs AS run ON run.id=unit_run.run_id
+      JOIN business_units AS unit ON unit.id=unit_run.unit_id
+      WHERE run.status IN ('queued','running') AND unit_run.status='running'
+        AND unit_run.session_id LIKE 'machine:%' AND unit.kind='machine'
+      ORDER BY unit_run.created_at, unit_run.id
+    `).all();
+  }
+
   /**
    * Machines are business units with a durable lifecycle. Kernel-bound
    * machines are claimed as running and dispatched to the legacy LineRunner.
@@ -630,11 +652,12 @@ export class SqliteStore {
    */
   private activateReadyMachineRuns(run: BusinessRun, unitRuns: UnitRun[], predecessors: Map<string, UnitRun[]>): void {
     const timestamp = this.timestamp();
-    const activate = this.db.query("UPDATE unit_runs SET status=?, error=?, updated_at=? WHERE id=? AND status='queued'");
+    const activate = this.db.query("UPDATE unit_runs SET status=?, session_id=?, error=?, updated_at=? WHERE id=? AND status='queued'");
     const claimLegacy = this.db.query("UPDATE unit_runs SET status='running', session_id=?, error=NULL, updated_at=? WHERE id=? AND status='queued'");
     const updateUnit = this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?");
     const kernel = run.metadata.kernel;
     const legacy = Boolean(kernel && typeof kernel === "object" && !Array.isArray(kernel) && (kernel as Record<string, unknown>).execution === "legacy");
+    const graphUnits = new Set(this.businessGraph(run.businessSystemId).edges.flatMap(({ source, target }) => [source, target]));
     for (const item of unitRuns) {
       if (item.status !== "queued") continue;
       const unit = this.getBusinessUnit(item.unitId);
@@ -642,20 +665,39 @@ export class SqliteStore {
       const required = predecessors.get(item.unitId) ?? [];
       if (required.some((predecessor) => predecessor.status !== "completed")) continue;
       const error = unit.projectId ? undefined : "machine-project-unavailable";
+      if (!legacy && !graphUnits.has(unit.id)) {
+        activate.run("completed", null, null, timestamp, item.id);
+        updateUnit.run("ready", timestamp, unit.id);
+        item.status = "completed";
+        item.sessionId = undefined;
+        item.error = undefined;
+        item.updatedAt = timestamp;
+        continue;
+      }
       if (legacy && !error) {
         claimLegacy.run(`legacy:${item.id}`, timestamp, item.id);
         updateUnit.run("running", timestamp, unit.id);
         item.status = "running";
         item.sessionId = `legacy:${item.id}`;
         item.error = undefined;
-      } else {
-        const status: UnitRun["status"] = error ? "blocked" : "completed";
-        activate.run(status, error ?? null, timestamp, item.id);
-        updateUnit.run(error ? "blocked" : "ready", timestamp, unit.id);
+      } else if (!error) {
+        const status: UnitRun["status"] = "running";
+        activate.run(status, `machine:${item.id}`, null, timestamp, item.id);
+        updateUnit.run("running", timestamp, unit.id);
         item.status = status;
+        item.sessionId = `machine:${item.id}`;
+        item.error = undefined;
+      } else {
+        activate.run("blocked", null, error, timestamp, item.id);
+        updateUnit.run("blocked", timestamp, unit.id);
+        item.status = "blocked";
+        item.sessionId = undefined;
         item.error = error;
       }
       item.updatedAt = timestamp;
+    }
+    if (unitRuns.some((item) => item.status === "running" || item.status === "completed" || item.status === "blocked")) {
+      this.db.query("UPDATE business_runs SET status='running', updated_at=? WHERE id=? AND status='queued'").run(timestamp, run.id);
     }
     if (unitRuns.some((item) => item.status === "completed" || item.status === "blocked")) {
       this.db.query("UPDATE business_runs SET updated_at=? WHERE id=?").run(timestamp, run.id);
@@ -795,6 +837,16 @@ export class SqliteStore {
     if (!row) return undefined;
     this.db.query("DELETE FROM unit_run_owners WHERE unit_run_id=?").run(id);
     const unit = this.unitRunFromRow(row);
+    if (status === "completed" && this.getBusinessUnit(unit.unitId)?.kind === "operator") {
+      const sourceMachines = this.db.query<{ id: string }>(`
+        UPDATE unit_runs SET status='completed', session_id=NULL, error=NULL, updated_at=?
+        WHERE run_id=? AND status='running' AND session_id LIKE 'machine:%' AND id<>? RETURNING id
+      `).all(timestamp, unit.runId, id);
+      if (sourceMachines.length) this.db.query(`
+        UPDATE business_units SET status='ready', updated_at=?
+        WHERE id IN (SELECT unit_id FROM unit_runs WHERE id IN (SELECT value FROM json_each(?)))
+      `).run(timestamp, json(sourceMachines.map(({ id }) => id)));
+    }
     this.db.query(`
       UPDATE business_runs SET status = CASE
         WHEN EXISTS (SELECT 1 FROM unit_runs WHERE run_id = ? AND status IN ('failed', 'blocked')) THEN 'failed'
@@ -811,8 +863,22 @@ export class SqliteStore {
     const row = this.db.query("SELECT metadata FROM business_systems WHERE id=?").get(businessSystemId) as { metadata?: string } | undefined;
     const metadata = parseJson(row?.metadata);
     const graph = metadata.graph && typeof metadata.graph === "object" ? metadata.graph as { edges?: unknown } : {};
-    const edges = Array.isArray(graph.edges) ? graph.edges.filter((edge): edge is BusinessRunEdge => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string")) : [];
-    return { edges };
+    const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.status !== "archived");
+    const unitIds = new Set(units.map((unit) => unit.id));
+    const aliases = new Map<string, string>();
+    for (const unit of units) if ((unit.kind === "operator" || unit.kind === "machine") && !aliases.has(unit.kind)) aliases.set(unit.kind, unit.id);
+    const authored = Array.isArray(graph.edges) ? graph.edges.flatMap((edge): BusinessRunEdge[] => {
+      if (!edge || typeof edge !== "object" || typeof (edge as any).source !== "string" || typeof (edge as any).target !== "string") return [];
+      const source = aliases.get((edge as any).source) ?? (edge as any).source;
+      const target = aliases.get((edge as any).target) ?? (edge as any).target;
+      return unitIds.has(source) && unitIds.has(target) ? [{ source, target }] : [];
+    }) : [];
+    if (Array.isArray(graph.edges)) return { edges: authored };
+    const fallback = units.filter((unit) => unit.kind === "operator").flatMap((operator) => {
+      const machine = units.find((candidate) => candidate.kind === "machine" && candidate.projectId === operator.projectId);
+      return machine ? [{ source: machine.id, target: operator.id }] : [];
+    });
+    return { edges: fallback };
   }
 
   private businessUnitFromRow(row: any): BusinessUnit {
