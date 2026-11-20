@@ -172,13 +172,13 @@ export class ForemanCoordinator {
       }
       if (mailbox) await turn.wait(mailbox.flush());
       publishReply(redactor.finish());
-      if (persistent && officialId && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(officialId)) this.options.store.saveForemanSession(profile.id, officialId);
-      if (reply.trim()) {
-        const message = this.options.store.addTalkMessage({ role: "foreman", body: reply.trim(), metadata: { turn_id: safeSessionId(session.id) ?? sessionId, inbox_id: id, harness: definition.id } });
-        this.options.events.publish("talk.foreman.replied", { ...message, inboxId: id });
-      }
-      const done = this.options.store.completeForemanMessage(id);
-      if (done) this.options.events.publish("foreman.message.done", done);
+      const replyBody = reply.trim();
+      const committed = this.options.store.finishForemanTurn(id, {
+        reply: replyBody ? { body: replyBody, metadata: { turn_id: safeSessionId(session.id) ?? sessionId, harness: definition.id } } : undefined,
+        session: persistent && officialId && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(officialId)
+          ? { profileId: profile.id, sessionId: officialId } : undefined,
+      });
+      for (const event of committed) this.options.events.notifyCommitted(event);
     } catch (error) {
       if (this.closed) return;
       this.options.store.failForemanMessage(id);

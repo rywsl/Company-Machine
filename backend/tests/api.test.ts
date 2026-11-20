@@ -68,6 +68,45 @@ describe("Bun business backend", () => {
     } finally { app.stop(); }
   });
 
+  test("persists chat and its Foreman queue events together before notifying subscribers", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-atomic-talk-"));
+    const dbPath = join(root, "business.db");
+    const app = createApp({ dbPath, legacyPath: dbPath, dispatchWork: false });
+    const reader = new SqliteStore(dbPath, dbPath);
+    const observed: Array<{ type: string; messages: number; queued: number }> = [];
+    app.events.subscribe(({ type }) => observed.push({
+      type, messages: reader.listTalkMessages().length, queued: reader.listForemanInbox().length,
+    }));
+    const paths = ["/api/v1/talk", "/api/web/talk"];
+    const send = (path: string) => app.fetch(new Request("http://localhost" + path, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "Build the system" }),
+    }));
+    try {
+      app.store.db.exec(`
+        CREATE TRIGGER reject_talk_event BEFORE INSERT ON business_events WHEN NEW.type='foreman.message.queued'
+        BEGIN SELECT RAISE(ABORT, 'cannot persist queue event'); END;
+      `);
+      for (const path of paths) await expect(Promise.resolve(send(path))).rejects.toThrow("cannot persist queue event");
+      expect(reader.listTalkMessages()).toEqual([]);
+      expect(reader.listForemanInbox()).toEqual([]);
+      expect(reader.eventsAfter()).toEqual([]);
+      expect(observed).toEqual([]);
+
+      app.store.db.exec("DROP TRIGGER reject_talk_event");
+      for (const path of paths) expect((await send(path)).status).toBe(201);
+      expect(observed).toEqual([
+        { type: "talk.message.created", messages: 1, queued: 1 },
+        { type: "foreman.message.queued", messages: 1, queued: 1 },
+        { type: "talk.message.created", messages: 2, queued: 2 },
+        { type: "foreman.message.queued", messages: 2, queued: 2 },
+      ]);
+    } finally {
+      reader.close();
+      app.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("bounds recent conversation reads and fills unused slots from archived messages", async () => {
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
     try {

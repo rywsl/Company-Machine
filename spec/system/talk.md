@@ -76,6 +76,8 @@ def answer(ctx: Any, message_id: str, *, by: str, confirm: bool) -> TalkMessage
 
 Bun Web App 通过同源 API 使用这条线程。人的消息经 `/api/v1/talk` 写入，外部 Foreman 从 `/api/v1/foreman/inbox` claim 消息并经 `/api/v1/talk/reply` 写入回复。使用现有 `.factory/factory.db` 时，Bun 同时把人的 talk 投影到兼容的 `talk_messages` 和 `agent_messages`，让现有 Foreman 继续接收同一意图。两类写入都会产生事件，页面通过 `/api/v1/events` 的 SSE 流增量刷新，不需要控制面调用模型。
 
+Web、`/api/v1/talk` 和 `factory talk send` 在同一个 SQLite 事务中提交人的消息、兼容投影、厂长收件队列与对应事件。由 MAO 启动的官方 Harness 成功结束并处理完本轮邮箱后，在同一个事务中保存回复、可恢复的官方会话 ID、队列完成状态和对应事件。控制面在事务提交后通知 SSE 订阅者。服务重启只继续派发 `queued` 消息，结果未知的 `claimed` 消息保留原状态，供外部执行方核对。
+
 ### 3.2 不是页面操作的两个函数
 
 ```python

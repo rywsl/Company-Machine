@@ -120,7 +120,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 
 | 文件 | 验证 |
 |---|---|
-| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱、SSE 分页回放与跨进程写入 |
+| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱、对话入队与事件事务、SSE 分页回放与跨进程写入 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |
@@ -128,7 +128,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
 | `backend/tests/business-package.test.ts` | 业务包 CLI 跨目录移交、字节闭包校验、回滚和已知密钥拒绝 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
-| `backend/tests/foreman.test.ts` | 厂长队列、官方 Harness 回复事件、容器邮箱的业务持久化、项目范围、单个项目密钥请求、登记来源只读交接和暂存文件清理 |
+| `backend/tests/foreman.test.ts` | 厂长队列、官方 Harness 回复与完成事务、容器邮箱的业务持久化、项目范围、单个项目密钥请求、登记来源只读交接和暂存文件清理 |
 | `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |
@@ -139,7 +139,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/legacy-core.test.ts` | 规范 JSON、SQLite 仓库、并发 CAS 提交、快照和值投影 |
 | `backend/tests/legacy-snapshot.test.ts` | 目录树 epoch、类型索引、编译表达式查找、冻结快照重启读取、旧记录补齐和跨 epoch 执行保护 |
 | `backend/tests/registry-epochs.test.ts` | Git 提交冻结、解析表保留、active 指针与引用、回滚、保留判定及签名边界 |
-| `backend/tests/legacy-gate.test.ts` | 来料检查和产物验收 |
+| `backend/tests/legacy-gate.test.ts` | 来料检查、空产物工位、列表产物、元数据、validator 结果及封存边界 |
 | `backend/tests/legacy-harvest.test.ts` | 工位产物采集、路径边界、匹配顺序和异常结果 |
 | `backend/tests/legacy-connectors.test.ts` | Source 摄入与检验、Sink 幂等发布与核验、回执血缘和沙箱命令 |
 | `backend/tests/legacy-egress.test.ts` | Registry 出网策略编译、授权等级、域名与方法匹配、CONNECT 和非法配置 |
@@ -224,6 +224,10 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_check_inputs_rejects_unsealed` | `backend/tests/legacy-gate.test.ts` | `checks missing, unsealed, wrong type, properties and ordered input cardinality without opening a sandbox` | 拒绝未封存与未知物料，来料检查不创建沙箱 |
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_check_inputs_type_requires_cardinality` | `backend/tests/legacy-gate.test.ts` | `checks missing, unsealed, wrong type, properties and ordered input cardinality without opening a sandbox` | 区分类型、属性和端口基数三类错误 |
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_check_inputs_ok_and_list` | `backend/tests/legacy-gate.test.ts` | `checks missing, unsealed, wrong type, properties and ordered input cardinality without opening a sandbox` | 标量与列表接收、封存状态、输入顺序和沙箱开销 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_inspect_pass_does_not_seal` | `backend/tests/legacy-gate.test.ts` | `checks output structure, measured facts, guarantees, acceptance and metadata` | 产物通过验收后仍未封存，实测事实留在报告中 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_inspect_validator_reject_and_infra` | `backend/tests/legacy-gate.test.ts` | `distinguishes validator rejection from a failed process and malformed facts` | 区分 validator 拒绝、进程异常和非法输出 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_inspect_property_accept_consistency` | `backend/tests/legacy-gate.test.ts` | `checks output structure, measured facts, guarantees, acceptance and metadata` | 类型属性、工位验收、元数据约束及与事实冲突 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_inspect_list_port` | `backend/tests/legacy-gate.test.ts` | `checks list output ordering, facts and whole-port acceptance before sealing` | 列表索引、整端口验收和按序保留实测事实 |
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_admit_external` | `backend/tests/legacy-gate.test.ts` | `admits an external card without validators and explains missing required metadata` | 外部物料入库但尚未封存，缺少元数据时拒绝 |
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_report_json_and_digest` | `backend/tests/legacy-gate.test.ts` | `checks output structure, measured facts, guarantees, acceptance and metadata` | 报告字段、检查阶段和确定的规范摘要 |
 | `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_result_and_unknown` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 统计陌生合法事件并提取费用、轮数和结果 |

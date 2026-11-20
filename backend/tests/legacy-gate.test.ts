@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { Context, CounterIds, FakeClock, Gate, LocalProvider, canonicalBytes, digestBytes, loadSnapshot } from "../src/legacy";
-import type { SandboxSpec } from "../runtime/podman";
+import type { Sandbox, SandboxSpec } from "../runtime/podman";
 
 const { cpSync, mkdirSync, rmSync } = fs;
 const provider = new LocalProvider({
@@ -145,6 +145,7 @@ describe("Bun M1 Gate boundary", () => {
       const accepted = await gate.inspect("writer@1", { ...options, jobId: "job-11", attempt: 4 });
       expect(accepted.data.verdict).toBe("pass");
       expect(accepted.data.facts[accepted.data.outputs.note[0]]).toEqual({ chars: 10, lines: 2, has_lower: false });
+      expect(context.warehouse.get(accepted.data.outputs.note[0])).toMatchObject({ sealed: false, facts: {} });
       const body = accepted.toJSON();
       expect(body).toMatchObject({ job_id: "job-11", station: "Station:writer@1", attempt: 4, verdict: accepted.data.verdict,
         outputs: accepted.data.outputs, facts: accepted.data.facts, checks: accepted.data.checks, feedback: "",
@@ -167,6 +168,108 @@ describe("Bun M1 Gate boundary", () => {
       expect(extra.data.outputs).toEqual({});
       expect(extra.data.feedback).toContain("other.txt");
     } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("distinguishes validator rejection from a failed process and malformed facts", async () => {
+    const context = Context.open(join("tmp", "legacy-gate-validator-" + randomUUID()));
+    try {
+      const snapshot = await loadSnapshot("tests/fixtures/registry-m1");
+      const outDir = join(context.root, "out");
+      const payload = join(outDir, "note", "note.txt");
+      mkdirSync(join(outDir, "note"), { recursive: true });
+      await Bun.write(payload, "fixture output");
+      let response = { exitCode: 1, output: JSON.stringify({ reason: "内容包含 REJECT" }) };
+      let closed = 0;
+      class ValidatorProvider extends LocalProvider {
+        async open(spec: SandboxSpec): Promise<Sandbox> {
+          expect(spec.name).toMatch(/^mao-gate-/);
+          expect(spec.network).toBe("none");
+          expect(spec.mounts).toHaveLength(1);
+          expect(spec.mounts[0]).toMatchObject({ target: "/bean", readonly: true });
+          return {
+            name: spec.name,
+            async exec(argv, options) {
+              expect(argv).toEqual(["count-text", "/bean/payload/note.txt"]);
+              expect(await Bun.file(join(spec.mounts[0].source, "payload", "note.txt")).text()).toBe("fixture output");
+              await Bun.write(options.stdout, response.output);
+              return { exitCode: response.exitCode, timedOut: false, durationMs: 0 };
+            },
+            async close() { closed++; },
+          };
+        }
+      }
+      const gate = new Gate(snapshot, context.warehouse, join(context.root, "work"), new ValidatorProvider());
+      const cases = [
+        { ...response, verdict: "reject", feedback: "拒绝：内容包含 REJECT" },
+        { exitCode: 2, output: "", verdict: "error", feedback: "设施故障：退出码 2" },
+        { exitCode: 0, output: "not json", verdict: "error", feedback: "设施故障：facts 形状不对" },
+      ];
+      for (const [index, entry] of cases.entries()) {
+        response = entry;
+        const { data } = await gate.inspect("upper@1", { jobId: "job-1", attempt: index + 1, outDir });
+        expect(data.verdict).toBe(entry.verdict);
+        expect(data.feedback).toContain(entry.feedback);
+        expect(data.checks).toContainEqual({ port: "note", index: 0, stage: "validator", name: "count-text", ok: false, detail: entry.feedback });
+        expect(data.checks.map(({ stage }) => stage)).toEqual(["structure", "validator"]);
+        expect(context.warehouse.get(data.outputs.note[0]).sealed).toBe(false);
+      }
+      expect(closed).toBe(cases.length);
+    } finally { context.close(); rmSync(context.root, { recursive: true, force: true }); }
+  });
+
+  test("checks list output ordering, facts and whole-port acceptance before sealing", { timeout: 60_000 }, async () => {
+    const context = Context.open(join("tmp", "legacy-gate-list-" + randomUUID()));
+    try {
+      const snapshot = await loadSnapshot("tests/fixtures/registry-m1");
+      const output = snapshot.docs["Station:upper@1"].spec.outputs.note;
+      output.type = "list<note.text@1>";
+      output.accept = ["size(out) >= 2"];
+      const gate = new Gate(snapshot, context.warehouse, join(context.root, "work"), provider);
+      const outDir = join(context.root, "out");
+      for (const [index, value] of [[1, "ABC"], [0, "DE"]] as const) {
+        const path = join(outDir, "note", String(index));
+        mkdirSync(path, { recursive: true });
+        await Bun.write(join(path, "note.txt"), value);
+      }
+      const options = { jobId: "job-1", attempt: 1, outDir };
+      const accepted = (await gate.inspect("upper@1", options)).data;
+      expect(accepted.verdict).toBe("pass");
+      expect(accepted.outputs.note.map((id) => accepted.facts[id].chars)).toEqual([2, 3]);
+      expect(accepted.outputs.note.every((id) => !context.warehouse.get(id).sealed)).toBe(true);
+      rmSync(join(outDir, "note", "1"), { recursive: true });
+      const short = (await gate.inspect("upper@1", options)).data;
+      expect(short.verdict).toBe("reject");
+      expect(short.checks).toContainEqual({ port: "note", index: -1, stage: "accept", name: "accept[0]", ok: false, detail: "accept[0]" });
+      fs.renameSync(join(outDir, "note", "0"), join(outDir, "note", "2"));
+      const gap = (await gate.inspect("upper@1", options)).data;
+      expect(gap.verdict).toBe("reject");
+      expect(gap.outputs).toEqual({});
+      expect(gap.checks).toMatchObject([{ stage: "structure", name: "index", ok: false }]);
+    } finally { context.close(); rmSync(context.root, { recursive: true, force: true }); }
+  });
+
+  test("rejects non-UTF-8 metadata and ignores output paths for stations without outputs", async () => {
+    const context = Context.open(join("tmp", "legacy-gate-metadata-" + randomUUID()));
+    try {
+      const snapshot = await loadSnapshot("tests/fixtures/registry-m1");
+      const gate = new Gate(snapshot, context.warehouse, join(context.root, "work"));
+      const outDir = join(context.root, "out");
+      const portDir = join(outDir, "note");
+      mkdirSync(portDir, { recursive: true });
+      const payload = join(portDir, "note.txt");
+      await Bun.write(payload, "valid payload");
+      const opening = new TextEncoder().encode('{"title":"');
+      const closing = new TextEncoder().encode('"}');
+      await Bun.write(join(portDir, "meta.json"), Uint8Array.from([...opening, 0xff, ...closing]));
+      const options = { jobId: "job-1", attempt: 1, outDir };
+      const malformed = (await gate.inspect("upper@1", options)).data;
+      expect(malformed.verdict).toBe("reject");
+      expect(malformed.outputs).toEqual({});
+      expect(malformed.checks).toMatchObject([{ stage: "structure", name: "meta", ok: false }]);
+      snapshot.docs["Station:upper@1"].spec.outputs = {};
+      const none = (await gate.inspect("upper@1", { ...options, outDir: payload })).data;
+      expect(none).toMatchObject({ verdict: "pass", outputs: {}, facts: {}, checks: [], feedback: "" });
+    } finally { context.close(); rmSync(context.root, { recursive: true, force: true }); }
   });
 
   test("rejects linked output directories and list ports with a gap", async () => {

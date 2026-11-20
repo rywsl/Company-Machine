@@ -383,11 +383,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const body = await readJson(request);
       const text = typeof body.body === "string" ? body.body : body.text;
       if (typeof text !== "string" || text.length === 0) return response({ error: "body is required" }, 400);
-      const message = store.addTalkMessage({ ...body, body: redactText(text) });
-      store.bridgeHumanTalk(message.id, message.body);
-      const envelope = store.queueForemanMessage(message.id, message.body);
-      events.publish("talk.message.created", message);
-      events.publish("foreman.message.queued", envelope);
+      const { message, envelope, events: committed } = store.enqueueForemanTalk({ ...body, body: redactText(text) });
+      for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
       return response({ state: "accepted", message }, 201);
     }
@@ -515,11 +512,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const body = await readJson(request);
       const text = typeof body.text === "string" ? body.text : body.body;
       if (typeof text !== "string" || text.length === 0) return response({ error: "text is required" }, 400);
-      const message = store.addTalkMessage({ body: redactText(text) });
-      store.bridgeHumanTalk(message.id, message.body);
-      const envelope = store.queueForemanMessage(message.id, message.body);
-      events.publish("talk.message.created", message);
-      events.publish("foreman.message.queued", envelope);
+      const { message, envelope, events: committed } = store.enqueueForemanTalk({ body: redactText(text) });
+      for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
       return response({ state: "accepted", message }, 201);
     }

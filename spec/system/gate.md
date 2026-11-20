@@ -6,7 +6,7 @@
 ## Bun 实现
 
 - `Gate.checkInputs(stationRef, inputs, params?)` 检查必填端口、列表或标量形状、Bean 封存状态和类型，用该 Bean 的实测 facts 求值 `requires`，随后求值工位 `admit`。失败时返回 `INTAKE_REJECTED` 的问题明细。
-- `Gate.inspect(stationRef, { jobId, attempt, outDir, inputs, params })` 按标量根目录或连续的列表下标读取候选产物。Gate 在读取文件前拒绝符号链接和特殊文件，每个文件必须满足该类型的一条 payload 规则。候选根目录的 `meta.json` 是单独解析的元数据。
+- `Gate.inspect(stationRef, { jobId, attempt, outDir, inputs, params })` 按标量根目录或从 0 开始的连续列表下标读取候选产物。列表下标无效时生成 `structure/index` 检查。Gate 在读取文件前拒绝符号链接和特殊文件，每个文件必须满足该类型的一条 payload 规则。候选根目录的 `meta.json` 必须是 UTF-8 JSON 对象，格式错误生成 `structure/meta` 检查。工位没有声明产物时，通过参数校验后直接返回空报告。
 - 类型声明 validator 时，Gate 通过选定的 `ContainerProvider` 用只读 `/bean` 和隔离网络执行 argv。成功的 stdout 必须是符合 `emits` 和 Type facts 声明的 JSON 对象。每个候选的物料只物化一次，多个 validator 共享该只读副本，完成后清理副本。缺少运行时、超时、设施退出码或无效的 facts 输出产生 `error`，validator 拒绝产生 `reject`。
 - Gate 用实测 facts 检查 `always` 和 `guarantees`，以端口实际的标量或列表形状求值 `accept`，再检查 `meta_schema` 和同名元数据、事实是否一致。Bun 复用 Registry 的 JSON Schema 校验，元数据 schema 引用限于同一 schema 的 JSON Pointer。
 - `Gate.admitExternal(type, files, meta, jobId?, attempt?)` 复用结构、validator、属性和一致性检验，返回 `{ report, bean }`。只有检验通过时 `bean` 才有值，封存仍由调用方完成。 `report.data.facts` 提供封存事实。

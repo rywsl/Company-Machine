@@ -9,8 +9,12 @@ export class EventBus {
 
   publish<T>(type: string, data: T): Event<T> {
     const event = this.store.appendEvent(type, data) as Event<T>;
-    for (const listener of this.listeners) listener(event);
+    this.notifyCommitted(event);
     return event;
+  }
+
+  notifyCommitted(event: Event): void {
+    for (const listener of this.listeners) listener(event);
   }
 
   after(lastEventId?: string | number, limit?: number): Event[] {

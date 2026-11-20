@@ -76,20 +76,18 @@ function readCandidate(root: string): Candidate {
       const path = parent ? parent + "/" + name : name;
       const full = join(root, path);
       const entry = lstatSync(full);
-      if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
-        throw new FactoryError("PAYLOAD_INVALID", "候选目录含链接或特殊文件", { path });
-      }
       if (path === "meta.json") {
-        if (!entry.isFile()) throw new FactoryError("PAYLOAD_INVALID", "meta.json 必须是普通文件");
+        if (!entry.isFile()) throw new FactoryError("PAYLOAD_INVALID", "meta.json 必须是普通文件", { check: "meta" });
         try {
-          const loaded: unknown = JSON.parse(readFileSync(full, "utf8"));
+          const loaded: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(full)));
           if (!isObject(loaded)) throw new Error("not an object");
           meta = loaded;
         } catch {
-          throw new FactoryError("PAYLOAD_INVALID", "meta.json 必须是 JSON 对象");
+          throw new FactoryError("PAYLOAD_INVALID", "meta.json 必须是 UTF-8 JSON 对象", { check: "meta" });
         }
       } else if (entry.isDirectory()) directories.push(path);
-      else files.push([path, full]);
+      else if (entry.isFile()) files.push([path, full]);
+      else throw new FactoryError("PAYLOAD_INVALID", "候选目录含链接或特殊文件", { path });
     }
   }
   return { files: Object.fromEntries(files), meta };
@@ -266,6 +264,8 @@ export class Gate {
     const checks: GateCheck[] = [];
     const outputs: Record<string, string[]> = Object.create(null);
     const facts: Record<string, JsonObject> = Object.create(null);
+    const ports = options.port === undefined ? Object.keys(declarations).sort() : [options.port];
+    if (!ports.length) return report(options.jobId, station, options.attempt, checks);
     let hasRoot: boolean;
     try { hasRoot = directory(options.outDir); }
     catch (error) {
@@ -273,21 +273,23 @@ export class Gate {
       return report(options.jobId, station, options.attempt, checks);
     }
 
-    const ports = options.port === undefined ? Object.keys(declarations).sort() : [options.port];
     for (const port of ports) {
       const declaration = declarations[port];
       const { list, type } = parseType(declaration.type, true);
       const portDir = join(options.outDir, port);
       let candidates: string[];
+      let checkName = "payload";
       try {
         if (!hasRoot || !directory(portDir)) {
           if (!declaration.optional) throw new FactoryError("PAYLOAD_INVALID", "缺少候选目录");
           continue;
         }
+        checkName = list ? "index" : "payload";
         candidates = list ? this.indexedCandidates(portDir) : [portDir];
+        checkName = "payload";
         if (!declaration.optional && !candidates.length) throw new FactoryError("PAYLOAD_INVALID", "缺少必填产物");
       } catch (error) {
-        checks.push({ port, index: 0, stage: "structure", name: "payload", ok: false, detail: errorDetail(error) });
+        checks.push({ port, index: 0, stage: "structure", name: checkName, ok: false, detail: errorDetail(error) });
         continue;
       }
 
@@ -335,7 +337,8 @@ export class Gate {
       data = candidate();
       validatePayload(data, document.spec.payload ?? []);
     } catch (error) {
-      checks.push({ port, index, stage: "structure", name: "payload", ok: false, detail: errorDetail(error) });
+      const name = error instanceof FactoryError && error.detail.check === "meta" ? "meta" : "payload";
+      checks.push({ port, index, stage: "structure", name, ok: false, detail: errorDetail(error) });
       return null;
     }
     try {

@@ -517,4 +517,45 @@ describe("Foreman official Harness dispatch", () => {
       app.stop();
     }
   });
+
+  test("rolls back a Foreman reply and native session if persisting completion fails", async () => {
+    const sessionId = "a9919900-0000-4111-9111-200000000000";
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, foreman: {
+      spawn: () => fakeProcess([
+        JSON.stringify({ type: "thread.started", thread_id: sessionId }),
+        JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Fixture reply" } }),
+        JSON.stringify({ type: "turn.completed" }),
+      ]),
+    } });
+    const terminalEvents: string[] = [];
+    app.events.subscribe(({ type }) => {
+      if (type === "talk.foreman.replied" || type === "foreman.message.done") terminalEvents.push(type);
+    });
+    try {
+      const profile = app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      app.store.saveForemanSession(profile.id, "previous-session");
+      const first = app.store.queueForemanMessage("turn-first", "Persist atomic completion");
+      app.store.db.exec(`
+        CREATE TRIGGER reject_done_event BEFORE INSERT ON business_events WHEN NEW.type='foreman.message.done'
+        BEGIN SELECT RAISE(ABORT, 'cannot persist completion event'); END;
+      `);
+      await app.foreman.dispatch(first.id);
+      expect(app.store.getForemanMessage(first.id)?.status).toBe("failed");
+      expect(app.store.foremanSession(profile.id)).toBe("previous-session");
+      expect(app.store.listTalkMessages()).toEqual([]);
+      expect(app.events.after().map(({ type }) => type)).not.toContain("talk.foreman.replied");
+      expect(terminalEvents).toEqual([]);
+
+      app.store.db.exec("DROP TRIGGER reject_done_event");
+      const second = app.store.queueForemanMessage("turn-second", "Persist a new turn");
+      await app.foreman.dispatch(second.id);
+      expect(app.store.getForemanMessage(second.id)?.status).toBe("done");
+      expect(app.store.foremanSession(profile.id)).toBe(sessionId);
+      expect(app.store.listTalkMessages()).toMatchObject([{ role: "foreman", body: "Fixture reply", metadata: { inbox_id: second.id } }]);
+      expect(terminalEvents).toEqual(["talk.foreman.replied", "foreman.message.done"]);
+    } finally {
+      await app.foreman.close();
+      app.stop();
+    }
+  });
 });

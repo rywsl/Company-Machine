@@ -814,6 +814,19 @@ export class SqliteStore {
     return value;
   }
 
+  enqueueForemanTalk(input: Parameters<SqliteStore["addTalkMessage"]>[0]): { message: TalkMessage; envelope: ForemanEnvelope; events: Event[] } {
+    return this.db.transaction(() => {
+      const message = this.addTalkMessage(input);
+      this.bridgeHumanTalk(message.id, message.body);
+      const envelope = this.queueForemanMessage(message.id, message.body);
+      const events = [
+        this.appendEvent("talk.message.created", message),
+        this.appendEvent("foreman.message.queued", envelope),
+      ];
+      return { message, envelope, events };
+    }).immediate();
+  }
+
   listTalkMessages(limit?: number): TalkMessage[] {
     const rows = limit === undefined
       ? this.db.query("SELECT * FROM business_talk_messages ORDER BY created_at, id").all()
@@ -913,6 +926,24 @@ export class SqliteStore {
   saveForemanSession(profileId: string, sessionId: string): void {
     this.db.query("INSERT INTO foreman_sessions (profile_id,session_id) VALUES (?,?) ON CONFLICT (profile_id) DO UPDATE SET session_id=excluded.session_id")
       .run(profileId, sessionId);
+  }
+
+  finishForemanTurn(id: string, result: {
+    reply?: Pick<TalkMessage, "body" | "metadata">;
+    session?: { profileId: string; sessionId: string };
+  }): Event[] {
+    return this.db.transaction(() => {
+      const completed = this.db.query("UPDATE foreman_outbox SET status='done' WHERE id=? AND status='claimed' RETURNING id").get(id);
+      if (!completed) return [];
+      const events: Event[] = [];
+      if (result.session) this.saveForemanSession(result.session.profileId, result.session.sessionId);
+      if (result.reply) {
+        const message = this.addTalkMessage({ role: "foreman", body: result.reply.body, metadata: { ...result.reply.metadata, inbox_id: id } });
+        events.push(this.appendEvent("talk.foreman.replied", { ...message, inboxId: id }));
+      }
+      events.push(this.appendEvent("foreman.message.done", this.getForemanMessage(id)!));
+      return events;
+    }).immediate();
   }
 
   completeForemanMessage(id: string): ForemanEnvelope | undefined {

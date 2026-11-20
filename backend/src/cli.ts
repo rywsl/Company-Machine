@@ -247,11 +247,9 @@ async function runCommand(argv: string[]): Promise<number> {
     if (command === "talk" && args[0] === "send") {
       const text = args.slice(1).join(" ").trim();
       if (!text) throw new CliUsageError("text is required");
-      const message = app.store.addTalkMessage({ body: redactText(text) });
-      app.store.bridgeHumanTalk(message.id, message.body);
-      const envelope = app.store.queueForemanMessage(message.id, message.body);
-      app.events.publish("talk.message.created", message);
-      app.events.publish("foreman.message.queued", envelope);
+      const { message } = await requestJson(app, "/api/v1/talk", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }),
+      });
       console.log(JSON.stringify(message, null, 2));
       return 0;
     }
