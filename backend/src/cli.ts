@@ -1,6 +1,7 @@
+import { statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createApp, startServer } from "./server";
-import { checkRegistry } from "../mrl/factory";
+import { checkRegistry, type RegistryCheckResult } from "../mrl/factory";
 import { Context } from "./legacy/context";
 import { ConversionStore, conversionDocument } from "./legacy/conversion-requests";
 import { FactoryError } from "./legacy/errors";
@@ -28,6 +29,7 @@ export function usage(scope?: string): string {
   if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID [--package DEST]\n  verify PACKAGE\n  import PACKAGE --root NEW_ROOT\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID\n  conversion ls [--status open|in_progress|resolved] [--root PATH]`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
+  if (scope === "registry") return "factory registry check PATH [--json]";
   return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
 
@@ -46,8 +48,34 @@ async function requestJson(app: ReturnType<typeof createApp>, path: string, init
   return parsed;
 }
 
+function runRegistryCli(args: string[]): number {
+  const [operation, root, ...options] = args;
+  if (args.length === 1 && (operation === "help" || operation === "--help")) {
+    console.log(usage("registry"));
+    return 0;
+  }
+  if (operation !== "check" || !root || root.startsWith("--") || options.length > 1 || (options.length === 1 && options[0] !== "--json")) {
+    throw new CliUsageError("registry expects check PATH [--json]");
+  }
+  const { ok, stats, diagnostics }: Pick<RegistryCheckResult, "ok" | "stats" | "diagnostics"> =
+    statSync(root, { throwIfNoEntry: false })?.isDirectory()
+      ? checkRegistry(root)
+      : { ok: false, stats: {}, diagnostics: [{ severity: "error", code: "E-LAYOUT", subject: root, message: "Registry path must be an existing directory" }] };
+  if (options[0] === "--json") {
+    console.log(JSON.stringify({ root, ok, stats, diagnostics }, null, 2));
+  } else {
+    for (const diagnostic of diagnostics) {
+      const location = diagnostic.file ? `${diagnostic.file}:${diagnostic.line ?? 0}` : "(registry)";
+      console.log(`${diagnostic.severity === "error" ? "✖" : "⚠"} ${diagnostic.code} ${location} ${diagnostic.subject}\n    ${diagnostic.message}`);
+    }
+    console.log(ok ? "✔ registry passed" : "✖ registry failed");
+  }
+  return ok ? 0 : 1;
+}
+
 async function runCommand(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
+  if (command === "registry") return runRegistryCli(args);
   if (command === "foreman" && args[0] === "conversion") {
     return listConversions(args.slice(1));
   }
@@ -200,20 +228,6 @@ async function runCommand(argv: string[]): Promise<number> {
         return 0;
       }
       throw new CliUsageError(`unknown business command: ${subcommand ?? "(missing)"}`);
-    }
-    if (command === "registry" && args[0] === "check") {
-      const root = args[1];
-      if (!root) throw new CliUsageError("registry path is required");
-      const result = checkRegistry(root);
-      if (args.includes("--json")) console.log(JSON.stringify({ root: result.root, ok: result.ok, stats: result.stats, diagnostics: result.diagnostics }, null, 2));
-      else {
-        for (const diagnostic of result.diagnostics) {
-          const location = diagnostic.file ? `${diagnostic.file}:${diagnostic.line ?? 0}` : "(registry)";
-          console.log(`${diagnostic.severity === "error" ? "✖" : "⚠"} ${diagnostic.code} ${location} ${diagnostic.subject}\n    ${diagnostic.message}`);
-        }
-        console.log(result.ok ? "✔ registry passed" : "✖ registry failed");
-      }
-      return result.ok ? 0 : 1;
     }
     if (command === "foreman") {
       if (args[0] === "inbox") {

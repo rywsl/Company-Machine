@@ -16,7 +16,7 @@
 | `factory project intake ...` | 通过仓库、文件夹或文件引用创建项目。 |
 | `factory project intake --file PATH`、`factory project fetch PROJECT SHA256 --output PATH` | 导入文件字节并通过稳定摘要取回。`--file` 可重复。 |
 | `factory business ...` | 读取或写入业务系统、DAG、运行、产物和转换。 |
-| `factory registry check PATH [--json]` | 通过 Bun MRL 检查 Registry 结构与 schema。 |
+| `factory registry check PATH [--json]` | 通过 Bun MRL 只读检查 Registry 的结构、schema 与引用。 |
 | `factory bean import --type TYPE --file PATH=HOST` | 检验并封存外部物料。可以重复传入 `--file`。 |
 | `factory bean lineage BEAN --direction up\|down` | 查询已封存物料的上下游工位和物料。 |
 | `factory job run STATION [--input PORT=BEAN] [--param NAME=JSON] [--cache]` | 执行工位并封存通过 Gate 的产物。`--cache` 可复用已有结果。列表端口允许重复传入 `--input`。 |
@@ -34,6 +34,8 @@
 | `factory talk ...` | 写入人的消息或厂长回复。 |
 
 Bean 与 Job 命令支持 `--root`、`--registry`、`--json`、`--provider podman|kiri|local`。工厂目录和 Registry 分别读取 `FACTORY_ROOT` 与 `FACTORY_REGISTRY`，缺省为 `.factory` 与 `registry`。容器引擎缺省采用 `MAO_CONTAINER_RUNTIME` 的设置，未配置时使用 Podman。`--local-commands FILE` 与显式的 `--provider local` 一起使用，文件内容为命令名到 argv 数组的 JSON 映射。
+
+Registry 检查独立于工厂存储执行。检查通过时退出码为 `0`，目录缺失、路径指向文件或发现 Registry 错误时退出码为 `1`。JSON 模式在 stdout 输出 `root`、`ok`、`stats` 和 `diagnostics`。参数不符合用法时在 stderr 输出命令用法并退出 `2`。
 
 活动 CLI 的退出码为 `0` 成功、`1` 业务或运行失败、`2` 用法错误、`3` 工位命令遇到无效 Registry、`4` 运行时设施不可用。活动测试位于 `backend/tests/cli.test.ts`，MRL CLI 测试位于 `backend/mrl/cli.test.ts`。
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { runCommand } from "../runtime/podman";
 import { main } from "../src/cli";
 import { SqliteStore } from "../src/db";
 import { Context } from "../src/legacy/context";
@@ -112,6 +113,55 @@ describe("Bun factory CLI", () => {
     const result = await capture(() => main(["registry", "check", "tests/fixtures/registry-m1", "--json"]));
     expect(result.code).toBe(0);
     expect(JSON.parse(result.output.join("\n"))).toMatchObject({ ok: true });
+  });
+
+  test("checks Registry references without creating factory storage", { timeout: 20_000 }, async () => {
+    const root = resolve("tmp", "registry-check-" + randomUUID());
+    const registry = join(root, "registry");
+    const factory = join(root, "factory");
+    const database = join(factory, "factory.db");
+    mkdirSync(root, { recursive: true });
+    try {
+      cpSync("tests/fixtures/registry-m1", registry, { recursive: true });
+      const run = () => runCommand([Bun.argv[0], "run", "backend/src/cli.ts", "registry", "check", registry, "--json"], {
+        env: { FACTORY_ROOT: factory, FACTORY_DB_PATH: database, BUSINESS_DB_PATH: database },
+      });
+      const valid = await run();
+      expect(valid.exitCode).toBe(0);
+      expect(JSON.parse(new TextDecoder().decode(valid.stdout))).toMatchObject({ root: registry, ok: true });
+
+      const station = join(registry, "stations", "upper.yaml");
+      const original = await Bun.file(station).text();
+      await Bun.write(station, original.replace("machine: toolbox@1", "machine: missing-machine@1"));
+      const invalid = await run();
+      expect(invalid.exitCode).toBe(1);
+      const report = JSON.parse(new TextDecoder().decode(invalid.stdout));
+      expect(report).toMatchObject({ root: registry, ok: false });
+      expect(report.diagnostics.some((item: { code: string; severity: string }) => item.code === "E-REF" && item.severity === "error")).toBe(true);
+      expect(existsSync(factory)).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+  });
+
+  test("reports Registry usage errors and rejects a missing or non-directory path", async () => {
+    const usage = "factory registry check PATH [--json]";
+    expect(await capture(() => main(["registry", "--help"]))).toEqual({ code: 0, output: [usage], errors: [] });
+    for (const args of [[], ["unknown"], ["check"], ["check", "--json"],
+      ["check", ".", "--wrong"], ["check", ".", "--json", "extra"], ["check", ".", "--json", "--json"]]) {
+      const result = await capture(() => main(["registry", ...args]));
+      expect(result.code).toBe(2);
+      expect(result.output).toEqual([]);
+      expect(result.errors[1]).toBe(usage);
+    }
+    for (const path of [join("tmp", "missing-registry-" + randomUUID()), "package.json"]) {
+      const result = await capture(() => main(["registry", "check", path, "--json"]));
+      expect(result.code).toBe(1);
+      expect(result.errors).toEqual([]);
+      expect(JSON.parse(result.output[0])).toMatchObject({
+        root: path,
+        ok: false,
+        diagnostics: [{ code: "E-LAYOUT", severity: "error" }],
+      });
+    }
   });
 
   test("binds an Operator through the business CLI and preserves the binding across processes", { timeout: 30_000 }, async () => {
