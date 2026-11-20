@@ -131,6 +131,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/legacy-harvest.test.ts` | 工位产物采集、路径边界、匹配顺序和异常结果 |
 | `backend/tests/legacy-connectors.test.ts` | Source 摄入与检验、Sink 幂等发布与核验、回执血缘和沙箱命令 |
 | `backend/tests/legacy-egress.test.ts` | Registry 出网策略编译、授权等级、域名与方法匹配、CONNECT 和非法配置 |
+| `backend/tests/legacy-egress-forwarder.test.ts` | 本地代理认证、域名和方法拒绝、地址固定、本地 HTTP 和 CONNECT 转发、Unix 套接字权限与清理 |
 | `backend/tests/legacy-mailbox.test.ts` | 异步文件邮箱、并发请求、审批响应与异常路径 |
 | `backend/tests/legacy-operator.test.ts` | 工位任务渲染、调用参数和官方 CLI 转录 |
 | `backend/tests/legacy-runplan.test.ts` | 产线展开、绑定、执行顺序与计划持久化 |

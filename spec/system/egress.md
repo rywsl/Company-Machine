@@ -35,6 +35,12 @@ Bun 的 Kiri Linux 和 Podman 接收同一形式的受管网络配置。`egressN
 
 `matchesEgressAllowlist(plan, target, method)` 检查 HTTP(S) 的实际目标地址。主机按完整域名或第 5.1 节及 `capabilities.md` 5.2 的显式通配模式匹配。对于无法读取内部方法的 CONNECT，只有明确允许任意方法的规则才能匹配。代理接入需要消费同一份计划，并执行按需审批与监控策略。
 
+`backend/src/legacy/egress-forwarder.ts` 提供独立的 Bun 正向代理。一个监听器绑定一份作业策略快照和一项随机 Basic 凭证。监听位置是 `127.0.0.1` 的系统分配端口，或在宿主指定目录中创建的私有 Unix 套接字。Unix 实例目录权限为 `0700`，套接字为 `0600`。关闭时断开活动连接并移除套接字及其私有目录。
+
+代理在解析上游地址前验证凭证和允许列表。HTTP 使用请求中的绝对 URL，并用该 URL 的权威地址重建 Host。代理移除逐跳头和代理凭证。HTTPS 通过 443 端口的 CONNECT 传输，要求允许列表接受任意方法。DNS 结果只接受公开数字地址，连接使用已检查的地址。未列入的地址和要求监控审批的策略失败关闭。HTTP 使用 80 端口。当宿主配置了 Bun 的代理环境变量时，HTTP 转发返回 502，以维持地址固定。监听器对连接数、头部大小和连接总时长设限。
+
+Bun 测试通过注入解析和传输地址将流量限定在回环夹具。工位、厂长和 Operator 的容器接入需要在实际 Linux Podman 和 Kiri 上独立验收网络隔离及 Unix 套接字挂载。
+
 D10 禁止控制面自己当 agent 去调模型。模型代理不违反这一点：请求的发起者是沙箱内的 CLI，代理只注入密钥并记账。`mao.approvals`、`mao.scheduler`、`mao.contract` **禁止** import 本模块的转发函数。
 
 ---

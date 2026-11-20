@@ -25,6 +25,7 @@ declare module "bun:sqlite" {
 declare module "node:crypto" {
   export const randomUUID: () => string;
   export const randomBytes: (size: number) => any;
+  export const timingSafeEqual: (left: Uint8Array, right: Uint8Array) => boolean;
   export const createHash: (algorithm: string) => { update(value: unknown): any; digest(format: "hex"): string };
   export const createCipheriv: (...args: any[]) => any;
   export const createDecipheriv: (...args: any[]) => any;
