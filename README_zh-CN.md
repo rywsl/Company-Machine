@@ -219,16 +219,16 @@ flowchart LR
 
 ## 命令行一览
 
-活动入口是 Bun 的 `factory` CLI 和 Web App。业务命令使用 `business`、`project`、`foreman`、`runtime` 等分组，官方 Harness 由控制面分配，不由项目自建。
+活动入口是 Bun 的 `factory` CLI、`mrl` CLI 和 Web App。业务命令使用 `business`、`project`、`foreman`、`runtime` 等分组，官方 Harness 由控制面分配，不由项目自建。历史 Python 命令保存在 `removed/python/`。
 
 | 分组 | 命令 |
 |---|---|
-| 结构 | `check` · `epoch {init,ls,show,rollback,adopt}` · `changeset {propose,ls,show,withdraw,advance}` · `contract …` · `governance {tick,safe-mode}` |
-| 物料 | `bean {import,lineage,label}` · `cache {ls,explain,invalidate}` · `gc [--dry-run]` |
-| 执行 | `job {run,show,exec}` · `line {plan,run,ls,show,nodes,cancel,retry,rebuild}` · `trigger process` · `schedule {tick,dlq,quarantine,release}` · `approval {ls,show,decide}` |
-| 接入 | `image {build,ls}` · `gateway manifest` · `egress check` · `secret ls` · `backend {status,migrate,verify}` · `backup {create,verify,restore}` |
-| 自治 | `serve [--once]` · `foreman …` · `mcp --role {foreman,reviewer}` · `maintain bootstrap` · `audit` · `drift ls` |
-| 可观测性 | `status` · `metrics` · `events` · `console` |
+| 运行时 | `serve` · `status` · `runtime status` · `runtime ensure-ready` |
+| 项目 | `project intake --name NAME --repo URL`、`--folder PATH` 或 `--file-ref REF` |
+| 业务系统 | `business units|run|runs|export|graph|artifact|conversion` |
+| 厂长 | `foreman inbox|claim|done` · `talk send|reply` |
+| Registry | `registry check PATH [--json]` |
+| MRL | `mrl eval|template|check|run` |
 
 退出码：
 - `0` 成功
@@ -238,7 +238,7 @@ flowchart LR
 - `4` 环境错误（如 Podman 或 Kiri 不可用）
 - `5` 内部错误
 
-完整参考见 [docs/zh-CN/cli.md](docs/zh-CN/cli.md)。
+活动 CLI 退出码为 `0` 成功、`1` 业务或请求失败、`2` 用法错误、`4` 运行时不可用。完整参考见 [docs/zh-CN/cli.md](docs/zh-CN/cli.md)。
 
 ---
 

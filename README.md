@@ -214,18 +214,18 @@ The pipeline computes the risk tier from the diff, and the foreman cannot lower 
 
 ## CLI at a Glance
 
-Two entry points: `factory` (the control plane) and `mrl` (the relation language toolkit). Global options: `--root`, `--registry`, `--provider {docker,local}`, `--epoch` and `--json`. The environment variables `FACTORY_ROOT` and `FACTORY_REGISTRY` provide defaults.
+Two active entry points run on Bun. `factory` manages business systems and runtime state, while `mrl` evaluates the TypeScript MRL runtime. The historical Python command surface remains under `removed/python/`.
 
 | Group | Commands |
 |---|---|
-| Structure | `check` · `epoch {init,ls,show,rollback,adopt}` · `changeset {propose,ls,show,withdraw,advance}` · `contract …` · `governance {tick,safe-mode}` |
-| Material | `bean {import,lineage,label}` · `cache {ls,explain,invalidate}` · `gc [--dry-run]` |
-| Execution | `job {run,show,exec}` · `line {plan,run,ls,show,nodes,cancel,retry,rebuild}` · `trigger process` · `schedule {tick,dlq,quarantine,release}` · `approval {ls,show,decide}` |
-| Integration | `image {build,ls}` · `gateway manifest` · `egress check` · `secret ls` · `backend {status,migrate,verify}` · `backup {create,verify,restore}` |
-| Autonomy | `serve [--once]` · `foreman …` · `mcp --role {foreman,reviewer}` · `maintain bootstrap` · `audit` · `drift ls` |
-| Observability | `status` · `metrics` · `events` · `console` |
+| Runtime | `serve` · `status` · `runtime status` · `runtime ensure-ready` |
+| Projects | `project intake --name NAME --repo URL` or `--folder PATH` or `--file-ref REF` |
+| Business systems | `business units|run|runs|export|graph|artifact|conversion` |
+| Foreman | `foreman inbox|claim|done` · `talk send|reply` |
+| Registry | `registry check PATH [--json]` |
+| MRL | `mrl eval|template|check|run` |
 
-Exit codes: `0` success · `1` business failure · `2` usage · `3` invalid registry · `4` environment (for example, no Docker) · `5` internal error. The full reference is in [docs/en/cli.md](docs/en/cli.md).
+Exit codes for the active CLI are `0` success, `1` business or request failure, `2` usage error, and `4` unavailable runtime. The full reference is in [docs/en/cli.md](docs/en/cli.md).
 
 ---
 
