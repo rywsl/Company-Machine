@@ -75,7 +75,7 @@ def exit_code(exc: FactoryError) -> int
 | `contract` | `contract validator TYPE VALIDATOR --timeout S`、`contract golden G@N [--baseline B@N] --timeout S`、`contract equivalence S@N [--timeout S]`、`contract diff S@N [--timeout S]`、`contract sink-dry-run S@N --in PORT=BEAN ... [--param K=V ...] [--timeout S]`、`contract ls [--kind K]` | `contract-tests.md` | `ContractRunner` |
 | `schedule` | `schedule tick`、`schedule dlq ls`、`schedule quarantine BEAN --reason TEXT`、`schedule release BEAN` | `scheduler.md` 3.2 | `Scheduler` |
 | `epoch` | `epoch init COMMIT [--by ACTOR]`、`epoch ls`、`epoch show [COMMIT]`、`epoch rollback [COMMIT] [--by ACTOR]`、`epoch adopt COMMIT [--by ACTOR]` | `governance.md` 3.4 | `EpochStore` |
-| `changeset` | `changeset propose FILE --commit C --by ACTOR`、`changeset ls [--state S]`、`changeset show ID`、`changeset withdraw ID --by ACTOR`、`changeset advance ID` | 同上 | `ChangePipeline` |
+| `changeset` | `changeset propose FILE --commit C --by ACTOR`、`changeset ls [--state S]`、`changeset show ID`、`changeset review ID --runtime R --verdict approve\|deny --by ACTOR [--note TEXT]`、`changeset withdraw ID --by ACTOR`、`changeset advance ID` | 同上 | `ChangePipeline` |
 | `governance` | `governance tick`、`governance safe-mode` | 同上 | `ChangePipeline.tick` / `safe_mode` |
 | `audit` | `audit once`、`audit ls [--state S]` | `reconciler.md` 3.1 | `Reconciler` |
 | `drift` | `drift ls` | 同上 | `Reconciler.findings(state=None)` 中 `invariant == "drift"` 的项 |

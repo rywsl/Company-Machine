@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,9 +10,12 @@ import { ChangeSetStages } from "../src/legacy/change-stages";
 import type { VerificationContracts } from "../src/legacy/change-verification";
 import { ContractRunner } from "../src/legacy/contract";
 import { Context } from "../src/legacy/context";
-import { CounterIds, FakeClock } from "../src/legacy/foundation";
+import { CounterIds, FakeClock, canonicalJson, utcIso } from "../src/legacy/foundation";
 import { EpochStore } from "../src/legacy/registry-epochs";
 import { Runner } from "../src/legacy/runner";
+import { RunStore } from "../src/legacy/runs";
+import { runMetrics } from "../src/legacy/change-rollout";
+import { RegistrySelection } from "../src/registry-selection";
 import { LocalProvider } from "../src/legacy/sandbox";
 
 async function git(root: string, ...args: string[]): Promise<string> {
@@ -55,6 +59,14 @@ async function commitFile(registry: string, path: string, data: string) {
   await git(registry, "add", "--", path);
   await git(registry, "commit", "-m", `Change ${path}`);
   return git(registry, "rev-parse", "HEAD");
+}
+
+function recordSample(context: Context, options: { id: string; epoch: string; state: string; cost?: number; at?: string; dryRun?: boolean }): void {
+  new RunStore(context.db, context.clock, context.ids);
+  const { id, epoch, state, cost = 1, at = utcIso(context.clock.now()), dryRun = false } = options;
+  context.db.query(`INSERT INTO runs (id, line, epoch, state, plan, plan_digest, inputs, budget_cap_usd, spent_usd, trigger, created_at, updated_at, sink_mode)
+    VALUES (?, 'Line:note-pipeline@1', ?, ?, '{}', 'digest', '{}', 10, ?, '{}', ?, ?, ?)`)
+    .run(id, epoch, state, cost, at, at, dryRun ? "dry-run" : "execute");
 }
 
 test("proposes a distinct control-plane commit and persists draft history", { timeout: 90_000 }, async () => {
@@ -204,7 +216,7 @@ test("rejects undeclared, immutable and backward-incompatible Registry changes",
     const pending = await risk.advance(claimed.id);
     expect(pending).toMatchObject({ state: "verified", risk_tier: "T2", reviews_required: 1 });
     expect(pending.document.spec).not.toHaveProperty("risk_tier");
-    expect(await risk.advance(claimed.id)).toEqual(pending);
+    expect(await risk.advance(claimed.id)).toMatchObject({ state: "verified", risk_tier: "T2", report: { reason: "reviews" } });
     expect(w.epochs.pointers().candidate).toBeNull();
 
     await git(w.registry, "switch", "-C", "candidate-work", w.base);
@@ -238,8 +250,150 @@ test("executes real diff and GoldenSet jobs before recording a successful shadow
     expect(baseline.list({ kind: "diff", subject: "Station:upper@2" })[0]).toMatchObject({ verdict: "pass", detail: { cases: [{ old_sealed: true, new_sealed: true, facts_equal: true }] } });
     const shadow = await stage.advance(draft.id);
     expect(shadow).toMatchObject({ state: "shadow", report: { ok: true, detail: { runs: 1, regressions: [] } } });
-    expect(await stage.advance(draft.id)).toEqual(shadow);
     expect(w.epochs.pointers()).toMatchObject({ active: w.base, candidate: draft.commit });
-    expect(await git(w.registry, "rev-parse", "refs/factory/active")).toBe(w.base);
+    w.config([{ start: "2026-11-01T00:00:00Z", until: "2026-11-20T00:00:00Z" }]);
+    expect(await stage.advance(draft.id)).toMatchObject({ state: "shadow", report: { reason: "freeze" } });
+    expect(w.epochs.current()).toBe(w.base);
+    w.config();
+    expect(await stage.advance(draft.id)).toMatchObject({ state: "active" });
+    expect(w.epochs.pointers()).toEqual({ active: draft.commit, candidate: null, previous: w.base });
+    expect(await git(w.registry, "rev-parse", "refs/factory/active")).toBe(draft.commit);
+    expect(await git(w.registry, "rev-parse", "refs/heads/main")).toBe(w.base);
+    recordSample(w.context, { id: "observation-good", epoch: draft.commit, state: "SUCCEEDED" });
+    (w.context.clock as FakeClock).advance(7200);
+    const observed = await stage.advance(draft.id);
+    expect(observed).toMatchObject({ state: "active", report: { stage: "observe", ok: true } });
+    expect(await stage.advance(draft.id)).toEqual(observed);
   } finally { w.close(); }
+});
+
+test("records independent reviews and uses canary SLO samples before promotion", { timeout: 120_000 }, async () => {
+  const w = await world();
+  try {
+    const path = "machines/toolbox/machine.yaml";
+    const machine = readFileSync(join(w.registry, path), "utf8");
+    const source = await commitFile(w.registry, path, machine + "\n---\n" + machine.replace("version: 1", "version: 2").replace("09b42648636a8405", "19b42648636a8405"));
+    const stage = new ChangeSetStages(w.changesets, {
+      contracts: () => contracts("pass"), shadow: async () => ({ ok: true, runs: 0, regressions: [], spent_usd: 0 }),
+    });
+    const proposal = () => w.changesets.propose(document(w.base, { changes: [{ op: "upsert", kind: "Machine", name: "toolbox" }] }), source, { by: "fake-agent@1" });
+    const draft = await proposal();
+    const review = (runtime: string, verdict = "approve") => w.changesets.addReview(draft.id, { runtime, verdict, note: "", by: "independent" });
+    await expect(review("script@1")).rejects.toMatchObject({ code: "CHANGESET_STATE_INVALID" });
+    expect(await stage.advance(draft.id)).toMatchObject({ state: "verified", risk_tier: "T2", proposer_runtime: "OperatorRuntime:fake-agent@1" });
+    await expect(review("fake-agent@1")).rejects.toMatchObject({ code: "REVIEW_SAME_RUNTIME" });
+    await expect(review("unknown@1")).rejects.toMatchObject({ code: "REVIEW_INVALID" });
+    await expect(review("Station:upper@1")).rejects.toMatchObject({ code: "REVIEW_INVALID" });
+    const candidate = await w.epochs.materialize(draft.commit);
+    const denied = await review("script@1", "deny");
+    expect(w.changesets.approvals(draft.id, candidate)).toEqual([]);
+    expect(await stage.advance(draft.id)).toMatchObject({ state: "verified", report: { reason: "reviews" } });
+    expect(await review("OperatorRuntime:script@1")).toBe(denied);
+    expect(w.changesets.approvals(draft.id, candidate)).toEqual(["OperatorRuntime:script@1"]);
+    w.context.db.query("UPDATE reviews SET runtime_digest='tampered' WHERE id=?").run(denied);
+    expect(await stage.advance(draft.id)).toMatchObject({ state: "verified", report: { reason: "reviews" } });
+    expect(await review("script@1")).toBe(denied);
+
+    expect(await stage.advance(draft.id)).toMatchObject({ state: "shadow" });
+    expect(w.epochs.pointers()).toMatchObject({ active: w.base, candidate: draft.commit });
+    const canary = await stage.advance(draft.id);
+    expect(canary).toMatchObject({ state: "canary", stage_started_at: utcIso(w.context.clock.now()) });
+    expect(w.epochs.current()).toBe(w.base);
+    const router = new RegistrySelection(w.context, w.registry);
+    const line = "Line:note-pipeline@1";
+    const picks = Object.fromEntries([w.base, draft.commit].map((commit) => [commit, 0]));
+    for (let index = 0; index < 12; index += 1) {
+      const inputs = { task: "task-" + index };
+      const hash = createHash("sha256").update(line + ":" + canonicalJson(inputs)).digest("hex");
+      const expected = Number.parseInt(hash.slice(0, 8), 16) % 100 < 50 ? draft.commit : w.base;
+      expect((await router.forLine("note-pipeline@1", () => inputs)).epoch).toBe(expected);
+      picks[expected]++;
+    }
+    expect(picks[w.base]).toBeGreaterThan(0);
+    expect(picks[draft.commit]).toBeGreaterThan(0);
+
+    recordSample(w.context, { id: "active-good", epoch: w.base, state: "SUCCEEDED" });
+    recordSample(w.context, { id: "canary-running", epoch: draft.commit, state: "RUNNING" });
+    recordSample(w.context, { id: "shadow-good", epoch: draft.commit, state: "SUCCEEDED", dryRun: true });
+    recordSample(w.context, { id: "canary-first", epoch: draft.commit, state: "SUCCEEDED" });
+    expect(await stage.advance(draft.id)).toMatchObject({ state: "canary", report: { reason: "samples" } });
+    recordSample(w.context, { id: "canary-second", epoch: draft.commit, state: "SUCCEEDED" });
+    expect(runMetrics(w.context, draft.commit, canary.stage_started_at!)).toEqual({
+      runs: 2, jobs: 0, success_rate: 1, gate_reject_rate: null, cost_per_run_usd: 1,
+    });
+    expect(await stage.advance(draft.id)).toMatchObject({ state: "active" });
+    expect(w.epochs.pointers()).toEqual({ active: draft.commit, candidate: null, previous: w.base });
+    expect(await git(w.registry, "rev-parse", "refs/factory/active")).toBe(draft.commit);
+  } finally { w.close(); }
+});
+
+test("keeps withdrawn ChangeSets from advancing and retains their Git audit refs", { timeout: 90_000 }, async () => {
+  const w = await world();
+  try {
+    const upper = readFileSync(join(w.registry, "stations", "upper.yaml"), "utf8");
+    const source = await commitFile(w.registry, "stations/upper-v2.yaml", upper.replace("version: 1", "version: 2").replace("60s", "30s"));
+    const draft = await w.changesets.propose(document(w.base), source, { by: "human:a" });
+    expect(w.changesets.withdraw(draft.id, "human:a").state).toBe("withdrawn");
+    await expect(new ChangeSetStages(w.changesets).advance(draft.id)).rejects.toMatchObject({ code: "CHANGESET_STATE_INVALID" });
+    expect(() => w.changesets.get("cs-9999")).toThrow("找不到变更");
+    expect(await git(w.registry, "rev-parse", `refs/changesets/${draft.id}`)).toBe(draft.commit);
+  } finally { w.close(); }
+});
+
+test("rolls back failed canary and observation SLOs without moving unrelated epoch pointers", { timeout: 120_000 }, async () => {
+  const w = await world();
+  try {
+    const stage = new ChangeSetStages(w.changesets, {
+      contracts: () => contracts("pass"), shadow: async () => ({ ok: true, runs: 0, regressions: [], spent_usd: 0 }),
+    });
+    const path = "machines/toolbox/machine.yaml";
+    const machine = readFileSync(join(w.registry, path), "utf8");
+    const changed = await commitFile(w.registry, path, machine + "\n---\n" + machine.replace("version: 1", "version: 2").replace("09b42648636a8405", "19b42648636a8405"));
+    const machineDraft = await w.changesets.propose(document(w.base, { changes: [{ op: "upsert", kind: "Machine", name: "toolbox" }] }), changed, { by: "fake-agent@1" });
+    expect((await stage.advance(machineDraft.id)).state).toBe("verified");
+    await w.changesets.addReview(machineDraft.id, { runtime: "script@1", verdict: "approve", note: "", by: "script" });
+    expect((await stage.advance(machineDraft.id)).state).toBe("shadow");
+    expect((await stage.advance(machineDraft.id)).state).toBe("canary");
+    recordSample(w.context, { id: "failed-canary", epoch: machineDraft.commit, state: "FAILED" });
+    recordSample(w.context, { id: "passed-canary", epoch: machineDraft.commit, state: "SUCCEEDED" });
+    expect(await stage.advance(machineDraft.id)).toMatchObject({
+      state: "rolled-back", report: { code: "SLO_ROLLBACK", detail: { metric: "success_rate", value: 0.5, bound: ">= 0.9" } },
+    });
+    expect(w.epochs.pointers()).toEqual({ active: w.base, candidate: null, previous: null });
+
+    await git(w.registry, "switch", "-C", "candidate-work", w.base);
+    const upper = readFileSync(join(w.registry, "stations/upper.yaml"), "utf8");
+    const source = await commitFile(w.registry, "stations/upper-v2.yaml", upper.replace("version: 1", "version: 2").replace("60s", "30s"));
+    const upperDraft = await w.changesets.propose(document(w.base, {
+      rollout: { shadow: { budget_usd: 1 }, observe: "1h", slo: { success_rate: ">= 0.9" } },
+    }), source, { by: "human:a" });
+    expect((await stage.advance(upperDraft.id)).state).toBe("verified");
+    expect((await stage.advance(upperDraft.id)).state).toBe("shadow");
+    expect((await stage.advance(upperDraft.id)).state).toBe("active");
+    recordSample(w.context, { id: "failed-live", epoch: upperDraft.commit, state: "FAILED" });
+    (w.context.clock as FakeClock).advance(7200);
+    expect(await stage.advance(upperDraft.id)).toMatchObject({ state: "rolled-back", report: { code: "SLO_ROLLBACK" } });
+    expect(w.epochs.pointers()).toEqual({ active: w.base, candidate: null, previous: upperDraft.commit });
+    expect(await git(w.registry, "rev-parse", "refs/factory/active")).toBe(w.base);
+    expect(await git(w.registry, "rev-parse", "refs/heads/main")).toBe(w.base);
+  } finally { w.close(); }
+});
+
+test("aggregates terminal rollout run outcomes, current cost, and distinct rejected jobs", () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-rollout-metrics-"));
+  const context = Context.open(root);
+  try {
+    const since = "2026-11-10T00:00:00.000Z";
+    const epoch = "e".repeat(40);
+    expect(runMetrics(context, epoch, since)).toEqual({ runs: 0, jobs: 0, success_rate: null, gate_reject_rate: null, cost_per_run_usd: null });
+    recordSample(context, { id: "ok", epoch, state: "SUCCEEDED", cost: 1, at: since });
+    recordSample(context, { id: "failed", epoch, state: "FAILED", cost: 2, at: since });
+    recordSample(context, { id: "running", epoch, state: "RUNNING", cost: 9, at: since });
+    recordSample(context, { id: "old", epoch, state: "SUCCEEDED", cost: 9, at: "2026-11-09T00:00:00.000Z" });
+    const link = context.db.query("INSERT INTO run_node_jobs (run_id,node_id,job_id,created_at) VALUES (?, 'node', ?, ?)");
+    for (const [run, job] of [["ok", "j1"], ["ok", "j2"], ["failed", "j3"], ["failed", "j4"], ["old", "j5"]]) link.run(run, job, since);
+    context.db.query("INSERT INTO job_events (id,job_id,kind,data,at) VALUES ('reject-j1','j1','job.state',?,?)").run('{"to":"REJECTED"}', since);
+    context.db.query("INSERT INTO events (id,job_id,kind,data,at) VALUES ('legacy-reject-j1','j1','job.state',?,?)").run('{"to":"REJECTED"}', since);
+    expect(runMetrics(context, epoch, since)).toEqual({ runs: 2, jobs: 4, success_rate: 0.5, gate_reject_rate: 0.25, cost_per_run_usd: 1.5 });
+  } finally { context.close(); rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
 });

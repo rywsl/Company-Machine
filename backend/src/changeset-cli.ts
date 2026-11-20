@@ -8,15 +8,22 @@ import { FactoryError } from "./legacy/errors";
 import { canonicalJson } from "./legacy/foundation";
 import { EpochStore } from "./legacy/registry-epochs";
 
-export const changesetCommands = { changeset: ["propose FILE --commit COMMIT --by ACTOR", "ls [--state STATE]", "show ID", "advance ID"] };
+export const changesetCommands = { changeset: [
+  "propose FILE --commit COMMIT --by ACTOR", "ls [--state STATE]", "show ID", "advance ID",
+  "review ID --runtime RUNTIME --verdict approve|deny --by ACTOR [--note TEXT]", "withdraw ID --by ACTOR",
+] };
 
 export async function runChangeSetCli(context: Context, operation: string, args: string[], options: {
   registry?: string;
   provider?: () => ContainerProvider | Promise<ContainerProvider>;
 } = {}): Promise<number> {
   const usage = (message: string) => new FactoryError("CLI_USAGE", message);
-  if (!["ls", "show", "propose", "advance"].includes(operation)) throw usage(`Unknown changeset command: ${operation}`);
-  const allowed = new Set(operation === "ls" ? ["--state"] : operation === "propose" ? ["--commit", "--by"] : []);
+  const optionNames: Record<string, string[]> = {
+    ls: ["--state"], propose: ["--commit", "--by"], review: ["--runtime", "--verdict", "--by", "--note"],
+    withdraw: ["--by"], advance: [], show: [],
+  };
+  if (!Object.hasOwn(optionNames, operation)) throw usage(`Unknown changeset command: ${operation}`);
+  const allowed = new Set(optionNames[operation]);
   const flags = new Map<string, string>();
   let target: string | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -30,6 +37,9 @@ export async function runChangeSetCli(context: Context, operation: string, args:
   if (operation !== "ls" && !target) throw usage(`${operation} requires ${operation === "propose" ? "a file" : "an ID"}`);
   const commit = flags.get("--commit"), by = flags.get("--by");
   if (operation === "propose" && (!commit || !by)) throw usage("propose requires --commit and --by");
+  const runtime = flags.get("--runtime"), verdict = flags.get("--verdict");
+  if (operation === "review" && (!runtime || !verdict || !by)) throw usage("review requires --runtime, --verdict, and --by");
+  if (operation === "withdraw" && !by) throw usage("withdraw requires --by");
   const changesets = new ChangeSetStore(context, await EpochStore.open(context, options));
   if (operation === "propose") {
     let documents;
@@ -39,6 +49,11 @@ export async function runChangeSetCli(context: Context, operation: string, args:
     console.log(canonicalJson(await changesets.propose(documents[0].data, commit!, { by: by! })));
   } else if (operation === "advance") {
     console.log(canonicalJson(await new ChangeSetStages(changesets, { provider: options.provider }).advance(target!)));
+  } else if (operation === "review") {
+    const id = await changesets.addReview(target!, { runtime: runtime!, verdict: verdict!, by: by!, note: flags.get("--note") ?? "" });
+    console.log(canonicalJson({ id }));
+  } else if (operation === "withdraw") {
+    console.log(canonicalJson(changesets.withdraw(target!, by!)));
   } else {
     console.log(canonicalJson(operation === "show" ? changesets.get(target!) : changesets.list(flags.get("--state"))));
   }

@@ -233,6 +233,33 @@ export class EpochStore {
     await this.syncRefs();
   }
 
+  updateRolloutPointers(base: string, commit: string, outcome: "stage" | "promote" | "discard" | "rollback"): boolean {
+    return this.context.db.transaction(() => {
+      const pointers = this.pointers();
+      const change = { by: "governance", reason: outcome };
+      if (outcome === "stage") {
+        if (pointers.active !== base || (pointers.candidate && pointers.candidate !== commit)) return false;
+        if (!pointers.candidate) this.writePointer("candidate", commit, change);
+        return true;
+      }
+      if (outcome === "discard") {
+        if (pointers.candidate === commit) this.writePointer("candidate", null, change);
+        return true;
+      }
+      if (outcome === "promote") {
+        if (pointers.active !== base || pointers.candidate !== commit) return false;
+        this.writePointer("previous", base, change);
+        this.writePointer("active", commit, change);
+        this.writePointer("candidate", null, change);
+        return true;
+      }
+      if (pointers.active !== commit || pointers.previous !== base) return false;
+      this.writePointer("previous", commit, change);
+      this.writePointer("active", base, change);
+      return true;
+    }).immediate();
+  }
+
   private writePointer(name: Pointer, commit: string | null, change: { by: string; reason: string }): void {
     if (!pointerNames.includes(name)) throw new Error("Invalid epoch pointer");
     const { db } = this.context;

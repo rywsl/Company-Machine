@@ -182,6 +182,7 @@ factory epoch adopt COMMIT
 factory changeset propose FILE --commit COMMIT --by ACTOR
 factory changeset ls [--state S] [--json] factory changeset show ID [--json]
 factory changeset withdraw ID --by ACTOR  factory changeset advance ID
+factory changeset review ID --runtime RUNTIME --verdict approve|deny --by ACTOR [--note TEXT]
 factory governance tick [--json]          factory governance safe-mode [--json]
 ```
 
@@ -476,15 +477,17 @@ Bun 的 `changeset advance ID` 持久化 `verifying`，通过候选 Git epoch、
 
 **影子运行**：`shadow.run(cs, candidate=..., active=..., rollout=document.spec.rollout, golden_only=(tier == "T1" and rollout.shadow 没有 runs))`。`report.ok` 为假、`spent_usd > rollout.shadow.budget_usd`、或 `regressions` 非空 → 失败。缺省实现 `LineShadowRunner`：
 
-Bun 的 `advance` 在复核要求为零时推进影子阶段。在途或已通过的影子占用唯一候选位置。重放按变更和基线运行 ID 恢复，Sink 使用 `dry-run`。失败会清除该变更的候选指针并保存 `SHADOW_FAILED`，成功则保留 `shadow` 及报告，供后续发布流程读取。
+Bun 的 `advance` 将候选快照中独立 Runtime 的有效批准计入复核门槛。候选位置由影子、金丝雀和观察阶段共享。重放按变更和基线运行 ID 恢复，Sink 使用 `dry-run`。通过影子后按风险阶段进入金丝雀或推广，封版期间保持当前阶段。候选位置、推广和回滚指针与阶段状态在同一 SQLite 事务中更新，再同步 `refs/factory/*`。
 
 - 重放基线 epoch 最近 `rollout.shadow.runs` 个 `SUCCEEDED` run 的输入（`golden_only` 时改用相关 GoldenSet 的样例），在候选快照上新建 run，`trigger = "shadow:<cs_id>"`；
 - **Sink 换成空 Sink**：sink 步骤只走 `contract-tests.md` 的 `run_sink_dry_run`，绝不真实发布，也不写回执；
 - 对比同一输入在两个 epoch 的结果：节点终态从 DONE 变成 FAILED、产物类型不同、检验 verdict 从 pass 变成 reject，都算一条 regression。
 
-**金丝雀样本**：`R = run_metrics` 所用集合，即 `runs.epoch == cs.commit`、`created_at >= stage_started_at`、状态为终态的 run。样本足够指 `len(R) >= canary.min_runs × multiplier`。
+**金丝雀样本**：`R = run_metrics` 所用集合，即 `runs.epoch == cs.commit`、`created_at >= stage_started_at`、真实执行且达到终态的 run。样本足够指 `len(R) >= canary.min_runs × multiplier`。
 
 **路由**：`EpochRouter.choose(key)`：有 `canary` 状态的 ChangeSet 时，`bucket = int(sha256(key.encode("utf-8")).hexdigest()[:8], 16) % 100`，`bucket < percent` 返回候选 commit，否则返回 `active`。没有金丝雀时返回 `active`。调用方（触发器、`factory line run`）用 `line + ":" + canonical_json(inputs)` 作 key，所以重放同一输入总落在同一边。
+
+Bun 的 `factory line run` 通过 `RegistrySelection.forLine` 选择金丝雀快照。显式 `--epoch` 固定所选快照。仅候选快照包含的产线由候选执行。
 
 ### 5.10 推广、观察、回滚（M3-03）
 

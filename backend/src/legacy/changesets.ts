@@ -4,8 +4,9 @@ import { validate } from "../../mrl/factory/schema";
 import { governanceLimits, object } from "./change-facts";
 import type { Context } from "./context";
 import { FactoryError } from "./errors";
-import { canonicalJson, parseDuration, utcIso } from "./foundation";
+import { canonicalBytes, canonicalJson, digestBytes, parseDuration, utcIso } from "./foundation";
 import type { EpochStore } from "./registry-epochs";
+import type { Snapshot } from "./snapshot";
 
 type Data = Record<string, unknown>;
 interface ChangeSetRow {
@@ -100,6 +101,12 @@ export class ChangeSetStore {
       );
       CREATE INDEX IF NOT EXISTS changesets_state ON changesets(state);
       CREATE INDEX IF NOT EXISTS changesets_activated ON changesets(activated_at);
+      CREATE TABLE IF NOT EXISTS reviews (
+        id TEXT PRIMARY KEY, changeset_id TEXT NOT NULL REFERENCES changesets(id),
+        runtime TEXT NOT NULL, runtime_digest TEXT NOT NULL, verdict TEXT NOT NULL,
+        note TEXT NOT NULL, by TEXT NOT NULL, at TEXT NOT NULL,
+        UNIQUE(changeset_id, runtime)
+      );
     `);
   }
 
@@ -114,6 +121,69 @@ export class ChangeSetStore {
     const rows = state === undefined ? db.query<ChangeSetRow>("SELECT * FROM changesets ORDER BY id").all()
       : db.query<ChangeSetRow>("SELECT * FROM changesets WHERE state = ? ORDER BY id").all(state);
     return rows.map(decodeRow);
+  }
+
+  async addReview(id: string, review: { runtime: string; verdict: string; note: string; by: string }): Promise<string> {
+    const reviewable = (change: ChangeSet) => {
+      if (!["verified", "shadow", "canary"].includes(change.state)) {
+        throw new FactoryError("CHANGESET_STATE_INVALID", "当前状态不能复核", { id, state: change.state });
+      }
+    };
+    const change = this.get(id);
+    reviewable(change);
+    if (!["approve", "deny"].includes(review.verdict) || Array.from(review.note).length > 2000) {
+      throw new FactoryError("REVIEW_INVALID", "复核不合法", { id, runtime: review.runtime });
+    }
+    const snapshot = await this.epochs.materialize(change.commit);
+    const runtime = snapshot.key("OperatorRuntime", review.runtime);
+    if (!runtime.startsWith("OperatorRuntime:") || !Object.hasOwn(snapshot.docs, runtime)) {
+      throw new FactoryError("REVIEW_INVALID", "复核运行时不存在", { id, runtime: review.runtime });
+    }
+    const digest = digestBytes(canonicalBytes(snapshot.doc(runtime)));
+    const { db, ids, clock } = this.context;
+    return db.transaction(() => {
+      const current = this.get(id);
+      reviewable(current);
+      if (runtime === current.proposer_runtime) {
+        throw new FactoryError("REVIEW_SAME_RUNTIME", "提出者不能复核自己", { id, runtime });
+      }
+      const previous = db.query<{ id: string }>("SELECT id FROM reviews WHERE changeset_id=? AND runtime=?").get(id, runtime);
+      const reviewId = previous?.id ?? ids.new("rv");
+      const at = utcIso(clock.now());
+      db.query(`INSERT INTO reviews (id, changeset_id, runtime, runtime_digest, verdict, note, by, at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(changeset_id, runtime) DO UPDATE SET
+        runtime_digest=excluded.runtime_digest, verdict=excluded.verdict, note=excluded.note, by=excluded.by, at=excluded.at`)
+        .run(reviewId, id, runtime, digest, review.verdict, review.note, review.by, at);
+      db.query("INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'changeset.review', NULL, ?)")
+        .run(ids.new("ev"), at, canonicalJson({ id, review: reviewId, runtime, verdict: review.verdict }));
+      return reviewId;
+    }).immediate();
+  }
+
+  approvals(id: string, candidate: Snapshot): string[] {
+    const change = this.get(id);
+    if (candidate.epoch !== change.commit) throw new FactoryError("EPOCH_MISMATCH", "复核需要候选快照", { id, epoch: candidate.epoch });
+    return this.context.db.query<{ runtime: string; runtime_digest: string }>(
+      "SELECT runtime, runtime_digest FROM reviews WHERE changeset_id=? AND verdict='approve' ORDER BY runtime",
+    ).all(id).filter(({ runtime, runtime_digest }) => runtime !== change.proposer_runtime
+      && runtime.startsWith("OperatorRuntime:") && Object.hasOwn(candidate.docs, runtime)
+      && digestBytes(canonicalBytes(candidate.doc(runtime))) === runtime_digest
+    ).map(({ runtime }) => runtime);
+  }
+
+  withdraw(id: string, by: string): ChangeSet {
+    const { db, ids, clock } = this.context;
+    return db.transaction(() => {
+      const current = this.get(id);
+      if (!["draft", "verified"].includes(current.state)) {
+        throw new FactoryError("CHANGESET_STATE_INVALID", "当前状态不能撤回", { id, state: current.state });
+      }
+      const at = utcIso(clock.now());
+      db.query("UPDATE changesets SET state='withdrawn', updated_at=? WHERE id=?").run(at, id);
+      db.query("INSERT INTO events (id, at, kind, job_id, data) VALUES (?, ?, 'changeset.state', NULL, ?)")
+        .run(ids.new("ev"), at, canonicalJson({ id, from: current.state, to: "withdrawn", code: "WITHDRAWN", by }));
+      return this.get(id);
+    }).immediate();
   }
 
   async propose(document: unknown, reference: string, options: { by: string; timeoutSeconds?: number }): Promise<ChangeSet> {
@@ -176,14 +246,20 @@ export class ChangeSetStore {
     catch { throw new FactoryError("REGISTRY_NOT_CONFIGURED", "factory.json 无法解析", { path }); }
   }
 
-  private checkWindows(config: Data, limit: number): void {
+  freezeUntil(config = this.config()): string | undefined {
     const now = this.context.clock.now().getTime();
     if (Array.isArray(config.freeze)) for (const window of config.freeze) {
       const { start, until } = object(window);
       if (Date.parse(String(start)) <= now && now < Date.parse(String(until))) {
-        throw new FactoryError("FREEZE_WINDOW", "封版期内不能受理", { until });
+        return String(until);
       }
     }
+  }
+
+  private checkWindows(config: Data, limit: number): void {
+    const until = this.freezeUntil(config);
+    if (until) throw new FactoryError("FREEZE_WINDOW", "封版期内不能受理", { until });
+    const now = this.context.clock.now().getTime();
     const count = this.context.db.query<{ count: number }>(`SELECT count(*) AS count FROM changesets WHERE activated_at >= ? AND activated_at <= ?`)
       .get(utcIso(new Date(now - 86_400_000)), utcIso(new Date(now)))?.count ?? 0;
     if (!Number.isFinite(limit) || count >= limit) throw new FactoryError("RATE_LIMITED", "推广过于频繁", { count });

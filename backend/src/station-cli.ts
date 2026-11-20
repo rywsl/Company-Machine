@@ -398,9 +398,13 @@ async function runLineCli(context: Context, snapshots: RegistrySelection, operat
   if (!["run", "exec", "rebuild"].includes(operation)) throw new CliUsageError(`unknown line command: ${operation}`);
   const noCache = operation === "run" && rest.includes("--no-cache");
   const fields = readOptions(rest.filter((word) => !noCache || word !== "--no-cache"), operation === "run" ? ["--in", "--budget", "--variant"] : []);
+  const lineInputs = (snapshot: Awaited<ReturnType<RegistrySelection["current"]>>) => {
+    const spec = snapshot.spec(snapshot.key("Line", target));
+    return materialInputs(fields.get("--in") ?? [], "--in", (port) => spec.interface?.inputs?.[port]?.type.startsWith("list<") ?? false);
+  };
   const snapshot = operation === "exec"
     ? await snapshots.saved(store.get(target).epoch)
-    : await snapshots.current();
+    : operation === "run" ? await snapshots.forLine(target, lineInputs) : await snapshots.current();
   const lines = new LineRunner(new Runner(context, snapshot, await provider(options)));
   if (operation === "rebuild") {
     const previous = store.get(target);
@@ -413,10 +417,8 @@ async function runLineCli(context: Context, snapshots: RegistrySelection, operat
   }
   let id = target;
   if (operation === "run") {
-    const plan = compileDynamicRunPlan(snapshot, target);
-    const inputs = materialInputs(fields.get("--in") ?? [], "--in", (port) => plan.inputs[port]?.startsWith("list<") ?? false);
     id = lines.start(target, {
-      inputs, budgetCapUsd: fields.has("--budget") ? Number(required(fields, "--budget")) : undefined,
+      inputs: lineInputs(snapshot), budgetCapUsd: fields.has("--budget") ? Number(required(fields, "--budget")) : undefined,
       variants: Object.fromEntries((fields.get("--variant") ?? []).map((value) => pair(value, "--variant"))),
       useCache: !noCache,
       trigger: { on: "manual", by },
