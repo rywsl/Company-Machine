@@ -5,6 +5,9 @@
  * This module never invokes a shell and never talks to a model provider.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 export type NetworkMode = "none" | "egress";
 
 export type Mount = {
@@ -115,6 +118,26 @@ function platformName(): string {
   return processLike?.platform ?? "unknown";
 }
 
+function environment(): Record<string, string | undefined> {
+  return ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
+}
+
+/** Resolve the user-local Windows installation when the parent process has a stale PATH. */
+export function resolvePodmanExecutable(configured?: string): string {
+  if (configured && configured !== "podman") return configured;
+  const env = environment();
+  if (env.MAO_PODMAN_EXECUTABLE) return env.MAO_PODMAN_EXECUTABLE;
+  if (platformName() !== "win32") return configured ?? "podman";
+  const localAppData = env.LOCALAPPDATA;
+  if (!localAppData) return configured ?? "podman";
+  const root = join(localAppData, "Programs", "Podman");
+  for (const version of ["6.2.0", "5.8.10"]) {
+    const candidate = join(root, `podman-${version}`, "usr", "bin", "podman.exe");
+    if (existsSync(candidate)) return candidate;
+  }
+  return configured ?? "podman";
+}
+
 async function defaultRunner(argv: string[], options: { timeoutMs?: number } = {}): Promise<CommandResult> {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new PodmanError("RUNTIME_UNAVAILABLE", "Bun runtime is required");
@@ -212,7 +235,7 @@ export class PodmanProvider implements ContainerProvider {
     machine?: string;
     runner?: CommandRunner;
   } = {}) {
-    this.executable = options.executable ?? "podman";
+    this.executable = resolvePodmanExecutable(options.executable);
     this.allowUnproxiedEgress = options.allowUnproxiedEgress ?? false;
     this.egressNetwork = options.egressNetwork ?? null;
     this.egressEnv = { ...(options.egressEnv ?? {}) };

@@ -8,7 +8,7 @@ The Web App is served from `src/mao/webapp/static/dist` when that directory exis
 
 When a Foreman profile is configured, queued talk messages can be dispatched through the selected official Harness CLI or an explicitly configured ACP transport. The Bun process only starts the external Harness, forwards the business request, parses bounded transcript events and persists the human-readable reply. It never calls a model API itself or forwards the host environment wholesale.
 
-Podman health and machine readiness are exposed at `/api/v1/runtime` and `/api/v1/runtime/ensure-ready`. A missing Podman dependency is reported to the Web App as an explicit runtime state.
+Podman health and machine readiness are exposed at `/api/v1/runtime` and `/api/v1/runtime/ensure-ready`. A missing Podman dependency is reported to the Web App as an explicit runtime state. `MAO_PODMAN_EXECUTABLE` can point at a user-local Podman CLI when the parent desktop process has an older PATH snapshot.
 
 Secret values enter through `/api/v1/secrets/requests/:id/value` and are encrypted in the local vault. The database and event stream contain only the vault reference and status.
 
