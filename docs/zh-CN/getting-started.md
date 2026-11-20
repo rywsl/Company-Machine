@@ -57,6 +57,8 @@ bun run build:test-images
 bun run tools/verify-runtime.ts
 ```
 
+若 Kiri 的镜像构建请求超时，可在同 CPU 架构的 Podman 主机上运行 `bun run build:test-images --save-to /tmp/mao-test-images`。将目录复制到 Kiri 主机，执行 `MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --load-from /tmp/mao-test-images`，再运行同一条工位验收命令。
+
 ## 交给厂长
 
 ```bash

@@ -57,6 +57,8 @@ bun run build:test-images
 bun run tools/verify-runtime.ts
 ```
 
+If Kiri's image build request times out, run `bun run build:test-images --save-to /tmp/mao-test-images` on a Podman host with the same CPU architecture. Copy the directory to the Kiri host, run `MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --load-from /tmp/mao-test-images`, then run the same station verification command.
+
 ## Hand a project to Foreman
 
 ```bash

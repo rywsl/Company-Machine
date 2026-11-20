@@ -15,7 +15,8 @@ const textExtensions = new Set([".ts", ".sh", ".txt", ".json", ".yaml", ".yml", 
 type CommandResult = { code: number; stdout: string; stderr: string };
 
 function usage(): void {
-  console.log(`bun run build:test-images [--only NAME]... [--base IMAGE] [--executable PATH]`);
+  console.log(`bun run build:test-images [--only NAME]... [--base IMAGE] [--executable PATH]
+  [--save-to DIRECTORY | --load-from DIRECTORY] [--build-timeout SECONDS]`);
 }
 
 function values(args: string[], flag: string): string[] {
@@ -52,7 +53,13 @@ async function run(argv: string[], timeoutMs: number, env?: Record<string, strin
   return { code: result.exitCode, stdout: decoder.decode(result.stdout), stderr: decoder.decode(result.stderr) };
 }
 
-async function build(name: string, commandPrefix: string[], base: string | undefined, env?: Record<string, string>): Promise<string> {
+async function checked(argv: string[], timeoutMs: number, env?: Record<string, string>): Promise<string> {
+  const result = await run(argv, timeoutMs, env);
+  if (result.code !== 0) throw new Error(`${argv.join(" ")} 失败\n${result.stdout}\n${result.stderr}`);
+  return result.stdout;
+}
+
+async function build(name: string, commandPrefix: string[], base: string | undefined, timeoutMs: number, env?: Record<string, string>): Promise<void> {
   const context = await mkdtemp(join(tmpdir(), `mao-img-${name}-`));
   try {
     await copyTree(join(imagesRoot, name), context);
@@ -60,15 +67,18 @@ async function build(name: string, commandPrefix: string[], base: string | undef
     const argv = [...commandPrefix, "build", "--tag", `mao-test/${name}:dev`];
     if (base) argv.push("--build-arg", `BASE=${base}`);
     argv.push(context);
-    const built = await run(argv, 1_800_000, env);
-    if (built.code !== 0) throw new Error(`构建 mao-test/${name}:dev 失败\n${built.stdout}\n${built.stderr}`);
-    const inspected = await run([...commandPrefix, "image", "inspect", "--format", "{{.Id}}", `mao-test/${name}:dev`], 60_000, env);
-    const id = parseImageId(inspected.stdout);
-    if (inspected.code !== 0 || !id) throw new Error(`构建后找不到 mao-test/${name}:dev\n${inspected.stderr}`);
-    return id;
+    await checked(argv, timeoutMs, env);
   } finally {
     await rm(context, { recursive: true, force: true });
   }
+}
+
+async function inspectImage(commandPrefix: string[], tag: string, env?: Record<string, string>): Promise<string> {
+  const inspect = (name: string) => run([...commandPrefix, "image", "inspect", "--format", "{{.Id}}", name], 60_000, env);
+  const inspected = await inspect(tag);
+  const id = parseImageId(inspected.stdout);
+  if (inspected.code !== 0 || !id) throw new Error(`找不到 ${tag} 的镜像摘要\n${inspected.stderr}`);
+  return id;
 }
 
 export async function main(argv = Bun.argv.slice(2)): Promise<number> {
@@ -83,12 +93,21 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
   }
   const explicit = one(argv, "--executable");
   const base = one(argv, "--base");
+  const save = one(argv, "--save-to");
+  const load = one(argv, "--load-from");
+  const seconds = one(argv, "--build-timeout");
+  const timeout = seconds === undefined ? undefined : Number(seconds);
+  if ((save && load) || (load && base) || (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= 0 || timeout > 86_400))) {
+    usage();
+    return 2;
+  }
   const targets = selected.length ? [...new Set(selected)] : [...names];
   const ids: Record<string, string> = {};
   try {
     const kiri = !explicit && process.env.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri" ? resolveKiriClient() : undefined;
     const commandPrefix = kiri?.argv ?? [explicit ?? resolvePodmanExecutable()];
     const env = kiri && { ...kiri.env, ...(kiri.mode === "linux-socket" ? { DOCKER_BUILDKIT: "0" } : {}) };
+    const buildTimeoutMs = 1000 * (timeout ?? (kiri?.mode === "linux-socket" ? 300 : 1800));
     if (kiri) {
       const health = await new KiriProvider().ensureReady();
       if (!health.available) throw new Error(`${health.executable} 不可用\n${health.reason ?? ""}`);
@@ -96,8 +115,30 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
       const health = await run([...commandPrefix, "version"], 60_000);
       if (health.code !== 0) throw new Error(`${commandPrefix.join(" ")} 不可用\n${health.stderr}`);
     }
+    if (save) await mkdir(resolve(save), { recursive: true });
     for (const name of targets) {
-      ids[name] = await build(name, commandPrefix, base, env);
+      const tag = `mao-test/${name}:dev`;
+      if (load) {
+        const output = await checked([...commandPrefix, "load", "--input", join(resolve(load), `${name}.tar`)], 300_000, env);
+        // Podman writes its local registry prefix into Docker-format archives.
+        const localTag = `localhost/${tag}`;
+        if (kiri && output.split(/\r?\n/).some((line) => line.trim() === `Loaded image: ${localTag}`)) {
+          await checked([...commandPrefix, "tag", localTag, tag], 60_000, env);
+        }
+      } else {
+        console.error(`正在构建 ${tag}`);
+        try {
+          await build(name, commandPrefix, base, buildTimeoutMs, env);
+        } catch (error) {
+          if (kiri?.mode === "linux-socket") {
+            throw new Error(`构建 ${tag} 失败。可用 --load-from DIR 导入已构建的测试镜像。\n${error instanceof Error ? error.message : String(error)}`);
+          }
+          throw error;
+        }
+      }
+      const id = await inspectImage(commandPrefix, tag, env);
+      ids[name] = id;
+      if (save) await checked([...commandPrefix, "save", "--output", join(resolve(save), `${name}.tar`), tag], 300_000, env);
       console.error(`✔ mao-test/${name}:dev ${ids[name]}`);
     }
   } catch (error) {

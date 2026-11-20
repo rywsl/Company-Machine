@@ -74,6 +74,8 @@ bun run build:test-images
 
 构建 `mao-test/tool`、`mao-test/studio`、`mao-test/operator`。上下文来自 `tests/fixtures/images/<名字>/`，并复制 `tests/fakes/`。复制时把文本文件的 CRLF 换成 LF。Linux Kiri 的构建和镜像检查使用与控制面相同的 Unix 套接字。构建通过 Kiri 提供的经典 Docker build API 提交。
 
+`--save-to DIR` 为选中的每个夹具导出一个 Docker 格式的镜像归档。`--load-from DIR` 将归档装入所选引擎后检查夹具标签和摘要，供同架构的构建主机和无桌面 Kiri 主机之间传输。`--build-timeout SECONDS` 可覆盖经典 Kiri 构建的 300 秒默认时限。
+
 在实际容器引擎上运行工位验收：
 
 ```bash
