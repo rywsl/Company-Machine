@@ -8,6 +8,8 @@ Bun Runner 从同一 attempt 的持久化状态恢复。执行进程结束后，
 
 两阶段工位持久化 `Job.phase`。方案待审时，Runner 返回 `AWAITING_APPROVAL`，释放执行锁。重入读取同一次尝试的已保存决定。批准后继续 execute，拒绝或超时进入失败重试流程。两个阶段在同一次尝试下使用各自的 in、out、ctl 和日志目录，并共用工作区。Sink 只在进入已获批的执行阶段后占用回执。`backend/tests/legacy-two-phase.test.ts` 验证了自动审批、数据库重开后人工批准、拒绝以及 Sink 回执边界。
 
+两阶段 Sink 的试运行持久化 `proposal_only`。批准时在 `propose` 阶段封存空输出，恢复任务时继续使用该限制。契约测试提交的 `timeout_ms` 对操作工和出厂检验沙箱执行设定上限。[契约测试](contract-tests.md)
+
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M1-08**。
 > 模块：`mao.jobs`、`mao.runner`。迁移：`src/mao/migrations/002_jobs.sql`。
 > 依据：README D4、D9、D10、D12、D14、第 4.7–4.9 节、第 5 节。架构文档 6.5 的状态名已经定了。

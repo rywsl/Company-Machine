@@ -54,7 +54,7 @@ export class LineRunner {
     return this.runs.create(plan, options);
   }
 
-  tick(id: string): string[] {
+  tick(id: string, dispatch?: (jobIds: readonly string[]) => void): string[] {
     return this.runner.context.db.transaction(() => {
       let run = this.runs.get(id);
       if (runTerminalStates.has(run.state)) return [];
@@ -87,15 +87,14 @@ export class LineRunner {
             if (material && run.useCache) {
               const cached = this.cache.lookup(material.key());
               if (cached) {
-                this.runs.completeCachedNode(id, node.id, { params }, cached);
+                nodes.set(node.id, this.runs.completeCachedNode(id, node.id, { params }, cached));
                 continue;
               }
             }
             const row = this.runs.submitNode(id, node.id, { params, reservedUsd: node.budgetUsd }, () => {
-              if (node.role === "sink" && run.sinkMode === "dry-run") {
-                throw new FactoryError("SINK_DRY_RUN_UNSUPPORTED", "还不能执行发布工位的试运行", { run: id, node: node.id });
-              }
-              const job = this.runner.submit(node.station, inputs, params, runValue(run));
+              const job = this.runner.submit(node.station, inputs, params, runValue(run), {
+                proposalOnly: node.role === "sink" && run.sinkMode === "dry-run",
+              });
               if (material) this.cache.bind(job.id, material);
               return job;
             });
@@ -119,6 +118,10 @@ export class LineRunner {
       } else if (run.state === "RUNNING" && [...nodes.values()].every((node) => node.state === "DONE")) {
         const outputs = Object.fromEntries(Object.entries(plan.outputs).map(([name, [node, port]]) => [name, nodes.get(node)?.outputs[port] ?? []]));
         this.runs.transition(id, "SUCCEEDED", { outputs });
+      }
+      if (dispatch) {
+        const pending = [...nodes.values()].flatMap((node) => node.state === "SUBMITTED" && node.jobId ? [node.jobId] : []);
+        if (pending.length) dispatch(pending);
       }
       return submitted.sort();
     }).immediate();

@@ -26,7 +26,9 @@ cron 触发器使用 `cron_fires.last_at` 检查 `every:<时长>`，首次扫描
 
 `backend/src/legacy/scheduler.ts` 使用 SQLite 持久化 Job 队列。 `ScheduledExecutor.dispatch` 只登记任务。 `Scheduler.pump` 按 Job ID 顺序选取满足 CPU、内存、GPU、单工位在制品限制和物料隔离的 Job，并通过进程认领记录协调并发调度。认领进程退出后，后续调度可重新认领。每次实际调用 Runner 都在数据库事务之外，终态 Job 离开队列。
 
-`Scheduler.tick` 处理超时审批，随后在同一事务内为 Bean 和 cron 触发分配 `run_cap` 名额。之后记录死信并按需运行队列。死信保留首次错误及脱敏内容。已创建的产线运行由 LineRunner 推进。对应专项验收见 `backend/tests/legacy-scheduler.test.ts`。隔舱、令牌桶、熔断与自动隔离的完整规范仍见下文。
+`Scheduler.tick` 处理超时审批，随后在同一事务内为 Bean 和 cron 触发分配 `run_cap` 名额。之后记录死信并按需运行队列。死信保留首次错误及脱敏内容。已创建的产线运行由 LineRunner 推进。对应专项验收见 `backend/tests/legacy-scheduler.test.ts`。
+
+Bun 调度准入同时检查隔舱与全局容量。CPU、内存和 GPU 的占用随认领行写入 SQLite，另一调度进程读取同一份数据。工位、机器与 Policy 的 provider 域名可以配置熔断。自动隔离由 `toxic_failures` 驱动，复用人工隔离和缓存查询的表。
 
 ---
 
@@ -309,6 +311,8 @@ CREATE TABLE rate_buckets (
 
 subject 的写法：`station:` + 工位 Spec 键，`machine:` + 机器 Spec 键，`provider:` + 小写 host。一条规则只管一种 subject。
 
+Bun 用 Job 所属快照的工位、机器和 `Policy.spec.egress.providers` 匹配 subject。机器和 provider 的历史样本取自调度器已加载的快照。半开探针占用在 Job 认领事务内登记，等待审批或重启后继续沿用。成功关闭后从后续终态开始积累新窗口，以便旧故障不会重复打开该熔断器。在持有执行锁期间，可能重试的 `REJECTED` 暂缓纳入统计。
+
 ### 5.5 背压与 run 准入
 
 `run_cap` 不是 `null` 时，非终态 run 的数量 `>= run_cap` 则：
@@ -317,7 +321,7 @@ subject 的写法：`station:` + 工位 Spec 键，`machine:` + 机器 Spec 键�
 - 不启动新的 cron run；
 - 写 `scheduler.backpressure`，`scope=run`。
 
-`process()` 一次事务可能建出多个 run（`lines.md` 不能在中途停）。若调用后数量超过 `run_cap`，按 run id 降序 `LineRunner.cancel`，`by="scheduler"`，直到不超过上限。`cancel` 只对 `PENDING` / `RUNNING` 有效；刚 `start_run` 的 run 是 `PENDING`，可以取消。
+`process()` 接收剩余名额，每创建一个 run 就消耗一个名额。cron 使用 Bean 触发处理完成后的剩余名额。两类触发在同一事务内检查容量和创建运行。
 
 工位在制品见第 5.3 节第 5 步。未配置 `wip` 的工位不限队列长度。
 
@@ -333,18 +337,19 @@ subject 的写法：`station:` + 工位 Spec 键，`machine:` + 机器 Spec 键�
 - `start_run` 抛 `RUN_BUDGET_REQUIRED` 或其他 `FactoryError`：记下码，跳过，不发明预算。
 - 成功：写 `cron_fires`，`trigger={"on": "cron", "schedule": <原文>, "by": "scheduler"}`，事件 `scheduler.cron`。
 
-本函数不推进 run。推进仍由 `tick` 之外的 `LineRunner.tick` 或调用方的 `run_to_completion` 完成。`tick` 只负责创建。
+cron 和 Bean 触发的 run 由调度器推进。每次提交节点时，LineRunner 在同一 SQLite 事务内登记 Job 和队列项。未结算的节点在恢复时也会补入队列。手动运行继续由 `factory line run` 或 `factory line exec` 执行。
 
 ### 5.7 `tick` 的顺序
 
 在一个逻辑步骤里按这个顺序做，每一步自己的写操作用自己的事务（不要把 `runner.run` 包进事务）：
 
 1. `expire_due`。
-2. 若 run 准入允许，`TriggerEngine.process`，然后按第 5.5 节裁掉超额。
+2. 若 run 准入允许，`TriggerEngine.process` 用剩余名额处理 Bean 触发。
 3. `cron`（同样受 run 准入）。
 4. 扫描新的 `DEAD` job，补死信行。
-5. 更新熔断器的 `open` → `half_open` 时钟。
-6. `pump`。
+5. 加载运行和队列记录绑定的 Registry 快照，推进自动触发的产线，把就绪节点提交到队列。无法恢复的 epoch 及错误码列在 `blockedEpochs`，其他 epoch 继续推进。
+6. 更新熔断器的 `open` → `half_open` 时钟，按配置执行一批准入 Job。各 epoch 共用容量与在制品限制。`pump: false` 跳过执行。
+7. 若本轮执行过 Job，结算已终止的节点，提交就绪的后继供下一轮执行。
 
 返回第 3.2 节的字典。同输入、同配置、同时钟，结果的 id 列表相同。
 
@@ -359,6 +364,8 @@ job 状态变为 `DEAD` 时插入 `dead_letters`。已有行则不更新（第�
 `quarantine` 插入 `source=manual`。已隔离：`QUARANTINE_STATE_INVALID`。`release` 删除行。未隔离就 `release`：同一错误码。
 
 自动隔离：`toxic_failures` 是整数 `k` 时，若某个 Bean 作为输入的最近 `k` 个已终态 job 全部是 `DEAD` 或 `REJECTED`，则插入 `source=auto`，`by=scheduler`。不足 `k` 个不隔离。`toxic_failures` 为 `null` 时不扫描。不把 `k` 写成代码里的常数。
+
+Bun 将自动隔离扫描进度写入 SQLite。Job 对同一个 Bean 的多次引用只计一次，成功封存会中断连续失败。人工解除后，出现新失败时才按窗口重新评估。修改阈值会用新阈值重算历史。
 
 `is_quarantined` 只查 `quarantines` 表。`cache.md` 的 `lookup` 用模块级函数；测试必须先 `install`。
 

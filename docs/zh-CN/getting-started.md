@@ -36,10 +36,11 @@ bun run factory status
 
 ## 在 Linux 上使用 headless Kiri
 
-无桌面环境可以安装 Kiri 官方 `kiri-lite` 包与 Docker 兼容 CLI。先授权运行 MAO 的账户访问 `kiri.service`，刷新登录会话后检查就绪状态。
+从官方发布页下载与 Linux 发行版和 CPU 架构对应的 `kiri-lite` 包，并安装 Docker 兼容 CLI。Debian 和 Ubuntu 使用 `sudo apt install ./KIRI_PACKAGE.deb`，Fedora 使用 `sudo dnf install ./KIRI_PACKAGE.rpm`。将示例文件名替换为下载的文件名，再给运行 MAO 的账户授予访问权限。 [Kiri 官方发布页](https://runkiri.com/releases/)
 
 ```bash
 sudo kiri host-access "$USER"
+# 重新登录，再执行以下命令
 MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
@@ -47,6 +48,14 @@ MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 MAO 通过 `/run/kiri/docker.sock` 连接。自定义部署可以设置 `MAO_KIRI_SOCKET` 和 `MAO_DOCKER_EXECUTABLE` 指定套接字和客户端。官方 Linux 路径直接使用 Unix 套接字，无需桌面会话。
 
 在 WSL 中运行工位时，将 `FACTORY_ROOT` 指向 Linux 文件系统，例如 `$HOME/.local/share/mao`。文件邮箱使用 Linux 目录权限保护宿主响应。
+
+可以用项目自带验证命令构建夹具镜像，并运行真实 Kiri 工位。
+
+```bash
+export MAO_CONTAINER_RUNTIME=kiri
+bun run build:test-images
+bun run tools/verify-runtime.ts
+```
 
 ## 交给厂长
 

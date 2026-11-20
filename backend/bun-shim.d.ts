@@ -42,6 +42,7 @@ declare module "node:fs" {
   export const readdirSync: (...args: any[]) => any[];
   export const statSync: (...args: any[]) => any;
   export const lstatSync: (...args: any[]) => any;
+  export const realpathSync: (path: string) => string;
   export const cpSync: (...args: any[]) => void;
   export const copyFileSync: (source: string, target: string, mode?: number) => void;
   export const renameSync: (...args: any[]) => void;
@@ -59,6 +60,7 @@ declare module "node:os" {
 
 declare module "node:path" {
   export const sep: string;
+  export const isAbsolute: (path: string) => boolean;
   export const dirname: (path: string) => string;
   export const extname: (path: string) => string;
   export const join: (...parts: string[]) => string;

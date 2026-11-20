@@ -6,18 +6,20 @@ import { canonicalJson, utcIso } from "./foundation";
 import { terminalStates, type Job, type JobState } from "./jobs";
 import { LineRunner } from "./line-runner";
 import type { Runner } from "./runner";
+import { AdmissionProtections, nonnegative, parseAdmission, parsePools, resources, type AdmissionConfig, type Pools, type Resources } from "./scheduler-protections";
 import type { Snapshot } from "./snapshot";
 import { TriggerEngine } from "./triggers";
 
-type Resources = { cpu: number; memoryMb: number; gpu: number };
-type PoolKey = "cpu" | "memory_mb" | "gpu";
-type Pools = Partial<Record<PoolKey, number | null>>;
 type JsonObject = Record<string, unknown>;
-type QueueEntry = { id: string; station: string; inputs: string; pid: number | null };
-type Claim = Resources & { jobId: string; station: string; pid: number };
-type Options = { lines?: Pick<LineRunner, "start">; config?: SchedulerConfig };
+type QueueEntry = { id: string; epoch: string; station: string; line: string | null; inputs: string; pid: number | null };
+type Claim = Resources & { jobId: string; station: string; pid: number; pool: string };
+type Options = {
+  lines?: Pick<LineRunner, "start">;
+  config?: SchedulerConfig;
+  resolveRunner?: (epoch: string) => Promise<Runner>;
+};
 
-export interface SchedulerConfig {
+export interface SchedulerConfig extends AdmissionConfig {
   pools?: Pools;
   wip?: Array<{ station: string; max: number }>;
   run_cap?: number | null;
@@ -40,13 +42,8 @@ export interface SchedulerTick {
   triggered: string[];
   pumped: string[];
   dead: string[];
+  blockedEpochs?: Record<string, string>;
 }
-
-const resources = [
-  ["cpu", "cpu"],
-  ["memoryMb", "memory_mb"],
-  ["gpu", "gpu"],
-] as const;
 
 const REDACT = /\b(api[_-]?key|secret|token|password|authorization|cookie)(\s*[:=]\s*)(?:bearer\s+)?(?:"[^"]*"|\S+)/gi;
 const SECRET_KEY = /api[_-]?key|secret|token|password|authorization|cookie/i;
@@ -62,11 +59,6 @@ function object(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function nonnegative(value: unknown, integral = false): value is number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return false;
-  return !integral || Number.isSafeInteger(value);
-}
-
 function liveProcess(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch (error) { return (error as { code?: string }).code !== "ESRCH"; }
@@ -78,18 +70,7 @@ function parseConfig(value: unknown): SchedulerConfig {
   };
   if (!object(value)) return invalid("配置必须为对象");
   const result: SchedulerConfig = {};
-  if (value.pools !== undefined) {
-    if (!object(value.pools)) return invalid("pools 必须为对象");
-    const pools = value.pools;
-    result.pools = {};
-    for (const [, key] of resources) {
-      const legacy = key === "memory_mb" ? pools.memory : undefined;
-      const capacity = Object.hasOwn(pools, key) ? pools[key] : legacy;
-      if (capacity === undefined) continue;
-      if (capacity !== null && !nonnegative(capacity, key !== "cpu")) return invalid("pools." + key);
-      result.pools[key] = capacity as number | null;
-    }
-  }
+  if (value.pools !== undefined) result.pools = parsePools(value.pools, "pools");
   if (value.wip !== undefined) {
     if (!Array.isArray(value.wip)) return invalid("wip 必须为列表");
     result.wip = value.wip.map((item) => {
@@ -107,22 +88,28 @@ function parseConfig(value: unknown): SchedulerConfig {
     if (typeof value.cron !== "boolean") return invalid("cron");
     result.cron = value.cron;
   }
-  return result;
+  return { ...result, ...parseAdmission(value, result.pools) };
 }
 
 export class Scheduler {
   private config?: SchedulerConfig;
   private readonly triggers: TriggerEngine;
-  private readonly demands = new Map<string, Demand>();
+  private readonly runners = new Map<string, Runner>();
+  private readonly lines = new Map<string, LineRunner>();
+  private readonly demands = new Map<string, Resources & { pool?: string }>();
+  private readonly admission: AdmissionProtections;
 
-  constructor(readonly context: Context, readonly snapshot: Snapshot, readonly runner: Runner, options: Options = {}) {
+  constructor(readonly context: Context, readonly snapshot: Snapshot, readonly runner: Runner, private readonly options: Options = {}) {
     const { db } = this.context;
-    this.triggers = new TriggerEngine(context, snapshot, options.lines ?? new LineRunner(runner));
+    const lines = new LineRunner(runner);
+    this.runners.set(snapshot.epoch, runner);
+    this.lines.set(snapshot.epoch, lines);
+    this.triggers = new TriggerEngine(context, snapshot, options.lines ?? lines);
     db.exec(`
       CREATE TABLE IF NOT EXISTS schedule_queue (job_id TEXT PRIMARY KEY, enqueued_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS schedule_claims (
         job_id TEXT PRIMARY KEY, station TEXT NOT NULL, pid INTEGER NOT NULL,
-        cpu REAL NOT NULL, memory_mb INTEGER NOT NULL, gpu INTEGER NOT NULL
+        cpu REAL NOT NULL, memory_mb INTEGER NOT NULL, gpu INTEGER NOT NULL, pool TEXT NOT NULL DEFAULT '*'
       );
       CREATE TABLE IF NOT EXISTS dead_letters (
         job_id TEXT PRIMARY KEY, station TEXT NOT NULL, error_code TEXT NOT NULL, error TEXT NOT NULL, at TEXT NOT NULL
@@ -133,6 +120,11 @@ export class Scheduler {
       );
       CREATE INDEX IF NOT EXISTS scheduler_jobs_state ON jobs(state, epoch);
     `);
+    db.transaction(() => {
+      const columns = db.query<{ name: string }>("PRAGMA table_info(schedule_claims)").all();
+      if (!columns.some(({ name }) => name === "pool")) db.exec("ALTER TABLE schedule_claims ADD COLUMN pool TEXT NOT NULL DEFAULT '*'");
+    }).immediate();
+    this.admission = new AdmissionProtections(context, (kind, data, jobId) => this.event(kind, data, jobId));
     if (options.config !== undefined) this.configure(options.config);
   }
 
@@ -155,14 +147,33 @@ export class Scheduler {
     this.demands.clear();
   }
 
-  demand(stationRef: string): Demand {
+  demand(stationRef: string, snapshot = this.snapshot, line?: string): Demand {
     const config = this.requireConfig();
-    const stationKey = this.snapshot.key("Station", stationRef);
-    const existing = this.demands.get(stationKey);
-    if (existing) return { ...existing };
-    const station = this.snapshot.spec(stationKey);
-    const machine = this.snapshot.spec(this.snapshot.key("Machine", station.machine));
-    const policy = this.snapshot.spec(this.snapshot.key("Policy", station.policy));
+    const stationKey = snapshot.key("Station", stationRef);
+    const key = snapshot.epoch + ":" + stationKey;
+    let need = this.demands.get(key);
+    if (!need) {
+      need = this.stationDemand(stationKey, snapshot);
+      this.demands.set(key, need);
+    }
+    const matched = config.compartments?.find((compartment) => need.pool
+      ? compartment.name === need.pool : compartment.match.line === line);
+    if (need.pool && need.pool !== "*" && !matched) {
+      throw new FactoryError("SCHEDULER_CAPACITY_UNSET", "调度隔舱未配置", { station: stationKey, pool: need.pool });
+    }
+    const demand = { ...need, pool: matched?.name ?? "*" };
+    for (const [field, resource] of resources) {
+      if (demand[field] > 0 && (config.pools?.[resource] === undefined || (matched && matched.pools[resource] === undefined))) {
+        throw new FactoryError("SCHEDULER_CAPACITY_UNSET", "调度资源容量未配置", { station: stationKey, resource, pool: demand.pool });
+      }
+    }
+    return demand;
+  }
+
+  private stationDemand(stationKey: string, snapshot: Snapshot): Resources & { pool?: string } {
+    const station = snapshot.spec(stationKey);
+    const machine = snapshot.spec(snapshot.key("Machine", station.machine));
+    const policy = snapshot.spec(snapshot.key("Policy", station.policy));
     const declaration = { ...machine.runtime?.resources, ...policy.resources };
     const cpu = declaration.cpus ?? 0;
     const invalid = (key: string) => new FactoryError(
@@ -178,14 +189,7 @@ export class Scheduler {
     const gpu = typeof gpuValue === "string" ? gpuValue === "none" || gpuValue === "" ? 0 : 1 : gpuValue;
     if (!nonnegative(gpu, true)) throw invalid("gpu");
 
-    const demand = { cpu, memoryMb, gpu, pool: "*" };
-    for (const [field, key] of resources) {
-      if (demand[field] > 0 && config.pools?.[key] === undefined) {
-        throw new FactoryError("SCHEDULER_CAPACITY_UNSET", "调度资源容量未配置", { station: stationKey, resource: key });
-      }
-    }
-    this.demands.set(stationKey, demand);
-    return { ...demand };
+    return { cpu, memoryMb, gpu, pool: typeof policy.resources?.pool === "string" ? policy.resources.pool : undefined };
   }
 
   enqueue(jobIds: readonly string[]): void {
@@ -207,22 +211,29 @@ export class Scheduler {
   }
 
   async pump(): Promise<string[]> {
+    await this.prepareEpochs();
+    return this.pumpPrepared();
+  }
+
+  private async pumpPrepared(): Promise<string[]> {
     const { db } = this.context;
     const chosen = this.claimReady();
     const remaining = new Set(chosen);
     const completed: string[] = [];
     try {
       for (const id of chosen) {
-        const job = await this.runner.run(id);
+        const queued = this.runner.jobs.get(id);
+        const job = await this.runners.get(queued.epoch)!.run(id);
         db.transaction(() => {
           if (job.state === "DEAD") this.recordDead(job);
           if (terminalStates.has(job.state)) db.query("DELETE FROM schedule_queue WHERE job_id = ?").run(id);
           db.query("DELETE FROM schedule_claims WHERE job_id = ? AND pid = ?").run(id, process.pid);
+          this.admission.refresh(this.requireConfig(), this.loadedSnapshots());
         }).immediate();
         remaining.delete(id);
         completed.push(id);
       }
-      return completed;
+      return completed.sort();
     } finally {
       const release = db.query("DELETE FROM schedule_claims WHERE job_id = ? AND pid = ?");
       db.transaction(() => { for (const id of remaining) release.run(id, process.pid); }).immediate();
@@ -244,11 +255,58 @@ export class Scheduler {
       return { cron, triggered };
     }).immediate();
     const dead = this.scanDead();
-    const pumped = options.pump === false ? [] : await this.pump();
+    const blockedEpochs = await this.prepareEpochs();
+    this.advanceRuns();
+    if (options.pump === false) this.refreshAdmission();
+    const pumped = options.pump === false ? [] : await this.pumpPrepared();
     for (const id of pumped) {
       if (this.runner.jobs.get(id).state === "DEAD") dead.push(id);
     }
-    return { expired, cron, triggered, pumped, dead: dead.sort() };
+    if (pumped.length) this.advanceRuns();
+    return { expired, cron, triggered, pumped, dead: [...new Set(dead)].sort(),
+      ...(Object.keys(blockedEpochs).length ? { blockedEpochs } : {}) };
+  }
+
+  private scheduledRuns(): Array<{ id: string; epoch: string }> {
+    return this.context.db.query<{ id: string; epoch: string }>(`
+      SELECT id, epoch FROM runs
+      WHERE state IN ('PENDING', 'RUNNING', 'FAILING', 'CANCELLING')
+        AND json_extract(trigger, '$.on') IN ('bean', 'cron')
+      ORDER BY id
+    `).all();
+  }
+
+  private async prepareEpochs(): Promise<Record<string, string>> {
+    const { db } = this.context;
+    const epochs = new Set(this.scheduledRuns().map(({ epoch }) => epoch));
+    for (const { epoch } of db.query<{ epoch: string }>(`
+      SELECT DISTINCT jobs.epoch FROM schedule_queue JOIN jobs ON jobs.id = schedule_queue.job_id
+      WHERE jobs.state NOT IN ('SEALED', 'DEAD')
+    `).all()) epochs.add(epoch);
+    const blocked: Record<string, string> = Object.create(null);
+    for (const epoch of epochs) {
+      if (this.runners.has(epoch)) continue;
+      if (!this.options.resolveRunner) {
+        blocked[epoch] = "EPOCH_NOT_FOUND";
+        continue;
+      }
+      try {
+        const runner = await this.options.resolveRunner(epoch);
+        if (runner.snapshot.epoch !== epoch) throw new FactoryError("EPOCH_MISMATCH", "调度器收到不匹配的 Registry 快照", { epoch });
+        this.runners.set(epoch, runner);
+        this.lines.set(epoch, new LineRunner(runner));
+      } catch (error) {
+        if (!(error instanceof FactoryError) || !["EPOCH_NOT_FOUND", "EPOCH_MISMATCH", "EPOCH_CORRUPT"].includes(error.code)) throw error;
+        blocked[epoch] = error.code;
+      }
+    }
+    return blocked;
+  }
+
+  private advanceRuns(): void {
+    for (const { id, epoch } of this.scheduledRuns()) {
+      this.lines.get(epoch)?.tick(id, (jobs) => this.enqueue(jobs));
+    }
   }
 
   async waitChange(timeoutS: number): Promise<void> {
@@ -296,10 +354,18 @@ export class Scheduler {
 
   private now(): string { return utcIso(this.context.clock.now()); }
 
+  private loadedSnapshots(): Snapshot[] { return [...this.runners.values()].map(({ snapshot }) => snapshot); }
+
+  private refreshAdmission(): void {
+    const config = this.requireConfig();
+    this.context.db.transaction(() => this.admission.refresh(config, this.loadedSnapshots())).immediate();
+  }
+
   private claimReady(): string[] {
     const config = this.requireConfig();
     const { db } = this.context;
     return db.transaction(() => {
+      this.admission.refresh(config, this.loadedSnapshots());
       for (const row of db.query<{ id: string; state: JobState }>(`
         SELECT queue.job_id AS id, job.state FROM schedule_queue AS queue
         LEFT JOIN jobs AS job ON job.id = queue.job_id
@@ -309,17 +375,23 @@ export class Scheduler {
         db.query("DELETE FROM schedule_queue WHERE job_id = ?").run(row.id);
       }
       const active = db.query<Claim>(`
-        SELECT job_id AS jobId, station, pid, cpu, memory_mb AS memoryMb, gpu FROM schedule_claims
+        SELECT job_id AS jobId, station, pid, cpu, memory_mb AS memoryMb, gpu, pool FROM schedule_claims
       `).all();
       const used = { cpu: 0, memoryMb: 0, gpu: 0 };
+      const compartmentUse = new Map<string, Resources>();
       const counts = new Map<string, number>();
       const alive = new Map<number, boolean>();
       const isAlive = (pid: number) => {
         if (!alive.has(pid)) alive.set(pid, liveProcess(pid));
         return alive.get(pid)!;
       };
-      const account = (station: string, need: Resources) => {
-        for (const [field] of resources) used[field] += need[field];
+      const account = (station: string, need: Demand) => {
+        let local = compartmentUse.get(need.pool);
+        if (!local) compartmentUse.set(need.pool, local = { cpu: 0, memoryMb: 0, gpu: 0 });
+        for (const [field] of resources) {
+          used[field] += need[field];
+          local[field] += need[field];
+        }
         counts.set(station, (counts.get(station) ?? 0) + 1);
       };
       for (const claim of active) {
@@ -327,25 +399,29 @@ export class Scheduler {
         else db.query("DELETE FROM schedule_claims WHERE job_id = ?").run(claim.jobId);
       }
       const rows = db.query<QueueEntry>(`
-        SELECT jobs.id, jobs.station, jobs.inputs, locks.pid
+        SELECT jobs.id, jobs.epoch, jobs.station, jobs.inputs, locks.pid, json_extract(jobs.run_value, '$.line') AS line
         FROM schedule_queue AS queue JOIN jobs ON queue.job_id = jobs.id
         LEFT JOIN job_execution_locks AS locks ON locks.job_id = jobs.id
         LEFT JOIN schedule_claims AS claims ON claims.job_id = jobs.id
         LEFT JOIN dead_letters AS dead ON dead.job_id = jobs.id
-        WHERE jobs.epoch = ? AND claims.job_id IS NULL AND dead.job_id IS NULL
+        WHERE claims.job_id IS NULL AND dead.job_id IS NULL AND NOT (
+          jobs.state = 'AWAITING_APPROVAL' AND jobs.phase = 'propose' AND EXISTS (
+            SELECT 1 FROM approvals WHERE job_id = jobs.id AND attempt = jobs.attempt AND phase = 'propose' AND status = 'pending'
+          )
+        )
         ORDER BY jobs.id
-      `).all(this.snapshot.epoch);
+      `).all();
       const chosen: string[] = [];
       const quarantine = db.query("SELECT 1 FROM quarantines WHERE bean_id = ?");
-      const claim = db.query("INSERT INTO schedule_claims (job_id, station, pid, cpu, memory_mb, gpu) VALUES (?, ?, ?, ?, ?, ?)");
+      const claim = db.query("INSERT INTO schedule_claims (job_id, station, pid, cpu, memory_mb, gpu, pool) VALUES (?, ?, ?, ?, ?, ?, ?)");
+      const compartments = new Map((config.compartments ?? []).map((item) => [item.name, item]));
+      const candidates: { row: QueueEntry; need: Demand; snapshot: Snapshot }[] = [];
       for (const row of rows) {
         if (row.pid !== null && isAlive(row.pid)) continue;
-        const inputs = JSON.parse(row.inputs) as Record<string, string[]>;
-        const rule = config.wip?.find(({ station }) => station === row.station || this.snapshot.key("Station", station) === row.station);
-        if (rule && (counts.get(row.station) ?? 0) >= rule.max) continue;
-        if (Object.values(inputs).some((items) => items.some((bean) => quarantine.get(bean)))) continue;
+        const snapshot = this.runners.get(row.epoch)?.snapshot;
+        if (!snapshot) continue;
         let need: Demand;
-        try { need = this.demand(row.station); }
+        try { need = this.demand(row.station, snapshot, row.line ?? undefined); }
         catch (error) {
           if (!(error instanceof FactoryError)) throw error;
           if (!db.query("SELECT 1 FROM events WHERE job_id = ? AND kind = 'scheduler.queued' AND json_extract(data, '$.code') = ?").get(row.id, error.code)) {
@@ -353,11 +429,25 @@ export class Scheduler {
           }
           continue;
         }
+        candidates.push({ row, need, snapshot });
+      }
+      const priority = (pool: string) => compartments.get(pool)?.priority ?? 0;
+      candidates.sort((a, b) => priority(b.need.pool) - priority(a.need.pool));
+      for (const { row, need, snapshot } of candidates) {
+        const inputs = JSON.parse(row.inputs) as Record<string, string[]>;
+        const rule = config.wip?.find(({ station }) => station === row.station || snapshot.key("Station", station) === row.station);
+        if (rule && (counts.get(row.station) ?? 0) >= rule.max) continue;
+        if (Object.values(inputs).some((items) => items.some((bean) => quarantine.get(bean)))) continue;
+        const compartment = compartments.get(need.pool);
+        const local = compartmentUse.get(need.pool);
         if (resources.some(([field, key]) => {
           const capacity = config.pools?.[key];
-          return capacity != null && used[field] + need[field] > capacity;
+          const localCapacity = compartment?.pools[key];
+          return (capacity != null && used[field] + need[field] > capacity)
+            || (localCapacity != null && (local?.[field] ?? 0) + need[field] > localCapacity);
         })) continue;
-        claim.run(row.id, row.station, process.pid, need.cpu, need.memoryMb, need.gpu);
+        if (!this.admission.admit(row.id, row.station, snapshot, config)) continue;
+        claim.run(row.id, row.station, process.pid, need.cpu, need.memoryMb, need.gpu, need.pool);
         account(row.station, need);
         this.event("scheduler.admitted", { job: row.id, compartment: need.pool }, row.id);
         chosen.push(row.id);

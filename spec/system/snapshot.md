@@ -84,6 +84,12 @@ def recipe_env(inputs, params) -> dict;  def runtime_env(brief, limits, operator
 
 快照是内存对象。Registry 目录只读。epoch 不写入 Registry。
 
+Bun 的 `RegistrySnapshotStore` 在 `factory.db` 的 `registry_snapshots` 表持久化运行使用的快照。`epoch` 为主键，`tree_digest` 保存完整的目录树摘要。`payload` 保存版本化的检查结果，包含已校验的文档、宪法模块和转换解析表。`payload_digest` 校验目录树摘要和内容的组合。快照只保存执行需要的 Registry 数据，不保存仓库的绝对路径、任意附件或保险箱内容。SQLite 检查点包含这些记录。
+
+提交新的 Run 或 Job 时先捕获快照。已保存的 epoch 复用原有检查结果，跨进程恢复时可按记录的 epoch 读取原始定义。读取时摘要或内容格式有误会返回 `EPOCH_CORRUPT`。没有快照的旧记录可以从当前 Registry 补齐，但目录树计算出的 epoch 必须与记录完全匹配。目录缺失时返回 `EPOCH_NOT_FOUND`，epoch 不一致时返回 `EPOCH_MISMATCH`。
+
+新提交时，捕获后的快照可以从原 Registry 目录读取契约测试夹具。恢复时快照使用 `registry:<epoch>` 标识。已经导入的夹具由仓库 Bean 引用提供。
+
 ### 4.2 epoch
 
 `epoch` 匹配 `^e-[0-9a-f]{16}$`。它是 Registry **目录树**内容哈希的前 16 个十六进制字符，前面加 `e-`（README D4、名词表）。算法见 5.2。哈希输入是文件字节，不是规范化换行之后的文本。

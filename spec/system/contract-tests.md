@@ -4,6 +4,8 @@
 > 依据：架构文档 7.5（契约测试）、8.6（黄金样例与基线）、9.6（差分）。与示例工位、factory-profile 冲突时，以已有 Spec 为准：equivalence 的环境是 `src` / `dst` / `params`，不是架构草稿里的 `in` / `out`。
 > 本文件不实现 V3。演进校验不在这四个 M2 组件里。
 
+Bun 实现在 `backend/src/legacy/contract.ts`。结果写入控制面 SQLite，`factory contract ls` 与 `show` 可查询记录。业务上下文、运行环境和日志保存在原任务边界，契约报告保存样例引用、判定、指标及审批标识。
+
 ---
 
 ## 1. 目的与范围
@@ -90,8 +92,10 @@ factory contract validator TYPE@M.m VALIDATOR --timeout S
 factory contract golden GOLDEN@N [--baseline BASELINE@N] --timeout S
 factory contract equivalence STATION@N [--timeout S]
 factory contract diff STATION@N [--timeout S]
-factory contract sink-dry-run STATION@N --in PORT=BEAN ... [--timeout S]
-factory contract ls [--kind K] [--json]
+factory contract sink-dry-run STATION@N --in PORT=BEAN ... [--param NAME=JSON] [--timeout S]
+factory contract canary STATION@N [--timeout S]
+factory contract ls [--kind K] [--subject S] [--json]
+factory contract show RESULT_ID
 ```
 
 退出码：verdict `pass` 为 0；`fail` 为 1；用法错误为 2。`--timeout` 是调用方的期限，不是本规范规定的门槛。
@@ -134,6 +138,8 @@ CREATE INDEX contract_runs_subject ON contract_runs(subject, kind);
 validator 与 converter 的 `fixtures.accept` / `fixtures.reject` 是相对 **Registry 根**的路径（与示例 `fixtures/video/ok-1920x1080.mp4` 一致）。文件不是 Spec，检查期被忽略；运行期必须能读到。路径越出 Registry 根：该样例失败，`code=CONTRACT_FIXTURE_PATH`。
 
 `GoldenSet.spec.cases[].inputs` 的值：以 `sha256:` 开头则是已封存 Bean ID；否则是 Registry 内的文件，用 `Gate.admit_external` 入库后再提交。`GoldenSet` 没有 `budget_usd` 时抛 `CONTRACT_BUDGET_REQUIRED`，不要填 0 或 6。
+
+Bun 先校验路径位于 Registry 根内，再解析已存在的路径并检查其真实位置。恢复已提交任务时使用仓库里的 Bean ID。入库成功的样例与生成的契约报告分别使用仓库及 `contract_runs`。
 
 ### 4.4 Baseline 门槛
 
@@ -234,6 +240,8 @@ argv 是 validator 的 `run`，超时是调用方的 `timeout_s`。退出码与 
 4. propose 已批准：仍然**不**自动 execute。检查 `receipts` 中没有该 job 的行。有行：`fail`，`CONTRACT_SINK_PUBLISHED`。没有行：`pass`，`executed_run=false`。
 5. 真正的发布由调用方另一次显式 execute 完成，不在 dry-run 里。验收测试的本地 Sink 若要验证“批准后才能复制文件”，那是 `approvals.md` 的测试，不是本函数的默认步骤。
 
+Bun 将 `proposal_only` 和调用方的任务超时写入 Job。方案获批后将试运行置为 `SEALED`，阶段仍为 `propose` 且输出为空。方案待批时保留 `AWAITING_APPROVAL`。数据库重开后继续该任务仍遵守方案阶段，上报的 `receipt` 和 `executed_run` 分别反映实际回执行和阶段。
+
 ### 5.7 定时 canary
 
 `ContractRunner.canary(station_key)` 选择引用该工位的、Spec 键最小的一个 `GoldenSet`，调用 `run_golden`（带同工位的 Baseline，若有多个则取键最小的一个）。没有 GoldenSet：`CONTRACT_NOT_FOUND`。不查缓存。多久跑一次由 `scheduler.md` 的配置决定，本文件不规定周期。
@@ -270,6 +278,8 @@ verdict 为 `fail` 时，上表的码写入 `detail.code`，同时抛 `FactoryEr
 ---
 
 ## 7. 验收测试
+
+活动 Bun 验收位于 `backend/tests/legacy-contract.test.ts`。测试覆盖正反样例、反例集合、Registry 边界、GoldenSet 原有门槛、转换等价与版本差分，以及自动批准和恢复后人工批准的 Sink 试运行。恢复用例再次执行任务并检查发布目标与回执表。
 
 夹具：`tests/fixtures/registry-m2/` 增加一个带 validator 的类型（正反样例各至少一）、一个脚本 converter（equivalence 比较一个整数 fact）、一个 `GoldenSet` 与一个只含 `cost_usd.max` 的 `Baseline`、一个两阶段本地 Sink。反样例文件是零字节或明显坏掉的文本。全部 `LocalProvider`，不调用模型。
 

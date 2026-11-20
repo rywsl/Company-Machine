@@ -36,10 +36,11 @@ Set `MAO_PODMAN_EXECUTABLE` when the desktop process has an old PATH snapshot.
 
 ## Use headless Kiri on Linux
 
-For a headless host, install the official `kiri-lite` package and a Docker-compatible CLI. Grant the MAO account access to `kiri.service`, then refresh the login session before checking readiness.
+Download the official `kiri-lite` package for your Linux distribution and CPU architecture, and install a Docker-compatible CLI. On Debian or Ubuntu, use `sudo apt install ./KIRI_PACKAGE.deb`. On Fedora, use `sudo dnf install ./KIRI_PACKAGE.rpm`. Substitute the downloaded filename, then grant access to the account that runs MAO. [Kiri releases](https://runkiri.com/releases/)
 
 ```bash
 sudo kiri host-access "$USER"
+# Start a new login session before running these commands.
 MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
@@ -47,6 +48,14 @@ MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 MAO connects through `/run/kiri/docker.sock`. Set `MAO_KIRI_SOCKET` for a custom deployment and `MAO_DOCKER_EXECUTABLE` to select the CLI. The official Linux path uses the Unix socket directly and works without a desktop session.
 
 For station jobs inside WSL, point `FACTORY_ROOT` to a Linux filesystem such as `$HOME/.local/share/mao`. The mailbox uses Linux directory permissions to protect host responses.
+
+Build the fixture images and verify a station job using Kiri.
+
+```bash
+export MAO_CONTAINER_RUNTIME=kiri
+bun run build:test-images
+bun run tools/verify-runtime.ts
+```
 
 ## Hand a project to Foreman
 

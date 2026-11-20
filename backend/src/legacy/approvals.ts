@@ -112,7 +112,7 @@ function approvalPayload(value: OpenRequest["payload"]): ApprovalPayload {
 
 export class Approvals {
   private readonly jobs: JobStore;
-  constructor(readonly context: Pick<Context, "db" | "clock" | "ids">, readonly snapshot: Snapshot, jobs?: JobStore) {
+  constructor(readonly context: Pick<Context, "db" | "clock" | "ids">, private readonly registry?: Snapshot, jobs?: JobStore) {
     const { db, clock, ids } = context;
     this.jobs = jobs ?? new JobStore(db, clock, ids);
     db.transaction(() => {
@@ -144,6 +144,11 @@ export class Approvals {
         );
       `);
     }).immediate();
+  }
+
+  get snapshot(): Snapshot {
+    if (!this.registry) throw new FactoryError("EPOCH_NOT_FOUND", "审批决定需要绑定的 Registry 快照");
+    return this.registry;
   }
 
   openRequest(options: OpenRequest): Approval {

@@ -172,6 +172,7 @@ export class Gate {
   constructor(
     readonly snapshot: Snapshot, readonly warehouse: Warehouse, readonly workdir: string,
     readonly provider?: ContainerProvider,
+    private readonly timeoutMs = 60_000,
   ) {}
 
   checkInputs(stationRef: string, inputs: Record<string, string | string[]>, params: JsonObject = {}): Materials {
@@ -456,7 +457,7 @@ export class Gate {
     });
     let result: Awaited<ReturnType<typeof sandbox.exec>>;
     try {
-      result = await sandbox.exec(validator.run, { timeoutMs: 60_000, stdout, stderr: join(workspace, String(ordinal) + ".err") });
+      result = await sandbox.exec(validator.run, { timeoutMs: Math.min(60_000, this.timeoutMs), stdout, stderr: join(workspace, String(ordinal) + ".err") });
     } finally {
       await sandbox.close();
     }

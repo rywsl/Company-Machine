@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { main } from "../src/cli";
+import { Context } from "../src/legacy/context";
 
 async function capture(run: () => Promise<number>): Promise<{ code: number; output: string[]; errors: string[] }> {
   const output: string[] = [];
@@ -119,6 +120,89 @@ describe("Bun factory CLI", () => {
       const reusedNodes = await capture(() => main(["--root", root, "line", "nodes", reusedRun.id]));
       expect(reusedRun.outputs).toEqual(run.outputs);
       expect(JSON.parse(reusedNodes.output[0])).toMatchObject([{ nodeId: "upper", state: "DONE", cacheHit: true }]);
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
+
+  test("approves and resumes a pending Job through the CLI after its Registry is removed", { timeout: 60_000 }, async () => {
+    const root = join("tmp", `approval-cli-${randomUUID()}`);
+    const registry = join(root, "registry");
+    mkdirSync(root, { recursive: true });
+    try {
+      cpSync("tests/fixtures/registry-m2", registry, { recursive: true });
+      const station = join(registry, "stations", "publish-staged.yaml");
+      const spec = await Bun.file(station).text();
+      await Bun.write(station, spec.replace(/propose: \{auto_if: .*\}/, "propose: foreman"));
+      const note = join(root, "note.txt");
+      const commands = join(root, "commands.json");
+      const publication = resolve(root, "published");
+      await Bun.write(note, "data to publish\n");
+      await Bun.write(commands, JSON.stringify(Object.fromEntries(
+        ["write-proposal", "count-text", "publish-copy", "local-file-check"].map((name) =>
+          [name, [Bun.argv[0], join(import.meta.dir, "../../tests/fakes/tools", name.replaceAll("-", "_") + ".ts")]]),
+      )));
+      const cli = async (...args: string[]) => {
+        const result = await capture(() => main(["--root", root, "--registry", registry,
+          "--provider", "local", "--local-commands", commands, "--json", ...args]));
+        expect(result).toMatchObject({ code: 0, errors: [] });
+        return JSON.parse(result.output[0]);
+      };
+      const bean = await cli("bean", "import", "--type", "note.text@1", "--file", `note.txt=${note}`);
+      const job = await cli("job", "run", "publish-staged@1", "--input", `note=${bean.id}`, "--param", `dir=${JSON.stringify(publication)}`);
+      expect(job.state).toBe("AWAITING_APPROVAL");
+      const [approval] = await cli("approval", "ls", "--job", job.id);
+      rmSync(registry, { recursive: true });
+      expect(await cli("approval", "approve", approval.id)).toMatchObject({ status: "approved" });
+      expect(await cli("job", "exec", job.id)).toMatchObject({ state: "SEALED", epoch: job.epoch });
+      const [receipt] = await cli("receipt", "ls");
+      expect(await cli("receipt", "verify", receipt.id)).toMatchObject({ status: "verified" });
+      expect(await Bun.file(join(publication, "note.txt")).text()).toBe("data to publish\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
+
+  test("advances a triggered Line through the scheduler after the Registry changes", { timeout: 60_000 }, async () => {
+    const root = join("tmp", `scheduled-cli-${randomUUID()}`);
+    const registry = join(root, "registry");
+    mkdirSync(root, { recursive: true });
+    try {
+      cpSync("tests/fixtures/registry-m2", registry, { recursive: true });
+      const note = join(root, "note.txt");
+      const config = join(root, "scheduler.json");
+      const commands = join(root, "commands.json");
+      await Bun.write(note, "hello\n");
+      await Bun.write(config, JSON.stringify({ pools: { cpu: 0, memory_mb: 256, gpu: 0 } }));
+      await Bun.write(commands, JSON.stringify(Object.fromEntries(
+        ["upper-text", "count-text"].map((name) =>
+          [name, [Bun.argv[0], join(import.meta.dir, "../../tests/fakes/tools", name.replaceAll("-", "_") + ".ts")]]),
+      )));
+      const cli = async (...args: string[]) => {
+        const result = await capture(() => main(["--root", root, "--registry", registry,
+          "--provider", "local", "--local-commands", commands, "--json", ...args]));
+        expect(result).toMatchObject({ code: 0, errors: [] });
+        return JSON.parse(result.output[0]);
+      };
+      const bean = await cli("bean", "import", "--type", "note.text@1", "--file", `note.txt=${note}`);
+      const context = Context.open(root);
+      try { context.warehouse.label(bean.id, "line", "note-trigger", "test"); }
+      finally { context.close(); }
+      const first = await cli("schedule", "tick", "--config", config);
+      expect(first.triggered).toHaveLength(1);
+      expect(first.pumped).toEqual([]);
+      const [runId] = first.triggered;
+      const [node] = await cli("line", "nodes", runId);
+      expect(node.state).toBe("SUBMITTED");
+      const pending = await cli("job", "show", node.jobId);
+
+      await Bun.write(config, JSON.stringify({ pools: { cpu: 1, memory_mb: 256, gpu: 0 } }));
+      const machine = join(registry, "machines", "toolbox", "machine.yaml");
+      const original = await Bun.file(machine).text();
+      await Bun.write(machine, original.replace("upper-text", "changed-executable"));
+      expect(await cli("schedule", "tick", "--config", config)).toMatchObject({ triggered: [], pumped: [node.jobId] });
+      expect(await cli("line", "show", runId)).toMatchObject({ state: "SUCCEEDED", epoch: pending.epoch });
+      expect(await cli("job", "show", node.jobId)).toMatchObject({ state: "SEALED", epoch: pending.epoch });
     } finally {
       rmSync(root, { recursive: true, force: true, maxRetries: 3 });
     }

@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { createApp, startServer } from "./server";
 import { checkRegistry } from "../mrl/factory";
-import { CliUsageError, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
+import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
 export { CliUsageError } from "./station-cli";
 
 const redactText = (text: string) => text.replace(/(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
@@ -16,7 +16,7 @@ function values(args: string[], name: string): string[] {
 }
 
 export function usage(scope?: string): string {
-  if (scope === "bean" || scope === "job" || scope === "line" || scope === "source" || scope === "receipt" || scope === "approval" || scope === "schedule" || scope === "backup") return stationUsage(scope);
+  if (scope && isStationScope(scope)) return stationUsage(scope);
   if (scope === "project") return `factory project commands\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH`;
   if (scope === "business") return `factory business commands\n  units ID\n  run ID [--input REF]\n  runs ID\n  export ID\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID`;
@@ -41,7 +41,7 @@ async function requestJson(app: ReturnType<typeof createApp>, path: string, init
 
 async function runCommand(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
-  if (["bean", "job", "line", "source", "receipt", "approval", "schedule", "backup", "--root", "--registry", "--provider", "--local-commands", "--json"].includes(command)) {
+  if (isStationScope(command) || ["--root", "--registry", "--provider", "--local-commands", "--json"].includes(command)) {
     return runStationCli(argv);
   }
   if (!command || command === "help" || command === "--help") {

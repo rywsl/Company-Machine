@@ -28,6 +28,8 @@ export interface Job {
   params: Record<string, unknown>;
   runValue?: Record<string, unknown>;
   idempotencyKey?: string;
+  proposalOnly?: boolean;
+  timeoutMs?: number;
   outputs: Record<string, string[]>;
   costUsd: number;
   error?: Record<string, unknown>;
@@ -42,6 +44,8 @@ type JobRow = {
   error: string | null; feedback: string | null; created_at: string; updated_at: string;
   run_value: string | null; idempotency_key: string | null;
   phase: string;
+  proposal_only: number;
+  timeout_ms: number | null;
 };
 
 type JobPatch = Partial<Pick<Job, "error" | "feedback" | "outputs" | "costUsd" | "phase">> & { external?: boolean };
@@ -57,6 +61,8 @@ export function dumpJob(job: Job): Record<string, unknown> {
     id: job.id, station: job.station, epoch: job.epoch, state: job.state, phase: job.phase, attempt: job.attempt,
     inputs: job.inputs, params: job.params, outputs: job.outputs, cost_usd: job.costUsd,
     error: job.error ?? null, feedback: job.feedback ?? null, created_at: job.createdAt, updated_at: job.updatedAt,
+    ...(job.proposalOnly ? { proposal_only: true } : {}),
+    ...(job.timeoutMs === undefined ? {} : { timeout_ms: job.timeoutMs }),
   };
 }
 
@@ -67,7 +73,8 @@ export class JobStore {
         id TEXT PRIMARY KEY, station TEXT NOT NULL, epoch TEXT NOT NULL, state TEXT NOT NULL,
         attempt INTEGER NOT NULL, inputs TEXT NOT NULL, params TEXT NOT NULL, outputs TEXT NOT NULL,
         cost_usd REAL NOT NULL DEFAULT 0, error TEXT, feedback TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        run_value TEXT, idempotency_key TEXT, phase TEXT NOT NULL DEFAULT 'execute'
+        run_value TEXT, idempotency_key TEXT, phase TEXT NOT NULL DEFAULT 'execute',
+        proposal_only INTEGER NOT NULL DEFAULT 0, timeout_ms REAL
       );
       CREATE TABLE IF NOT EXISTS job_events (
         id TEXT PRIMARY KEY, job_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL, at TEXT NOT NULL
@@ -75,7 +82,10 @@ export class JobStore {
       CREATE INDEX IF NOT EXISTS job_events_kind ON job_events(job_id, kind);
       CREATE TABLE IF NOT EXISTS job_execution_locks (job_id TEXT PRIMARY KEY, pid INTEGER NOT NULL);
     `);
-    const definitions: Record<string, string> = { run_value: "TEXT", idempotency_key: "TEXT", phase: "TEXT NOT NULL DEFAULT 'execute'" };
+    const definitions: Record<string, string> = {
+      run_value: "TEXT", idempotency_key: "TEXT", phase: "TEXT NOT NULL DEFAULT 'execute'",
+      proposal_only: "INTEGER NOT NULL DEFAULT 0", timeout_ms: "REAL",
+    };
     const missing = () => {
       const columns = new Set(db.query<{ name: string }>("PRAGMA table_info(jobs)").all().map(({ name }) => name));
       return Object.keys(definitions).filter((name) => !columns.has(name));
@@ -87,13 +97,13 @@ export class JobStore {
     }
   }
 
-  create(input: Pick<Job, "station" | "epoch" | "inputs" | "params" | "runValue" | "idempotencyKey"> & { phase?: JobPhase }): Job {
+  create(input: Pick<Job, "station" | "epoch" | "inputs" | "params" | "runValue" | "idempotencyKey" | "proposalOnly" | "timeoutMs"> & { phase?: JobPhase }): Job {
     return this.db.transaction(() => {
       const at = utcIso(this.clock.now());
       const job: Job = { ...input, id: this.ids.new("job"), state: "PENDING", phase: input.phase ?? "execute", attempt: 1, outputs: {}, costUsd: 0, createdAt: at, updatedAt: at };
-      this.db.query("INSERT INTO jobs (id,station,epoch,state,attempt,inputs,params,outputs,created_at,updated_at,run_value,idempotency_key,phase) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      this.db.query("INSERT INTO jobs (id,station,epoch,state,attempt,inputs,params,outputs,created_at,updated_at,run_value,idempotency_key,phase,proposal_only,timeout_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
         .run(job.id, job.station, job.epoch, job.state, job.attempt, canonicalJson(job.inputs), canonicalJson(job.params), canonicalJson(job.outputs), at, at,
-          job.runValue === undefined ? null : canonicalJson(job.runValue), job.idempotencyKey ?? null, job.phase);
+          job.runValue === undefined ? null : canonicalJson(job.runValue), job.idempotencyKey ?? null, job.phase, Number(Boolean(job.proposalOnly)), job.timeoutMs ?? null);
       this.event(job, "job.created", Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)));
       return job;
     }).immediate();
@@ -110,15 +120,22 @@ export class JobStore {
       feedback: row.feedback ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at,
       ...(row.run_value ? { runValue: JSON.parse(row.run_value) } : {}),
       ...(row.idempotency_key === null ? {} : { idempotencyKey: row.idempotency_key }),
+      ...(row.proposal_only ? { proposalOnly: true } : {}),
+      ...(row.timeout_ms === null ? {} : { timeoutMs: row.timeout_ms }),
     };
   }
 
   transition(id: string, state: JobState, patch: JobPatch = {}): Job {
     return this.db.transaction(() => {
       const before = this.get(id);
+      if (before.proposalOnly && patch.phase === "execute") {
+        throw new FactoryError("JOB_STATE_INVALID", "试运行任务只可执行方案阶段", { jobId: id, state: before.state });
+      }
       const phaseSwitch = before.phase === "propose" && patch.phase === "execute" && state === "PROVISIONING" &&
         (before.state === "RUNNING" || before.state === "AWAITING_APPROVAL");
-      if (!phaseSwitch) ensureEdge(before, state);
+      const proposalComplete = before.proposalOnly && before.phase === "propose" && state === "SEALED" &&
+        (before.state === "RUNNING" || before.state === "AWAITING_APPROVAL");
+      if (!phaseSwitch && !proposalComplete) ensureEdge(before, state);
       const retry = state === "PENDING";
       const { external, ...changes } = patch;
       const job: Job = {

@@ -113,13 +113,15 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询和业务 DAG 校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、物料记录与启动前的运行时就绪 |
-| `backend/tests/cli.test.ts` | Bun 工厂命令、用法与 Registry 检查 |
+| `backend/tests/cli.test.ts` | Bun 工厂命令、Registry 检查、从冻结快照恢复审批和调度运行 |
 | `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
 | `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
 | `backend/tests/legacy-approvals.test.ts` | 工位审批的费用规则、尝试隔离、到期与拒绝 |
+| `backend/tests/legacy-contract.test.ts` | validator 正反样例、GoldenSet、Baseline、转换等价、差分及 Sink 方案试运行恢复 |
 | `backend/tests/legacy-cache.test.ts` | 缓存键、候选可用性、失效范围与审计 |
 | `backend/tests/legacy-core.test.ts` | 规范 JSON、SQLite 仓库、并发 CAS 提交、快照和值投影 |
+| `backend/tests/legacy-snapshot.test.ts` | 目录树 epoch、冻结快照重启读取、旧记录补齐和跨 epoch 执行保护 |
 | `backend/tests/legacy-gate.test.ts` | 来料检查和产物验收 |
 | `backend/tests/legacy-harvest.test.ts` | 工位产物采集、路径边界、匹配顺序和异常结果 |
 | `backend/tests/legacy-connectors.test.ts` | Source 摄入与检验、Sink 幂等发布与核验、回执血缘和沙箱命令 |
@@ -130,7 +132,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
 | `backend/tests/legacy-sandbox.test.ts` | 本地夹具执行、超时和文件邮箱 |
-| `backend/tests/legacy-scheduler.test.ts` | 任务准入、资源预留、死信和审批到期 |
+| `backend/tests/legacy-scheduler.test.ts` | 任务准入、资源与隔舱配额、熔断探针、自动隔离、死信和审批到期 |
 | `backend/tests/legacy-triggers.test.ts` | 事件去重、游标恢复、并发准入和定时触发 |
 | `backend/tests/runtime.test.ts` | 运行时状态缓存、就绪去重与失败诊断 |
 | `backend/runtime/kiri.test.ts` | Linux 套接字、服务就绪与受限容器参数 |
@@ -160,6 +162,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_id_prefix_validation` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 拒绝大写前缀 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_database_pragmas_and_rows` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | WAL 模式和提交后的行查询 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_tx_commit_and_rollback` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | 外层异常撤销插入 |
+| `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_epoch_is_tree_hash` | `backend/tests/legacy-snapshot.test.ts` | `matches an independent tree hash across directories and includes non-Spec files` | 格式和独立算出的 SHA-256 树摘要一致 |
+| `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_epoch_ignores_absolute_path_and_changes_with_content` | `backend/tests/legacy-snapshot.test.ts` | `matches an independent tree hash across directories and includes non-Spec files` | 复制到其他目录得到相同 epoch，添加非规范文件后摘要改变 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_nested_tx_uses_savepoints` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | 内层回滚保留外层事务 |
 | `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_put_file_cas_layout_and_idempotent` | `backend/tests/legacy-core.test.ts` | `streams file digests and keeps one empty blob at its exact CAS path` | 空 Blob 的摘要、仓库层级与重复写入 |
 | `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_bean_id_and_add_get` | `backend/tests/legacy-core.test.ts` | `preserves Bean identity and rejects invalid paths, types, digests and IDs` | Bean 身份、元数据副本、媒介类型及首次创建时间 |
@@ -202,6 +206,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_writer_harvests_and_seals` | `backend/tests/legacy-runner.test.ts` | `harvests official-shaped Harness outputs and stops over-budget jobs before sealing` | Runner 采集官方 Harness 形状的产物并封存正常任务 |
 | `removed/python/tests/acceptance/m1/test_m1_09_cli.py::test_bean_lineage_json` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | CLI 封存后向上追溯，结果只包含原输入 Bean |
 | `removed/python/tests/acceptance/m2/test_m2_01_runplan.py::test_templated_params_recorded` | `backend/tests/legacy-runplan.test.ts` | `orders the example by dependency layer and records parameters and budgets` | 归档示例产线的 `to_s3.prefix` 保留模板原文和模板字段标记 |
+| `removed/python/tests/acceptance/m2/test_m2_03_line_runner.py::test_epoch_mismatch` | `backend/tests/legacy-snapshot.test.ts` | `rejects a Run tick from a LineRunner bound to a different epoch` | 不同 Registry 快照下拒绝推进同一个 Run |
 | `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_not_cacheable_roles` | `backend/tests/legacy-cache.test.ts` | `uses result-affecting inputs without depending on epoch or descriptive metadata` | Sink 的缓存键请求返回 `CACHE_NOT_CACHEABLE` |
 | `removed/python/tests/acceptance/m7/test_m7_04_backup.py::test_restore_refuses` | `backend/tests/backup.test.ts` | `reports corrupt and missing blobs, extra files, and unsafe paths before restore` | 拒绝损坏备份和非空恢复目录，原 CAS 保留 |
 

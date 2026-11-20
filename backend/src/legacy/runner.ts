@@ -72,20 +72,29 @@ export class Runner {
     this.receipts = new ReceiptStore(context);
   }
 
-  submit(stationRef: string, inputs: Record<string, string | string[]>, params: Record<string, unknown>, runValue?: Record<string, unknown>): Job {
+  submit(stationRef: string, inputs: Record<string, string | string[]>, params: Record<string, unknown>, runValue?: Record<string, unknown>,
+    options: { proposalOnly?: boolean; timeoutMs?: number } = {},
+  ): Job {
     const station = this.snapshot.key("Station", stationRef);
+    const spec = this.snapshot.spec(station);
+    const role = spec.role;
+    if (options.proposalOnly && (role !== "sink" || !spec.phases?.includes("propose"))) {
+      throw new FactoryError("CONTRACT_SINK_NO_PROPOSE", "试运行需要两阶段 Sink 工位", { station });
+    }
+    if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
+      throw new FactoryError("SANDBOX_SPEC_INVALID", "任务超时必须为正有限数", { station });
+    }
     const gate = new Gate(this.snapshot, this.context.warehouse, join(this.context.root, "tmp", "gate"), this.provider);
     const checkedInputs = gate.checkInputs(station, inputs, params);
     const effectiveParams = paramsValue(this.snapshot, station, params);
-    const spec = this.snapshot.spec(station);
-    const role = spec.role;
     const ids = Object.fromEntries(Object.entries(checkedInputs).map(([port, value]) => [
       port, (Array.isArray(value) ? value : [value]).map((bean) => bean.id),
     ]));
     return this.jobs.create({
       station, epoch: this.snapshot.epoch, inputs: ids, params: effectiveParams, runValue,
       phase: spec.phases?.includes("propose") ? "propose" : "execute",
-      idempotencyKey: role === "sink" ? sinkKey(this.snapshot, station, checkedInputs, effectiveParams, runValue) : undefined,
+      idempotencyKey: role === "sink" && !options.proposalOnly ? sinkKey(this.snapshot, station, checkedInputs, effectiveParams, runValue) : undefined,
+      ...options,
     });
   }
 
@@ -95,6 +104,9 @@ export class Runner {
     const job = this.jobs.get(id);
     if (terminalStates.has(job.state)) return job;
     if (job.epoch !== this.snapshot.epoch) throw new FactoryError("EPOCH_MISMATCH", "Job snapshot does not match", { jobId: id });
+    if (job.proposalOnly && job.phase !== "propose") {
+      throw new FactoryError("JOB_STATE_INVALID", "试运行任务只可执行方案阶段", { jobId: id, state: job.state });
+    }
     this.jobs.acquireExecution(id);
 
     try {
@@ -203,6 +215,7 @@ export class Runner {
       return job.state === "AWAITING_APPROVAL" ? job : this.jobs.transition(job.id, "AWAITING_APPROVAL", { costUsd });
     }
     if (proposal.status === "approved") {
+      if (job.proposalOnly) return this.jobs.transition(job.id, "SEALED", { costUsd });
       return this.jobs.transition(job.id, "PROVISIONING", { phase: "execute", costUsd });
     }
     return this.jobs.transition(job.id, "FAILED", {
@@ -318,7 +331,7 @@ export class Runner {
       let result: Awaited<ReturnType<Sandbox["exec"]>>;
       try {
         result = await sandbox.exec(invocation.argv, {
-          timeoutMs: invocation.timeoutS * 1000,
+          timeoutMs: Math.min(invocation.timeoutS * 1000, job.timeoutMs ?? Infinity),
           stdout,
           stderr: join(logs, "stderr"),
           env: { ...invocation.env, ...control },
@@ -433,7 +446,7 @@ export class Runner {
       if (result.exitCode !== 0 || result.timedOut) {
         return { id, ok: true, result: { verdict: "reject", feedback: "无法读取预检文件" }, error: null };
       }
-      const gate = new Gate(this.snapshot, this.context.warehouse, join(root, "gate"), this.provider);
+      const gate = new Gate(this.snapshot, this.context.warehouse, join(root, "gate"), this.provider, job.timeoutMs);
       const { data } = await gate.inspect(job.station, { jobId: job.id, attempt: job.attempt, outDir: join(root, "candidate"), inputs, params: job.params, port });
       return { id, ok: true, result: { verdict: data.verdict, feedback: data.feedback }, error: null };
     } finally {
@@ -460,7 +473,7 @@ export class Runner {
         return this.jobs.transition(job.id, "FAILED", { error: { code: "HARVEST_FAILED", detail: result } });
       }
     }
-    const gate = new Gate(this.snapshot, this.context.warehouse, join(attemptRoot, "gate"), this.provider);
+    const gate = new Gate(this.snapshot, this.context.warehouse, join(attemptRoot, "gate"), this.provider, job.timeoutMs);
     const report = await gate.inspect(job.station, {
       jobId: job.id, attempt: job.attempt, outDir, inputs, params: job.params,
     });

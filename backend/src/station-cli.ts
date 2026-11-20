@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { selectedContainerProvider } from "../runtime/selected";
-import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RunStore, Runner, canonicalJson, compileRunPlan, dumpJob, loadSnapshot, runTerminalStates, type RunState } from "./legacy";
+import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RegistrySnapshotStore, RunStore, Runner, canonicalJson, compileRunPlan, dumpJob, loadSnapshot, runTerminalStates, type RunState } from "./legacy";
 import { PodmanError, type ContainerProvider } from "../runtime/podman";
 import { Approvals, type ApprovalStatus } from "./legacy/approvals";
+import { ContractRunner, type ContractKind, type ContractResult } from "./legacy/contract";
 import { ReceiptStore } from "./legacy/connectors";
 import { Scheduler } from "./legacy/scheduler";
 import { connectorCommands, runConnectorCli } from "./connector-cli";
@@ -25,8 +26,18 @@ const commands = {
   line: ["plan LINE", "run LINE [--in PORT=BEAN] [--budget USD]", "exec RUN", "ls [--state STATE]", "show RUN", "nodes RUN", "cancel RUN", "retry RUN NODE", "rebuild RUN"],
   approval: ["ls [--job JOB] [--status STATUS]", "show APPROVAL", "approve APPROVAL [--note TEXT]", "deny APPROVAL [--note TEXT]"],
   schedule: ["tick [--config PATH]", "enqueue JOB...", "dlq ls", "quarantine BEAN --reason TEXT", "release BEAN"],
+  contract: [
+    "validator TYPE VALIDATOR --timeout SECONDS", "golden GOLDEN [--baseline BASELINE] --timeout SECONDS",
+    "equivalence STATION [--timeout SECONDS]", "diff STATION [--timeout SECONDS]",
+    "sink-dry-run STATION [--in PORT=BEAN] [--param NAME=JSON] [--timeout SECONDS]",
+    "canary STATION [--timeout SECONDS]", "ls [--kind KIND] [--subject SUBJECT]", "show RESULT",
+  ],
   backup: ["create DEST [--root ROOT] [--registry DIR] [--with-logs]", "verify DEST", "restore DEST --root NEW_ROOT"],
 };
+
+export function isStationScope(scope: string): scope is keyof typeof commands {
+  return Object.hasOwn(commands, scope);
+}
 
 export function stationUsage(scope: keyof typeof commands): string {
   return `factory ${scope} commands\n  ${commands[scope].join("\n  ")}`;
@@ -75,6 +86,30 @@ function pair(value: string, option: string): [string, string] {
   return [value.slice(0, index), value.slice(index + 1)];
 }
 
+function materialInputs(arguments_: string[], flag: string, isList: (port: string) => boolean): Record<string, string | string[]> {
+  const inputs: Record<string, string | string[]> = Object.create(null);
+  for (const argument of arguments_) {
+    const [port, bean] = pair(argument, flag);
+    if (isList(port)) {
+      const items = (inputs[port] ?? []) as string[];
+      items.push(bean);
+      inputs[port] = items;
+    } else {
+      if (Object.hasOwn(inputs, port)) throw new CliUsageError(`duplicate input: ${port}`);
+      inputs[port] = bean;
+    }
+  }
+  return inputs;
+}
+
+function parameters(arguments_: string[]): Record<string, unknown> {
+  return Object.fromEntries(arguments_.map((argument) => {
+    const [key, value] = pair(argument, "--param");
+    try { return [key, JSON.parse(value)]; }
+    catch { throw new CliUsageError(`--param requires valid JSON for ${key}`); }
+  }));
+}
+
 async function provider(options: Options): Promise<ContainerProvider> {
   if (options.provider && !["local", "kiri", "podman"].includes(options.provider)) {
     throw new CliUsageError("--provider must be podman, kiri, or local");
@@ -95,7 +130,7 @@ async function provider(options: Options): Promise<ContainerProvider> {
 
 export async function runStationCli(argv: string[]): Promise<number> {
   const { options, args: [scope, operation, ...args] } = parse(argv);
-  if (scope !== "bean" && scope !== "job" && scope !== "line" && scope !== "source" && scope !== "receipt" && scope !== "approval" && scope !== "schedule" && scope !== "backup") {
+  if (!isStationScope(scope)) {
     throw new CliUsageError("Unknown factory command");
   }
   if (!operation || operation === "help" || operation === "--help") {
@@ -113,11 +148,12 @@ export async function runStationCli(argv: string[]): Promise<number> {
   const context = Context.open(root);
   try {
     if (scope === "source" || scope === "receipt") return await runConnectorCli(context, {
-      scope, operation, args, json: options.json, loadSnapshot: () => loadSnapshot(registry), provider: () => provider(options),
+      scope, operation, args, registry, json: options.json, provider: () => provider(options),
     });
     if (scope === "approval") return await runApprovalCli(context, registry, operation, args);
     if (scope === "schedule") return await runScheduleCli(context, registry, operation, args, options);
     if (scope === "line") return await runLineCli(context, registry, operation, args, options);
+    if (scope === "contract") return await runContractCli(context, registry, operation, args, options);
     if (scope === "bean" && operation === "lineage") {
       const [id, ...rest] = args;
       if (!id || id.startsWith("--")) throw new CliUsageError("Bean id is required");
@@ -156,28 +192,16 @@ export async function runStationCli(argv: string[]): Promise<number> {
     const [target, ...rest] = args;
     if (!target || target.startsWith("--")) throw new CliUsageError(operation === "run" ? "Station is required" : "Job id is required");
     const fields = readOptions(rest, operation === "run" ? ["--input", "--param"] : []);
-    const snapshot = await loadSnapshot(registry);
+    const snapshots = new RegistrySnapshotStore(context.db);
+    const snapshot = operation === "run"
+      ? await snapshots.capture(registry)
+      : await snapshots.materialize(new JobStore(context.db, context.clock, context.ids).get(target).epoch, registry);
     const runner = new Runner(context, snapshot, await provider(options));
     let id = target;
     if (operation === "run") {
       const station = snapshot.spec(snapshot.key("Station", target));
-      const inputs: Record<string, string | string[]> = Object.create(null);
-      for (const argument of fields.get("--input") ?? []) {
-        const [port, bean] = pair(argument, "--input");
-        if (station.inputs?.[port]?.type?.startsWith("list<")) {
-          const items = (inputs[port] ?? []) as string[];
-          items.push(bean);
-          inputs[port] = items;
-        } else {
-          if (Object.hasOwn(inputs, port)) throw new CliUsageError(`duplicate input: ${port}`);
-          inputs[port] = bean;
-        }
-      }
-      const params = Object.fromEntries((fields.get("--param") ?? []).map((argument) => {
-        const [key, value] = pair(argument, "--param");
-        try { return [key, JSON.parse(value)]; }
-        catch { throw new CliUsageError(`--param requires valid JSON for ${key}`); }
-      }));
+      const inputs = materialInputs(fields.get("--input") ?? [], "--input", (port) => station.inputs?.[port]?.type?.startsWith("list<") ?? false);
+      const params = parameters(fields.get("--param") ?? []);
       id = runner.submit(target, inputs, params).id;
     }
     const job = await runner.run(id);
@@ -194,8 +218,67 @@ export async function runStationCli(argv: string[]): Promise<number> {
   }
 }
 
+async function runContractCli(context: Context, registry: string, operation: string, args: string[], options: Options): Promise<number> {
+  if (!["validator", "golden", "equivalence", "diff", "sink-dry-run", "canary", "ls", "show"].includes(operation)) {
+    throw new CliUsageError(`unknown contract command: ${operation}`);
+  }
+  const snapshot = await new RegistrySnapshotStore(context.db).capture(registry);
+  const contract = new ContractRunner(new Runner(context, snapshot, await provider(options)));
+  if (operation === "ls") {
+    const fields = readOptions(args, ["--kind", "--subject"]);
+    const kind = fields.has("--kind") ? required(fields, "--kind") : undefined;
+    if (kind && !["validator", "golden", "equivalence", "diff", "sink_dry_run", "fixture_set"].includes(kind)) {
+      throw new CliUsageError("Invalid contract result kind");
+    }
+    const subject = fields.has("--subject") ? required(fields, "--subject") : undefined;
+    console.log(canonicalJson(contract.list({ kind: kind as ContractKind | undefined, subject })));
+    return 0;
+  }
+  const [target, ...rest] = args;
+  if (!target || target.startsWith("--")) throw new CliUsageError("Contract subject is required");
+  if (operation === "show") {
+    readOptions(rest, []);
+    console.log(canonicalJson(contract.get(target)));
+    return 0;
+  }
+  const validator = operation === "validator" ? rest.shift() : undefined;
+  if (operation === "validator" && (!validator || validator.startsWith("--"))) throw new CliUsageError("Validator name is required");
+  const extra = operation === "golden" ? ["--baseline"] : operation === "sink-dry-run" ? ["--in", "--param"] : [];
+  const fields = readOptions(rest, ["--timeout", ...extra]);
+  const requiresTimeout = operation === "validator" || operation === "golden";
+  const timeoutS = requiresTimeout || fields.has("--timeout") ? Number(required(fields, "--timeout")) : undefined;
+  if (timeoutS !== undefined && (!Number.isFinite(timeoutS) || timeoutS <= 0)) throw new CliUsageError("--timeout requires positive seconds");
+  const timeout = { timeoutS };
+  let result: ContractResult;
+  switch (operation) {
+    case "validator":
+      result = await contract.runValidator(target, validator!, timeout);
+      break;
+    case "golden":
+      result = await contract.runGolden(target, fields.has("--baseline") ? required(fields, "--baseline") : undefined, timeout);
+      break;
+    case "equivalence":
+      result = await contract.runEquivalence(target, timeout);
+      break;
+    case "diff":
+      result = await contract.runDiff(target, timeout);
+      break;
+    case "canary":
+      result = await contract.canary(target, timeout);
+      break;
+    default: {
+      const key = snapshot.key("Station", target);
+      const station = snapshot.docs[key]?.spec;
+      const inputs = materialInputs(fields.get("--in") ?? [], "--in", (port) => station?.inputs?.[port]?.type?.startsWith("list<") ?? false);
+      result = await contract.runSinkDryRun(target, { ...timeout, inputs, params: parameters(fields.get("--param") ?? []) });
+    }
+  }
+  console.log(canonicalJson(result));
+  return result.verdict === "pass" ? 0 : 1;
+}
+
 async function runApprovalCli(context: Context, registry: string, operation: string, args: string[]): Promise<number> {
-  const approvals = new Approvals(context, await loadSnapshot(registry));
+  const approvals = new Approvals(context);
   if (operation === "ls") {
     const options = readOptions(args, ["--job", "--status"]);
     const status = options.has("--status") ? required(options, "--status") : undefined;
@@ -210,7 +293,10 @@ async function runApprovalCli(context: Context, registry: string, operation: str
   else if (operation === "approve" || operation === "deny") {
     const options = readOptions(rest, ["--note"]);
     const note = options.has("--note") ? required(options, "--note") : undefined;
-    console.log(canonicalJson(approvals.applyDecision(id, operation, { by: process.env.FACTORY_HUMAN_BY ?? "human", note })));
+    const jobs = new JobStore(context.db, context.clock, context.ids);
+    const job = jobs.get(approvals.get(id).jobId);
+    const snapshot = await new RegistrySnapshotStore(context.db).materialize(job.epoch, registry);
+    console.log(canonicalJson(new Approvals(context, snapshot, jobs).applyDecision(id, operation, { by: process.env.FACTORY_HUMAN_BY ?? "human", note })));
   } else throw new CliUsageError(`unknown approval command: ${operation}`);
   return 0;
 }
@@ -238,9 +324,13 @@ async function runBackupCli(operation: string, args: string[], root: string, opt
 }
 
 async function runScheduleCli(context: Context, registry: string, operation: string, args: string[], options: Options): Promise<number> {
-  const snapshot = await loadSnapshot(registry);
-  const runner = new Runner(context, snapshot, await provider(options));
-  const scheduler = new Scheduler(context, snapshot, runner);
+  const snapshots = new RegistrySnapshotStore(context.db);
+  const snapshot = await snapshots.capture(registry);
+  const runtime = await provider(options);
+  const runner = new Runner(context, snapshot, runtime);
+  const scheduler = new Scheduler(context, snapshot, runner, {
+    resolveRunner: async (epoch) => new Runner(context, await snapshots.materialize(epoch, registry), runtime),
+  });
   const by = process.env.FACTORY_HUMAN_BY ?? "human";
   if (operation === "tick") {
     const fields = readOptions(args, ["--config"]);
@@ -293,7 +383,10 @@ async function runLineCli(context: Context, registry: string, operation: string,
   if (!["run", "exec", "rebuild"].includes(operation)) throw new CliUsageError(`unknown line command: ${operation}`);
   const noCache = operation === "run" && rest.includes("--no-cache");
   const fields = readOptions(rest.filter((word) => !noCache || word !== "--no-cache"), operation === "run" ? ["--in", "--budget", "--variant"] : []);
-  const snapshot = await loadSnapshot(registry);
+  const snapshots = new RegistrySnapshotStore(context.db);
+  const snapshot = operation === "exec"
+    ? await snapshots.materialize(store.get(target).epoch, registry)
+    : await snapshots.capture(registry);
   const lines = new LineRunner(new Runner(context, snapshot, await provider(options)));
   if (operation === "rebuild") {
     const previous = store.get(target);
@@ -307,18 +400,7 @@ async function runLineCli(context: Context, registry: string, operation: string,
   let id = target;
   if (operation === "run") {
     const plan = compileRunPlan(snapshot, target);
-    const inputs: Record<string, string | string[]> = Object.create(null);
-    for (const value of fields.get("--in") ?? []) {
-      const [port, bean] = pair(value, "--in");
-      if (plan.inputs[port]?.startsWith("list<")) {
-        const items = (inputs[port] ?? []) as string[];
-        items.push(bean);
-        inputs[port] = items;
-      } else {
-        if (Object.hasOwn(inputs, port)) throw new CliUsageError(`duplicate input: ${port}`);
-        inputs[port] = bean;
-      }
-    }
+    const inputs = materialInputs(fields.get("--in") ?? [], "--in", (port) => plan.inputs[port]?.startsWith("list<") ?? false);
     id = lines.start(target, {
       inputs, budgetCapUsd: fields.has("--budget") ? Number(required(fields, "--budget")) : undefined,
       variants: Object.fromEntries((fields.get("--variant") ?? []).map((value) => pair(value, "--variant"))),
