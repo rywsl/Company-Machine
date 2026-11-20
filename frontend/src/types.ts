@@ -82,6 +82,7 @@ export interface HarnessRecord {
 
 export interface DependencyStatus {
   state: string;
+  provider?: string;
   version?: string | null;
   message?: string;
   id?: string;
@@ -142,7 +143,7 @@ export interface Bootstrap {
   talk: TalkMessage[];
   harnesses: HarnessRecord[];
   harness_profiles?: HarnessProfile[];
-  dependencies?: { harnesses: DependencyStatus[]; podman?: DependencyStatus; docker?: DependencyStatus };
+  dependencies?: { harnesses: DependencyStatus[]; podman?: DependencyStatus; kiri?: DependencyStatus; docker?: DependencyStatus };
   foreman: { configured?: boolean; setup_required?: boolean; runtime?: string | null; model?: string | null; mode?: string | null; profile?: HarnessProfile | null };
   secrets: SecretRecord[];
   constitution: {

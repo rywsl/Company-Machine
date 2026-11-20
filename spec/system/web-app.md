@@ -292,7 +292,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
 - Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
 - ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环
-- Harness profile 提供 digest 固定的 `image` 时，官方 CLI 或 ACP 进程通过受限 Podman `run` 启动，使用非 root、只读根文件系统、`cap-drop ALL` 和 `network none`
+- Harness profile 提供 digest 固定的 `image` 时，官方 CLI 或 ACP 进程通过当前 ContainerProvider 启动。Podman 使用受限 `podman run`，Kiri 使用受限 `kiri run` 或 `docker --context kiri run`，都使用非 root、只读根文件系统、`cap-drop ALL` 和 `network none`
 - 启动官方 Harness 时只继承运行所需的基础环境和显式声明的变量。宿主环境中的其他密钥不会被批量转发
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
 - `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
@@ -306,7 +306,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 
 Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。业务运行只调度 Operator，Machine 作为被操作的软件项目和 DAG 节点存在。Operator Harness 输出 `mao.record` 事件后，控制面把记录写入该项目并通过事件流返回产物或物料状态。
 
-容器运行时采用 Podman。Windows 由应用管理 Podman machine，Linux 使用 rootless Podman。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。Docker 只作为迁移期兼容 provider。
+容器运行时默认采用 Podman，也可以通过 `MAO_CONTAINER_RUNTIME=kiri` 选择官方 Kiri。Windows 上 Podman 由应用管理 machine，Kiri 使用自己的 WSL/daemon 和 Docker Engine API 兼容边界。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。Docker 只作为历史兼容 provider。
 
 后端性能基线由 `backend/bench.ts` 生成。交互 API 的本地单用户 p95 目标为 200ms，Foreman 首个事件目标为 1s，事件增量延迟目标为 2s。读模型在一次请求内复用状态、Harness、运行和资产来源查询，业务系统级产物与物料使用一次 JOIN 读取，项目来源与资源请求使用批量投影和索引，事件流使用游标增量发送。
 
@@ -326,6 +326,6 @@ Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。
 - Intake 创建的项目会进入 BusinessSystem 图并通过事件流刷新
 - Foreman 回复可以通过外部 Harness 回写同一 talk 线程
 - 项目资源请求只显示项目用途、范围、检查项和状态，密钥值进入保险箱
-- Podman 缺失时显示运行时依赖状态，不把 Docker 状态伪装成 Podman 在线
-- `/api/v1/runtime` 与 bootstrap 的 Podman 状态来自实际探测，不能用 Docker 在线状态替代
+- 当前容器运行时缺失时显示实际依赖状态，不把另一运行时状态伪装成在线
+- `/api/v1/runtime` 与 bootstrap 的 Podman 或 Kiri 状态来自实际探测，不能用另一运行时在线状态替代
 - `POST /api/v1/runtime/ensure-ready` 在 Windows 尝试启动已配置的 Podman machine，在 Linux 只报告 rootless 服务状态

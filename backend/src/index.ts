@@ -9,6 +9,7 @@ export * from "./operator";
 // The Bun control plane exposes the MRL boundary so business projections and
 // Foreman adapters can validate predicates without importing the Python tree.
 export * from "../mrl";
+export * from "../runtime/kiri";
 import { startServer } from "./server";
 
 if (import.meta.main) {

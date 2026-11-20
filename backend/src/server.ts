@@ -57,7 +57,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
   let dispatchOperatorRun = (_runId: string) => {};
   const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId) });
   const runtime = options.runtime ?? (process.env.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
-    ? new KiriProvider({ context: process.env.MAO_KIRI_CONTEXT, egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) })
+    ? new KiriProvider({ kiriExecutable: process.env.MAO_KIRI_EXECUTABLE, dockerExecutable: process.env.MAO_DOCKER_EXECUTABLE, context: process.env.MAO_KIRI_CONTEXT, mode: process.env.MAO_KIRI_MODE === "docker-context" ? "docker-context" : "kiri", egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) })
     : new PodmanProvider({ egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) }));
   const provider = runtimeProvider(runtime);
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;

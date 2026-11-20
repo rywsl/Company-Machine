@@ -138,7 +138,7 @@ export function resolvePodmanExecutable(configured?: string): string {
   return configured ?? "podman";
 }
 
-async function defaultRunner(argv: string[], options: { timeoutMs?: number } = {}): Promise<CommandResult> {
+export async function runCommand(argv: string[], options: { timeoutMs?: number } = {}): Promise<CommandResult> {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new PodmanError("RUNTIME_UNAVAILABLE", "Bun runtime is required");
   const process = bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
@@ -217,7 +217,7 @@ function assertSpec(spec: SandboxSpec, allowEgress: boolean): void {
 }
 
 export class PodmanProvider implements ContainerProvider {
-  readonly name = "podman";
+  readonly name: string = "podman";
   private readonly run: CommandRunner;
   private readonly allowUnproxiedEgress: boolean;
   private readonly egressNetwork: string | null;
@@ -248,7 +248,7 @@ export class PodmanProvider implements ContainerProvider {
       throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid managed egress network", { field: "egressNetwork" });
     }
     this.machine = options.machine ?? null;
-    this.run = options.runner ?? defaultRunner;
+    this.run = options.runner ?? runCommand;
   }
 
   buildRunArgv(spec: SandboxSpec): string[] {

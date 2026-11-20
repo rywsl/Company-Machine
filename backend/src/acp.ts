@@ -1,4 +1,5 @@
 import type { HarnessDefinition, HarnessEvent, HarnessSession, HarnessSessionRequest, HarnessTransport } from "./harness";
+import { buildKiriHarnessArgv } from "../runtime/kiri";
 
 export type AcpProcess = {
   stdout: ReadableStream<Uint8Array>;
@@ -183,7 +184,11 @@ export function defaultAcpSpawn(argv: string[], options: { cwd: string; env: Rec
     if (!managed || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(managed)) throw new Error("Managed egress network is unavailable");
     podmanNetwork = managed;
   }
-  const command = image ? ["podman", "run", "--rm", "-i", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv] : argv;
+  const command = image
+    ? hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
+      ? buildKiriHarnessArgv(image, argv, network, { kiriExecutable: hostEnv.MAO_KIRI_EXECUTABLE, dockerExecutable: hostEnv.MAO_DOCKER_EXECUTABLE, context: hostEnv.MAO_KIRI_CONTEXT, mode: hostEnv.MAO_KIRI_MODE === "docker-context" ? "docker-context" : "kiri", egressNetwork: env.MAO_EGRESS_NETWORK })
+      : ["podman", "run", "--rm", "-i", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv]
+    : argv;
   const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin, stderr: "pipe" });
   const stdin = process.stdin && typeof process.stdin.write === "function" ? {
     write: async (data: Uint8Array) => { await process.stdin.write(data); await process.stdin.flush?.(); },
