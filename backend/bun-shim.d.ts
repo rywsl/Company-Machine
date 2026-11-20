@@ -38,6 +38,7 @@ declare module "node:path" {
   export const join: (...parts: string[]) => string;
   export const basename: (path: string) => string;
   export const resolve: (...parts: string[]) => string;
+  export const relative: (from: string, to: string) => string;
   export const normalize: (path: string) => string;
 }
 

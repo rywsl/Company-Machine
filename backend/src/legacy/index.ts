@@ -5,3 +5,4 @@ export * from "./snapshot";
 export * from "./context";
 export * from "./values";
 export * from "./sandbox";
+export * from "./gate";
