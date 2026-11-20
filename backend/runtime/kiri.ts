@@ -159,8 +159,30 @@ export class KiriProvider extends PodmanProvider {
         };
       }
     }
-    const health = await super.health();
-    return { ...health, executable: `${this.dockerExecutable} --context ${this.context}`, machine: this.context };
+    try {
+      const commandOptions = Object.keys(this.kiriEnvironment).length > 0
+        ? { timeoutMs: 10_000, env: this.kiriEnvironment }
+        : { timeoutMs: 10_000 };
+      const result = await this.commandRunner(commandFor([this.dockerExecutable, "info", "--format", "json"], this.dockerExecutable, this.context), commandOptions);
+      const platform = ((globalThis as { process?: { platform?: string } }).process?.platform ?? "unknown");
+      return {
+        available: result.exitCode === 0,
+        platform,
+        executable: `${this.dockerExecutable} --context ${this.context}`,
+        machine: this.context,
+        rootless: null,
+        reason: result.exitCode === 0 ? undefined : new TextDecoder().decode(result.stderr).trim() || "kiri-unavailable",
+      };
+    } catch (error) {
+      return {
+        available: false,
+        platform: ((globalThis as { process?: { platform?: string } }).process?.platform ?? "unknown"),
+        executable: `${this.dockerExecutable} --context ${this.context}`,
+        machine: this.context,
+        rootless: null,
+        reason: error instanceof Error ? error.message : "kiri-unavailable",
+      };
+    }
   }
 
   async ensureReady(): Promise<RuntimeHealth> {
