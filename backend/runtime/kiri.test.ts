@@ -87,14 +87,40 @@ describe("KiriProvider", () => {
     const calls: string[][] = [];
     const runner = async (argv: string[]) => {
       calls.push(argv);
-      return argv[0] === "systemctl" ? result("", "Interactive authentication required", 1) : result("", "permission denied", 1);
+      return argv[0] === "systemctl" ? result("", "Interactive authentication required", 1) : result("", "connection refused", 1);
     };
     const managed = new KiriProvider({ platform: "linux", mode: "linux-socket", socket: "/run/kiri/docker.sock", runner });
-    expect((await managed.ensureReady()).reason).toBe("permission denied. Interactive authentication required");
+    expect((await managed.ensureReady()).reason).toBe("connection refused. Interactive authentication required");
     const custom = new KiriProvider({ platform: "linux", mode: "linux-socket", socket: "/tmp/kiri.sock", runner });
-    expect((await custom.ensureReady()).reason).toBe("permission denied");
+    expect((await custom.ensureReady()).reason).toBe("connection refused");
     expect(calls.filter((argv) => argv[0] === "systemctl")).toHaveLength(1);
     expect(calls.at(-1)?.slice(1, 3)).toEqual(["--host", "unix:///tmp/kiri.sock"]);
+  });
+
+  test("reports packaged socket access failure without requesting a systemd start", async () => {
+    const calls: string[][] = [];
+    const provider = new KiriProvider({
+      platform: "linux", mode: "linux-socket", socket: "/run/kiri/docker.sock",
+      runner: async (argv) => {
+        calls.push(argv);
+        return result("", "permission denied while trying to connect to the docker API", 1);
+      },
+    });
+    const health = await provider.health();
+    expect(health.available).toBe(false);
+    expect(health.reason).toContain('sudo kiri host-access "$USER"');
+    expect(await provider.ensureReady()).toEqual(health);
+    expect(calls.map((argv) => argv[3])).toEqual(["info", "info"]);
+  });
+
+  test("does not request a systemd start when the default endpoint identifies another engine", async () => {
+    const calls: string[][] = [];
+    const provider = new KiriProvider({
+      platform: "linux", mode: "linux-socket", socket: "/run/kiri/docker.sock",
+      runner: async (argv) => { calls.push(argv); return result("Docker"); },
+    });
+    expect(await provider.ensureReady()).toMatchObject({ available: false, reason: "The configured endpoint did not identify itself as Kiri" });
+    expect(calls.map((argv) => argv[3])).toEqual(["info"]);
   });
 
   test("retains the official CLI and named-context modes", async () => {

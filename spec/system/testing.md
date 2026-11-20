@@ -316,6 +316,16 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m2/test_m2_11_source.py::test_service_form_unsupported` | `backend/tests/legacy-connectors.test.ts` | `rejects service Source execution and incomplete Source Run context before launching` | 服务型 Source 执行前返回 `FORM_UNSUPPORTED` |
 | `removed/python/tests/acceptance/m2/test_m2_11_source.py::test_policy_violation_defense` | `backend/tests/legacy-connectors.test.ts` | `rejects service Source execution and incomplete Source Run context before launching` | Run 上下文缺字段时拒绝创建 Source Job |
 | `removed/python/tests/acceptance/m7/test_m7_04_backup.py::test_restore_refuses` | `backend/tests/backup.test.ts` | `reports corrupt and missing blobs, extra files, and unsafe paths before restore` | 拒绝损坏备份和非空恢复目录，原 CAS 保留 |
+| `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_none_stays_none` | `backend/tests/legacy-egress.test.ts` | `leaves none isolated and expands only explicitly delegated Machine tiers` | 无出网策略得到空允许列表 |
+| `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_none_stays_none` | `backend/runtime/podman.test.ts` | `emits the ordered Podman run contract and protects fixed environment entries` | 容器使用 none 网络，未注入代理凭证 |
+| `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_allow_exact_host_and_method` | `backend/tests/legacy-egress.test.ts` | `compiles the example Registry and matches exact HTTP(S) hosts` | 真实示例 Registry 解析出指定服务商域名 |
+| `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_allow_exact_host_and_method` | `backend/tests/legacy-egress-forwarder.test.ts` | `authenticates HTTP, pins the resolved address and forwards only the allowed method and end-to-end headers` | 匹配域名和方法后才转发，并剥离代理认证 |
+| `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_no_suffix_match` | `backend/tests/legacy-egress.test.ts` | `compiles the example Registry and matches exact HTTP(S) hosts` | 父域名不会隐式许可子域名 |
+| `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_machine_needs_do_not_expand_policy` | `backend/tests/legacy-egress.test.ts` | `leaves none isolated and expands only explicitly delegated Machine tiers` | Machine 声明只在策略显式委托的等级生效 |
+| `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_connect_without_ca_rejected_when_methods_limited` | `backend/tests/legacy-egress-forwarder.test.ts` | `rejects a CONNECT if the HTTPS method is opaque or a monitor must authorize it` | 方法受限时以 403 拒绝不透明 CONNECT |
+| `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_unproxied_still_denied` | `backend/runtime/podman.test.ts` | `rejects Registry egress before querying an engine with only a configured bridge` | 缺少隔离代理时在访问容器引擎前拒绝 |
+
+归档 M11 的出网验收同时要求持久化主体令牌、审计事件、按需审批及核验主体的秘密分类。Bun 已有本地协议证据和发布与核验分开创建监听器的证据，这些用例仍保留在历史差异中。M2 中依赖模型代理、计量与预算的用例也保留在历史差异中。
 
 `parity --json` 输出逐条差异。历史 Python 验收文件只作为需求和证据索引读取。普通验证检查活动源码的依赖边界、Shell 与表达式调用约束，以及 Python 代码归档。完整代码策略中尚未迁移的检查会在 `parity` 中列出。通过的 Registry 用例会按规则文件和行号记录实际生成诊断的规则及触发用例。未触发的诊断规则仍列入覆盖缺口。
 

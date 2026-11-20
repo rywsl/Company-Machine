@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { Context, CounterIds, FakeClock, LocalProvider, Runner, loadSnapshot } from "../src/legacy";
+import { Context, CounterIds, FakeClock, LocalProvider, Runner, Snapshot, loadSnapshot } from "../src/legacy";
 import { readReceiptPayload, ReceiptStore, renderReceiptPayload, sinkKey, verifyReceipt } from "../src/legacy/connectors";
+import { startEgressForwarder } from "../src/legacy/egress-forwarder";
 import { runCommand } from "../runtime/podman";
 
 const registry = "tests/fixtures/registry-m2";
@@ -166,6 +167,32 @@ test("rejects service Source execution and incomplete Source Run context before 
   expect(runner.jobs.get(service.id)).toMatchObject({ state: "PENDING", attempt: service.attempt });
   expect(existsSync(join(context.root, "jobs", service.id))).toBe(false);
   expect(launches).toBe(0);
+}));
+
+test("uses independent egress listeners for Sink publication and receipt verification", { timeout: 30_000 }, async () => setup(async (context) => {
+  const base = await loadSnapshot(registry);
+  const station = "Station:publish-local@1";
+  const docs = structuredClone(base.docs);
+  const policy = base.key("Policy", base.spec(station).policy);
+  docs[policy].spec.egress = { publish: ["archive-profile"] };
+  mkdirSync(join(context.root, "egress"));
+  await Bun.write(join(context.root, "egress", "profiles.json"), JSON.stringify({ "archive-profile": ["archive.example"] }));
+  const snapshot = new Snapshot(base.root, base.epoch, docs, base.result);
+  const identities = new Set<string>();
+  let closed = 0;
+  const provider = new LocalProvider(localCommands, async (plan) => {
+    expect(plan).toMatchObject({ station, policy, allow: [{ host: "archive.example", tier: "publish" }] });
+    const listener = await startEgressForwarder({ plan, resolve: async () => { throw new Error("unexpected fixture DNS"); } });
+    identities.add(listener.authorization);
+    return { ...listener, async close() { await listener.close(); closed++; } };
+  });
+  const runner = new Runner(context, snapshot, provider);
+  const note = await sealNote(context);
+  const job = await runner.run(runner.submit(station, { note }, { dir: join(context.root, "publication") }).id);
+  expect(job.state).toBe("SEALED");
+  expect(new ReceiptStore(context).forJob(job.id)?.status).toBe("verified");
+  expect(identities.size).toBe(2);
+  expect(closed).toBe(2);
 }));
 
 test("Sink preserves the claim and prevents automatic retries after an uncertain result", { timeout: 90_000 }, async () => setup(async (context) => {

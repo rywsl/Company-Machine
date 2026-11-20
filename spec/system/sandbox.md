@@ -186,6 +186,8 @@ class DockerProvider:
 
 `LocalProvider.open` 不创建容器。它记住 `spec`，按 5.6 做路径映射。`close` 终止还在跑的子进程，不删除目录。
 
+Bun 的 `LocalProvider` 支持使用显式注入的出网代理测试出网协议。`open` 要求 `network: egress` 与 `egressPlan.network` 一致，随后启动该作业专用的回环监听器。`exec` 使用该监听器生成的代理环境变量，覆盖调用方配置中的同名键。`close` 撤销监听器并关闭活动连接。代理缺失或启动失败时，`open` 返回相应的出网错误。此路径用于宿主运行的测试夹具，进程的网络隔离由容器运行时提供。
+
 `exec` 的 `timeout_s` 必须 `> 0`，否则 `SANDBOX_SPEC_INVALID`。超时后终止进程，返回 `ExecResult(exit_code=None, timed_out=True, duration_s=...)`，**禁止**把 `subprocess.TimeoutExpired` 冒泡（README 3.7）。`duration_s` 是 `clock.monotonic()` 的差值，`>= 0`。stdout/stderr 以二进制写入给定路径（父目录不存在则创建）。调用方用 UTF-8、`errors="replace"` 读文本。
 
 Bun 后端在 `exec` 启动时将子进程 stdout 和 stderr 分别重定向到调用方指定的日志文件。Podman、Kiri 和 LocalProvider 的日志在进程返回前即可读取，控制面不需要在内存里保存完整输出。超时终止子进程后保留已写入内容，容器运行时的超时诊断追加到 stderr。`backend/runtime/podman.test.ts` 验证运行中可读取日志并在超时后保留。
@@ -372,6 +374,8 @@ Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都�
 设置 `MAO_CONTAINER_RUNTIME=kiri` 后，Linux 默认使用 `linux-socket` 模式，通过 `docker --host unix:///run/kiri/docker.sock` 访问 Kiri 官方 headless 服务。`kiri.service` 管理 `kiri daemon`、套接字权限和 daemon 的状态目录。运行 MAO 的账户需要有权访问该套接字。健康探针通过 `info` 确认服务端标识为 Kiri，运行时状态显示 `linux-host`。默认仍由 Podman 执行业务沙箱。
 
 `ensure-ready` 先探测并复用已运行的服务。官方套接字不可用时，通过 `systemctl --no-ask-password start kiri.service` 请求就绪，并在有限时间内复查。同一 provider 的并发请求共享一次启动。服务启动失败时返回探测和启动诊断。自定义套接字和显式 context 的生命周期由部署方管理。
+
+官方套接字拒绝当前账户访问时，健康状态提示使用 `sudo kiri host-access "$USER"` 为运行 MAO 的账户配置权限并重新登录。套接字拒绝访问、客户端不可执行或端点属于其他引擎时，`ensure-ready` 直接返回诊断。
 
 测试镜像构建和工位 Operator 注入卷初始化会先确认引擎就绪，因此可以从服务停止状态启动。Kiri 官方 `kiri-lite` 包只提供引擎。部署使用独立 Docker 兼容 CLI，MAO 用 `--host` 固定请求目标。
 

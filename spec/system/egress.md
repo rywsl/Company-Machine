@@ -29,7 +29,7 @@
 | 自签 CA 的生成算法 | 标准库签不出证书。CA 由操作员放到指定路径；没有 CA 时按第 5.4 节失败关闭 |
 | 服务型机器的入站 webhook 监听 | M4。`ingress` 在 M2 只表示 Source **拉取**时的出站白名单 |
 
-Bun 的 Kiri Linux 和 Podman 接收同一形式的受管网络配置。`egressNetwork` 指向出网服务管理的网络，`egressEnv` 允许 `ALL_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。Harness profile 的 `network: egress` 由 `MAO_EGRESS_NETWORK` 显式绑定。Bun 工位当前在 `network: none` 环境中运行，受管代理绑定属于下一段执行路径。
+Bun 的 Kiri Linux 和 Podman 接收同一形式的受管网络配置。`egressNetwork` 指向出网服务管理的网络，`egressEnv` 允许 `ALL_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。Harness profile 的 `network: egress` 由 `MAO_EGRESS_NETWORK` 显式绑定。Bun 工位及回执核验从冻结 Registry 读取策略，并从工厂的 `egress/profiles.json` 读取命名档案。沙箱会收到对应的网络模式和可选出网计划。LocalProvider 通过注入式回环代理验证该路径，Kiri Linux 和 Podman 在隔离代理接入前拒绝带 Registry 出网计划的启动。
 
 `backend/src/legacy/egress.ts` 的 `compileEgress(snapshot, station, profiles)` 从工位绑定的 Policy 编译不可变的 `EgressPlan`。计划携带完整工位键、策略键、网络选项、主机和 HTTP 方法允许列表，以及按需审批和监控元数据。只有显式的 `from-machine` 才从 Machine 的同级配置取值。命名档案由调用方提供。空的主机列表得到零条规则，空的方法列表拒绝全部方法。
 

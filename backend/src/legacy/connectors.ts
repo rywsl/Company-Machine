@@ -10,6 +10,7 @@ import { FactoryError } from "./errors";
 import { canonicalJson, parseDuration, utcIso } from "./foundation";
 import { JobStore, type Job } from "./jobs";
 import { sandboxResources } from "./sandbox";
+import { stationNetwork } from "./sandbox-egress";
 import type { Snapshot } from "./snapshot";
 import { inputsValue, recipeEnv } from "./values";
 import type { Bean } from "./warehouse";
@@ -251,6 +252,7 @@ export async function verifyReceipt(context: Context, snapshot: Snapshot, provid
     if (!Array.isArray(recipe?.run) || !recipe.run.length || (!machine.runtime?.image && provider.name !== "local")) {
       throw new FactoryError("RECEIPT_VERIFY_RECIPE_INVALID", "核验配方缺少命令或镜像");
     }
+    const network = stationNetwork(context.root, snapshot, receipt.station);
     const token = randomUUID().slice(0, 12);
     const principal = `${job.id}-verify-${token}`;
     const root = join(context.root, "jobs", job.id, `verify-${token}`);
@@ -284,7 +286,7 @@ export async function verifyReceipt(context: Context, snapshot: Snapshot, provid
     const env = recipeEnv(loaded, job.params);
     const argv = recipe.run.map((word: string) => render(word, env));
     const sandbox = await provider.open({
-      name: `mao-${principal}`, image: machine.runtime?.image ?? "local", workdir: "/workspace", network: "none",
+      name: `mao-${principal}`, image: machine.runtime?.image ?? "local", workdir: "/workspace", ...network,
       ...sandboxResources(machine.runtime?.resources),
       mounts: [
         { source: inDir, target: "/factory/in", readonly: true },

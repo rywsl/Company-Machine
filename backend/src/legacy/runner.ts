@@ -14,6 +14,7 @@ import { Gate } from "./gate";
 import { JobStore, terminalStates, type Job, type JobPhase } from "./jobs";
 import { buildInvocation, expandControlVars, parseTranscript, renderBrief } from "./operator";
 import { sandboxResources } from "./sandbox";
+import { stationNetwork } from "./sandbox-egress";
 import { nominalTypeId, type Snapshot } from "./snapshot";
 import { inputsValue, paramsValue, recipeEnv } from "./values";
 import type { Bean } from "./warehouse";
@@ -266,6 +267,7 @@ export class Runner {
     }
     mkdirSync(attemptRoot, { recursive: true, mode: 0o700 });
     const station = this.snapshot.spec(job.station);
+    const network = stationNetwork(this.context.root, this.snapshot, job.station);
     if (!existsSync(workspace) && job.attempt > 1 && station.limits?.retries?.mode === "resume") {
       const previous = join(this.attemptPath(job, job.attempt - 1), "workspace");
       if (existsSync(previous)) cpSync(previous, workspace, { recursive: true, verbatimSymlinks: true });
@@ -333,7 +335,7 @@ export class Runner {
         ...(inject ? [{ source: `volume:${volume}`, target: inject.mount as string, readonly: true }] : []),
       ],
       workdir: "/workspace",
-      network: "none",
+      ...network,
       ...sandboxResources(machine.runtime?.resources),
     }).catch(async (error: unknown) => {
       if (inject) await this.provider.removeVolume(volume).catch(() => {});

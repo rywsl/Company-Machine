@@ -7,6 +7,7 @@
 
 import { appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import type { EgressPlan } from "../src/legacy/egress";
 import { spawnLoggedProcess, type LogPaths } from "./process-logs";
 
 export type NetworkMode = "none" | "egress";
@@ -24,6 +25,7 @@ export type SandboxSpec = {
   workdir?: string;
   env?: Record<string, string>;
   network?: NetworkMode;
+  egressPlan?: EgressPlan;
   cpus?: number;
   memoryMb?: number;
   workspaceVolume?: string;
@@ -295,6 +297,7 @@ export class PodmanProvider implements ContainerProvider {
   }
 
   buildRunArgv(spec: SandboxSpec): string[] {
+    this.requireSupportedNetwork(spec);
     const managedEgress = spec.network === "egress" && this.egressNetwork !== null;
     assertSpec(spec, this.allowUnproxiedEgress || managedEgress);
     const network = spec.network === "egress" ? (this.egressNetwork ?? "bridge") : "none";
@@ -400,6 +403,7 @@ export class PodmanProvider implements ContainerProvider {
   }
 
   async open(spec: SandboxSpec): Promise<Sandbox> {
+    this.requireSupportedNetwork(spec);
     await this.requireReady();
     const resolved = await this.resolveImage(spec.image);
     if (spec.workspaceVolume) {
@@ -410,6 +414,10 @@ export class PodmanProvider implements ContainerProvider {
     const result = await this.run(this.buildRunArgv({ ...spec, image: resolved }), { timeoutMs: 120_000 });
     if (result.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", `${this.name} run failed`, { stderr: text(result.stderr) });
     return new PodmanSandbox(this, spec.name);
+  }
+
+  private requireSupportedNetwork(spec: SandboxSpec): void {
+    if (spec.egressPlan) throw new PodmanError("EGRESS_UNSUPPORTED", "Registry egress requires an isolated proxy transport", { network: spec.network });
   }
 
   private async requireReady(): Promise<void> {

@@ -72,6 +72,19 @@ describe("PodmanProvider", () => {
     expectPodmanError(() => provider.buildRunArgv({ ...spec, network: "egress" }), "EGRESS_UNSUPPORTED", { network: "egress" });
   });
 
+  test("rejects Registry egress before querying an engine with only a configured bridge", async () => {
+    const provider = new PodmanProvider({
+      egressNetwork: "mao-egress", runner: async () => { throw new Error("unexpected engine call"); },
+    });
+    await expect(provider.open({
+      ...spec, network: "egress",
+      egressPlan: {
+        station: "Station:runtime-fixture@1", policy: "Policy:runtime-fixture@1", network: "egress",
+        allow: [{ host: "allowed.example", tier: "providers", methods: ["*"] }], monitored: false, onUnlisted: "deny",
+      },
+    })).rejects.toMatchObject({ code: "EGRESS_UNSUPPORTED" });
+  });
+
   test("rejects mounted engine sockets, invalid names and mutable image tags", async () => {
     const provider = new PodmanProvider({ executable: "nonexistent-podman-fixture" });
     for (const [source, target] of [["/var/run/docker.sock", "/var/run/docker.sock"], ["/tmp/Docker.Sock", "/x"], ["/tmp/in", "/run/docker.sock"]]) {

@@ -117,17 +117,30 @@ export class KiriProvider extends PodmanProvider {
   }
 
   async health(timeoutMs = 5_000): Promise<RuntimeHealth> {
+    return (await this.probe(timeoutMs)).health;
+  }
+
+  private async probe(timeoutMs = 5_000): Promise<{ health: RuntimeHealth; canStartService: boolean }> {
     const { platform, machine, env } = this.client;
     const status = { available: false, platform, machine, executable: this.client.argv.join(" "), rootless: null };
     try {
       const result = await this.commandRunner(this.command("info", "--format", "{{.OperatingSystem}}"), { timeoutMs, env });
       if (result.exitCode === 0) {
-        if (new TextDecoder().decode(result.stdout).trim() === "Kiri") return { ...status, available: true };
-        return { ...status, reason: "The configured endpoint did not identify itself as Kiri" };
+        if (new TextDecoder().decode(result.stdout).trim() === "Kiri") {
+          return { health: { ...status, available: true }, canStartService: false };
+        }
+        return { health: { ...status, reason: "The configured endpoint did not identify itself as Kiri" }, canStartService: false };
       }
-      return { ...status, reason: new TextDecoder().decode(result.stderr).trim() || "Kiri is unavailable" };
+      const reason = new TextDecoder().decode(result.stderr).trim() || "Kiri is unavailable";
+      const permissionDenied = /permission denied while trying to connect|connect: permission denied/i.test(reason);
+      const accessHint = permissionDenied && this.client.managedService
+        ? '. Run sudo kiri host-access "$USER" for the MAO account, then start a new login session'
+        : "";
+      return { health: { ...status, reason: reason + accessHint }, canStartService: !permissionDenied };
     } catch (error) {
-      return { ...status, reason: error instanceof Error ? error.message : "Kiri is unavailable" };
+      const reason = error instanceof Error ? error.message : "Kiri is unavailable";
+      const code = (error as { code?: string } | null)?.code;
+      return { health: { ...status, reason }, canStartService: code !== "ENOENT" && code !== "EACCES" };
     }
   }
 
@@ -137,8 +150,8 @@ export class KiriProvider extends PodmanProvider {
   }
 
   private async startService(): Promise<RuntimeHealth> {
-    let health = await this.health();
-    if (health.available || !this.autoStart || !this.client.managedService) return health;
+    let { health, canStartService } = await this.probe();
+    if (!canStartService || !this.autoStart || !this.client.managedService) return health;
     try {
       const started = await this.commandRunner(["systemctl", "--no-ask-password", "start", "kiri.service"], { timeoutMs: 15_000 });
       if (started.exitCode !== 0) {
@@ -152,8 +165,8 @@ export class KiriProvider extends PodmanProvider {
     // The packaged service is Type=simple and can report started before the API binds.
     const deadline = performance.now() + 5_000;
     while (performance.now() < deadline) {
-      health = await this.health(Math.max(1, Math.ceil(deadline - performance.now())));
-      if (health.available) return health;
+      ({ health, canStartService } = await this.probe(Math.max(1, Math.ceil(deadline - performance.now()))));
+      if (!canStartService) return health;
       await new Promise((resolve) => setTimeout(resolve, Math.min(200, Math.max(0, deadline - performance.now()))));
     }
     return health;

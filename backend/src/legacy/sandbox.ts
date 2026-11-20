@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { ContainerProvider, Sandbox, SandboxSpec } from "../../runtime/podman";
 import { spawnLoggedProcess, type LoggedProcess } from "../../runtime/process-logs";
 import { FactoryError } from "./errors";
+import { startLocalSandboxEgress, type SandboxEgress, type StartSandboxForwarder } from "./sandbox-egress";
 
 export type LocalCommandMap = Record<string, string[]>;
 
@@ -55,11 +56,13 @@ function mapping(spec: SandboxSpec): Array<[string, string]> {
 
 export class LocalProvider implements ContainerProvider {
   readonly name = "local";
-  constructor(readonly commands: LocalCommandMap = {}) {}
+  constructor(readonly commands: LocalCommandMap = {}, private readonly startEgress?: StartSandboxForwarder) {}
   buildRunArgv(spec: SandboxSpec): string[] { return this.commands[spec.image] ?? []; }
   async ensureReady(): Promise<{ available: true; platform: string; executable: string; machine: null; rootless: null }> { return { available: true, platform: process.platform, executable: "local", machine: null, rootless: null }; }
   async health(): Promise<{ available: true; platform: string; executable: string; machine: null; rootless: null }> { return this.ensureReady(); }
-  async open(spec: SandboxSpec): Promise<Sandbox> { return new LocalSandboxImpl(spec, this.commands); }
+  async open(spec: SandboxSpec): Promise<Sandbox> {
+    return new LocalSandboxImpl(spec, this.commands, await startLocalSandboxEgress(spec, this.startEgress));
+  }
   async resolveImage(image: string): Promise<string> { return image; }
   async prepareInjectVolume(_image: string, _volume: string): Promise<void> {}
   async removeVolume(_name: string): Promise<boolean> { return false; }
@@ -68,11 +71,11 @@ export class LocalProvider implements ContainerProvider {
 
 class LocalSandboxImpl implements Sandbox {
   private readonly children = new Set<LoggedProcess>();
-  private closed = false;
-  constructor(private readonly spec: SandboxSpec, private readonly commands: LocalCommandMap) {}
+  private closing?: Promise<void>;
+  constructor(private readonly spec: SandboxSpec, private readonly commands: LocalCommandMap, private readonly egress?: SandboxEgress) {}
   get name(): string { return this.spec.name; }
   async exec(argv: string[], options: Parameters<Sandbox["exec"]>[1]) {
-    if (this.closed) throw new FactoryError("SANDBOX_CLOSED", "Local sandbox is closed", { name: this.name });
+    if (this.closing) throw new FactoryError("SANDBOX_CLOSED", "Local sandbox is closed", { name: this.name });
     if (!argv.length || options.timeoutMs <= 0) throw new FactoryError("SANDBOX_SPEC_INVALID", "Invalid local exec request");
     const mappings = mapping(this.spec);
     const command = this.commands[argv[0]] ? [...this.commands[argv[0]], ...argv.slice(1).map((item) => replacePath(item, mappings))] : argv.map((item) => replacePath(item, mappings));
@@ -88,7 +91,7 @@ class LocalSandboxImpl implements Sandbox {
     const mappedWorkdir = replacePath(options.workdir ?? this.spec.workdir ?? "/workspace", mappings);
     const workdir = existsSync(mappedWorkdir) ? mappedWorkdir : process.cwd();
     const started = Date.now();
-    const child = spawnLoggedProcess(command, options, { cwd: workdir, env: environment });
+    const child = spawnLoggedProcess(command, options, { cwd: workdir, env: this.egress?.env(environment) ?? environment });
     this.children.add(child);
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill(9); }, options.timeoutMs);
@@ -97,10 +100,14 @@ class LocalSandboxImpl implements Sandbox {
       return { exitCode: timedOut ? null : exitCode, timedOut, durationMs: Date.now() - started };
     } finally { clearTimeout(timer); this.children.delete(child); }
   }
-  async close(): Promise<void> {
-    this.closed = true;
+  close(): Promise<void> {
+    return this.closing ??= this.closeResources();
+  }
+
+  private async closeResources(): Promise<void> {
     const children = [...this.children];
     for (const child of children) child.kill(9);
-    await Promise.allSettled(children.map((child) => child.exited));
+    const [egress] = await Promise.allSettled([this.egress?.close(), ...children.map((child) => child.exited)]);
+    if (egress.status === "rejected") throw egress.reason;
   }
 }
