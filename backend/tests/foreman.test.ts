@@ -116,6 +116,8 @@ test("registers a repository from a general Foreman turn and uses its new scope"
       expect((await askMailbox(root, 6, "business.graph", { systemId, graph })).ok).toBe(true);
       expect((await askMailbox(root, 7, "business.bind", { systemId, unitId: projectId + ":operator", harness: "codex" })).ok).toBe(true);
       expect((await askMailbox(root, 8, "business.run", { systemId })).ok).toBe(true);
+      const credentialRequest = await askMailbox(root, 9, "project.secret.request", { projectId, name: "VIDEO_API_KEY" });
+      expect(credentialRequest).toMatchObject({ ok: true, result: { status: "requested" } });
       return fakeProcess([JSON.stringify({ type: "result", text: "已登记并组装业务系统" })]);
     } },
   });
@@ -135,12 +137,95 @@ test("registers a repository from a general Foreman turn and uses its new scope"
     expect(app.store.listBusinessSystems()).toHaveLength(1);
     expect(app.store.getBusinessSystem(registration.systemId)?.metadata.graph).toEqual(graph);
     expect(app.store.getProject(registration.projectId)).toMatchObject({
-      name: "sample", sources: [{ kind: "repo_url", repoUrl: "https://code.example/team/sample.git" }], secretRequests: [],
+      name: "sample", sources: [{ kind: "repo_url", repoUrl: "https://code.example/team/sample.git" }],
+      secretRequests: [{ name: "VIDEO_API_KEY", status: "requested" }],
     });
     expect(app.store.listBusinessRuns(registration.systemId)).toHaveLength(1);
     expect(app.store.listForemanInbox()).toHaveLength(0);
     expect(app.events.after().filter(({ type }) => type === "foreman.message.queued")).toHaveLength(1);
   } finally { app.stop(); }
+});
+
+test("requests one project credential through the intake Foreman mailbox without exposing any value", { timeout: 15_000 }, async () => {
+  const deploymentValue = "FOREMAN_FIXTURE_DEPLOYMENT_KEY";
+  const rejectedValue = "fixture-value-from-disallowed-mailbox-argument";
+  const deploymentKey = "MAO_FOREMAN_ANTHROPIC_API_KEY";
+  const deploymentEndpoint = "MAO_FOREMAN_ANTHROPIC_BASE_URL";
+  const previousKey = process.env[deploymentKey];
+  const previousEndpoint = process.env[deploymentEndpoint];
+  let projectId: string;
+  let otherProjectId: string;
+  let request: MailboxReply | undefined;
+  const app = createApp({
+    dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
+    runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
+    foreman: { spawn: async (argv, options) => {
+      expect(argv.join(" ")).toContain("本次项目 ID " + projectId);
+      expect(options.env?.ANTHROPIC_API_KEY === deploymentValue).toBe(true);
+      const root = options.foremanMailbox!;
+      const valid = { projectId, name: "VIDEO_API_KEY", purpose: "生成短片 " + deploymentValue, scope: "制作预览" };
+      const invalid = [
+        { ...valid, projectId: otherProjectId },
+        { ...valid, name: "PATH" },
+        { ...valid, name: deploymentValue },
+        { ...valid, purpose: { value: rejectedValue } },
+        { ...valid, value: rejectedValue },
+      ];
+      for (const [index, args] of invalid.entries()) {
+        const reply = await askMailbox(root, index + 1, "project.secret.request", args);
+        expect(reply).toMatchObject({ ok: false, result: null, error: { code: "FOREMAN_OPERATION_INVALID" } });
+      }
+      request = await askMailbox(root, 6, "project.secret.request", valid);
+      const duplicate = await askMailbox(root, 7, "project.secret.request", { ...valid, purpose: "修改后的用途" });
+      expect(duplicate.ok).toBe(true);
+      expect(duplicate.result).toEqual(request.result);
+      return fakeProcess([JSON.stringify({ type: "result", text: "项目已登记短片制作需求" })]);
+    } },
+  });
+  try {
+    process.env[deploymentKey] = deploymentValue;
+    process.env[deploymentEndpoint] = "https://api.anthropic.com";
+    app.store.saveHarnessProfile({
+      runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session",
+      image: "registry.example/foreman@sha256:" + "a".repeat(64),
+    });
+    const intake = await app.fetch(new Request("http://localhost/api/v1/projects/intake", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "测试项目", repo_url: "https://example.invalid/project" }),
+    }));
+    expect(intake.status).toBe(201);
+    const { project_id, foreman_inbox_id } = await intake.json();
+    projectId = project_id;
+    otherProjectId = app.store.createIntake({
+      name: "同业务内的其他项目", repo_url: "https://example.invalid/other",
+      business_system_id: app.store.getProject(projectId)!.businessSystemId,
+    }).id;
+    await app.foreman.dispatch(foreman_inbox_id);
+    expect(app.store.getForemanMessage(foreman_inbox_id)?.status).toBe("done");
+    const requests = app.store.listSecretRequests();
+    expect(requests).toHaveLength(1);
+    const [stored] = requests;
+    expect(stored).toMatchObject({
+      projectId, name: "VIDEO_API_KEY", status: "requested",
+      metadata: { purpose: "生成短片 [REDACTED]", scope: "制作预览" },
+    });
+    expect(request).toMatchObject({ ok: true });
+    expect(request?.result).toEqual({ id: stored.id, status: "requested" });
+    const events = app.events.after().filter(({ type }) => type === "secret.requested");
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0].data).toMatchObject({ id: stored.id, projectId, name: "VIDEO_API_KEY", status: "requested" });
+    const visible = await app.fetch(new Request("http://localhost/api/web/secrets"));
+    const secretViews = await visible.json();
+    expect(secretViews).toMatchObject([{ id: stored.id, configured: false, request: { project_id: projectId, project_name: "测试项目" } }]);
+    for (const value of [deploymentValue, rejectedValue, stored.vaultRef]) {
+      expect(JSON.stringify([request, events, secretViews]).includes(value)).toBe(false);
+    }
+    expect(JSON.stringify(stored.metadata).includes(deploymentValue)).toBe(false);
+  } finally {
+    if (previousKey === undefined) delete process.env[deploymentKey]; else process.env[deploymentKey] = previousKey;
+    if (previousEndpoint === undefined) delete process.env[deploymentEndpoint]; else process.env[deploymentEndpoint] = previousEndpoint;
+    app.stop();
+  }
 });
 
 test("gives the intake Foreman only registered upload bytes and the expressly selected folder", async () => {

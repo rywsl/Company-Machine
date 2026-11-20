@@ -311,6 +311,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - 取消 Windows 原生 Harness 会终止控制面本次启动且仍在运行的进程树。取消官方 CLI 会话也会取消正在等待的输出读取，避免 npm 命令包装器的子进程持有管道导致会话无法结束。
 - 带 `image` 的 Foreman 和 Operator 会在启动官方 Harness 前调用当前 ContainerProvider 的 readiness。并发启动共享一次 readiness promise，失败时不会启动 Harness
 - Linux Kiri 与 Podman 中的容器厂长通过当前轮的文件邮箱管理业务。容器获得 `/mao/foreman/requests` 写入权限和 `/mao/foreman/responses` 读取权限。请求包含 `id`、`op` 和 `args`，写入临时文件后以 0644 权限原子重命名为 `<id>.json`。MAO 调用固定的业务 API 来查询工位、更新 DAG、绑定 Operator、登记产物与转换、派发运行，并在同名响应文件返回结果。项目接收轮的操作范围是该项目及其所属业务系统，普通厂长轮可操作当轮列出的业务系统。文件通过引用登记。正常结束后处理已提交请求，取消时停止接收新请求，然后清理本轮目录。
+- 厂长发现缺少必需配置时，使用邮箱操作 `project.secret.request` 为当前项目申请一个密钥，参数包括 `projectId`、`name` 和可选的 `purpose`、`scope`。响应只含请求 ID 和状态。项目接收轮只允许当前项目，普通对话轮可以操作该轮列出或新登记的业务系统中的项目。Web 收到 `secret.requested` 后更新厂长面板的项目资源入口，用户可查看请求项目和密钥名并在资源抽屉提交配置。
 - 在普通厂长对话中，`project.register` 使用 `repoUrl` 和可选 `name` 创建项目及业务系统，返回 `projectId` 和 `systemId`。可在同一轮使用这些 ID 配置 Operator、DAG 和运行。省略名称时使用仓库路径最后一段并去除 `.git`。链接须为 HTTP(S)、SSH 或 Git URL，且不携带用户信息、查询参数或片段。登记只保存来源引用并发布项目事件，当前厂长继续处理本轮。
 - Harness 配置的 `session_timeout_s` 为单轮会话的超时秒数，适用于 Foreman 与 Operator 启动官方 CLI、建立 ACP 会话和读取回复。现有配置与新建时省略此值的配置默认 600 秒。接口接受 1 至 2147483 的整数，更新时省略该项保留已保存值。超时记录 `SESSION_TIMEOUT` 并取消本轮子进程，后续已排队的工作继续处理。配置页的连通性验证有独立超时。
 - 容器厂长的通用对话从 SQLite 读取当前来信之前已完成的最近四轮通用对话，按入队顺序作为上下文数据传入。每条消息最多读取一千个字符，并沿用厂长回复的脱敏规则。项目接入轮次只携带本次项目上下文，本机官方 Harness 继续使用原生会话 ID 恢复对话。

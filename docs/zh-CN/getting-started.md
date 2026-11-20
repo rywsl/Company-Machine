@@ -41,7 +41,7 @@ bun run factory status
 ```bash
 sudo systemctl enable --now kiri.service
 sudo kiri host-access "$USER"
-# 重新登录，再执行以下命令
+# 如 host-access 提示文件系统不支持 ACL，重新登录后继续
 export FACTORY_ROOT="$HOME/.local/share/mao"
 MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts

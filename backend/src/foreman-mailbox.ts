@@ -15,12 +15,18 @@ export const foremanMailboxContract = [
   "business.bind 使用 systemId、unitId、harness 和可选 model。",
   "business.artifact 使用 projectId、kind、ref、summary 和可选的 recordType、files。files 只含文件引用。",
   "business.conversion 使用 systemId、kind、summary 和可选 inputs、outputs。business.run 使用 systemId 和可选 inputs。",
-  "文件和物料使用引用，密钥通过项目资源请求流程处理。",
+  "缺少必要密钥时使用 project.secret.request，提供 projectId、name 和可选 purpose、scope。每次申请一个所需密钥。响应只包含请求 id 和状态，请勿传入密钥值。",
+  "文件和物料使用引用。",
 ].join(" ");
 
 type FetchBusiness = (request: Request) => Promise<Response>;
 export type RegisterForemanRepository = (input: { name: string; repoUrl: string }) => { projectId: string; systemId: string };
-type Scope = { systems: ReadonlySet<string>; projectSystem: (projectId: string) => string | undefined; projectId?: string };
+type Scope = {
+  systems: ReadonlySet<string>;
+  projectSystem: (projectId: string) => string | undefined;
+  projectId?: string;
+  redactText?: (value: string) => string;
+};
 type Operation = { method: "GET" | "POST" | "PATCH"; path: string; body?: Record<string, unknown> };
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -45,12 +51,32 @@ function repositoryInput(args: Record<string, unknown>): Parameters<RegisterFore
   } catch { return; }
 }
 
+function projectInScope(projectId: unknown, scope: Scope): projectId is string {
+  if (!identifier(projectId) || (scope.projectId && projectId !== scope.projectId)) return false;
+  const systemId = scope.projectSystem(projectId);
+  return systemId !== undefined && scope.systems.has(systemId);
+}
+
+function secretRequest(args: Record<string, unknown>, scope: Scope): Operation | undefined {
+  const { projectId, name, purpose, scope: usageScope } = args;
+  if (Object.keys(args).some((key) => !["projectId", "name", "purpose", "scope"].includes(key))) return;
+  if (!projectInScope(projectId, scope) || !text(name)) return;
+  const redact = scope.redactText ?? ((value) => value);
+  if (redact(name) !== name) return;
+  if ((purpose !== undefined && typeof purpose !== "string") || (usageScope !== undefined && typeof usageScope !== "string")) return;
+  return { method: "POST", path: "/api/v1/secrets/requests", body: {
+    project_id: projectId,
+    name,
+    purpose: purpose === undefined ? undefined : redact(purpose.trim()),
+    scope: usageScope === undefined ? undefined : redact(usageScope.trim()),
+  } };
+}
+
 function operation(op: string, args: Record<string, unknown>, scope: Scope): Operation | undefined {
   const { systemId, projectId, unitId, harness, model, graph, kind, ref, summary, recordType, files, inputs, outputs } = args;
+  if (op === "project.secret.request") return secretRequest(args, scope);
   if (op === "business.artifact") {
-    if (!identifier(projectId) || (scope.projectId && projectId !== scope.projectId)) return;
-    const system = scope.projectSystem(projectId);
-    if (!system || !scope.systems.has(system) || !reference(ref) || !text(kind) || !text(summary)) return;
+    if (!projectInScope(projectId, scope) || !reference(ref) || !text(kind) || !text(summary)) return;
     if (recordType !== undefined && recordType !== "artifact" && recordType !== "material") return;
     if (files !== undefined && (!Array.isArray(files) || files.some((file) => !object(file) || !reference(file.ref)))) return;
     return { method: "POST", path: "/api/v1/projects/" + projectId + "/artifacts", body: {
@@ -86,6 +112,7 @@ function reported(op: string, value: unknown): unknown {
     return value.filter(object).map(({ id, kind, projectId, name, status }) => ({ id, kind, projectId, name, status }));
   }
   if (!object(value)) return null;
+  if (op === "project.secret.request") return { id: value.request_id, status: value.state };
   if (op === "business.bind" && object(value.unit) && object(value.binding)) {
     return { id: value.unit.id, harness: value.binding.harnessRuntime, model: value.binding.model };
   }
@@ -127,6 +154,9 @@ export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, r
           method: request.method,
           ...(request.body && { headers: { "content-type": "application/json" }, body: JSON.stringify(request.body) }),
         }));
+        if (op === "project.secret.request" && response.status === 400) {
+          return denied(id, "FOREMAN_OPERATION_INVALID", "项目密钥名称无效");
+        }
         if (!response.ok) return denied(id, "FOREMAN_OPERATION_FAILED", "业务操作失败（HTTP " + response.status + "）");
         return { id, ok: true, result: reported(op, await response.json()), error: null };
       },

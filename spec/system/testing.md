@@ -92,7 +92,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --only operator
 MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 ```
 
-设置 `MAO_CONTAINER_RUNTIME=podman` 可复用这套验收。容器内的 Bun 夹具通过厂长邮箱登记仓库、查询 Operator 和 Machine 并保存 DAG。随后通过项目接收入口提交文件夹和私有 CAS 上传文件，验证两项来源的挂载只读、交付字节正确、该轮无法登记其他仓库，以及会话结束时邮箱和暂存文件已清理。夹具通过官方 CLI 的 JSONL 适配器返回回复，运行时无需模型凭证。
+设置 `MAO_CONTAINER_RUNTIME=podman` 可复用这套验收。容器内的 Bun 夹具通过厂长邮箱登记仓库、查询 Operator 和 Machine、保存 DAG，并为登记的项目申请一个必需密钥。重复申请应复用同一记录。随后通过项目接收入口提交文件夹和私有 CAS 上传文件，验证两项来源的挂载只读、交付字节正确、该轮无法登记其他仓库，以及会话结束时邮箱和暂存文件已清理。夹具通过官方 CLI 的 JSONL 适配器返回回复，运行时无需模型凭证。
 
 ### 5.2 端到端
 
@@ -128,7 +128,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
 | `backend/tests/business-package.test.ts` | 业务包 CLI 跨目录移交、字节闭包校验、回滚和已知密钥拒绝 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
-| `backend/tests/foreman.test.ts` | 厂长队列、官方 Harness 回复事件、容器邮箱的业务持久化、项目范围、登记来源只读交接和暂存文件清理 |
+| `backend/tests/foreman.test.ts` | 厂长队列、官方 Harness 回复事件、容器邮箱的业务持久化、项目范围、单个项目密钥请求、登记来源只读交接和暂存文件清理 |
 | `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |

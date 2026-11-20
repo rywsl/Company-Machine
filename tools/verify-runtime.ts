@@ -77,12 +77,13 @@ const checkedReply = "已登记仓库、更新业务图并验证只读来源";
 const folderText = "selected project folder";
 const upload = [0, 1, 13, 255];
 const repoUrl = "https://code.example/team/runtime-fixture.git";
+const projectKey = "PROJECT_FIXTURE_KEY";
 const graph = { nodes: [{ id: "operator" }, { id: "machine" }], edges: [{ source: "operator", target: "machine" }] };
 
 const foremanFixture = `
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-const { reply, folderText, upload, repoUrl, graph } = ${JSON.stringify({ reply: checkedReply, folderText, upload, repoUrl, graph })};
+const { reply, folderText, upload, repoUrl, graph, projectKey } = ${JSON.stringify({ reply: checkedReply, folderText, upload, repoUrl, graph, projectKey })};
 const mailbox = "/mao/foreman";
 const mountInfo = readFileSync("/proc/self/mountinfo", "utf8").split("\\n").map((line) => line.split(" "));
 const mode = (path) => mountInfo.find((fields) => fields[4] === path)?.[5].split(",")[0];
@@ -119,12 +120,18 @@ try {
     assert.equal(mode("/mao/sources/1"), undefined);
     const registered = await ask(1, "project.register", { repoUrl });
     assert.equal(registered.ok, true, JSON.stringify(registered.error));
-    const { systemId } = registered.result;
+    const { systemId, projectId } = registered.result;
     const units = await ask(2, "business.units", { systemId });
     assert.equal(units.ok, true, JSON.stringify(units.error));
     assert.equal(units.result.length, 2);
     const recorded = await ask(3, "business.graph", { systemId, graph });
     assert.equal(recorded.ok, true, JSON.stringify(recorded.error));
+    const secret = { projectId, name: projectKey, purpose: "Run the project's publishing step" };
+    const requested = await ask(4, "project.secret.request", secret);
+    assert.equal(requested.ok, true, JSON.stringify(requested.error));
+    assert.equal(typeof requested.result.id, "string");
+    assert.deepEqual(Object.keys(requested.result).sort(), ["id", "status"]);
+    assert.deepEqual((await ask(5, "project.secret.request", secret)).result, requested.result);
   }
   console.log(JSON.stringify({ type: "result", text: reply }));
 } catch (error) {
@@ -181,6 +188,11 @@ async function verifyForeman(provider: string): Promise<void> {
     assert.ok(project?.businessSystemId);
     assert.equal(project.sources[0].repoUrl, repoUrl);
     assert.deepEqual(app.store.getBusinessSystem(project.businessSystemId)?.metadata.graph, graph);
+    const requests = app.store.listSecretRequests();
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].name, projectKey);
+    assert.equal(requests[0].projectId, project.id);
+    assert.ok(app.events.after().some(({ type, data }) => type === "secret.requested" && data.id === requests[0].id));
 
     await mkdir(sourceFolder, { mode: 0o755 });
     await writeText(join(sourceFolder, "readme.txt"), folderText);
@@ -200,7 +212,7 @@ async function verifyForeman(provider: string): Promise<void> {
     assert.notEqual(uploads[0], blob);
     for (const path of [...mailboxes, ...uploads]) await assert.rejects(stat(path), { code: "ENOENT" });
     assert.equal(app.store.listTalkMessages().filter(({ body }) => body === checkedReply).length, 2);
-    console.log(`${provider}: 厂长邮箱、仓库登记、业务图、项目来源只读挂载和清理通过`);
+    console.log(`${provider}: 厂长邮箱、仓库登记、业务图、项目密钥申请、项目来源只读挂载和清理通过`);
     passed = true;
   } finally {
     app.stop();
