@@ -38,7 +38,7 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
   const app = createApp({
     dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
     runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
-    foreman: { spawn: async (argv, options) => {
+    foreman: { prepareSources: async () => undefined, spawn: async (argv, options) => {
       root = options.foremanMailbox;
       if (!root) throw new Error("Expected scoped mailbox");
       sourcePrompt = argv.join(" ");
@@ -96,7 +96,7 @@ test("registers a repository from a general Foreman turn and uses its new scope"
   const app = createApp({
     dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
     runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
-    foreman: { spawn: async (_argv, options) => {
+    foreman: { prepareSources: async () => undefined, spawn: async (_argv, options) => {
       const root = options.foremanMailbox!;
       const invalid = [
         "https://user:secret@code.example/team/private.git",
@@ -246,7 +246,7 @@ test("requests one project credential through the intake Foreman mailbox without
   const app = createApp({
     dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
     runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
-    foreman: { spawn: async (argv, options) => {
+    foreman: { prepareSources: async () => undefined, spawn: async (argv, options) => {
       expect(argv.join(" ")).toContain("本次项目 ID " + projectId);
       expect(options.env?.ANTHROPIC_API_KEY === deploymentValue).toBe(true);
       const root = options.foremanMailbox!;

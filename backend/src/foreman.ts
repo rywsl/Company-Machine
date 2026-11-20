@@ -18,6 +18,7 @@ export interface ForemanCoordinatorOptions {
   acpSpawn?: AcpSpawn;
   ensureRuntime?: () => Promise<void>;
   factoryEnv?: Record<string, string>;
+  readSecret?: (ref: string) => string | undefined;
   fetchBusiness?: (request: Request) => Promise<Response>;
   registerRepository?: RegisterRepository;
   prepareSources?: PrepareProjectSources;
@@ -154,7 +155,7 @@ export class ForemanCoordinator {
     const turn = new HarnessTurn(profile.sessionTimeoutSeconds);
     const owner: ActiveForemanTurn = { turn };
     this.turns.set(id, owner);
-    const credential = foremanCredential(profile);
+    const credential = foremanCredential(profile, this.options.readSecret);
     const useAcp = requireDeclaredTransport(definition, acpAvailable) === "acp";
     const transport = useAcp
       ? new AcpTransport(definition, turn.ownProcess(this.options.acpSpawn ?? defaultAcpSpawn))

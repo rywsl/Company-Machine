@@ -109,7 +109,7 @@ export interface Artifact {
 
 export type Material = Artifact & { recordType: "material" };
 
-export type SecretRequestStatus = "requested" | "available" | "denied" | "revoked";
+export type SecretRequestStatus = "requested" | "available" | "denied" | "revoked" | "expired";
 
 export interface SecretRequest {
   id: string;

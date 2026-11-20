@@ -15,6 +15,7 @@ interface VerificationOptions {
   ensureRuntime: () => Promise<void>;
   signal: AbortSignal;
   timeoutMs?: number;
+  readSecret?: (ref: string) => string | undefined;
 }
 
 const failed = (reason: string): Outcome => ({ state: "failed", reason });
@@ -23,7 +24,7 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
   const definition = resolveOfficialHarness(profile.runtime);
   if (!definition) return failed("未找到配置的官方 Harness");
   let env: Record<string, string>;
-  const credential = foremanCredential(profile);
+  const credential = foremanCredential(profile, options.readSecret);
   try {
     env = harnessEndpointEnv(definition, credential?.baseUrl ?? profile.baseUrl);
     if (credential) env[credential.variable] = credential.value;

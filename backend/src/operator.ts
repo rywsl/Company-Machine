@@ -212,6 +212,7 @@ export class OperatorCoordinator {
       const secretValues = Object.values(credentials);
       let failed = false;
       let finished = false;
+      let recordsProduced = false;
       for await (const emitted of turn.events(session)) {
         if (this.closed) return;
         const event = redactCredentialValues(emitted, secretValues) as HarnessEvent;
@@ -221,7 +222,17 @@ export class OperatorCoordinator {
         }
         if (event.type === "record") {
           const draft = this.recordFromEvent(event, unit.projectId, unit, definition.id);
-          if (draft) {
+          if (!draft) {
+            failed = true;
+          } else {
+            recordsProduced = true;
+            const invalidRefs = this.options.store.invalidBusinessInputRefs(unit.businessSystemId, [
+              ...(draft.inputs ?? []), ...(draft.lineage ?? []),
+            ]);
+            if (invalidRefs.length) {
+              failed = true;
+              continue;
+            }
             const staged = (draft.files ?? []).flatMap((file, position) => file && typeof file === "object" && Object.hasOwn(file, "staged")
               ? [{ position, file: file as unknown as StagedMaterialFile }] : []);
             if (staged.length) {
@@ -231,6 +242,19 @@ export class OperatorCoordinator {
               const artifact = this.options.store.addArtifact(draft);
               outputIds.add(artifact.ref);
               this.options.events.publish("artifact.created", artifact);
+              if (artifact.inputs?.length || artifact.lineage?.length) {
+                const conversion = this.options.store.createBusinessConversion({
+                  businessSystemId: unit.businessSystemId,
+                  kind: "record-production",
+                  summary: artifact.summary ?? artifact.title ?? `生成 ${artifact.kind}`,
+                  status: "completed",
+                  inputs: [...new Set([...(artifact.inputs ?? []), ...(artifact.lineage ?? [])])],
+                  outputs: [artifact.ref],
+                  producer: artifact.producer ? { operator: artifact.producer.operator, harness: artifact.producer.harness } : undefined,
+                  metadata: { artifact_id: artifact.id, schema: "mao.business-record/1" },
+                });
+                this.options.events.publish("business-conversion.created", conversion);
+              }
             }
           }
         }
@@ -260,6 +284,7 @@ export class OperatorCoordinator {
         this.options.store.resumeResourceRuns(requested.values().next().value!);
         return;
       }
+      if (!failed && !recordsProduced) failed = true;
       let completed: UnitRun | undefined;
       if (!failed && materialStage && pendingFiles.length) {
         if (!finished) throw new Error("官方 Harness 没有完成本轮，无法收取产物");
@@ -278,14 +303,28 @@ export class OperatorCoordinator {
             const artifact = store.addArtifact(draft);
             store.registerArtifactFiles(artifact.id, [...byPosition].map(([position, { digest, size }]) => ({ position, digest, size })));
             outputs.push(`${artifact.recordType}://${artifact.id}`);
-            return store.appendEvent("artifact.created", artifact);
-          });
+            const artifactEvent = store.appendEvent("artifact.created", artifact);
+            if (artifact.inputs?.length || artifact.lineage?.length) {
+              const conversion = store.createBusinessConversion({
+                businessSystemId: unit.businessSystemId,
+                kind: "record-production",
+                summary: artifact.summary ?? artifact.title ?? `生成 ${artifact.kind}`,
+                status: "completed",
+                inputs: [...new Set([...(artifact.inputs ?? []), ...(artifact.lineage ?? [])])],
+                outputs: [artifact.ref],
+                producer: artifact.producer ? { operator: artifact.producer.operator, harness: artifact.producer.harness } : undefined,
+                metadata: { artifact_id: artifact.id, schema: "mao.business-record/1" },
+              });
+              return [artifactEvent, store.appendEvent("business-conversion.created", conversion)];
+            }
+            return [artifactEvent];
+          }).flat();
           return { events, completed: store.completeUnitRun(unitRun.id, "completed", [...new Set(outputs)], undefined, owner.token) };
         }).immediate();
         for (const event of saved.events) this.options.events.notifyCommitted(event);
         completed = saved.completed;
       } else {
-        completed = this.options.store.completeUnitRun(unitRun.id, failed ? "failed" : "completed", [...outputIds], failed ? "official-harness-failed" : undefined, owner.token);
+        completed = this.options.store.completeUnitRun(unitRun.id, failed ? "failed" : "completed", [...outputIds], failed ? (recordsProduced ? "official-harness-failed" : "official-harness-produced-no-record") : undefined, owner.token);
       }
       if (completed) this.options.events.publish("operator.run.completed", completed);
       if (completed?.status === "completed") return completed.id;
@@ -329,7 +368,14 @@ export class OperatorCoordinator {
   private recordFromEvent(event: HarnessEvent, projectId: string, unit: { id: string; machineRef?: string }, harness: string): ArtifactDraft | undefined {
     const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata as Record<string, unknown> : {};
     const value = metadata.record && typeof metadata.record === "object" ? metadata.record as Record<string, unknown> : metadata;
-    if (typeof value.kind !== "string" || typeof value.ref !== "string" || typeof value.summary !== "string") return undefined;
+    if (typeof value.kind !== "string" || typeof value.ref !== "string"
+      || (typeof value.title !== "string" && typeof value.description !== "string" && typeof value.summary !== "string")) return undefined;
+    if (value.schema !== undefined && value.schema !== "mao.business-record/1") return undefined;
+    if (Array.isArray(value.files) && value.files.some((file) => {
+      if (!file || typeof file !== "object") return true;
+      const item = file as Record<string, unknown>;
+      return typeof item.ref !== "string" && typeof item.staged !== "string";
+    })) return undefined;
     return {
       projectId,
       recordType: value.record_type === "artifact" ? "artifact" : "material",

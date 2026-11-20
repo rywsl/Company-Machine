@@ -22,10 +22,36 @@ import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefini
 import type { AcpSpawn } from "./acp";
 import { validSessionTimeout } from "./harness-turn";
 
-const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" };
+const configuredCorsOrigin = process.env.MAO_CORS_ORIGIN?.trim();
+const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...(configuredCorsOrigin ? { "access-control-allow-origin": configuredCorsOrigin, "vary": "Origin" } : {}) };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
 const SECRET_TEXT = /(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi;
 const redactText = (value: string) => value.replace(SECRET_TEXT, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
+
+function isLoopbackHost(host: string): boolean {
+  const value = host.replace(/^\[|\]$/g, "").split(":")[0].toLowerCase();
+  return value === "localhost" || value === "127.0.0.1" || value === "::1";
+}
+
+function corsHeaders(request: Request): Record<string, string> {
+  const configured = process.env.MAO_CORS_ORIGIN?.trim();
+  const origin = request.headers.get("origin");
+  return configured && origin === configured ? { "access-control-allow-origin": configured, "vary": "Origin" } : {};
+}
+
+function authorizedRequest(request: Request): boolean {
+  const token = process.env.MAO_AUTH_TOKEN?.trim();
+  const loopback = isLoopbackHost(new URL(request.url).hostname);
+  if (!token && loopback) return true;
+  const authorization = request.headers.get("authorization") ?? "";
+  if (!token || authorization !== `Bearer ${token}`) return false;
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return true;
+  const csrf = process.env.MAO_CSRF_TOKEN?.trim();
+  if (csrf && request.headers.get("x-mao-csrf") !== csrf) return false;
+  const origin = request.headers.get("origin");
+  const configuredOrigin = process.env.MAO_CORS_ORIGIN?.trim();
+  return !origin || !configuredOrigin || origin === configuredOrigin;
+}
 
 export interface BackendApp {
   store: SqliteStore;
@@ -147,9 +173,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)]);
   const foreman = new ForemanCoordinator({
     store, events, ...options.foreman, ensureRuntime,
+    readSecret: (ref) => vault.get(ref),
     factoryEnv: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: databasePath(store.legacyPath), BUSINESS_DB_PATH: databasePath(store.dbPath) },
     fetchBusiness: (request) => fetch(request),
-    prepareSources,
+    prepareSources: options.foreman?.prepareSources ?? prepareSources,
     registerRepository,
   });
   let stopped = false;
@@ -200,7 +227,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   };
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...headers, "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "content-type,last-event-id" } });
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...headers, ...corsHeaders(request), "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "authorization,content-type,last-event-id,x-mao-csrf" } });
+    if (url.pathname.startsWith("/api/") && !authorizedRequest(request)) return response({ code: "AUTH_REQUIRED", message: "需要本地身份或 Bearer token" }, 401);
     if (url.pathname === "/healthz" && request.method === "GET") return response({ ok: true });
     if (url.pathname === "/api/v1/runtime" && request.method === "GET") {
       const health = await runtimeHealth();
@@ -288,6 +316,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (body.inputs !== undefined && (!Array.isArray(body.inputs) || body.inputs.some((item: unknown) => typeof item !== "string"))) return response({ error: "inputs must be string references" }, 400);
       if (body.outputs !== undefined && (!Array.isArray(body.outputs) || body.outputs.some((item: unknown) => typeof item !== "string"))) return response({ error: "outputs must be string references" }, 400);
       if (!store.getBusinessSystem(conversionMatch[1])) return response({ error: "business system was not found" }, 404);
+      const refs = [...(Array.isArray(body.inputs) ? body.inputs : []), ...(Array.isArray(body.outputs) ? body.outputs : [])];
+      const invalid = store.invalidBusinessInputRefs(conversionMatch[1], refs);
+      if (invalid.length) return response({ error: "conversion references must belong to the current business system", detail: { refs: invalid } }, 400);
       const conversion = store.createBusinessConversion({ businessSystemId: conversionMatch[1], kind: body.kind, summary: body.summary, status: body.status === "running" || body.status === "completed" || body.status === "failed" ? body.status : "planned", inputs: body.inputs ?? [], outputs: body.outputs ?? [], producer: body.producer && typeof body.producer === "object" ? body.producer : undefined, metadata: body.metadata && typeof body.metadata === "object" ? body.metadata : {} });
       events.publish("business-conversion.created", conversion);
       return response(conversion, 201);
@@ -455,9 +486,28 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (body.files !== undefined && (!Array.isArray(body.files) || body.files.some((file: unknown) => !file || typeof file !== "object" || typeof (file as any).ref !== "string"))) return response({ error: "files must contain file references" }, 400);
       const project = store.getProject(artifactMatch[1]);
       if (!project) return response({ error: "project was not found" }, 404);
+      if (body.schema !== undefined && body.schema !== "mao.business-record/1") return response({ error: "unsupported business record schema" }, 400);
+      if (project.businessSystemId) {
+        const references = [...(Array.isArray(body.inputs) ? body.inputs : []), ...(Array.isArray(body.lineage) ? body.lineage : [])];
+        const invalid = store.invalidBusinessInputRefs(project.businessSystemId, references);
+        if (invalid.length) return response({ error: "record references must belong to the current business system", detail: { refs: invalid } }, 400);
+      }
       const metadata = { ...body.metadata, record_type: body.record_type, title: body.title, description: body.description, summary: body.summary, purpose: body.purpose, status: body.status, producer: body.producer, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage };
       const artifact = store.addArtifact({ projectId: project.id, sourceId: typeof body.source_id === "string" ? body.source_id : undefined, recordType: body.record_type, kind: body.kind, ref: body.ref, title: typeof body.title === "string" ? body.title : undefined, description: typeof body.description === "string" ? body.description : undefined, status: typeof body.status === "string" ? body.status : undefined, producer: body.producer && typeof body.producer === "object" ? body.producer : undefined, summary: body.summary, purpose: typeof body.purpose === "string" ? body.purpose : undefined, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage, metadata });
       events.publish("artifact.created", artifact);
+      if (project.businessSystemId && (artifact.inputs?.length || artifact.lineage?.length)) {
+        const conversion = store.createBusinessConversion({
+          businessSystemId: project.businessSystemId,
+          kind: "record-production",
+          summary: artifact.summary ?? artifact.title ?? `生成 ${artifact.kind}`,
+          status: "completed",
+          inputs: [...new Set([...(artifact.inputs ?? []), ...(artifact.lineage ?? [])])],
+          outputs: [artifact.ref],
+          producer: artifact.producer ? { operator: artifact.producer.operator, harness: artifact.producer.harness } : undefined,
+          metadata: { artifact_id: artifact.id, schema: "mao.business-record/1" },
+        });
+        events.publish("business-conversion.created", conversion);
+      }
       return response(publicArtifact(artifact), 201);
     }
     if (url.pathname === "/api/v1/talk" && request.method === "POST") {
@@ -514,15 +564,39 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       events.publish("secret.requested", visible);
       return response({ request_id: requestRecord.id, state: requestRecord.status, request: visible }, 201);
     }
+    const secretActionMatch = url.pathname.match(/^\/api\/v1\/secrets\/requests\/([^/]+)\/(deny|revoke|rotate|audit)$/);
+    if (secretActionMatch && request.method === "GET" && secretActionMatch[2] === "audit") {
+      const record = store.getSecretRequest(secretActionMatch[1]);
+      return record ? response(store.listSecretAudit(record.id)) : response({ error: "secret request was not found" }, 404);
+    }
+    if (secretActionMatch && request.method === "POST" && secretActionMatch[2] !== "audit") {
+      const record = store.getSecretRequest(secretActionMatch[1]);
+      if (!record) return response({ error: "secret request was not found" }, 404);
+      if (secretActionMatch[2] === "rotate") {
+        if (record.status === "revoked") return response({ error: "secret request is already revoked" }, 409);
+        store.setSecretStatus(record.id, "revoked", "user", { reason: "rotation" });
+        vault.delete(record.vaultRef);
+        const rotated = store.createSecretRequest({ projectId: record.projectId, name: record.name, vaultRef: `vault://secret/${store.uuid()}`, metadata: { ...record.metadata, rotated_from: record.id } });
+        events.publish("secret.rotated", { id: rotated.id, projectId: rotated.projectId, name: rotated.name, status: rotated.status });
+        return response({ request_id: rotated.id, state: rotated.status }, 201);
+      }
+      const status = secretActionMatch[2] === "deny" ? "denied" : "revoked";
+      const updated = store.setSecretStatus(record.id, status, "user");
+      if (status === "revoked") vault.delete(record.vaultRef);
+      events.publish(`secret.${status}`, { id: record.id, projectId: record.projectId, name: record.name, status: updated?.status ?? status });
+      return response({ request_id: record.id, state: updated?.status ?? status }, 200);
+    }
     const secretValueMatch = url.pathname.match(/^\/api\/v1\/secrets\/requests\/([^/]+)\/value$/);
     if (secretValueMatch && request.method === "POST") {
       const requestRecord = store.getSecretRequest(secretValueMatch[1]);
       if (!requestRecord) return response({ error: "secret request was not found" }, 404);
       const body = await readJson(request);
       if (typeof body.value !== "string" || body.value.length === 0) return response({ error: "value is required" }, 400);
+      if (requestRecord.status !== "requested") return response({ error: `secret request is ${requestRecord.status}` }, 409);
       vault.put(requestRecord.vaultRef, body.value);
       const { runIds, event } = store.db.transaction(() => {
         const available = store.markSecretAvailable(requestRecord.id);
+        if (!available) throw new Error("secret request changed while writing");
         const runIds = store.resumeResourceRuns(requestRecord.id);
         const event = store.appendEvent("secret.available", {
           id: requestRecord.id, projectId: requestRecord.projectId, name: requestRecord.name, status: available?.status ?? "available",
@@ -594,7 +668,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       verificationJobs.set(profile.id, controller);
       events.publish("harness.profile.verification.requested", { id: profile.id, runtime: profile.runtime, role: profile.role });
       const transportOptions = profile.role === "operator" ? options.operator : options.foreman;
-      void verifyHarness(profile, { ...transportOptions, ensureRuntime, signal: controller.signal, timeoutMs: options.harnessVerificationTimeoutMs }).then(({ state, reason }) => {
+      void verifyHarness(profile, { ...transportOptions, ensureRuntime, readSecret: (ref) => vault.get(ref), signal: controller.signal, timeoutMs: options.harnessVerificationTimeoutMs }).then(({ state, reason }) => {
         if (verificationJobs.get(profile.id) !== controller) return;
         verificationJobs.delete(profile.id);
         const current = store.listHarnessProfiles().find((item) => item.id === profile.id);
@@ -1005,7 +1079,7 @@ function eventsResponse(events: EventBus, cursor: string | null, signal: AbortSi
     },
     cancel() { cleanup(); },
   });
-  return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "connection": "keep-alive", "access-control-allow-origin": "*" } });
+  return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "connection": "keep-alive" } });
 }
 
 export function startServer(options: BackendAppOptions & { port?: number; hostname?: string } = {}) {

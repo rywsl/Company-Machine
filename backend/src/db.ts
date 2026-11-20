@@ -23,6 +23,8 @@ import type {
   UnitRun,
 } from "./models";
 
+export const BUSINESS_RECORD_SCHEMA = "mao.business-record/1";
+
 const defaultFactoryDatabase = () => process.env.FACTORY_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db");
 const json = (value: unknown) => JSON.stringify(value ?? {});
 const parseJson = (value: unknown): Record<string, unknown> => {
@@ -126,6 +128,11 @@ export class SqliteStore {
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, vault_ref TEXT NOT NULL,
         status TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS secret_audit (
+        id TEXT PRIMARY KEY, request_id TEXT NOT NULL, action TEXT NOT NULL,
+        unit_run_id TEXT, actor TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS secret_audit_request ON secret_audit(request_id, created_at, id);
       CREATE TABLE IF NOT EXISTS harness_profiles (
         id TEXT PRIMARY KEY, runtime TEXT NOT NULL, role TEXT NOT NULL, base_url TEXT NOT NULL,
         model TEXT NOT NULL, mode TEXT NOT NULL, image TEXT, network TEXT, secret_ref TEXT,
@@ -809,6 +816,7 @@ export class SqliteStore {
   addArtifact(input: Omit<Artifact, "id" | "createdAt">, id = this.uuid()): Artifact {
     const metadata: Record<string, unknown> = {
       ...(input.metadata ?? {}),
+      schema: typeof input.metadata?.schema === "string" ? input.metadata.schema : BUSINESS_RECORD_SCHEMA,
       record_type: input.recordType ?? (input.metadata?.record_type === "material" ? "material" : "artifact"),
       title: input.title ?? input.metadata?.title,
       description: input.description ?? input.metadata?.description,
@@ -929,6 +937,19 @@ export class SqliteStore {
   }
 
   createBusinessConversion(input: Omit<BusinessConversion, "id" | "createdAt" | "updatedAt">): BusinessConversion {
+    const invalid = this.invalidBusinessInputRefs(input.businessSystemId, [...input.inputs, ...input.outputs]);
+    if (invalid.length) throw new Error("conversion input references are outside the business system");
+    const existing = this.db.query<any>(`
+      SELECT * FROM business_conversions
+      WHERE business_system_id=? AND kind=? AND summary=? AND inputs=? AND outputs=?
+      ORDER BY created_at DESC, id DESC LIMIT 1
+    `).get(input.businessSystemId, input.kind, input.summary, json(input.inputs), json(input.outputs));
+    if (existing) return {
+      id: existing.id, businessSystemId: existing.business_system_id, kind: existing.kind,
+      summary: existing.summary, status: existing.status, inputs: parseList(existing.inputs),
+      outputs: parseList(existing.outputs), producer: existing.producer ? parseJson(existing.producer) as BusinessConversion["producer"] : undefined,
+      metadata: parseJson(existing.metadata), createdAt: existing.created_at, updatedAt: existing.updated_at,
+    };
     const timestamp = this.timestamp();
     const value: BusinessConversion = { ...input, id: this.uuid(), createdAt: timestamp, updatedAt: timestamp };
     this.db.query("INSERT INTO business_conversions (id,business_system_id,kind,summary,status,inputs,outputs,producer,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
@@ -978,7 +999,7 @@ export class SqliteStore {
 
   createSecretRequest(input: { projectId: string; name: string; vaultRef: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }): SecretRequest {
     return this.db.transaction(() => {
-      const existing = this.db.query<{ id: string }>("SELECT id FROM secret_requests WHERE project_id=? AND name=? ORDER BY status='available' DESC, created_at, id LIMIT 1")
+      const existing = this.db.query<{ id: string }>("SELECT id FROM secret_requests WHERE project_id=? AND name=? AND status IN ('requested','available') ORDER BY status='available' DESC, created_at DESC, id DESC LIMIT 1")
         .get(input.projectId, input.name);
       if (existing) return this.getSecretRequest(existing.id)!;
       const timestamp = this.timestamp();
@@ -986,6 +1007,7 @@ export class SqliteStore {
         status: input.status ?? "requested", metadata: input.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
       this.db.query("INSERT INTO secret_requests (id,project_id,name,vault_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
         .run(value.id, value.projectId, value.name, value.vaultRef, value.status, json(value.metadata), timestamp, timestamp);
+      this.recordSecretAudit(value.id, "requested", "control", undefined, { name: value.name });
       return value;
     }).immediate();
   }
@@ -996,7 +1018,11 @@ export class SqliteStore {
 
   unitSecretRequests(unitRunId: string): SecretRequest[] {
     const ids = this.db.query<{ request_id: string }>("SELECT request_id FROM unit_secret_requests WHERE unit_run_id=? ORDER BY request_id").all(unitRunId);
-    return ids.flatMap(({ request_id }) => this.getSecretRequest(request_id) ?? []);
+    return ids.flatMap(({ request_id }) => {
+      const request = this.getSecretRequest(request_id);
+      if (request?.status === "available") this.recordSecretAudit(request.id, "used", "operator", unitRunId);
+      return request ? [request] : [];
+    });
   }
 
   resumeResourceRuns(requestId?: string): string[] {
@@ -1229,8 +1255,32 @@ export class SqliteStore {
 
   markSecretAvailable(id: string): SecretRequest | undefined {
     const timestamp = this.timestamp();
-    this.db.query("UPDATE secret_requests SET status = 'available', updated_at = ? WHERE id = ?").run(timestamp, id);
+    const changed = this.db.query("UPDATE secret_requests SET status = 'available', updated_at = ? WHERE id = ? AND status = 'requested'").run(timestamp, id);
+    if (changed.changes === 0) return undefined;
+    this.recordSecretAudit(id, "available", "user");
     return this.getSecretRequest(id);
+  }
+
+  setSecretStatus(id: string, status: SecretRequest["status"], actor = "user", detail: Record<string, unknown> = {}): SecretRequest | undefined {
+    const current = this.getSecretRequest(id);
+    if (!current || current.status === status) return current;
+    const timestamp = this.timestamp();
+    const changed = this.db.query("UPDATE secret_requests SET status=?, updated_at=? WHERE id=?").run(status, timestamp, id);
+    if (changed.changes === 0) return undefined;
+    this.recordSecretAudit(id, status, actor, undefined, detail);
+    return this.getSecretRequest(id);
+  }
+
+  recordSecretAudit(requestId: string, action: string, actor: string, unitRunId?: string, detail: Record<string, unknown> = {}): void {
+    this.db.query("INSERT INTO secret_audit (id,request_id,action,unit_run_id,actor,detail,created_at) VALUES (?,?,?,?,?,?,?)")
+      .run(this.uuid(), requestId, action, unitRunId ?? null, actor, json(detail), this.timestamp());
+  }
+
+  listSecretAudit(requestId: string): Array<{ id: string; requestId: string; action: string; unitRunId?: string; actor: string; detail: Record<string, unknown>; createdAt: string }> {
+    return this.db.query("SELECT * FROM secret_audit WHERE request_id=? ORDER BY created_at,id").all(requestId).map((row: any) => ({
+      id: row.id, requestId: row.request_id, action: row.action, unitRunId: row.unit_run_id ?? undefined,
+      actor: row.actor, detail: parseJson(row.detail), createdAt: row.created_at,
+    }));
   }
 
   appendEvent(type: string, data: unknown): Event {

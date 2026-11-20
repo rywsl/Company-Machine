@@ -1,6 +1,8 @@
 import { resolveOfficialHarness } from "./harness";
 import type { HarnessProfile } from "./models";
 
+type ExplicitCredential = { variable: string; source?: string; base_url?: string };
+
 const deploymentCredentials = {
   "claude-code": {
     key: "MAO_FOREMAN_ANTHROPIC_API_KEY", endpoint: "MAO_FOREMAN_ANTHROPIC_BASE_URL",
@@ -19,12 +21,40 @@ function url(value: string): URL | undefined {
   } catch { return undefined; }
 }
 
-export function foremanCredential(profile: Pick<HarnessProfile, "role" | "runtime" | "baseUrl">): { variable: string; value: string; baseUrl: string } | undefined {
+function explicitCredentials(): Record<string, ExplicitCredential> {
+  const raw = process.env.MAO_FOREMAN_CREDENTIALS_JSON;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).flatMap(([runtime, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const item = value as Record<string, unknown>;
+      if (typeof item.variable !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(item.variable)) return [];
+      if (item.source !== undefined && (typeof item.source !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(item.source))) return [];
+      if (item.base_url !== undefined && typeof item.base_url !== "string") return [];
+      return [[runtime, { variable: item.variable, source: item.source, base_url: item.base_url } as ExplicitCredential]];
+    }));
+  } catch { return {}; }
+}
+
+export function foremanCredential(
+  profile: Pick<HarnessProfile, "role" | "runtime" | "baseUrl" | "secretRef">,
+  readSecret?: (ref: string) => string | undefined,
+): { variable: string; value: string; baseUrl: string } | undefined {
   if (profile.role !== "foreman") return;
   const id = resolveOfficialHarness(profile.runtime)?.id;
+  const explicit = id ? explicitCredentials()[id] : undefined;
+  if (explicit) {
+    const value = profile.secretRef ? readSecret?.(profile.secretRef) : explicit.source ? process.env[explicit.source] : undefined;
+    if (!value?.trim()) return;
+    const baseUrl = profile.baseUrl || explicit.base_url || "";
+    if (baseUrl && !url(baseUrl)) return;
+    return { variable: explicit.variable, value, baseUrl };
+  }
   if (id !== "claude-code" && id !== "codex") return;
   const config = deploymentCredentials[id];
-  const value = process.env[config.key];
+  const value = (profile.secretRef ? readSecret?.(profile.secretRef) : undefined) ?? process.env[config.key];
   if (!value?.trim()) return;
   const endpoint = url(profile.baseUrl || config.base);
   const configured = process.env[config.endpoint];

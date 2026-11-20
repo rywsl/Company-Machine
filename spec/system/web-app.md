@@ -332,6 +332,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - 本机厂长在普通对话中使用 `factory project register` 将仓库登记到指定业务系统或新建系统，并在同一轮继续搭建。修改 DAG 前，厂长可通过 `factory business graph <id>` 读取已有节点与边。接入已登记项目时，提示提供项目 ID、所属业务系统 ID 和来源说明。
 - 启动官方 Harness 时只继承运行所需的基础环境和显式声明的变量。宿主环境中的其他密钥不会被批量转发
 - 无桌面部署可为厂长的 Claude Code 提供 `MAO_FOREMAN_ANTHROPIC_API_KEY`，并为 `codex exec` 提供 `MAO_FOREMAN_CODEX_API_KEY`。MAO 将其分别传给对应的 `ANTHROPIC_API_KEY` 或 `CODEX_API_KEY`，同样用于厂长的连通性验证。缺省匹配官方 HTTPS 服务。自定义 Base URL 须与部署方设置的 `MAO_FOREMAN_ANTHROPIC_BASE_URL` 或 `MAO_FOREMAN_CODEX_BASE_URL` 匹配。页面仅显示部署凭证是否可用于当前配置。厂长的实时回复、事件和会话标识会屏蔽已传入的凭证值。
+- 其他官方 Harness 的厂长凭据只能通过部署方显式设置 `MAO_FOREMAN_CREDENTIALS_JSON` 映射，映射必须声明 Harness ID、官方环境变量名、来源环境变量或项目 Vault 引用和可选 Base URL。控制面不猜测厂商变量、CLI 参数或认证方式，缺少声明时明确显示凭据未配置。
 - `POST /api/web/harnesses/verify` 为配置创建一次连通性检查，返回 `202` 和 `requested` 状态。同一配置的并发请求复用当前检查。检查通过官方 CLI 或 ACP 开一个新会话，在临时工作目录请求固定的简短文本。项目数据、保险箱凭据和已有会话都不进入检查。启动带 `image` 的 Harness 前同样检查运行时就绪。
 - 连接就绪、会话启动及响应共用 45 秒时限。收到预期文本且会话正常结束后保存 `verified`，其他情况保存 `failed` 和固定说明。`harness.profile.verification.completed` 事件和配置读模型只提供验证状态、说明和时间。重新保存配置将取消原检查，旧结果不会覆盖新配置。
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
@@ -342,21 +343,24 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 并发的运行时状态查询共用一次在途探测，结果缓存 5 秒。主动就绪检查在并发的被动探测期间完成时，后返回的被动探测使用最新的就绪结果。
 - Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，运行时健康检查和带镜像的官方 Harness/ACP 启动必须复用同一解析结果，避免桌面进程继承旧 PATH 后误报运行时缺失
 - `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱。保险箱写入成功后，SQLite 在同一事务内更新请求状态、记录可用事件并重新排队所需请求均已可用的工位。事件推送与派发在提交后执行。若保险箱已写入而 SQLite 提交失败，用户可重新提交同一请求。
+- 密钥请求状态支持 `requested`、`available`、`denied`、`revoked` 和 `expired`。已经 `available` 的请求不能覆盖写入，轮换必须先调用 `rotate` 生成新的请求和保险箱引用。`deny`、`revoke`、`rotate` 和 `audit` 路由只返回请求标识、状态和脱敏审计记录，审计记录不能包含密钥值。Operator 读取可用密钥时登记使用事件，并按项目请求和工位绑定范围恢复运行。
 - 服务启动恢复时，已授权运行中等待资源的工位在所有已绑定的本项目请求均为可用时重新排队，再按 DAG 派发。缺少资源关联、请求仍未完成或归属其他项目的工位继续等待。
 
 本地保险箱将加密记录写入同目录的私有临时文件，再原子替换正式文件。首次写入时允许正式文件缺失。读取出错或记录格式损坏时停止写入，保留正式文件供恢复。
 
+本机回环地址默认采用单用户模式。设置 `MAO_AUTH_TOKEN` 后，API 和 SSE 必须使用对应的 Bearer token，写请求还需提供 `X-MAO-CSRF`，值由 `MAO_CSRF_TOKEN` 指定。绑定到非回环地址时也必须配置身份验证。CORS 不再默认开放到任意来源，跨源访问需要显式设置 `MAO_CORS_ORIGIN`。
+
 密钥值只在保险箱写入请求中出现。数据库、事件、Harness、Foreman 和普通 UI 只接触保险箱引用与状态。UI 展示语义化字段、图表、时间线和文件引用，底层 JSON 不作为用户详情内容渲染。
 
-业务记录的 JSON 契约保留 `record_type`（`artifact` 或 `material`）、`kind`、`ref`、`title`、`description`、`summary`、`purpose`、`status`、`producer`、`files`、`inputs`、`outputs` 和 `lineage`。`title`、`description` 或 `summary` 至少有一个面向人的说明。`files` 只保存引用、路径、媒体类型和摘要，不内嵌文件字节。记录由官方 Harness 产生或转换后写入，控制面只保存和分发这些描述，不执行记录中的指令。
+业务记录的 JSON 契约版本固定为 `mao.business-record/1`，保留 `record_type`（`artifact` 或 `material`）、`kind`、`ref`、`title`、`description`、`summary`、`purpose`、`status`、`producer`、`files`、`inputs`、`outputs` 和 `lineage`。`title`、`description` 或 `summary` 至少有一个面向人的说明。`files` 只保存引用、路径、媒体类型和摘要，不内嵌文件字节。`inputs` 和 `lineage` 引用必须属于当前业务系统，未知或跨业务引用拒绝写入。记录由官方 Harness 产生或转换后写入，控制面只保存和分发这些描述，不执行记录中的指令。
 
 下游 Operator 获得输入引用及当前业务系统内匹配的记录说明和文件引用。数据库先按记录 ID 解析，再按引用查询该业务系统内最新匹配。未登记的输入仍按原引用传递。
 
-本地 Linux Kiri 和 Podman 工位可把本轮文件写入 `/mao/outputs`，通过 `mao.record` 的 `files` 项声明 `staged` 文件名和可选显示路径。控制面在官方 Harness 成功结束并关闭会话后检查普通文件，流式计算摘要并拒绝包含本轮注入凭据的文件。业务记录、文件授权、成功状态和对应事件在同一事务提交。后继获得稳定记录 ID，并从同一业务系统的输入记录读取已授权的 `/mao/inputs/<序号>` 只读挂载。运行结束清理暂存区。
+本地 Linux Kiri 和 Podman 工位可把本轮文件写入 `/mao/outputs`，通过 `mao.record` 的 `files` 项声明 `staged` 文件名和可选显示路径。控制面在官方 Harness 成功结束并关闭会话后检查普通文件，流式计算摘要并拒绝包含本轮注入凭据的文件。官方 Harness 没有产生有效 `mao.record` 时，Operator 运行失败，不能仅凭会话正常结束标记完成。业务记录、文件授权、成功状态和对应事件在同一事务提交。后继获得稳定记录 ID，并从同一业务系统的输入记录读取已授权的 `/mao/inputs/<序号>` 只读挂载。运行结束清理暂存区。
 
 已校验的业务包导入恢复随包交付的文件授权。直接导入 JSON 保存文件引用。备份记录活动文件授权和对应 CAS 文件。
 
-厂长与 Operator 使用同一份项目来源投影。仓库 URL 的密码和凭据查询参数在交给 Harness 前移除。上传文件使用内容摘要引用，可通过项目文件路由读取。本地 Linux Kiri 和 Podman 中，接收项目的厂长和执行该项目的 Operator 都可在来源摘要中看到文件名或文件夹名，以及 `/mao/sources/<序号>` 下的只读位置。每个位置只挂载该项目登记的上传文件或用户选择的本地目录。宿主目录须为规范绝对路径，符号链接路径及与工厂存储重叠的目录不可挂载。本地目录沿用宿主文件访问权限。私有上传文件按轮暂存，正常结束、失败或取消后清理。主机上的 Harness 可读取用户提交的原始文件夹位置，其他容器运行方式使用来源引用。
+厂长与 Operator 使用同一份项目来源投影。仓库 URL 的密码和凭据查询参数在交给 Harness 前移除。容器运行的 `repo_url` 来源先由控制面用无交互 Git 浅克隆固定到具体 commit，再以 `/mao/sources/<序号>` 只读挂载，并在轮次 facts 中保留 commit。公开来源不携带凭据，当前未绑定官方 Git 认证的私有仓库必须明确失败，不能把凭据写进 URL。上传文件使用内容摘要引用，可通过项目文件路由读取。本地 Linux Kiri 和 Podman 中，接收项目的厂长和执行该项目的 Operator 都可在来源摘要中看到文件名或文件夹名，以及 `/mao/sources/<序号>` 下的只读位置。每个位置只挂载该项目登记的上传文件或用户选择的本地目录。宿主目录须为规范绝对路径，符号链接路径及与工厂存储重叠的目录不可挂载。本地目录沿用宿主文件访问权限。私有上传文件按轮暂存，正常结束、失败或取消后清理。主机上的 Harness 可读取用户提交的原始文件夹位置，其他容器运行方式使用来源引用。
 
 Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。业务运行同时保留两类基础单元的生命周期，Machine 负责项目来源激活，Operator 负责通过官方 Harness 操作软件项目。Operator Harness 输出 `mao.record` 事件后，控制面把记录写入该项目并通过事件流返回产物或物料状态。
 

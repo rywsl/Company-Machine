@@ -73,6 +73,26 @@ export class VaultStore {
     return Boolean(this.read()[ref]);
   }
 
+  delete(ref: string): boolean {
+    const records = this.read();
+    if (!records[ref]) return false;
+    delete records[ref];
+    const temporary = `${this.path}.${randomUuid()}.part`;
+    let staged = false;
+    try {
+      writeFileSync(temporary, JSON.stringify(records), { encoding: "utf8", mode: 0o600, flag: "wx" });
+      staged = true;
+      renameSync(temporary, this.path);
+      return true;
+    } catch (error) {
+      if (staged || (error as { code?: string }).code !== "EEXIST") {
+        try { rmSync(temporary, { force: true }); }
+        catch { /* Keep the primary write or publication error. */ }
+      }
+      throw error;
+    }
+  }
+
   get(ref: string): string | undefined {
     const record = this.read()[ref];
     if (!record) return undefined;

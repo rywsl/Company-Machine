@@ -457,9 +457,16 @@ describe("Bun business backend", () => {
       });
       expect(JSON.stringify(reader.eventsAfter())).not.toContain(resource.vaultRef);
       expect(JSON.stringify(reader.eventsAfter())).not.toContain("after-retry");
-      expect((await submit("rotated-value")).status).toBe(200);
-      expect(vault.get(resource.vaultRef)).toBe("rotated-value");
-      expect(reader.eventsAfter()).toHaveLength(2);
+      expect((await submit("rotated-value")).status).toBe(409);
+      const rotated = await app.fetch(new Request(`http://localhost/api/v1/secrets/requests/${resource.id}/rotate`, { method: "POST" }));
+      expect(rotated.status).toBe(201);
+      const rotatedBody = await rotated.json() as { request_id: string };
+      expect((await app.fetch(new Request(`http://localhost/api/v1/secrets/requests/${rotatedBody.request_id}/value`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value: "rotated-value" }),
+      }))).status).toBe(200);
+      expect(vault.get(resource.vaultRef)).toBeUndefined();
+      expect(vault.get(reader.getSecretRequest(rotatedBody.request_id)!.vaultRef)).toBe("rotated-value");
+      expect(reader.eventsAfter()).toHaveLength(3);
     } finally {
       reader.close();
       app.stop();
@@ -573,6 +580,26 @@ describe("Bun business backend", () => {
       external.close();
       app.stop();
       await rm(dbPath, { force: true });
+    }
+  });
+
+  test("keeps loopback single-user access and protects token deployments", async () => {
+    const previousToken = process.env.MAO_AUTH_TOKEN;
+    const previousCsrf = process.env.MAO_CSRF_TOKEN;
+    process.env.MAO_AUTH_TOKEN = "test-auth-token";
+    process.env.MAO_CSRF_TOKEN = "test-csrf-token";
+    const root = mkdtempSync(join(tmpdir(), "mao-auth-"));
+    const app = createApp({ dbPath: join(root, "factory.db"), legacyPath: join(root, "factory.db"), storageRoot: root, dispatchWork: false });
+    try {
+      expect((await app.fetch(new Request("http://localhost/api/v1/business-systems"))).status).toBe(401);
+      const headers = { authorization: "Bearer test-auth-token", "content-type": "application/json" };
+      expect((await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers, body: JSON.stringify({ name: "blocked" }) }))).status).toBe(401);
+      expect((await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers: { ...headers, "x-mao-csrf": "test-csrf-token" }, body: JSON.stringify({ name: "allowed" }) }))).status).toBe(201);
+    } finally {
+      app.stop();
+      await rm(root, { recursive: true, force: true });
+      if (previousToken === undefined) delete process.env.MAO_AUTH_TOKEN; else process.env.MAO_AUTH_TOKEN = previousToken;
+      if (previousCsrf === undefined) delete process.env.MAO_CSRF_TOKEN; else process.env.MAO_CSRF_TOKEN = previousCsrf;
     }
   });
 });

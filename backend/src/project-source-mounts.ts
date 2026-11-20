@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Project } from "./models";
 import { projectSourceFacts } from "./project-sources";
+import { runCommand } from "../runtime/podman";
+import { resolveGitExecutable } from "../runtime/git";
 
 export type ProjectSourceMount = { source: string; index: number };
 export const projectSourceRoot = "/mao/sources";
@@ -37,6 +39,7 @@ export async function prepareProjectSources(project: Project, uploadedBlob: Look
     try { return realpathSync(path); } catch { return resolve(path); }
   }), ...(process.platform === "linux" ? ["/dev", "/proc", "/sys"] : [])];
   const facts = projectSourceFacts(project, false);
+  const git = resolveGitExecutable();
   const mounts: ProjectSourceMount[] = [];
   let staging: string | undefined;
   const close = () => {
@@ -67,6 +70,23 @@ export async function prepareProjectSources(project: Project, uploadedBlob: Look
             }
           }
         }
+      } else if (source.kind === "repo_url" && source.repoUrl) {
+        staging ??= mkdtempSync(join(tmpdir(), "mao-source-"));
+        const checkout = join(staging, String(index));
+        const cloned = await runCommand([git, "clone", "--depth", "1", "--no-tags", "--", source.repoUrl, checkout], {
+          timeoutMs: 180_000,
+          env: { GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
+        });
+        if (cloned.exitCode !== 0) throw new Error("project repository clone failed");
+        const revision = await runCommand([git, "-C", checkout, "rev-parse", "HEAD"], {
+          timeoutMs: 30_000,
+          env: { GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
+        });
+        if (revision.exitCode !== 0) throw new Error("project repository revision lookup failed");
+        const commit = new TextDecoder().decode(revision.stdout).trim();
+        if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("project repository revision is invalid");
+        facts[offset] = { ...facts[offset], commit, checkout: `intake://${project.id}/${source.id}` };
+        hostPath = checkout;
       } else continue;
       if (hostPath) mounts.push({ source: hostPath, index });
     }
