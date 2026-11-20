@@ -309,17 +309,25 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (!body.repo_url && !body.local_folder && !(Array.isArray(body.files) && body.files.length) && !(Array.isArray(body.uploaded_file_refs) && body.uploaded_file_refs.length)) {
         return response({ error: "one project source is required" }, 400);
       }
-      if (typeof body.business_system_id !== "string") {
-        const system = store.createBusinessSystem({ name: typeof body.name === "string" ? body.name : typeof body.project_name === "string" ? body.project_name : "新业务系统", metadata: { intake: true } });
-        body.business_system_id = system.id;
-        events.publish("business-system.created", system);
-      }
-      const project = store.createIntake(body);
+      const recorded = store.db.transaction(() => {
+        let createdSystem: BusinessSystem | undefined;
+        let systemId = body.business_system_id;
+        if (typeof systemId !== "string") {
+          const name = typeof body.name === "string" ? body.name : typeof body.project_name === "string" ? body.project_name : "新业务系统";
+          createdSystem = store.createBusinessSystem({ name, metadata: { intake: true } });
+          systemId = createdSystem.id;
+        } else if (!store.getBusinessSystem(systemId)) return undefined;
+        const project = store.createIntake({ ...body, business_system_id: systemId });
+        const text = `项目「${project.name}」已提交。请厂长识别项目、建立 Operator 与 Machine，搭建业务 DAG，并说明下一步需要的项目资源。项目引用 ${project.id}。`;
+        const intakeMessage = store.addTalkMessage({ role: "user", body: text, metadata: { source: "project-intake", project_id: project.id } });
+        store.bridgeHumanTalk(intakeMessage.id, intakeMessage.body);
+        const intakeEnvelope = store.queueForemanMessage(intakeMessage.id, intakeMessage.body);
+        return { createdSystem, project, intakeMessage, intakeEnvelope };
+      }).immediate();
+      if (!recorded) return response({ error: "business system was not found" }, 404);
+      const { createdSystem, project, intakeMessage, intakeEnvelope } = recorded;
+      if (createdSystem) events.publish("business-system.created", createdSystem);
       events.publish("project.intake.created", publicProject(project));
-      const intakeText = `项目「${project.name}」已提交。请厂长识别项目、建立 Operator 与 Machine，搭建业务 DAG，并说明下一步需要的项目资源。项目引用 ${project.id}。`;
-      const intakeMessage = store.addTalkMessage({ role: "user", body: intakeText, metadata: { source: "project-intake", project_id: project.id } });
-      store.bridgeHumanTalk(intakeMessage.id, intakeMessage.body);
-      const intakeEnvelope = store.queueForemanMessage(intakeMessage.id, intakeMessage.body);
       events.publish("talk.message.created", intakeMessage);
       events.publish("foreman.message.queued", intakeEnvelope);
       dispatchForemanIfConfigured(intakeEnvelope.id);
@@ -413,8 +421,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     // The existing web client uses these read-only projections while it migrates to v1.
     if (url.pathname === "/api/web/talk" && request.method === "GET") {
-      const limit = Number(url.searchParams.get("limit") ?? 80);
-      return response([...store.legacyTalk(), ...store.listTalkMessages()].slice(-Math.max(1, limit)));
+      const requested = Number(url.searchParams.get("limit") ?? 80);
+      const limit = Number.isFinite(requested) ? Math.max(1, Math.min(1000, Math.trunc(requested))) : 80;
+      return response(store.recentTalk(limit));
     }
     if (url.pathname === "/api/web/logs" && request.method === "GET") {
       const requested = Number(url.searchParams.get("limit") ?? 100);
@@ -499,7 +508,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: new Date().toISOString() },
         eventCursor, pendingForemanReplies: foreman.pendingReplies(),
         graph: { factory: factoryGraph },
-        assets: webAssets(store), logs: webLogs(store, 100), talk: [...store.legacyTalk(), ...store.listTalkMessages()].slice(-80),
+        assets: webAssets(store), logs: webLogs(store, 100), talk: store.recentTalk(80),
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });

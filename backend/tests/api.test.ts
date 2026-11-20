@@ -12,6 +12,36 @@ async function jsonResponse(response: Response) {
 }
 
 describe("Bun business backend", () => {
+  test("rolls back project intake when it cannot record the Foreman request", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
+    const intake = (business_system_id?: string) => app.fetch(new Request("http://localhost/api/v1/projects/intake", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Atomic intake", repo_url: "https://example.invalid/repo", business_system_id }),
+    }));
+    try {
+      expect((await intake("unknown-system")).status).toBe(404);
+      app.store.db.exec("CREATE TRIGGER reject_intake BEFORE INSERT ON foreman_outbox BEGIN SELECT RAISE(ABORT, 'cannot queue intake'); END;");
+      await expect(Promise.resolve(intake())).rejects.toThrow("cannot queue intake");
+      expect(app.store.listBusinessSystems()).toHaveLength(0);
+      expect(app.store.listProjects()).toHaveLength(0);
+      expect(app.store.listTalkMessages()).toHaveLength(0);
+      expect(app.events.after()).toHaveLength(0);
+    } finally { app.stop(); }
+  });
+
+  test("bounds recent conversation reads and fills unused slots from archived messages", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
+    try {
+      app.store.db.exec(`CREATE TABLE talk_messages (id TEXT, role TEXT, body TEXT, card TEXT, created_at TEXT);
+        INSERT INTO talk_messages VALUES ('a', 'user', 'earlier', '{}', '2025-01-01'), ('b', 'foreman', 'latest archived', '{}', '2025-01-02');
+        INSERT INTO business_talk_messages VALUES ('c', 'user', 'active', '{}', '2026-01-01'), ('d', 'foreman', 'latest active', '{}', '2026-01-02');`);
+      const fetchIds = async (path: string) => (await (await app.fetch(new Request(`http://localhost${path}`))).json() as Array<{ id: string }>).map(({ id }) => id);
+      expect(await fetchIds("/api/web/talk?limit=3")).toEqual(["b", "c", "d"]);
+      expect(await fetchIds("/api/web/talk?limit=1")).toEqual(["d"]);
+      expect(await fetchIds("/api/v1/talk")).toEqual(["a", "b", "c", "d"]);
+    } finally { app.stop(); }
+  });
+
   test("stores uploaded project bytes under a digest and fetches them through their project", async () => {
     const storageRoot = mkdtempSync(join(tmpdir(), "mao-project-upload-"));
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", storageRoot });

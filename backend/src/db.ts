@@ -727,8 +727,11 @@ export class SqliteStore {
     return value;
   }
 
-  listTalkMessages(): TalkMessage[] {
-    return this.db.query("SELECT * FROM business_talk_messages ORDER BY created_at, id").all().map((row: any) => ({
+  listTalkMessages(limit?: number): TalkMessage[] {
+    const rows = limit === undefined
+      ? this.db.query("SELECT * FROM business_talk_messages ORDER BY created_at, id").all()
+      : this.db.query("SELECT * FROM business_talk_messages ORDER BY created_at DESC, id DESC LIMIT ?").all(limit).reverse();
+    return rows.map((row: any) => ({
       id: row.id, role: row.role, body: row.body, metadata: parseJson(row.metadata), createdAt: row.created_at,
     }));
   }
@@ -887,12 +890,20 @@ export class SqliteStore {
     }));
   }
 
-  legacyTalk(): TalkMessage[] {
+  legacyTalk(limit?: number): TalkMessage[] {
     const source = this.legacy ?? this.db;
     if (!this.hasLegacyTable("talk_messages")) return [];
-    return source.query("SELECT id,role,body,card,created_at FROM talk_messages ORDER BY created_at, id").all().map((row: any) => ({
+    const rows = limit === undefined
+      ? source.query("SELECT id,role,body,card,created_at FROM talk_messages ORDER BY created_at, id").all()
+      : source.query("SELECT id,role,body,card,created_at FROM talk_messages ORDER BY created_at DESC, id DESC LIMIT ?").all(limit).reverse();
+    return rows.map((row: any) => ({
       id: row.id, role: row.role, body: row.body, metadata: { card: parseJson(row.card) }, createdAt: row.created_at,
     }));
+  }
+
+  recentTalk(limit: number): TalkMessage[] {
+    const active = this.listTalkMessages(limit);
+    return active.length >= limit ? active : [...this.legacyTalk(limit - active.length), ...active];
   }
 
   private hasLegacyTable(name: string) {
