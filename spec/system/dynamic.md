@@ -174,6 +174,8 @@ Bun 的 RunPlan 保存 `until` 条件、迭代上限及聚合节点。每次 tic
 4. 子 run `FAILED` 或 `CANCELLED`：父节点 `FAILED`，错误码 `SUBLINE_FAILED`，`detail.child` 为子 run id。父 run 进入 `FAILING`。
 5. 子产线步骤不接受参数（内核 `E-PARAM`）。这里不再渲染参数。
 
+Bun 在父 RunPlan 中保存子计划及其摘要，编译时拒绝递归引用。父节点在一个事务中预留子产线预算、建立子 Run 并保存 `params.child_run`。手动执行和调度都继续推进已关联的子 Run，重启后使用原计划和节点标识。子 Run 终结时父节点仅结算一次。取消父 Run 时先取消并结算子 Run。
+
 ### 5.5 Plan
 
 `compile_plan` 的步骤。任一步失败则 `ok` 为假，`plan` 为 `None`，`feedback` 列出全部诊断（不要只留第一条）。

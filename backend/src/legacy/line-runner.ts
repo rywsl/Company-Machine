@@ -3,6 +3,7 @@ import { compileTemplate } from "../../mrl/template";
 import { BOOL, DYN } from "../../mrl/types";
 import { JobCache, cacheableRoles } from "./cache";
 import { compileDynamicRunPlan, selectSwitchTarget, switchTargets } from "./dynamic-switch";
+import { restoreSubline } from "./dynamic-subline";
 import { untilHolds, untilIteration } from "./dynamic-until";
 import { FactoryError } from "./errors";
 import { terminalStates } from "./jobs";
@@ -22,7 +23,10 @@ export class LineRunner {
   }
 
   start(line: string, options: Parameters<RunStore["create"]>[1]): Run {
-    const plan = compileDynamicRunPlan(this.runner.snapshot, line);
+    return this.startPlan(compileDynamicRunPlan(this.runner.snapshot, line), options);
+  }
+
+  private startPlan(plan: RunPlan, options: Parameters<RunStore["create"]>[1]): Run {
     const problems: Array<{ port: string; bean: string; reason: string }> = [];
     for (const [port, type] of Object.entries(plan.inputs)) {
       const ids = options.inputs[port];
@@ -71,16 +75,26 @@ export class LineRunner {
         const job = this.runner.jobs.get(node.jobId);
         if (terminalStates.has(job.state)) nodes.set(node.nodeId, this.runs.settleNode(id, node.nodeId, job));
       }
+      const submitted: string[] = [];
+      const descendantJobs: string[] = [];
+      let activeChild = false;
+      for (const planned of plan.nodes) {
+        if (planned.kind !== "subline") continue;
+        const node = nodes.get(planned.id);
+        if (node?.state === "WAITING" && typeof node.params?.child_run === "string") {
+          activeChild = this.advanceChild(run, node, nodes, submitted, descendantJobs) || activeChild;
+        }
+      }
       const failed = [...nodes.values()].find((node) => node.state === "FAILED");
       if (run.state === "RUNNING" && failed) {
         run = this.runs.transition(id, "FAILING", { error: { code: "NODE_FAILED", node: failed.nodeId } });
       }
 
-      const submitted: string[] = [];
       if (run.state === "RUNNING") {
         const dynamic = plan.nodes.some((node) => node.kind === "switch");
         for (const planned of plan.nodes) {
           if (nodes.get(planned.id)?.state !== "WAITING") continue;
+          if (planned.kind === "subline" && nodes.get(planned.id)?.params?.child_run) continue;
           try {
             if (dynamic) {
               const readiness = this.dynamicReadiness(plan, planned, nodes);
@@ -99,6 +113,22 @@ export class LineRunner {
                 throw new FactoryError("RUN_PLAN_INVALID", "switch 选中的步骤不在计划里", { step: planned.step, selected });
               }
               nodes.set(planned.id, this.runs.completeSwitch(id, planned.id, selected));
+              continue;
+            }
+            if (planned.kind === "subline") {
+              if (!planned.subline) throw new FactoryError("RUN_PLAN_INVALID", "运行计划缺少子产线定义", { step: planned.step });
+              const childPlan = restoreSubline(planned.subline, run.epoch, planned.step);
+              const childInputs = this.nodeInputs(run, planned, nodes, Object.fromEntries(Object.entries(childPlan.inputs).map(([port, type]) => [port, { type }])));
+              const link = this.runs.attachSubline(id, planned.id, childPlan.budgetCapUsd ?? 0, () => this.startPlan(childPlan, {
+                inputs: childInputs, useCache: run.useCache, sinkMode: run.sinkMode,
+                trigger: { on: "subline", parent: id, step: planned.id },
+              }));
+              nodes.set(planned.id, link);
+              activeChild = this.advanceChild(run, link, nodes, submitted, descendantJobs) || activeChild;
+              if (nodes.get(planned.id)?.state === "FAILED") {
+                run = this.runs.transition(id, "FAILING", { error: { code: "NODE_FAILED", node: planned.id } });
+                break;
+              }
               continue;
             }
             const node = planned.kind === "until" ? this.nextIteration(id, planned, nodes) : planned;
@@ -136,7 +166,7 @@ export class LineRunner {
         }
       }
 
-      const active = [...nodes.values()].some((node) => node.state === "SUBMITTED");
+      const active = activeChild || [...nodes.values()].some((node) => node.state === "SUBMITTED");
       if (!active && (run.state === "FAILING" || run.state === "CANCELLING")) {
         this.runs.transition(id, run.state === "FAILING" ? "FAILED" : "CANCELLED");
       } else if (run.state === "RUNNING" && [...nodes.values()].every((node) => node.state === "DONE" || node.state === "SKIPPED")) {
@@ -144,11 +174,27 @@ export class LineRunner {
         this.runs.transition(id, "SUCCEEDED", { outputs });
       }
       if (dispatch) {
-        const pending = [...nodes.values()].flatMap((node) => node.state === "SUBMITTED" && node.jobId ? [node.jobId] : []);
+        const pending = [...descendantJobs, ...[...nodes.values()].flatMap((node) => node.state === "SUBMITTED" && node.jobId ? [node.jobId] : [])].sort();
         if (pending.length) dispatch(pending);
       }
       return submitted.sort();
     }).immediate();
+  }
+
+  private advanceChild(parent: Run, node: RunNode, nodes: Map<string, RunNode>, submitted: string[], pending: string[]): boolean {
+    const childId = String(node.params?.child_run);
+    let child = this.runs.get(childId);
+    if (child.epoch !== parent.epoch || child.trigger.parent !== parent.id || child.trigger.step !== node.nodeId) {
+      throw new FactoryError("RUN_PLAN_INVALID", "子产线的持久化身份不匹配", { run: parent.id, node: node.nodeId, child: childId });
+    }
+    if (!runTerminalStates.has(child.state)) {
+      if (parent.state === "CANCELLING" && (child.state === "PENDING" || child.state === "RUNNING")) this.runs.cancel(childId, "parent:" + parent.id);
+      submitted.push(...this.tick(childId, (jobs) => pending.push(...jobs)));
+      child = this.runs.get(childId);
+    }
+    if (!runTerminalStates.has(child.state)) return true;
+    nodes.set(node.nodeId, this.runs.settleSubline(parent.id, node.nodeId, childId));
+    return false;
   }
 
   private nextIteration(id: string, node: PlanNode, nodes: Map<string, RunNode>): PlanNode | undefined {
@@ -189,12 +235,12 @@ export class LineRunner {
   }
 
   async run(id: string): Promise<Run> {
-    const maxTicks = this.runs.plan(id).nodes.reduce((total, node) => total + 2 * (node.until?.maxIter ?? 1), 2);
+    const maxTicks = this.tickLimit(this.runs.plan(id));
     for (let tick = 0; tick < maxTicks; tick += 1) {
-      this.tick(id);
+      const jobs: string[] = [];
+      this.tick(id, (pending) => jobs.push(...pending));
       const run = this.runs.get(id);
       if (runTerminalStates.has(run.state)) return run;
-      const jobs = this.runs.nodes(id).filter((node) => node.state === "SUBMITTED" && node.jobId).map((node) => node.jobId!).sort();
       let waiting = 0;
       for (const job of jobs) if ((await this.runner.run(job)).state === "AWAITING_APPROVAL") waiting += 1;
       if (waiting > 0 && waiting === jobs.length) return this.runs.get(id);
@@ -202,12 +248,16 @@ export class LineRunner {
     throw new FactoryError("RUN_STUCK", "产线未能在计划步数内完成", { run: id, state: this.runs.get(id).state });
   }
 
-  private nodeInputs(run: Run, node: PlanNode, nodes: Map<string, RunNode>): Record<string, string | string[]> {
-    const station = this.runner.snapshot.spec(node.station);
+  private tickLimit(plan: RunPlan): number {
+    return plan.nodes.reduce((total, node) => total + 2 * (node.until?.maxIter ?? 1)
+      + (node.subline ? this.tickLimit(restoreSubline(node.subline, plan.epoch, node.step)) : 0), 2);
+  }
+
+  private nodeInputs(run: Run, node: PlanNode, nodes: Map<string, RunNode>, declarations = this.runner.snapshot.spec(node.station).inputs): Record<string, string | string[]> {
     const inputs: Record<string, string | string[]> = Object.create(null);
     for (const binding of node.inputs) {
       const values = binding.source === "input" ? run.inputs[binding.outPort] : nodes.get(binding.node)?.outputs[binding.outPort];
-      const declaration = station.inputs[binding.port];
+      const declaration = declarations[binding.port];
       const list = declaration.type.startsWith("list<");
       if (!values?.length && declaration.optional) continue;
       if (!values?.length || (!list && values.length !== 1)) {

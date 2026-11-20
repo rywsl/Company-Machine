@@ -4,6 +4,7 @@ import { canonicalBytes, digestBytes } from "./foundation";
 import type { Snapshot } from "./snapshot";
 import type { SwitchDefinition } from "./dynamic-switch";
 import type { UntilDefinition } from "./dynamic-until";
+import type { SublineDefinition, SublineShape } from "./dynamic-subline";
 
 export interface Binding {
   readonly port: string;
@@ -14,7 +15,7 @@ export interface Binding {
 
 export interface PlanNode {
   readonly id: string;
-  readonly kind: "station" | "converter" | "switch" | "until";
+  readonly kind: "station" | "converter" | "switch" | "until" | "subline";
   readonly step: string;
   readonly station: string;
   readonly role: string;
@@ -27,6 +28,7 @@ export interface PlanNode {
   readonly resolution: LineResolution | null;
   readonly switch?: SwitchDefinition;
   readonly until?: UntilDefinition;
+  readonly subline?: SublineDefinition;
 }
 
 type Parameter = string | boolean | number;
@@ -120,6 +122,7 @@ export class RunPlan implements Plan {
         resolution: node.resolution,
         ...(node.switch ? { switch: node.switch } : {}),
         ...(node.until ? { until: node.until } : {}),
+        ...(node.subline ? { subline: node.subline } : {}),
       })),
       outputs: this.outputs,
       keep: this.keep,
@@ -325,14 +328,19 @@ class LineTypes {
   }
 }
 
-function stationSteps(snapshot: Snapshot, line: string, spec: LineSpec): Map<string, Step> {
+function stationSteps(snapshot: Snapshot, line: string, spec: LineSpec, sublines?: ReadonlyMap<string, { line: string; shape: SublineShape }>): Map<string, Step> {
   const steps = new Map<string, Step>();
   const declarations = Object.entries(spec.steps).sort(([a], [b]) => compare(a, b));
   for (const [step, declaration] of declarations) {
-    const construct = UNSUPPORTED.find((key) => Object.hasOwn(declaration, key));
+    const construct = UNSUPPORTED.find((key) => Object.hasOwn(declaration, key) && !(key === "subline" && sublines?.has(step)));
     if (construct) throw new FactoryError("LINE_UNSUPPORTED", "静态产线不支持该构造", { line, step, construct });
   }
   for (const [step, declaration] of declarations) {
+    const child = sublines?.get(step);
+    if (child) {
+      steps.set(step, { declaration, stationKey: child.line, station: child.shape });
+      continue;
+    }
     if (!declaration.station) return invalid(line, "步骤缺少工位", { step });
     const stationKey = snapshot.key("Station", declaration.station);
     const document = snapshot.doc(stationKey);
@@ -668,11 +676,15 @@ function reconcileBudget(
 }
 
 export function compileRunPlan(snapshot: Snapshot, lineRef: string): RunPlan {
+  return compileWiredRunPlan(snapshot, lineRef);
+}
+
+export function compileWiredRunPlan(snapshot: Snapshot, lineRef: string, sublines?: ReadonlyMap<string, { line: string; shape: SublineShape }>): RunPlan {
   const line = snapshot.key("Line", lineRef);
   const document = snapshot.doc(line);
   if (document.metadata?.lifecycle === "retired") return invalid(line, "产线已退役");
   const spec = document.spec as LineSpec;
-  const steps = stationSteps(snapshot, line, spec);
+  const steps = stationSteps(snapshot, line, spec, sublines);
   const types = new LineTypes(snapshot, line);
   const converters = converterLibrary(snapshot, types, line);
   const inputs = spec.interface?.inputs ?? {};

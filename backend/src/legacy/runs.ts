@@ -308,18 +308,46 @@ export class RunStore {
       const run = this.get(runId);
       const controller = this.node(runId, controllerId);
       if (run.state !== "RUNNING" || controller.state !== "WAITING") this.invalidState(run, "prepare_iteration", controller);
-      if (!Number.isFinite(remainingBudget) || remainingBudget < 0) throw new FactoryError("RUN_BUDGET_INVALID", "迭代预算不合法", { runId, controllerId, remainingBudget });
       const now = this.now();
-      const need = remainingBudget - controller.reservedUsd;
-      if (need > Number.EPSILON * remainingBudget * 8) {
-        this.checkBudget(run, controllerId, need);
-        this.db.query("UPDATE run_nodes SET reserved_usd = ?, updated_at = ? WHERE run_id = ? AND node_id = ?").run(remainingBudget, now, runId, controllerId);
-        this.db.query("UPDATE runs SET reserved_usd = reserved_usd + ?, updated_at = ? WHERE id = ?").run(need, now, runId);
-        this.budgetEvent(run, controllerId, remainingBudget, 0, now);
-      }
+      this.reserveWaiting(run, controller, remainingBudget, now);
       this.db.query(`INSERT INTO run_nodes (run_id, node_id, ord, state, updated_at)
         VALUES (?, ?, (SELECT COALESCE(MAX(ord), -1) + 1 FROM run_nodes WHERE run_id = ?), 'WAITING', ?)
         ON CONFLICT (run_id, node_id) DO NOTHING`).run(runId, iterationId, runId, now);
+    }).immediate();
+  }
+
+  attachSubline(runId: string, nodeId: string, cap: number, start: () => Run): RunNode {
+    return this.db.transaction(() => {
+      const run = this.get(runId);
+      const node = this.node(runId, nodeId);
+      if (run.state !== "RUNNING" || node.state !== "WAITING" || node.params?.child_run) this.invalidState(run, "start_subline", node);
+      const now = this.now();
+      this.reserveWaiting(run, node, cap, now);
+      const child = start();
+      if (child.epoch !== run.epoch || child.budgetCapUsd !== cap || child.trigger.on !== "subline" || child.trigger.parent !== runId || child.trigger.step !== nodeId) {
+        this.invalidState(run, "attach_subline", node);
+      }
+      this.db.query("UPDATE run_nodes SET params = ?, updated_at = ? WHERE run_id = ? AND node_id = ?")
+        .run(canonicalJson({ child_run: child.id }), now, runId, nodeId);
+      this.event(runId, "run.subline", { node: nodeId, child: child.id, epoch: child.epoch }, now);
+      return this.node(runId, nodeId);
+    }).immediate();
+  }
+
+  settleSubline(runId: string, nodeId: string, childId: string): RunNode {
+    return this.db.transaction(() => {
+      const run = this.get(runId);
+      const node = this.node(runId, nodeId);
+      const child = this.get(childId);
+      if (node.state !== "WAITING" || node.params?.child_run !== child.id || child.epoch !== run.epoch || !runTerminalStates.has(child.state)) this.invalidState(run, "settle_subline", node);
+      const now = this.now();
+      const ok = child.state === "SUCCEEDED";
+      const error = ok ? null : { code: "SUBLINE_FAILED", message: "子产线没有成功", detail: { step: nodeId, child: child.id, child_state: child.state } };
+      this.setNode(node, ok ? "DONE" : "FAILED", ok ? child.outputs : {}, error, now);
+      this.db.query("UPDATE runs SET reserved_usd = MAX(0, reserved_usd - ?), spent_usd = spent_usd + ?, updated_at = ? WHERE id = ?")
+        .run(node.reservedUsd, child.spentUsd, now, runId);
+      this.budgetEvent(run, nodeId, 0, child.spentUsd, now);
+      return this.node(runId, nodeId);
     }).immediate();
   }
 
@@ -415,11 +443,11 @@ export class RunStore {
     if (runTerminalStates.has(state)) {
       const active = this.db.query<NodeRow>(
         "SELECT * FROM run_nodes WHERE run_id = ? AND state IN ('SUBMITTED', 'WAITING', 'FAILED') ORDER BY ord",
-      ).all(run.id);
-      if (active.some((node) => node.state === "SUBMITTED") || (state === "SUCCEEDED" && active.length)) {
+      ).all(run.id).map(decodeNode);
+      if (active.some((node) => node.state === "SUBMITTED" || (node.state === "WAITING" && node.params?.child_run)) || (state === "SUCCEEDED" && active.length)) {
         this.invalidState(run, "finish");
       }
-      for (const node of active.filter((node) => node.state === "WAITING").map(decodeNode)) {
+      for (const node of active.filter((node) => node.state === "WAITING")) {
         this.setNode(node, "SKIPPED", {}, null, now);
         if (node.reservedUsd) this.budgetEvent(run, node.nodeId, 0, 0, now);
       }
@@ -456,6 +484,16 @@ export class RunStore {
         runId: run.id, node: nodeId, spent: run.spentUsd, reserved: run.reservedUsd, need, cap: run.budgetCapUsd,
       });
     }
+  }
+
+  private reserveWaiting(run: Run, node: RunNode, budget: number, now: string): void {
+    if (!Number.isFinite(budget) || budget < 0) throw new FactoryError("RUN_BUDGET_INVALID", "控制节点预算不合法", { runId: run.id, node: node.nodeId, budget });
+    const need = budget - node.reservedUsd;
+    if (need <= Number.EPSILON * budget * 8) return;
+    this.checkBudget(run, node.nodeId, need);
+    this.db.query("UPDATE run_nodes SET reserved_usd = ?, updated_at = ? WHERE run_id = ? AND node_id = ?").run(budget, now, run.id, node.nodeId);
+    this.db.query("UPDATE runs SET reserved_usd = reserved_usd + ?, updated_at = ? WHERE id = ?").run(need, now, run.id);
+    this.budgetEvent(run, node.nodeId, budget, 0, now);
   }
 
   private setNode(node: RunNode, state: NodeState, outputs: PortIds, error: JsonObject | null, now: string): void {

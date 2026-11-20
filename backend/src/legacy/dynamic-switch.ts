@@ -3,8 +3,9 @@ import { compileExpr, MrlEvalError, type EvalEnvironment } from "../../mrl/evalu
 import { MrlSyntaxError } from "../../mrl/lexer";
 import { BOOL, DYN } from "../../mrl/types";
 import { readUntil } from "./dynamic-until";
+import { freezeSubline, sublineShape } from "./dynamic-subline";
 import { FactoryError } from "./errors";
-import { compileRunPlan, RunPlan, topologicalOrder, type PlanNode } from "./runplan";
+import { compileRunPlan, compileWiredRunPlan, RunPlan, topologicalOrder, type PlanNode } from "./runplan";
 import { Snapshot } from "./snapshot";
 import { beanValue } from "./values";
 import type { Bean } from "./warehouse";
@@ -37,20 +38,37 @@ export function switchTargets(definition: SwitchDefinition): string[] {
 }
 
 export function compileDynamicRunPlan(snapshot: Snapshot, lineRef: string): RunPlan {
+  return compileDynamicLine(snapshot, lineRef, new Set(), new Map());
+}
+
+function compileDynamicLine(snapshot: Snapshot, lineRef: string, ancestry: ReadonlySet<string>, compiled: Map<string, RunPlan>): RunPlan {
   const line = snapshot.key("Line", lineRef);
+  if (ancestry.has(line)) throw new FactoryError("RUN_PLAN_INVALID", "子产线引用形成了环", { line, ancestry: [...ancestry] });
+  const cached = compiled.get(line);
+  if (cached) return cached;
   const document = snapshot.doc(line);
   const declarations = Object.entries(document.spec.steps as Record<string, Record<string, unknown>>);
   const switches = declarations.filter(([, declaration]) => Object.hasOwn(declaration, "switch"));
   const loops = new Map(declarations.filter(([, declaration]) => Object.hasOwn(declaration, "until"))
     .map(([step, declaration]) => [step, readUntil(line, step, declaration.until)]));
-  if (!switches.length && !loops.size) return compileRunPlan(snapshot, line);
+  const path = new Set([...ancestry, line]);
+  const sublines = new Map(declarations.flatMap(([step, declaration]) => {
+    if (typeof declaration.subline !== "string") return [];
+    const plan = compileDynamicLine(snapshot, declaration.subline, path, compiled);
+    return [[step, { line: plan.line, shape: sublineShape(snapshot, plan), definition: freezeSubline(plan) }]] as const;
+  }));
+  if (!switches.length && !loops.size && !sublines.size) {
+    const staticPlan = compileRunPlan(snapshot, line);
+    compiled.set(line, staticPlan);
+    return staticPlan;
+  }
   const stepNames = new Set(declarations.map(([name]) => name));
   const stations = declarations.filter(([, declaration]) => !Object.hasOwn(declaration, "switch"))
     .map(([step, { until: _until, ...station }]) => [step, station]);
   const stationOnly = new Snapshot(snapshot.root, snapshot.epoch, {
     ...snapshot.docs, [line]: { ...document, spec: { ...document.spec, steps: Object.fromEntries(stations) } },
   }, snapshot.result);
-  const base = compileRunPlan(stationOnly, line);
+  const base = compileWiredRunPlan(stationOnly, line, sublines);
   const nodes = new Map(base.nodes.map((node) => [node.id, node]));
   const controllers = new Map<string, string[]>();
 
@@ -61,7 +79,8 @@ export function compileDynamicRunPlan(snapshot: Snapshot, lineRef: string): RunP
       if (!Object.hasOwn(base.inputs, on.port)) return invalid(line, step, "switch-source");
     } else {
       const producer = nodes.get(on.node);
-      if (!producer || !Object.hasOwn(snapshot.spec(producer.station).outputs ?? {}, on.port)) {
+      const outputs = producer && (sublines.get(on.node)?.shape.outputs ?? snapshot.spec(producer.station).outputs);
+      if (!outputs || !Object.hasOwn(outputs, on.port)) {
         return invalid(line, step, "switch-source");
       }
     }
@@ -77,11 +96,15 @@ export function compileDynamicRunPlan(snapshot: Snapshot, lineRef: string): RunP
   for (const [id, node] of nodes) {
     const incoming = controllers.get(node.step);
     const until = loops.get(id);
+    const child = sublines.get(id);
     if (until) nodes.set(id, { ...node, kind: "until", until, deps: [...new Set([...node.deps, ...(incoming ?? [])])].sort() });
+    else if (child) nodes.set(id, { ...node, kind: "subline", subline: child.definition, deps: [...new Set([...node.deps, ...(incoming ?? [])])].sort() });
     else if (incoming) nodes.set(id, { ...node, deps: [...new Set([...node.deps, ...incoming])].sort() });
   }
   const budgetItems = base.budgetItems.map(([id, amount]) => [id, amount * (loops.get(id)?.maxIter ?? 1)] as const);
-  return new RunPlan({ ...base, nodes: topologicalOrder(line, nodes), budgetItems });
+  const plan = new RunPlan({ ...base, nodes: topologicalOrder(line, nodes), budgetItems });
+  compiled.set(line, plan);
+  return plan;
 }
 
 export function selectSwitchTarget(node: PlanNode, materials: readonly Bean[]): string {
