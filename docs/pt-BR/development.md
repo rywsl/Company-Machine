@@ -1,3 +1,5 @@
+> **Migration notice.** The active control plane uses Bun + TypeScript with Podman or headless Kiri. This translated document retains historical Python milestone examples. Use the active English or Chinese guides for current commands.
+
 # Desenvolvimento
 
 Código, `spec/` e testes de aceitação podem ser alterados na ordem exigida pela verificação. A spec não precisa ser commitada antes da implementação.

@@ -1,3 +1,5 @@
+> **Migration notice.** The active control plane uses Bun + TypeScript with Podman or headless Kiri. This translated document retains historical Python milestone examples. Use the active English or Chinese guides for current commands.
+
 [English](README.md) | [日本語](README_ja.md) | [한국어](README_ko.md) | [Français](README_fr.md) | [Deutsch](README_de.md) | [Español](README_es.md) | **Português (BR)** | [Русский](README_ru.md) | [简体中文](README_zh-CN.md)
 
 <p align="center">

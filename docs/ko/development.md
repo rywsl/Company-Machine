@@ -1,3 +1,5 @@
+> **Migration notice.** The active control plane uses Bun + TypeScript with Podman or headless Kiri. This translated document retains historical Python milestone examples. Use the active English or Chinese guides for current commands.
+
 # 개발
 
 코드, `spec/`, 인수 테스트는 검증 결과에 맞춰 필요한 순서로 수정할 수 있습니다. 구현보다 먼저 spec을 커밋할 필요는 없습니다.

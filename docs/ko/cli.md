@@ -1,3 +1,5 @@
+> **Migration notice.** The active control plane uses Bun + TypeScript with Podman or headless Kiri. This translated document retains historical Python milestone examples. Use the active English or Chinese guides for current commands.
+
 [English](../en/cli.md) | [日本語](../ja/cli.md) | **한국어** | [Français](../fr/cli.md) | [Deutsch](../de/cli.md) | [Español](../es/cli.md) | [Português (BR)](../pt-BR/cli.md) | [Русский](../ru/cli.md) | [简体中文](../zh-CN/cli.md)
 
 # CLI 레퍼런스
