@@ -89,6 +89,8 @@ def exit_code(exc: FactoryError) -> int
 
 Bun 的 `epoch` 命令输出规范 JSON。`init`、`rollback` 和 `adopt` 返回 `{ "commit": "<提交 ID>" }`。可用 `--registry DIR` 显式指定 Git 工作树，或让命令读取 `factory.json` 的 `governance.registry`。从 Bun 检查点恢复后，可将 `--registry` 指向恢复根目录下的 `registry`，以重新物化原来的 Git epoch。
 
+Bun 的 `business units <system-id>` 返回业务单元标识。`business bind <system-id> <operator-id> --harness <official-id> [--model <model-id>]` 设置该 Operator 的 Harness 和模型。省略模型时继承共享 Harness 配置中的默认模型。命令与厂区节点详情写入同一业务绑定。
+
 Bun 将新运行绑定到已配置的 active 提交，`--epoch` 可选用其它已构建提交。已有 Job、Run、审批和回执按其记录的 epoch 恢复。当前 Bun 的治理路由使用 active 指针，分流规则由后续 EpochRouter 接入。
 
 ### 3.3 全局选项

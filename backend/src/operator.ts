@@ -3,7 +3,8 @@ import type { SqliteStore } from "./db";
 import type { BusinessUnit, UnitRun } from "./models";
 import { randomUUID } from "node:crypto";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
-import { OfficialCliTransport, chooseTransport, harnessEndpointEnv, resolveOfficialHarness, type HarnessEvent, type HarnessSession, type OfficialSpawn } from "./harness";
+import { OfficialCliTransport, chooseTransport, harnessEndpointEnv, type HarnessEvent, type HarnessSession, type OfficialSpawn } from "./harness";
+import { resolveOperatorBinding } from "./operator-binding";
 
 export interface OperatorCoordinatorOptions {
   store: SqliteStore;
@@ -74,18 +75,24 @@ export class OperatorCoordinator {
       this.options.store.completeUnitRun(unitRun.id, "blocked", [], "operator-project-unavailable");
       return;
     }
-    const profile = this.options.store.listHarnessProfiles().find((item) => item.role === "operator" && (!unit.harnessRuntime || item.runtime.toLowerCase().includes(unit.harnessRuntime.toLowerCase())));
-    const definition = profile ? resolveOfficialHarness(profile.runtime) : undefined;
-    if (!profile || !definition) {
-      this.options.store.completeUnitRun(unitRun.id, "blocked", [], "operator-harness-not-configured");
-      this.options.events.publish("operator.run.blocked", { runId, unitRunId, reason: "operator-harness-not-configured" });
+    const binding = resolveOperatorBinding(unit, this.options.store.listHarnessProfiles());
+    if ("reason" in binding) {
+      this.options.store.completeUnitRun(unitRun.id, "blocked", [], binding.reason);
+      this.options.events.publish("operator.run.blocked", { runId, unitRunId, reason: binding.reason });
       return;
     }
+    const { definition, profile, model, explicitModel } = binding;
     const sessionId = `${definition.id}:${unitRun.id}`;
+    const useAcp = chooseTransport(definition, Boolean(definition.id === "kimi-code" || this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
+    if (explicitModel && definition.transportPreference === "acp" && !useAcp) {
+      const reason = "operator-harness-requires-acp-for-model";
+      this.options.store.completeUnitRun(unitRun.id, "blocked", [], reason);
+      this.options.events.publish("operator.run.blocked", { runId, unitRunId, reason });
+      return;
+    }
     const claimed = this.options.store.claimUnitRun(runId, unit.id, sessionId);
     if (!claimed || claimed.status !== "running") return;
-    this.options.events.publish("operator.run.claimed", { runId, unitRunId, unitId: unit.id, sessionId, harness: definition.id });
-    const useAcp = chooseTransport(definition, Boolean(definition.id === "kimi-code" || this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
+    this.options.events.publish("operator.run.claimed", { runId, unitRunId, unitId: unit.id, sessionId, harness: definition.id, model });
     const transport = useAcp
       ? new AcpTransport(definition, this.options.acpSpawn ?? this.options.spawn ?? defaultAcpSpawn)
       : new OfficialCliTransport(definition, this.options.spawn);
@@ -105,7 +112,8 @@ export class OperatorCoordinator {
       session = await transport.start({
         task: this.taskFor(unit, runId, unitRun),
         contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。缺少项目资源时输出 {\"type\":\"mao.secret_request\",\"name\":\"...\",\"purpose\":\"...\",\"scope\":\"...\"}，由项目资源请求流程向用户呈现。",
-        model: profile.model,
+        model,
+        requireModelSelection: explicitModel,
         env: { ...credentials, ...harnessEndpointEnv(definition, profile.baseUrl) },
         cwd: this.cwd,
         containerImage: profile.image,

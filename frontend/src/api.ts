@@ -1,4 +1,4 @@
-import type { Bootstrap, Graph, EventRecord, AssetRecord, HarnessRecord, HarnessProfile, SecretRecord, StreamEvent, TalkMessage } from "./types";
+import type { Bootstrap, Graph, EventRecord, AssetRecord, HarnessRecord, HarnessProfile, OperatorBindingView, SecretRecord, StreamEvent, TalkMessage } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -24,9 +24,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     payload = null;
   }
   if (!response.ok) {
-    const message = typeof payload === "object" && payload && "message" in payload
-      ? String(payload.message)
-      : "本地服务请求失败";
+    const detail = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    const message = typeof detail.message === "string" ? detail.message
+      : typeof detail.error === "string" ? detail.error : "本地服务请求失败";
     throw new ApiError(message, response.status, payload);
   }
   return payload as T;
@@ -44,6 +44,12 @@ export const configureHarness = (config: Record<string, unknown>) => api<{ profi
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(config),
 });
+export const updateOperatorBinding = (systemId: string, unitId: string, harness: string, model?: string) =>
+  api<{ binding: OperatorBindingView }>(`/api/v1/business-systems/${encodeURIComponent(systemId)}/units/${encodeURIComponent(unitId)}/binding`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ harness_runtime: harness, model: model ?? null }),
+  });
 export const verifyHarness = (profile_id: string) => api<{ profile: HarnessProfile }>("/api/web/harnesses/verify", {
   method: "POST",
   headers: { "Content-Type": "application/json" },

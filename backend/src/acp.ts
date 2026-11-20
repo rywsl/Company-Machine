@@ -25,6 +25,18 @@ function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+function modelOption(state: Record<string, unknown>): Record<string, unknown> | undefined {
+  return Array.isArray(state.configOptions) ? state.configOptions.map(object)
+    .find((option) => option?.category === "model" && option.type === "select") : undefined;
+}
+
+function hasOptionValue(options: unknown, model: string): boolean {
+  return Array.isArray(options) && options.some((entry) => {
+    const option = object(entry);
+    return option?.value === model || (Array.isArray(option?.options) && option.options.some((item) => object(item)?.value === model));
+  });
+}
+
 function decodeLine(line: string): Record<string, unknown> | undefined {
   try {
     return object(JSON.parse(line));
@@ -98,7 +110,7 @@ class AcpSession implements HarnessSession {
 
   get id(): string { return this.sessionId; }
 
-  async initialize(request: HarnessSessionRequest): Promise<void> {
+  async initialize(request: HarnessSessionRequest, nativeModel: boolean): Promise<void> {
     const initialized = await this.request(1, "initialize", {
       protocolVersion: 1,
       clientInfo: { name: "machine-agent-org", version: "1" },
@@ -107,18 +119,35 @@ class AcpSession implements HarnessSession {
     if (initialized.protocolVersion !== 1) throw new Error("ACP agent did not negotiate protocol version 1");
     const workspace = { cwd: request.containerImage ? "/tmp" : request.cwd, mcpServers: [] };
     let nextId = 2;
+    const requestId = () => { if (nextId === PROMPT_ID) nextId++; return nextId++; };
+    let sessionState: Record<string, unknown> = {};
     if (request.resumeId && object(initialized.agentCapabilities)?.loadSession === true) {
       try {
-        const loaded = await this.request(nextId++, "session/load", { ...workspace, sessionId: request.resumeId });
+        const loaded = await this.request(requestId(), "session/load", { ...workspace, sessionId: request.resumeId });
         this.sessionId = typeof loaded.sessionId === "string" && loaded.sessionId.trim() ? loaded.sessionId : request.resumeId;
+        sessionState = loaded;
       } catch (error) {
         if (!(error instanceof AcpRpcError)) throw error;
       }
     }
     if (!this.sessionId) {
-      const created = await this.request(nextId === PROMPT_ID ? PROMPT_ID + 1 : nextId, "session/new", workspace);
+      const created = await this.request(requestId(), "session/new", workspace);
       if (typeof created.sessionId !== "string" || !created.sessionId.trim()) throw new Error("ACP did not return a session id");
       this.sessionId = created.sessionId;
+      sessionState = created;
+    }
+    const option = modelOption(sessionState);
+    if (!option && request.requireModelSelection && !nativeModel) {
+      throw new Error("此官方 Harness 未提供 ACP 模型选择");
+    }
+    if (option && option.currentValue !== request.model) {
+      if (typeof option.id !== "string" || !hasOptionValue(option.options, request.model)) {
+        throw new Error("此官方 Harness 未提供配置的模型");
+      }
+      const updated = await this.request(requestId(), "session/set_config_option", {
+        sessionId: this.id, configId: option.id, value: request.model,
+      });
+      if (modelOption(updated)?.currentValue !== request.model) throw new Error("官方 Harness 未确认配置的模型");
     }
     await this.write({ jsonrpc: "2.0", id: PROMPT_ID, method: "session/prompt", params: {
       sessionId: this.id,
@@ -251,14 +280,15 @@ export class AcpTransport implements HarnessTransport {
   constructor(private readonly definition: HarnessDefinition, private readonly spawn: AcpSpawn, private readonly argvSuffix: string[] = []) {}
 
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
+    const nativeModel = !this.argvSuffix.length && this.definition.id === "kimi-code";
     const args = this.argvSuffix.length ? this.argvSuffix
-      : this.definition.id === "kimi-code" ? ["--model", request.model, "acp"] : [];
+      : nativeModel ? ["--model", request.model, "acp"] : [];
     const process = this.spawn([this.definition.executable, ...args], { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network });
     const session = new AcpSession(process);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        session.initialize(request),
+        session.initialize(request, nativeModel),
         new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("ACP session startup timed out")), START_TIMEOUT_MS); }),
       ]);
       return session;

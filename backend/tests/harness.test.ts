@@ -11,10 +11,10 @@ function frame(value: object): Uint8Array {
   return encoder.encode(JSON.stringify(value) + "\n");
 }
 
-function terminalFixture(frames: Uint8Array[], keepOpen = false) {
+function terminalFixture(frames: Uint8Array[], keepOpen = false, definition = acpDefinition) {
   const writes: Array<{ id: number; method?: string; params?: Record<string, unknown>; error?: { code: number } }> = [];
   let killed = false;
-  const transport = new AcpTransport(acpDefinition, () => ({
+  const transport = new AcpTransport(definition, () => ({
     stdout: new ReadableStream({
       start(controller) {
         for (const frame of frames) controller.enqueue(frame);
@@ -65,6 +65,29 @@ describe("official Harness boundary", () => {
     expect(argv[0]).toBe("codex");
     expect(argv).toContain("--json");
     expect(argv.at(-1)).toContain("write tests");
+  });
+
+  test("selects the exact advertised ACP model before sending the prompt", async () => {
+    const definition = officialHarness("deepseek-harness")!;
+    const option = { id: "backend-model", type: "select", category: "model", currentValue: "base",
+      options: [{ group: "Available", options: [{ value: "target/model" }, { value: "base" }] }] };
+    const created = (configOptions?: unknown[]) => frame({ jsonrpc: "2.0", id: 2, result: { sessionId: "session", configOptions } });
+    const initialized = frame({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } });
+    const selected = frame({ jsonrpc: "2.0", id: 4, result: { configOptions: [{ ...option, currentValue: "target/model" }] } });
+    const promptResult = frame({ jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } });
+    const request = { ...acpRequest, model: "target/model", requireModelSelection: true };
+    const supported = terminalFixture([initialized, created([option]), selected, promptResult], false, definition);
+    const session = await supported.transport.start(request);
+    expect(supported.writes[2]).toMatchObject({ method: "session/set_config_option",
+      params: { sessionId: "session", configId: "backend-model", value: "target/model" } });
+    expect(supported.writes[3].method).toBe("session/prompt");
+    await collectPrompt(session);
+    const unsupported = terminalFixture([initialized, created()], false, definition);
+    await expect(unsupported.transport.start(request)).rejects.toThrow("未提供 ACP 模型选择");
+    expect(unsupported.writes.map(({ method }) => method)).toEqual(["initialize", "session/new"]);
+    const missing = terminalFixture([initialized, created([option])], false, definition);
+    await expect(missing.transport.start({ ...request, model: "target" })).rejects.toThrow("未提供配置的模型");
+    expect(missing.writes.map(({ method }) => method)).toEqual(["initialize", "session/new"]);
   });
 
   test("maps ACP JSON lines into bounded Harness events", () => {

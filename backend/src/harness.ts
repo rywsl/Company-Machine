@@ -23,6 +23,7 @@ export interface HarnessSessionRequest {
   task: string;
   contract: string;
   model: string;
+  requireModelSelection?: boolean;
   cwd: string;
   env?: Record<string, string>;
   resumeId?: string;
@@ -73,7 +74,7 @@ export function officialHarnesses(): HarnessDefinition[] {
 }
 
 export function officialHarness(id: string): HarnessDefinition | undefined {
-  return DEFINITIONS[id as OfficialHarnessName];
+  return Object.hasOwn(DEFINITIONS, id) ? DEFINITIONS[id as OfficialHarnessName] : undefined;
 }
 
 export function chooseTransport(definition: HarnessDefinition, acpAvailable: boolean): HarnessTransportKind {

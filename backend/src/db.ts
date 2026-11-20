@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ManagedDatabase } from "./sqlite";
+import type { OperatorBinding } from "./operator-binding";
 import type {
   Artifact,
   BusinessSystem,
@@ -326,6 +327,14 @@ export class SqliteStore {
 
   getBusinessUnit(id: string): BusinessUnit | undefined {
     const row = this.db.query("SELECT * FROM business_units WHERE id = ?").get(id) as any;
+    return row ? this.businessUnitFromRow(row) : undefined;
+  }
+
+  updateOperatorBinding(businessSystemId: string, id: string, binding: OperatorBinding): BusinessUnit | undefined {
+    const row = this.db.query(`
+      UPDATE business_units SET harness_runtime = ?, model = ?, updated_at = ?
+      WHERE id = ? AND business_system_id = ? AND kind = 'operator' RETURNING *
+    `).get(binding.harnessRuntime, binding.model ?? null, now(), id, businessSystemId);
     return row ? this.businessUnitFromRow(row) : undefined;
   }
 

@@ -286,12 +286,15 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `GET /api/v1/business-systems/<id>/export` 导出可迁移的业务系统文档。输出保留仓库、内容寻址文件及其他可移植引用。本机路径、仓库凭据、项目密钥值和 Harness 会话号在导出时剥离或脱敏。本地文件夹保留待接入引用
 - `POST /api/v1/business-systems/import` 在一个事务中重建项目、来源、运行单元、物料记录、转换和 DAG，并重写相关 ID 与来源引用。导入前后复用图写入的节点唯一、边引用和无环校验。密钥按项目所需资源重新创建为待配置请求。历史运行作为归档来源保留，导入后的新运行使用重建的 DAG
 - `GET /api/v1/business-systems/<id>/units` 返回由 Operator 与 Machine 组成的业务基础单元。项目来源的宿主路径只用于内部执行，公共投影只返回来源种类
+- `PATCH /api/v1/business-systems/<id>/units/<unit-id>/binding` 更新该业务系统的 Operator。请求字段为 `harness_runtime` 和可空的 `model`。厂区节点详情和厂长的 `business bind` 使用同一入口。清空模型后继承该 Harness 配置的模型。绑定随业务单元导出
 - `GET/POST /api/v1/business-systems/<id>/runs` 创建和读取业务运行，`GET /api/v1/runs/<id>` 读取运行及 Operator 执行状态，`POST /api/v1/runs/<id>/dispatch` 通过官方 Operator Harness 推进待执行单元
 - 创建业务运行默认同时记录派发授权。请求使用 `dispatch: false` 时保留待派发状态，直到调用显式派发接口。历史运行缺少派发记录且没有已完成的 Operator 时，继续通过显式接口派发。
 - 业务运行按 DAG 前置边决定就绪状态。前置 Operator 完成后，其产物引用会合并到后继 Operator 的输入物料，控制面不会并发启动未满足依赖的单元
 - 前置 Operator 失败或被阻塞时，所有受影响的后继 Operator 必须进入 `blocked`，业务运行进入 `failed`，不能因没有新的可调度单元而永久停留在 `running`
 - `GET/POST /api/v1/projects/<id>/artifacts` 读写带摘要、用途、文件引用、输入输出和 lineage 的物料 JSON
 - `GET/POST /api/v1/business-systems/<id>/graph` 读取或接收外部 Foreman 维护的 DAG 快照。写入时节点标识唯一，边必须引用存在节点，图必须无环
+
+Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现。运行在领用单元时解析绑定，并记录官方 Harness ID 和生效的模型 ID。官方 CLI 接收模型参数。ACP 优先用 `session/new` 或 `session/load` 提供的 `model` 配置选项，并在 `session/prompt` 前确认选择。Kimi Code 可通过原生启动参数接收模型。无法使用明确绑定的模型时，执行会报告原因。
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness

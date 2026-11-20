@@ -90,7 +90,7 @@ export class ForemanCoordinator {
       }));
       session = await transport.start({
         task: `${claimed.text}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${this.options.store.listBusinessSystems().map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
-        contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。需要写入业务事实时，在 MAO 仓库根目录使用 `bun run backend/src/cli.ts business graph <business-system-id> --file <path>`、`business artifact <project-id> --file <path>`、`business conversion <business-system-id> --kind <kind> --summary <summary>` 或 `business run <business-system-id>`。文件内容通过引用传递，密钥通过项目资源请求流程处理。",
+        contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。需要写入业务事实时，在 MAO 仓库根目录使用 `bun run backend/src/cli.ts business graph <business-system-id> --file <path>`、`business artifact <project-id> --file <path>`、`business conversion <business-system-id> --kind <kind> --summary <summary>` 或 `business run <business-system-id>`。先通过 `business units <business-system-id>` 找到工位，再使用 `business bind <business-system-id> <operator-id> --harness <官方 Harness ID> [--model <模型 ID>]` 修改绑定。文件内容通过引用传递，密钥通过项目资源请求流程处理。",
         model: profile.model,
         env: harnessEndpointEnv(definition, profile.baseUrl),
         cwd: this.cwd,

@@ -13,6 +13,7 @@ import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
 import { verifyHarness } from "./harness-verification";
 import { OperatorCoordinator, projectCredentialName } from "./operator";
+import { operatorBindingView, parseOperatorBinding } from "./operator-binding";
 import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, type OfficialSpawn } from "./harness";
 import type { AcpSpawn } from "./acp";
 
@@ -222,6 +223,22 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (unitsMatch && request.method === "GET") {
       if (!store.getBusinessSystem(unitsMatch[1])) return response({ error: "business system was not found" }, 404);
       return response(store.listBusinessUnits(unitsMatch[1]).map(publicUnit));
+    }
+    const bindingMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/units\/([^/]+)\/binding$/);
+    if (bindingMatch && request.method === "PATCH") {
+      const input = parseOperatorBinding(await readJson(request));
+      if (!input) return response({ error: "需要有效的官方 Harness ID 和模型 ID" }, 400);
+      let systemId: string;
+      let unitId: string;
+      try {
+        systemId = decodeURIComponent(bindingMatch[1]);
+        unitId = decodeURIComponent(bindingMatch[2]);
+      } catch { return response({ error: "业务系统或 Operator 标识无效" }, 400); }
+      const updated = store.updateOperatorBinding(systemId, unitId, input);
+      if (!updated) return response({ error: "找不到此业务系统的 Operator" }, 404);
+      const binding = operatorBindingView(updated, store.listHarnessProfiles());
+      events.publish("business-unit.binding.changed", { unitId, binding });
+      return response({ unit: publicUnit(updated), binding });
     }
     const runsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/runs$/);
     if (runsMatch && request.method === "GET") {
@@ -610,6 +627,7 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
     const storedNodes = Array.isArray(storedGraph?.nodes) ? storedGraph.nodes.filter((node): node is Record<string, any> => Boolean(node && typeof node === "object" && typeof (node as any).id === "string")) : [];
     const storedById = new Map<string, Record<string, any>>();
     for (const node of storedNodes) if (!storedById.has(node.id)) storedById.set(node.id, node);
+    const profiles = operatorUnits.length ? store.listHarnessProfiles() : [];
     const nodes = units.length ? units.map((unit, index) => {
       const saved = storedById.get(unit.id);
       return {
@@ -620,6 +638,7 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
       position: saved?.position && typeof saved.position === "object" ? saved.position : { x: unit.kind === "operator" ? 170 : 470, y: 130 + Math.floor(index / 2) * 180 },
       status: unit.status === "pending" ? "waiting" : unit.status,
       metadata: { project: unit.name, harness: unit.harnessRuntime, model: unit.model, source_kind: unit.metadata.source_kind },
+      ...(unit.kind === "operator" ? { operatorBinding: operatorBindingView(unit, profiles) } : {}),
       };
     }) : selectedProjects.flatMap((project, index) => [
       { id: `${project.id}:operator`, type: "operator", group: project.id, label: "Operator", position: { x: 170, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, harness: "official" } },

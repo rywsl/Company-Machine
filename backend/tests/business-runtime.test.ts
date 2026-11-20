@@ -20,6 +20,46 @@ function processForFailure(): OfficialProcess {
 }
 
 describe("Bun business execution loop", () => {
+  test("persists a scoped Operator binding, projects it in the graph and invokes the exact model", async () => {
+    const invocations: string[][] = [];
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", operator: { spawn: (argv) => {
+      invocations.push(argv);
+      return processForRecord();
+    } } });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Binding" });
+      const other = app.store.createBusinessSystem({ name: "Other" });
+      const project = app.store.createIntake({ business_system_id: system.id, name: "Model", repo_url: "https://example.test/project.git" });
+      const unitId = `${project.id}:operator`;
+      app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "codex-default", mode: "session" });
+      app.store.saveHarnessProfile({ runtime: "OperatorRuntime:claude-code@4", role: "operator", baseUrl: "", model: "claude-default", mode: "session" });
+      const bind = (body: unknown, systemId = system.id, id = unitId) =>
+        app.fetch(new Request(`http://localhost/api/v1/business-systems/${systemId}/units/${encodeURIComponent(id)}/binding`, {
+          method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        }));
+      const binding = { harness_runtime: "claude-code", model: "custom/model@v2" };
+      expect((await bind({ ...binding, harness_runtime: "code" })).status).toBe(400);
+      expect((await bind(binding, other.id)).status).toBe(404);
+      expect((await bind(binding, system.id, `${project.id}:machine`)).status).toBe(404);
+      const response = await bind(binding);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ binding: { harnessRuntime: "claude-code", model: binding.model, effectiveModel: binding.model } });
+      const graph = await (await app.fetch(new Request(`http://localhost/api/web/graph?scope=workarea&workarea=${system.id}`))).json() as { nodes: unknown[] };
+      expect(graph.nodes.find((node) => (node as { id: string }).id === unitId)).toMatchObject({ operatorBinding: { effectiveModel: binding.model } });
+      const run = app.store.createBusinessRun(system.id)!;
+      await app.operator.dispatch(run.id);
+      expect(invocations).toHaveLength(1);
+      expect(invocations[0][0]).toBe("claude");
+      expect(invocations[0][invocations[0].indexOf("--model") + 1]).toBe(binding.model);
+      expect(app.store.getBusinessRun(run.id)?.status).toBe("completed");
+      expect((await bind({ harness_runtime: "codex", model: null })).status).toBe(200);
+      const next = app.store.createBusinessRun(system.id)!;
+      await app.operator.dispatch(next.id);
+      expect(invocations[1][0]).toBe("codex");
+      expect(invocations[1][invocations[1].indexOf("--model") + 1]).toBe("codex-default");
+    } finally { app.stop(); }
+  });
+
   test("resumes the requesting project only after all of its required credentials are available", async () => {
     const root = mkdtempSync(join(tmpdir(), "mao-credentials-"));
     const credential = "local-test-credential";

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { main } from "../src/cli";
+import { SqliteStore } from "../src/db";
 import { Context } from "../src/legacy/context";
 
 async function capture(run: () => Promise<number>): Promise<{ code: number; output: string[]; errors: string[] }> {
@@ -46,6 +47,32 @@ describe("Bun factory CLI", () => {
     const result = await capture(() => main(["registry", "check", "tests/fixtures/registry-m1", "--json"]));
     expect(result.code).toBe(0);
     expect(JSON.parse(result.output.join("\n"))).toMatchObject({ ok: true });
+  });
+
+  test("binds an Operator through the business CLI and preserves the binding across processes", { timeout: 30_000 }, async () => {
+    const root = resolve("tmp", "operator-binding-" + randomUUID());
+    mkdirSync(root, { recursive: true });
+    const dbPath = join(root, "factory.db");
+    const initial = new SqliteStore(dbPath, dbPath);
+    const system = initial.createBusinessSystem({ name: "Binding CLI" });
+    const project = initial.createIntake({ name: "Project", business_system_id: system.id, repo_url: "https://example.test/project" });
+    const unitId = project.id + ":operator";
+    initial.close();
+    const run = async (args: string[]) => {
+      const bun = Bun as unknown as { spawn(argv: string[], options: object): { stdout: ReadableStream; stderr: ReadableStream; exited: Promise<number> } };
+      const child = bun.spawn([Bun.argv[0], "run", "backend/src/cli.ts", "business", ...args], {
+        env: { ...process.env, FACTORY_ROOT: root, FACTORY_DB_PATH: dbPath, BUSINESS_DB_PATH: dbPath }, stdout: "pipe", stderr: "pipe",
+      });
+      const [code, body, errors] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+      if (code !== 0) throw new Error(errors);
+      return JSON.parse(body);
+    };
+    try {
+      const changed = await run(["bind", system.id, unitId, "--harness", "claude-code", "--model", "custom/model"]);
+      expect(changed).toMatchObject({ unit: { id: unitId, harnessRuntime: "claude-code", model: "custom/model" } });
+      const units = await run(["units", system.id]) as Array<{ id: string }>;
+      expect(units.find(({ id }) => id === unitId)).toMatchObject({ harnessRuntime: "claude-code", model: "custom/model" });
+    } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 75 }); }
   });
 
   test("imports material, seals a scripted job and returns its lineage through Bun CLI", { timeout: 60_000 }, async () => {

@@ -1,6 +1,15 @@
 export type Page = "dashboard" | "compose" | "assets" | "logs" | "settings";
 export type Scope = "factory" | "workarea";
 
+export interface OperatorBindingView {
+  businessSystemId: string;
+  harnessRuntime?: string;
+  model?: string;
+  effectiveModel?: string;
+  profileId?: string;
+  reason?: string;
+}
+
 export interface GraphNode {
   id: string;
   type: "workarea" | "operator" | "machine";
@@ -9,6 +18,7 @@ export interface GraphNode {
   position: { x: number; y: number };
   status?: string;
   metadata?: Record<string, unknown>;
+  operatorBinding?: OperatorBindingView;
 }
 
 export interface GraphEdge {

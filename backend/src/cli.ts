@@ -18,10 +18,10 @@ function values(args: string[], name: string): string[] {
 export function usage(scope?: string): string {
   if (scope && isStationScope(scope)) return stationUsage(scope);
   if (scope === "project") return `factory project commands\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH`;
-  if (scope === "business") return `factory business commands\n  units ID\n  run ID [--input REF]\n  runs ID\n  export ID\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
+  if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
-  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
+  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
 
 function requireValue(args: string[], name: string): string {
@@ -111,6 +111,27 @@ async function runCommand(argv: string[]): Promise<number> {
     }
     if (command === "business") {
       const subcommand = args[0];
+      if (subcommand === "bind") {
+        const [, systemId, unitId, ...flags] = args;
+        if (!systemId || !unitId || systemId.startsWith("--") || unitId.startsWith("--")) throw new CliUsageError("business system and Operator ids are required");
+        const options = new Map<string, string>();
+        for (let index = 0; index < flags.length; index += 2) {
+          const [key, value] = [flags[index], flags[index + 1]];
+          if ((key !== "--harness" && key !== "--model") || !value || value.startsWith("--") || options.has(key)) {
+            throw new CliUsageError("business bind expects --harness ID [--model ID]");
+          }
+          options.set(key, value);
+        }
+        const harness = options.get("--harness");
+        if (!harness) throw new CliUsageError("--harness requires a value");
+        const route = `/api/v1/business-systems/${encodeURIComponent(systemId)}/units/${encodeURIComponent(unitId)}/binding`;
+        const binding = await requestJson(app, route, {
+          method: "PATCH", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ harness_runtime: harness, model: options.get("--model") ?? null }),
+        });
+        console.log(JSON.stringify(binding, null, 2));
+        return 0;
+      }
       if (["units", "runs", "export"].includes(subcommand ?? "")) {
         const id = args[1];
         if (!id) throw new CliUsageError("business system id is required");
