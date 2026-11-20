@@ -66,8 +66,8 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     return health;
   };
   let runtimeReadyPromise: Promise<RuntimeHealth> | undefined;
-  const ensureRuntimeHealth = async (): Promise<RuntimeHealth> => {
-    if (!runtime.ensureReady) throw new Error("runtime readiness is unavailable");
+  const ensureRuntimeHealth = async (): Promise<RuntimeHealth | undefined> => {
+    if (!runtime.ensureReady) return undefined;
     const pending = runtimeReadyPromise ?? (runtimeReadyPromise = (async () => {
       const health = await runtime.ensureReady!();
       runtimeCache = { at: Date.now(), health };
