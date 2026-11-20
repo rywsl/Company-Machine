@@ -10,8 +10,8 @@
 
 <p align="center">
   <img alt="Bun + TypeScript" src="https://img.shields.io/badge/Bun%20%2B%20TypeScript-active-f97316?style=flat-square&logo=bun&logoColor=white">
-  <img alt="运行时依赖 2 个" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="1448 个测试通过" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
+  <img alt="Bun 内置运行时" src="https://img.shields.io/badge/runtime-Bun%20built--ins-0f172a?style=flat-square&logo=bun&logoColor=white">
+  <img alt="43 个 Bun 测试通过" src="https://img.shields.io/badge/Bun%20tests-43%20passed-22c55e?style=flat-square">
   <img alt="内置 agent：0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
 
@@ -27,7 +27,7 @@
 
 ---
 
-> **这是什么？** 一个工厂控制面。它本身不包含任何 agent，也从不调用模型 API。所有智能都来自你已经在用的 CLI agent（Claude Code 无头模式、Codex……），它们运行在 Docker 沙箱里。工位**之间**的一切，包括路由、类型检查、转换、存储、调度、预算、审批和变更控制，都由确定性代码完成。
+> **这是什么？** 一个工厂控制面。它本身不包含任何 agent，也从不调用模型 API。所有智能都来自你已经在用的官方 CLI agent（Claude Code 无头模式、Codex……），它们运行在受控的 Podman 或 Kiri 沙箱里。工位**之间**的一切，包括路由、类型检查、转换、存储、调度、预算、审批和变更控制，都由确定性代码完成。
 
 [OpenMontage](https://github.com/OpenMontageInc/OpenMontage) 这类“智能体原生”产品让 agent 掌控整条流水线。Machine Agent Org 工作在它的上一层：把这类产品当作产线上的**机器**，每台机器在一个**工位**上由 agent **操作工**驱动。一个工位的产物经检验、封存后交给下一个工位作为物料，直到**消费者（Sink）**把结果发布到 S3、GitHub、YouTube 或其他地方。
 
@@ -45,7 +45,7 @@
 
 ## 实际运行
 
-下面是 fixture registry 中 `note-pipeline@1` 的一次真实运行。它使用本地沙箱提供者和 `tests/fakes/` 里的脚本化 fake agent，所以不需要 Docker，也不需要模型密钥。CLI 输出的是 JSON，图中做了精简。
+下面是 fixture registry 中 `note-pipeline@1` 的一次真实运行。它使用本地测试提供者和脚本化 fake agent，所以不需要启动 Podman 或 Kiri，也不需要模型密钥。CLI 输出的是 JSON，图中做了精简。
 
 <p align="center">
   <img src="docs/assets/demo-run.svg" alt="终端会话：check、import、plan、run、nodes、lineage、status" width="100%">
@@ -136,11 +136,11 @@ flowchart LR
 
 | 层 | 职责 | 主要代码 |
 |---|---|---|
-| **内核** | 元模型、结构编译器、宪法不变量、事件日志，极少变化 | `src/mrl/`（MRL 语言与工厂 profile） |
-| **结构层** | Git 中的 Registry；类型、机器、操作工、工位、产线、策略都是 Spec，按 **epoch** 版本化 | `mao.snapshot`、`mao.governance.epochs` |
-| **运行层** | 调度器、产线运行器、job 状态机、沙箱、出厂检验、仓库、缓存、租约 | `mao.runner`、`mao.runs`、`mao.dynamic`、`mao.scheduler`、`mao.gate`、`mao.warehouse` |
-| **适配层** | 机器包、操作工运行时、Docker/Local 沙箱、连接器、服务网关、出网与模型代理、存储后端 | `mao.sandbox`、`mao.operator`、`mao.gateway`、`mao.egress`、`mao.backends` |
-| **治理层** | 验证流水线、不变量审计、漂移监测、调和器、影子运行与金丝雀、厂长 | `mao.governance.*`、`mao.reconcile`、`mao.supervisor`、`mao.daemon` |
+| **内核** | MRL 表达式、规则求值、业务记录和事件日志 | `backend/mrl/`、`backend/src/models.ts`、`backend/src/event-bus.ts` |
+| **业务结构层** | 业务系统、Operator、Machine、物料和 DAG 记录 | `backend/src/db.ts`、`backend/src/models.ts` |
+| **运行层** | 业务运行调度、前置物料检查、产物记录、实时事件 | `backend/src/server.ts`、`backend/src/foreman.ts` |
+| **适配层** | 官方 Harness/ACP、受控 Podman/Kiri、项目接入 | `backend/src/harness.ts`、`backend/src/acp.ts`、`backend/runtime/` |
+| **治理层** | 外部厂长对话、密钥请求状态和用户可见投影 | `backend/src/foreman.ts`、`backend/src/vault.ts`、`frontend/src/` |
 
 **六层验证。** 每一层都有固定的执行时机和固定的失败后果：
 
@@ -162,18 +162,15 @@ flowchart LR
 **planner** 工位可以产出 `Plan`。Plan 中的任何部分运行之前，都要先经 V1/V2 编译，并对照该工位的 `plan_bounds` 检查（允许的工位与 Sink、步数、扇出、深度、预算）。
 
 <details>
-<summary><b><code>src/mao</code> 模块地图</b></summary>
+<summary><b><code>backend/</code> 模块地图</b></summary>
 
 | 领域 | 模块 |
 |---|---|
-| 基础设施 | `base` `errors` `db` `context` `values` `migrations/` |
-| 结构与治理 | `snapshot` `contract` `governance/{epochs,changesets,risk,rollout,shadow}` `reconcile` |
-| 执行 | `jobs` `runner` `runplan` `runs` `dynamic` `scheduler` `cache` `durable` `approvals` |
-| 物料 | `warehouse` `gate` `retention` `backup` |
-| 适配 | `sandbox` `operator` `brief` `ctl/factoryctl` `gateway` `connectors` `egress` `images` `backends` |
-| 自治 | `daemon`（`factory serve`） `supervisor` `foreman` `mcp` |
-| 可观测性 | `status` `console` |
-| 命令行 | `cli` `commands/*` |
+| 业务模型与持久化 | `src/models.ts` `src/db.ts` `src/event-bus.ts` |
+| 厂长与官方 Harness | `src/foreman.ts` `src/harness.ts` `src/acp.ts` `src/operator.ts` |
+| 运行时 | `runtime/podman.ts` `runtime/kiri.ts` |
+| MRL | `mrl/` |
+| Web API 与 CLI | `src/server.ts` `src/cli.ts` |
 
 </details>
 
@@ -222,7 +219,7 @@ flowchart LR
 
 ## 命令行一览
 
-有两个入口：`factory`（控制面）和 `mrl`（关系语言工具）。全局参数：`--root`、`--registry`、`--provider {docker,local}`、`--epoch`、`--json`。环境变量 `FACTORY_ROOT` 和 `FACTORY_REGISTRY` 提供默认值。
+活动入口是 Bun 的 `factory` CLI 和 Web App。业务命令使用 `business`、`project`、`foreman`、`runtime` 等分组，官方 Harness 由控制面分配，不由项目自建。
 
 | 分组 | 命令 |
 |---|---|
@@ -238,7 +235,7 @@ flowchart LR
 - `1` 业务失败
 - `2` 用法错误
 - `3` Registry 不合法
-- `4` 环境错误（如没有 Docker）
+- `4` 环境错误（如 Podman 或 Kiri 不可用）
 - `5` 内部错误
 
 完整参考见 [docs/zh-CN/cli.md](docs/zh-CN/cli.md)。
@@ -247,7 +244,7 @@ flowchart LR
 
 ## 项目状态
 
-当前代码和 spec 的一致性检查命令是 `uv run python tools/harness.py verify`。下面的里程碑说明作为项目历史背景保留。
+当前代码和 spec 的活动一致性检查命令是 `bun run verify:bun`。下面的里程碑说明作为项目历史背景保留，Python 实现与旧验收位于 `removed/python/`。
 
 | 里程碑 | 交付 |
 |---|---|
@@ -257,7 +254,7 @@ flowchart LR
 | M3 | epoch、ChangeSet 流水线、影子运行与金丝雀、调和器、漂移、厂长 |
 | M4 | 动态结构、Plan、服务网关、生产后端 |
 | M5 | 自治闭环：持久化执行、`serve`、MCP、厂长值守 |
-| M6 | Docker 中的真实 agent CLI、厂长构建镜像 |
+| M6 | 受控 Podman/Kiri 中的真实 agent CLI、厂长构建镜像 |
 | M7 | 可观测性、控制台、保留期、备份与恢复 |
 | M8 | 出网代理加固、`serve` 韧性 |
 | M9 | M4 的能力在生产路径上闭环（S3 SigV4、经 `psql` 的 Postgres……） |
@@ -267,8 +264,11 @@ flowchart LR
 ## 仓库结构
 
 ```
-src/mrl/          MRL：词法、语法、检查器、求值器、规则、工厂 profile
-src/mao/          工厂控制面（包 `mao`，命令 `factory`）
+backend/mrl/      Bun MRL：词法、语法、检查器、求值器和规则
+backend/src/      Bun 工厂控制面、业务 API、厂长和官方 Harness 分配
+backend/runtime/  Podman 与 Kiri 运行时适配
+frontend/         Web App 与图形化业务投影
+removed/python/   历史 Python 实现、旧 CLI、旧验收和旧夹具
 spec/             规范：MRL 1.0、工厂 profile、schema、系统规范、示例 registry
 plan/             historical design, task and review material
 tests/            spec-linked acceptance tests, system tests and fixtures
@@ -297,7 +297,7 @@ docs/             架构设计（中文）、多语言指南、图示
 
 ## 参与贡献
 
-当前开发流程允许代码、spec 和验收测试一起演进。提交或推送前运行 `uv run python tools/harness.py verify`。一致性检查见 [AGENTS.md](AGENTS.md) 和 [docs/zh-CN/development.md](docs/zh-CN/development.md)。
+当前开发流程允许代码、spec 和验收测试一起演进。提交或推送前运行 `bun run verify:bun`。一致性检查见 [AGENTS.md](AGENTS.md) 和 [docs/zh-CN/development.md](docs/zh-CN/development.md)。
 
 ## 许可证
 
