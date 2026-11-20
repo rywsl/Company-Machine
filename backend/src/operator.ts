@@ -5,7 +5,7 @@ import { materialOutputRoot, type CollectedMaterialFile, type createMaterialFile
 import { projectSourceFacts } from "./project-sources";
 import type { PrepareProjectSources, PreparedProjectSources } from "./project-source-mounts";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
-import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, type HarnessEvent, type OfficialSpawn } from "./harness";
+import { OfficialCliTransport, requireDeclaredTransport, harnessControlPlaneRoot, harnessEndpointEnv, type HarnessEvent, type OfficialSpawn } from "./harness";
 import { HarnessTurn } from "./harness-turn";
 import { resolveOperatorBinding } from "./operator-binding";
 import { createUnitRunOwner, unitRunOwnerExited, unitRunProcessScope } from "./unit-run-owner";
@@ -45,6 +45,7 @@ export class OperatorCoordinator {
   private readonly active = new Map<string, Promise<void>>();
   private readonly turns = new Map<string, HarnessTurn>();
   private readonly awaitingRuntime = new Map<string, string>();
+  private readonly cancelledRuns = new Set<string>();
   private closed = false;
   private readonly cwd: string;
 
@@ -96,6 +97,13 @@ export class OperatorCoordinator {
     for (const turn of this.turns.values()) void turn.close();
   }
 
+  cancelRun(runId: string): void {
+    this.cancelledRuns.add(runId);
+    for (const unitRun of this.options.store.listUnitRuns(runId)) {
+      if (unitRun.status === "running") void this.turns.get(unitRun.id)?.close();
+    }
+  }
+
   async close(): Promise<void> {
     this.stop();
     await Promise.allSettled([...this.turns.values()].map((turn) => turn.close()));
@@ -103,7 +111,7 @@ export class OperatorCoordinator {
   }
 
   private async run(runId: string, unitRunId: string): Promise<string | null | undefined> {
-    if (this.closed) return;
+    if (this.closed || this.cancelledRuns.has(runId)) return;
     this.awaitingRuntime.delete(unitRunId);
     const unitRun = this.options.store.getUnitRun(runId, unitRunId);
     if (!unitRun || unitRun.status !== "queued") return;
@@ -120,7 +128,15 @@ export class OperatorCoordinator {
     }
     const { definition, profile, model, explicitModel } = binding;
     const sessionId = `${definition.id}:${unitRun.id}`;
-    const useAcp = chooseTransport(definition, Boolean(definition.id === "kimi-code" || this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
+    const acpAvailable = Boolean(this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1");
+    let useAcp: boolean;
+    try {
+      useAcp = requireDeclaredTransport(definition, acpAvailable) === "acp";
+    } catch (error) {
+      this.options.store.completeUnitRun(unitRun.id, "blocked", [], error instanceof Error ? error.message : "official-acp-unavailable");
+      this.options.events.publish("operator.run.blocked", { runId, unitRunId, reason: error instanceof Error ? error.message : "official-acp-unavailable" });
+      return;
+    }
     if (explicitModel && definition.transportPreference === "acp" && !useAcp) {
       const reason = "operator-harness-requires-acp-for-model";
       this.options.store.completeUnitRun(unitRun.id, "blocked", [], reason);
@@ -151,7 +167,7 @@ export class OperatorCoordinator {
           return null;
         }
       }
-      if (this.closed) return null;
+      if (this.closed || this.cancelledRuns.has(runId)) return null;
       claimed = this.options.store.claimUnitRun(runId, unit.id, sessionId, owner);
       if (!claimed) return;
       this.options.events.publish("operator.run.claimed", { runId, unitRunId, unitId: unit.id, sessionId, harness: definition.id, model });
@@ -188,7 +204,7 @@ export class OperatorCoordinator {
         projectSources: sourceMounts?.mounts,
         materialFiles: materialStage ? { outputDirectory: materialStage.outputDirectory, inputs: materialInputs?.mounts ?? [] } : undefined,
       });
-      if (this.closed) return;
+      if (this.closed || this.cancelledRuns.has(runId)) return;
       if (useAcp) {
         this.options.store.noteUnitSession(unitRun.id, session.id, owner.token);
         recordedSessionId = session.id;
@@ -237,7 +253,7 @@ export class OperatorCoordinator {
         if (event.type === "session.failed") failed = true;
         if (event.type === "session.finished") finished = true;
       }
-      if (this.closed) return;
+      if (this.closed || this.cancelledRuns.has(runId)) return;
       if (requested.size) {
         const waiting = this.options.store.completeUnitRun(unitRun.id, "waiting_resources", [...outputIds], undefined, owner.token);
         if (waiting) this.options.events.publish("operator.run.waiting_resources", waiting);

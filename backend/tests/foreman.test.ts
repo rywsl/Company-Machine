@@ -776,4 +776,55 @@ describe("Foreman official Harness dispatch", () => {
       app.stop();
     }
   });
+
+  test("requeues stale Foreman claims during durable work recovery", () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
+    try {
+      const envelope = app.store.queueForemanMessage("stale-turn", "恢复这轮工作");
+      expect(app.store.claimForemanMessage(envelope.id)?.status).toBe("claimed");
+      app.store.db.query("UPDATE foreman_outbox SET claimed_at=? WHERE id=?").run("2000-01-01T00:00:00.000Z", envelope.id);
+      app.recoverQueuedWork();
+      expect(app.store.getForemanMessage(envelope.id)?.status).toBe("queued");
+      expect(app.store.eventsAfter().map(({ type }) => type)).toContain("foreman.message.requeued");
+    } finally {
+      app.stop();
+    }
+  });
+
+  test("dispatches queued Foreman work immediately after configuring a profile", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", foreman: {
+      spawn: () => fakeProcess([
+        JSON.stringify({ type: "result", text: "已接管项目。" }),
+      ]),
+    } });
+    try {
+      const queued = app.store.queueForemanMessage("before-profile", "接管项目");
+      const response = await app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtime: "claude-code", role: "foreman", model: "fixture" }),
+      }));
+      expect(response.status).toBe(200);
+      for (let attempt = 0; attempt < 40 && app.store.getForemanMessage(queued.id)?.status !== "done"; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(app.store.getForemanMessage(queued.id)?.status).toBe("done");
+      expect(app.store.listTalkMessages()).toMatchObject([{ role: "foreman", body: "已接管项目。" }]);
+    } finally {
+      await app.foreman.close();
+      app.stop();
+    }
+  });
+
+  test("fails an ACP-only Foreman explicitly instead of guessing CLI flags", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    try {
+      app.store.saveHarnessProfile({ runtime: "deepseek-harness", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      const queued = app.store.queueForemanMessage("acp-turn", "使用 DeepSeek Harness");
+      await app.foreman.dispatch(queued.id);
+      expect(app.store.getForemanMessage(queued.id)?.status).toBe("failed");
+      expect(app.store.eventsAfter().some(({ type, data }) => type === "foreman.session.failed" && JSON.stringify(data).includes("official-acp-unavailable"))).toBe(true);
+    } finally {
+      app.stop();
+    }
+  });
 });

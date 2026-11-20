@@ -414,7 +414,7 @@ export class SqliteStore {
   createBusinessRun(businessSystemId: string, trigger = "manual", metadata: Record<string, unknown> = {}, inputs: string[] = [], dispatch = false): BusinessRun | undefined {
     return this.db.transaction(() => {
       if (!this.db.query("SELECT 1 FROM business_systems WHERE id = ?").get(businessSystemId)) return undefined;
-      const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.kind === "operator");
+      const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.status !== "archived");
       const timestamp = this.timestamp();
       const run: BusinessRun = { id: this.uuid(), businessSystemId, status: units.length ? "queued" : "failed", trigger, metadata, createdAt: timestamp, updatedAt: timestamp };
       this.db.query("INSERT INTO business_runs (id,business_system_id,status,trigger,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
@@ -430,8 +430,49 @@ export class SqliteStore {
     }).immediate();
   }
 
+  /**
+   * Validate references that claim to address a business record. External
+   * ingress references such as cas:// URLs are allowed until a Source binds
+   * them to a record. Explicit business references must resolve in this
+   * business system so a run cannot silently consume another system's data.
+   */
+  invalidBusinessInputRefs(businessSystemId: string, refs: readonly string[]): string[] {
+    const invalid: string[] = [];
+    for (const ref of new Set(refs)) {
+      if (!/^(?:artifact|material|record):\/\//.test(ref)) continue;
+      if (!this.resolveBusinessMaterialRefs(businessSystemId, [ref])[0]?.record) invalid.push(ref);
+    }
+    return invalid;
+  }
+
   authorizeBusinessRunDispatch(runId: string): void {
     this.db.query("INSERT OR IGNORE INTO business_run_dispatch (run_id) SELECT id FROM business_runs WHERE id=? AND status IN ('queued','running','failed')").run(runId);
+  }
+
+  cancelBusinessRun(runId: string): BusinessRun | undefined {
+    return this.db.transaction(() => {
+      const run = this.getBusinessRun(runId);
+      if (!run || ["completed", "failed", "cancelled"].includes(run.status)) return run;
+      const timestamp = this.timestamp();
+      this.db.query("UPDATE business_runs SET status='cancelled', updated_at=? WHERE id=?").run(timestamp, runId);
+      this.db.query("UPDATE unit_runs SET status='cancelled', error='run-cancelled', updated_at=? WHERE run_id=? AND status IN ('queued','running','waiting_resources')").run(timestamp, runId);
+      this.db.query("DELETE FROM unit_run_owners WHERE unit_run_id IN (SELECT id FROM unit_runs WHERE run_id=?)").run(runId);
+      this.db.query("DELETE FROM business_run_dispatch WHERE run_id=?").run(runId);
+      return this.getBusinessRun(runId);
+    }).immediate();
+  }
+
+  retryBusinessRun(runId: string): BusinessRun | undefined {
+    return this.db.transaction(() => {
+      const run = this.getBusinessRun(runId);
+      if (!run || !["failed", "cancelled"].includes(run.status)) return run;
+      const timestamp = this.timestamp();
+      this.db.query("DELETE FROM unit_run_owners WHERE unit_run_id IN (SELECT id FROM unit_runs WHERE run_id=?)").run(runId);
+      this.db.query("UPDATE unit_runs SET status='queued', session_id=NULL, outputs='[]', error=NULL, updated_at=? WHERE run_id=?").run(timestamp, runId);
+      this.db.query("UPDATE business_runs SET status='queued', updated_at=? WHERE id=?").run(timestamp, runId);
+      this.authorizeBusinessRunDispatch(runId);
+      return this.getBusinessRun(runId);
+    }).immediate();
   }
 
   listRecoverableBusinessRunIds(): string[] {
@@ -457,9 +498,10 @@ export class SqliteStore {
       const history = this.listBusinessRuns(businessSystemId).map((run) => ({ ...run, units: [] as UnitRun[] }));
       const byRun = new Map(history.map((run) => [run.id, run]));
       const rows = this.db.query(`
-        SELECT * FROM unit_runs
-        WHERE run_id IN (SELECT id FROM business_runs WHERE business_system_id = ?)
-        ORDER BY run_id, created_at, id
+        SELECT unit_run.* FROM unit_runs AS unit_run
+        JOIN business_units AS unit ON unit.id=unit_run.unit_id
+        WHERE unit_run.run_id IN (SELECT id FROM business_runs WHERE business_system_id = ?)
+        ORDER BY unit_run.run_id, CASE unit.kind WHEN 'operator' THEN 0 ELSE 1 END, unit_run.created_at, unit_run.id
       `).all(businessSystemId);
       for (const row of rows) {
         const unit = this.unitRunFromRow(row);
@@ -475,7 +517,12 @@ export class SqliteStore {
   }
 
   listUnitRuns(runId: string): UnitRun[] {
-    return this.db.query("SELECT * FROM unit_runs WHERE run_id = ? ORDER BY created_at, id").all(runId).map((row: any) => this.unitRunFromRow(row));
+    return this.db.query(`
+      SELECT unit_run.* FROM unit_runs AS unit_run
+      JOIN business_units AS unit ON unit.id=unit_run.unit_id
+      WHERE unit_run.run_id = ?
+      ORDER BY CASE unit.kind WHEN 'operator' THEN 0 ELSE 1 END, unit_run.created_at, unit_run.id
+    `).all(runId).map((row: any) => this.unitRunFromRow(row));
   }
 
   getUnitRun(runId: string, id: string): UnitRun | undefined {
@@ -484,7 +531,12 @@ export class SqliteStore {
   }
 
   nextQueuedUnitRun(runId: string): UnitRun | undefined {
-    const row = this.db.query("SELECT * FROM unit_runs WHERE run_id = ? AND status = 'queued' ORDER BY created_at, id LIMIT 1").get(runId);
+    const row = this.db.query(`
+      SELECT unit_run.* FROM unit_runs AS unit_run
+      JOIN business_units AS unit ON unit.id=unit_run.unit_id
+      WHERE unit_run.run_id = ? AND unit_run.status = 'queued' AND unit.kind='operator'
+      ORDER BY unit_run.created_at, unit_run.id LIMIT 1
+    `).get(runId);
     return row ? this.unitRunFromRow(row) : undefined;
   }
 
@@ -511,10 +563,13 @@ export class SqliteStore {
         predecessors.get(target)!.push(before);
         successors.get(source)!.push(after);
       }
+      this.activateReadyMachineRuns(run, unitRuns, predecessors);
       this.reconcileBlockedUnitRuns(run, unitRuns, successors);
       const ready: UnitRun[] = [];
       for (const item of unitRuns) {
         if (item.status !== "queued") continue;
+        const unit = this.getBusinessUnit(item.unitId);
+        if (!unit || unit.kind !== "operator") continue;
         const required = predecessors.get(item.unitId) ?? [];
         if (required.some((predecessor) => predecessor.status !== "completed")) continue;
         this.mergeUnitRunInputs(item, required.flatMap((predecessor) => predecessor.outputs));
@@ -522,6 +577,35 @@ export class SqliteStore {
       }
       return ready;
     }).immediate();
+  }
+
+  /**
+   * Machines are business units with a durable lifecycle. Their execution is
+   * deterministic source activation. The Operator Harness remains the place
+   * where project work and business records are produced, so this method never
+   * fabricates an artifact or material output.
+   */
+  private activateReadyMachineRuns(run: BusinessRun, unitRuns: UnitRun[], predecessors: Map<string, UnitRun[]>): void {
+    const timestamp = this.timestamp();
+    const activate = this.db.query("UPDATE unit_runs SET status=?, error=?, updated_at=? WHERE id=? AND status='queued'");
+    const updateUnit = this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?");
+    for (const item of unitRuns) {
+      if (item.status !== "queued") continue;
+      const unit = this.getBusinessUnit(item.unitId);
+      if (!unit || unit.kind !== "machine") continue;
+      const required = predecessors.get(item.unitId) ?? [];
+      if (required.some((predecessor) => predecessor.status !== "completed")) continue;
+      const error = unit.projectId ? undefined : "machine-project-unavailable";
+      const status: UnitRun["status"] = error ? "blocked" : "completed";
+      activate.run(status, error ?? null, timestamp, item.id);
+      updateUnit.run(error ? "blocked" : "ready", timestamp, unit.id);
+      item.status = status;
+      item.error = error;
+      item.updatedAt = timestamp;
+    }
+    if (unitRuns.some((item) => item.status === "completed" || item.status === "blocked")) {
+      this.db.query("UPDATE business_runs SET updated_at=? WHERE id=?").run(timestamp, run.id);
+    }
   }
 
   private listReadySuccessorUnitRuns(completed: UnitRun): UnitRun[] {

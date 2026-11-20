@@ -167,12 +167,31 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   const dispatchForemanIfConfigured = (id: string) => {
     if (options.dispatchWork !== false && hasForeman()) runInBackground(foreman.dispatch(id));
   };
+  const recoverStaleForemanClaims = () => {
+    const configured = Number(process.env.MAO_FOREMAN_CLAIM_TIMEOUT_S ?? 900);
+    const timeoutSeconds = Number.isFinite(configured) && configured >= 30 && configured <= 86_400 ? Math.trunc(configured) : 900;
+    const cutoff = new Date(store.clock.now().getTime() - timeoutSeconds * 1_000).toISOString();
+    const recovered = store.db.transaction(() => {
+      const rows = store.db.query<{ id: string; message_id: string }>(`
+        UPDATE foreman_outbox
+        SET status='queued', claimed_at=NULL
+        WHERE status='claimed' AND claimed_at IS NOT NULL AND claimed_at < ?
+        RETURNING id, message_id
+      `).all(cutoff);
+      return rows.map(({ id, message_id: messageId }) => store.appendEvent("foreman.message.requeued", {
+        id, messageId, reason: "STALE_CLAIM_RECOVERED", cutoff,
+      }));
+    }).immediate();
+    for (const event of recovered) events.notifyCommitted(event);
+    return recovered.length;
+  };
   function dispatchOperatorRun(runId: string, completedUnitRunId?: string) {
     if (stopped || options.dispatchWork === false) return;
     for (const unitRun of store.listReadyUnitRuns(runId, completedUnitRunId)) runInBackground(operator.dispatch(runId, unitRun.id));
   }
   const recoverQueuedWork = () => {
     if (stopped || options.dispatchWork === false) return;
+    recoverStaleForemanClaims();
     if (hasForeman()) {
       for (const id of store.listQueuedForemanMessageIds()) runInBackground(foreman.dispatch(id));
     }
@@ -244,7 +263,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (graphMatch && request.method === "POST") {
       const body = await readJson(request);
       if (!body.graph || typeof body.graph !== "object") return response({ error: "graph is required" }, 400);
-      const graphError = validateDag(body.graph);
+      const graphError = validateBusinessGraph(store, graphMatch[1], body.graph);
       if (graphError) return response({ error: graphError }, 400);
       const system = store.updateBusinessSystemMetadata(graphMatch[1], { graph: body.graph, graph_updated_by: body.by ?? "foreman" });
       if (!system) return response({ error: "business system was not found" }, 404);
@@ -308,6 +327,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (runsMatch && request.method === "POST") {
       const body = await readJson(request);
       const inputs = Array.isArray(body.inputs) ? body.inputs.filter((item: unknown): item is string => typeof item === "string") : [];
+      const invalidInputs = store.invalidBusinessInputRefs(runsMatch[1], inputs);
+      if (invalidInputs.length) return response({ error: "business run inputs must belong to the current business system", detail: { refs: invalidInputs } }, 400);
       const dispatch = body.dispatch !== false;
       const run = store.createBusinessRun(runsMatch[1], typeof body.trigger === "string" ? body.trigger : "manual", body.metadata && typeof body.metadata === "object" ? body.metadata : {}, inputs, dispatch);
       if (!run) return response({ error: "business system was not found" }, 404);
@@ -328,6 +349,17 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       store.authorizeBusinessRunDispatch(run.id);
       dispatchOperatorRun(run.id);
       return response({ state: "dispatching", run_id: run.id }, 202);
+    }
+    const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/(cancel|retry)$/);
+    if (cancelRunMatch && request.method === "POST") {
+      const run = cancelRunMatch[2] === "cancel"
+        ? store.cancelBusinessRun(cancelRunMatch[1])
+        : store.retryBusinessRun(cancelRunMatch[1]);
+      if (!run) return response({ error: "business run was not found" }, 404);
+      if (cancelRunMatch[2] === "cancel") operator.cancelRun(run.id);
+      events.publish(cancelRunMatch[2] === "cancel" ? "business-run.cancelled" : "business-run.retried", { ...run, units: store.listUnitRuns(run.id) });
+      if (cancelRunMatch[2] === "retry") dispatchOperatorRun(run.id);
+      return response({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) }, 200);
     }
     if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects().map(publicProject));
     if (url.pathname === "/api/v1/projects/intake" && request.method === "POST") {
@@ -543,6 +575,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       verificationJobs.get(profile.id)?.abort();
       verificationJobs.delete(profile.id);
       events.publish("harness.profile.saved", { id: profile.id, runtime: profile.runtime, role: profile.role });
+      // A project may have been accepted before the Foreman was configured.
+      // Reconcile the durable queue immediately so first-run setup does not
+      // require a restart or a manual dispatch request.
+      if (profile.role === "foreman") recoverQueuedWork();
       const foremanProfile = profile.role === "foreman" ? profile : store.listHarnessProfiles().find((item) => item.role === "foreman");
       return response({ profile: publicProfile(profile), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, profile: publicProfile(foremanProfile) } }, 200);
     }
@@ -819,7 +855,8 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
       { id: `${project.id}:operator`, type: "operator", group: project.id, label: "Operator", position: { x: 170, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, harness: "official" } },
       { id: `${project.id}:machine`, type: "machine", group: project.id, label: project.name, position: { x: 470, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, sources: project.sources.length } },
     ]);
-    const storedEdges = Array.isArray(storedGraph?.edges) ? storedGraph.edges.filter((edge): edge is Record<string, any> => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string" && storedById.has((edge as any).source) && storedById.has((edge as any).target))) : [];
+    const validNodeIds = new Set(nodes.map((node) => node.id));
+    const storedEdges = Array.isArray(storedGraph?.edges) ? storedGraph.edges.filter((edge): edge is Record<string, any> => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string" && validNodeIds.has((edge as any).source) && validNodeIds.has((edge as any).target))) : [];
     const edges = storedEdges.length ? storedEdges.map((edge) => ({ id: typeof edge.id === "string" ? edge.id : `${edge.source}:${edge.target}`, source: edge.source, target: edge.target, kind: edge.kind ?? "material", condition: edge.condition, status: edge.status ?? "ready" })) : operatorUnits.length ? operatorUnits.map((unit) => ({ id: `${unit.id}:operator-to-machine`, source: unit.id, target: `${unit.projectId}:machine`, kind: "material", condition: "业务物料", status: "ready" })) : selectedProjects.map((project) => ({ id: `${project.id}:operator-to-machine`, source: `${project.id}:operator`, target: `${project.id}:machine`, kind: "material", condition: "业务物料", status: "ready" }));
     return { scope: "workarea", id: workarea, title: selectedSystem?.name ?? workarea, nodes, edges };
   }
@@ -860,6 +897,30 @@ function validateDag(value: unknown): string | undefined {
     }
   }
   return ready.length === incoming.size ? undefined : "graph must be acyclic";
+}
+
+function validateBusinessGraph(store: SqliteStore, businessSystemId: string, value: unknown): string | undefined {
+  if (!store.getBusinessSystem(businessSystemId)) return "business system was not found";
+  const generic = validateDag(value);
+  if (generic) return generic;
+  const graph = value as { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> };
+  const units = store.listBusinessUnits(businessSystemId);
+  if (!units.length) return undefined;
+  // Pre-M18 authored graphs did not carry node types and may use stable
+  // presentation IDs. Keep those snapshots readable while requiring the
+  // stricter business-unit binding as soon as a graph declares node types.
+  if (!graph.nodes.some((node) => node.type !== undefined)) return undefined;
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+  for (const node of graph.nodes) {
+    const id = node.id;
+    if (typeof id !== "string" || !byId.has(id)) return "graph nodes must reference business units in the current system";
+    const type = node.type;
+    if (type !== undefined && type !== byId.get(id)!.kind) return "graph node type must match its business unit";
+  }
+  for (const edge of graph.edges) {
+    if (edge.source === edge.target) return "graph edges cannot connect a node to itself";
+  }
+  return undefined;
 }
 
 async function readJson(request: Request): Promise<Record<string, any>> {

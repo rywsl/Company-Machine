@@ -8,6 +8,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { realpathSync, statSync } from "node:fs";
 import { resolveKiriClient } from "../runtime/kiri";
 import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
+import { resolveDockerHubImage } from "../runtime/dockerhub-mirror";
 import { prepareHarnessEgress } from "./harness-sandbox";
 import { foremanMailboxTarget } from "./foreman-mailbox";
 import { projectSourceRoot, type ProjectSourceMount } from "./project-source-mounts";
@@ -96,6 +97,18 @@ export function officialHarness(id: string): HarnessDefinition | undefined {
 
 export function chooseTransport(definition: HarnessDefinition, acpAvailable: boolean): HarnessTransportKind {
   return definition.transportPreference === "acp" && acpAvailable ? "acp" : "official-cli";
+}
+
+/**
+ * Selects a transport without inventing a CLI contract for an ACP-only
+ * Harness. The compatibility helper above remains available to callers that
+ * only need to inspect the declared preference.
+ */
+export function requireDeclaredTransport(definition: HarnessDefinition, acpAvailable: boolean): HarnessTransportKind {
+  if (definition.transportPreference === "acp" && !acpAvailable) {
+    throw new Error(`${definition.displayName} requires the official ACP transport`);
+  }
+  return definition.transportPreference;
 }
 
 export function harnessEndpointEnv(definition: HarnessDefinition, baseUrl: string): Record<string, string> {
@@ -368,10 +381,13 @@ export async function spawnOfficialProcess(
   const image = options.containerImage;
   const needsRelay = image !== undefined && options.network === "egress";
   validateImage(image);
-  const relay = needsRelay ? await prepareEgress(image, options.egressBaseUrl) : undefined;
-  const containerName = relay?.name ?? (image ? `mao-harness-${randomUuid()}` : undefined);
+  const initial = image ? processCommand(argv, options) : undefined;
+  const resolvedImage = image && initial ? await ensureContainerImage(image, initial.engine, initial.engineEnv) : image;
+  const effectiveOptions = resolvedImage === image ? options : { ...options, containerImage: resolvedImage };
+  const relay = needsRelay && resolvedImage ? await prepareEgress(resolvedImage, options.egressBaseUrl) : undefined;
+  const containerName = relay?.name ?? (resolvedImage ? `mao-harness-${randomUuid()}` : undefined);
   try {
-    const { command, env, engine, engineEnv } = processCommand(argv, options, relay, containerName);
+    const { command, env, engine, engineEnv } = processCommand(argv, effectiveOptions, relay, containerName);
     // The npm batch wrapper can interfere with prompts containing newlines.
     const claude = !image && process.platform === "win32" && command[0] === "claude"
       ? windowsClaudeExecutable(Bun.which("claude"))
@@ -390,9 +406,9 @@ export async function spawnOfficialProcess(
     } : undefined;
     let stopping: Promise<void> | undefined;
     async function stop(): Promise<void> {
-      if (image && !relay && child.exitCode === 0) return; // The engine has already processed --rm.
+      if (resolvedImage && !relay && child.exitCode === 0) return; // The engine has already processed --rm.
       try {
-        if (!image && process.platform === "win32" && child.exitCode === null && child.signalCode === null
+        if (!resolvedImage && process.platform === "win32" && child.exitCode === null && child.signalCode === null
             && Number.isSafeInteger(child.pid) && child.pid > 0) {
           // npm's Windows command wrapper and its native descendants can share the stdout pipe.
           const taskkill = resolve(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
@@ -410,6 +426,28 @@ export async function spawnOfficialProcess(
     await relay?.close().catch(() => {});
     throw error;
   }
+}
+
+async function ensureContainerImage(image: string, engine: string[], engineEnv?: Record<string, string>): Promise<string> {
+  const inspect = async (reference: string) => runCommand(
+    [...engine, "image", "inspect", "--format", "{{.Id}}", reference],
+    { timeoutMs: 60_000, env: engineEnv },
+  );
+  const expected = image.slice(image.indexOf("@") + 1).toLowerCase();
+  const present = await inspect(image);
+  if (present.exitCode === 0 && present.stdout.length > 0) return image;
+
+  const candidate = await resolveDockerHubImage(image);
+  const pulled = await runCommand([...engine, "pull", candidate], { timeoutMs: 10 * 60_000, env: engineEnv });
+  if (pulled.exitCode !== 0) {
+    throw new Error(`Harness image is unavailable: ${image}`);
+  }
+  const resolved = await inspect(candidate);
+  const id = new TextDecoder().decode(resolved.stdout).trim().toLowerCase();
+  if (resolved.exitCode !== 0 || id !== expected) {
+    throw new Error(`Harness image digest verification failed: ${image}`);
+  }
+  return candidate;
 }
 
 export function resolveOfficialHarness(runtime: string): HarnessDefinition | undefined {

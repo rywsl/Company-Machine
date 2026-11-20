@@ -457,7 +457,8 @@ describe("Bun business execution loop", () => {
       expect(artifacts[0].recordType).toBe("material");
       const details = await (await app.fetch(new Request(`http://localhost/api/v1/runs/${run.id}`))).json() as { status: string; units: Array<{ status: string }> };
       expect(details.status).toBe("completed");
-      expect(details.units.some((unit) => unit.status === "completed")).toBe(true);
+      expect(details.units).toHaveLength(2);
+      expect(details.units.every((unit) => unit.status === "completed")).toBe(true);
     } finally {
       app.stop();
       await rm(dbPath, { force: true });
@@ -499,6 +500,27 @@ describe("Bun business execution loop", () => {
       expect(tasks[1]).toContain('"repository":"https://example.test/two.git"');
       expect(tasks[1]).not.toContain("repo-password");
       expect(tasks[1]).not.toContain("repo-secret");
+    } finally {
+      app.stop();
+      await rm(dbPath, { force: true });
+    }
+  });
+
+  test("rejects graph nodes outside the business units and explicit cross-system inputs", async () => {
+    const dbPath = `.factory/business-boundaries-${randomUUID()}.db`;
+    const app = createApp({ dbPath, legacyPath: dbPath, dispatchWork: false });
+    const headers = { "content-type": "application/json" };
+    try {
+      const system = await (await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers, body: JSON.stringify({ name: "边界业务" }) }))).json() as { id: string };
+      const project = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "项目", repo_url: "https://example.test/boundary.git" }) }))).json() as { id: string };
+      const graph = { nodes: [{ id: `${project.id}:operator` }, { id: "foreign-unit", type: "operator" }], edges: [] };
+      const graphResponse = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, { method: "POST", headers, body: JSON.stringify({ graph }) }));
+      expect(graphResponse.status).toBe(400);
+      const other = app.store.createBusinessSystem({ name: "其他业务" });
+      const foreignProject = app.store.createIntake({ business_system_id: other.id, name: "外部项目", repo_url: "https://example.test/foreign.git" });
+      const foreignArtifact = app.store.addArtifact({ projectId: foreignProject.id, kind: "material", recordType: "material", ref: "material://foreign", summary: "外部物料", metadata: {} });
+      const runResponse = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/runs`, { method: "POST", headers, body: JSON.stringify({ inputs: [foreignArtifact.ref] }) }));
+      expect(runResponse.status).toBe(400);
     } finally {
       app.stop();
       await rm(dbPath, { force: true });

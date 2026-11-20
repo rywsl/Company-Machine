@@ -298,28 +298,32 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `GET /api/v1/business-systems/<id>/units` 返回由 Operator 与 Machine 组成的业务基础单元。项目来源的宿主路径只用于内部执行，公共投影只返回来源种类
 - `PATCH /api/v1/business-systems/<id>/units/<unit-id>/binding` 更新该业务系统的 Operator。请求字段为 `harness_runtime` 和可空的 `model`。厂区节点详情和厂长的 `business bind` 使用同一入口。清空模型后继承该 Harness 配置的模型。绑定随业务单元导出
 - `GET/POST /api/v1/business-systems/<id>/runs` 创建和读取业务运行，`GET /api/v1/runs/<id>` 读取运行及 Operator 执行状态，`POST /api/v1/runs/<id>/dispatch` 通过官方 Operator Harness 推进待执行单元
+- Web 编排页读取业务运行列表并显示每个运行的状态和单元数量。`POST /api/v1/runs/<id>/cancel` 取消仍可控的业务运行，`POST /api/v1/runs/<id>/retry` 为失败运行创建可追踪的重试运行。后端未提供运行汇总时，看板显示“待观测”，不把缺失状态渲染为零。
 - 创建业务运行默认同时记录派发授权。请求使用 `dispatch: false` 时保留待派发状态，直到调用显式派发接口。历史运行缺少派发记录且没有已完成的 Operator 时，继续通过显式接口派发。
-- 业务运行按 DAG 前置边决定就绪状态。Operator 成功完成后，控制面通过该次运行的依赖边索引检查其直接后继。后继在全部前置 Operator 完成后才能领用，输入先保留原有物料，再按依赖快照中的边顺序合并产物引用并去重。首次派发、启动恢复、资源恢复和失败会按完整运行重新核对就绪状态。
+- 业务运行按 DAG 前置边决定就绪状态。每个未归档的 Operator 和 Machine 都在运行快照中拥有一个 `unit_run`。Machine 在满足前置条件后由控制面执行确定性的项目来源激活，状态从 `queued` 进入 `completed` 或 `blocked`，不伪造 Artifact/Material。Operator 成功完成后，控制面通过该次运行的依赖边索引检查其直接后继。后继在全部前置基础单元完成后才能领用，输入先保留原有物料，再按依赖快照中的边顺序合并产物引用并去重。首次派发、启动恢复、资源恢复和失败会按完整运行重新核对就绪状态。
 - 前置 Operator 失败或被阻塞时，所有受影响的后继 Operator 必须进入 `blocked`，业务运行进入 `failed`，不能因没有新的可调度单元而永久停留在 `running`
 - `GET/POST /api/v1/projects/<id>/artifacts` 读写带摘要、用途、文件引用、输入输出和 lineage 的物料 JSON
 - `GET /api/v1/projects/<project-id>/artifacts/<artifact-id>/files/<sha256>` 通过项目与记录的文件授权返回下载。资产界面展示文件名和已授权下载入口。
-- `GET/POST /api/v1/business-systems/<id>/graph` 读取或接收外部 Foreman 维护的 DAG 快照。写入时节点标识唯一，边必须引用存在节点，图必须无环
+- `GET/POST /api/v1/business-systems/<id>/graph` 读取或接收外部 Foreman 维护的 DAG 快照。写入时节点标识唯一。带有节点类型的活动图必须引用当前业务系统的 Operator 或 Machine，声明的节点类型必须与基础单元一致，边必须引用图中存在的节点且不能形成自环，图必须无环。未带节点类型的历史快照只执行结构和环检查，读取后保留以支持迁移。
 
 Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现。运行在领用单元时解析绑定，并记录官方 Harness ID 和生效的模型 ID。官方 CLI 接收模型参数。ACP 使用 `session/new` 或 `session/load` 提供的 `model` 配置选项，并在 `session/prompt` 前确认选择。Kimi Code 通过 `--model MODEL acp` 接收模型，Pi 通过 `--model MODEL` 接收模型，Qwen Code 通过 `--model MODEL` 接收模型。无法使用明确绑定的模型时，执行会报告原因。
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
+- 保存厂长 Harness 配置后，控制面立即重新扫描此前已入队的厂长消息并派发，不要求重启服务或用户再次点击 dispatch。服务启动和恢复周期会按 `claimed_at` 回收超过 `MAO_FOREMAN_CLAIM_TIMEOUT_S` 的失联轮次，默认超时为 900 秒，并记录 `foreman.message.requeued` 事件。
+- 容器厂长轮次按隔离邮箱并发派发。使用本机可恢复会话的厂长轮次只在同一 Harness profile 内保持顺序，避免共享官方 session，同时不让一个 profile 的轮次阻塞其他 profile 或容器轮次。
 - Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，每个新领用的 Operator 单元在 SQLite 保存执行进程归属。Linux 服务启动时在同一内核启动和 PID 命名空间内检查归属，只有系统确认原 PID 已退出才将其置为 `failed` 并记录 `CONTROL_PLANE_RESTART`，保留已登记产物与会话编号。外部执行结果由用户核对后决定后续动作。活跃、无法核实以及历史没有归属记录的 `running` 单元保留原状态。等待资源的单元继续通过现有资源请求流程恢复。容器化 Operator 在领取单元前检查运行时。检查失败、超时或服务停止时，单元保留 `queued` 状态。成功执行 `POST /api/v1/runtime/ensure-ready` 后，通过正常 DAG 就绪规则恢复已授权的排队工作。服务在五秒内复用确认在线的运行时状态。
 - Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
-- ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环。Pi 的官方 CLI 使用 `--print --mode json`，Qwen Code 的官方 CLI 使用 `-p PROMPT --output-format stream-json`，两者均由控制面解析 stdout JSONL
+- ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环。Pi 的官方 CLI 使用 `--print --mode json`，Qwen Code 的官方 CLI 使用 `-p PROMPT --output-format stream-json`，两者均由控制面解析 stdout JSONL。DeepSeek Harness、Kimi Code 和 ZCode 没有可用 ACP 时必须直接报告 Harness 不可用，不能回退到未确认的通用 CLI 参数
 - ACP 使用官方 `sessionId`。只有 Harness 在初始化中声明 `loadSession` 时才请求恢复会话，恢复时收到的历史通知不进入当前回复。`session/prompt` 响应中的 `end_turn` 结束当前轮，无须等待 stdout 关闭。其他停止原因、JSON-RPC 错误和提前 EOF 终止当前轮并保留原因。握手限时 30 秒，单条消息最大 1 MiB，启动前暂存最多 128 条通知和 4 MiB。
-- Harness profile 提供 digest 固定的 `image` 时，官方 CLI 和 ACP 使用活动容器运行时。Linux Kiri 默认以 `docker --host unix:///run/kiri/docker.sock run` 启动。沙箱使用非 root、只读根文件系统、`--init`、`--pids-limit 256`、`--tmpfs /tmp` 和 `cap-drop ALL`，默认网络为 `none`。
+- Harness profile 提供 digest 固定的 `image` 时，官方 CLI 和 ACP 使用活动容器运行时。启动前控制面检查本地镜像，缺失时按 GeoIP 选择 Docker Hub 镜像源拉取并再次校验原始 digest。拉取失败或摘要不一致时，运行保持未启动并返回明确的镜像诊断。Linux Kiri 默认以 `docker --host unix:///run/kiri/docker.sock run` 启动。沙箱使用非 root、只读根文件系统、`--init`、`--pids-limit 256`、`--tmpfs /tmp` 和 `cap-drop ALL`，默认网络为 `none`。
 - 容器内的 `HOME`、XDG 配置和缓存使用本轮的 `/tmp`。控制面给每个容器分配名称，会话停止时清理该名称对应的容器。
 - 容器 Harness 选择 `egress` 时，启动器先确认隔离代理就绪，再把官方 CLI 的 JSONL 或 ACP 的双向标准流接入会话。出网目标取已保存的 Base URL 主机和部署方配置的 `MAO_HARNESS_EGRESS_HOSTS`。该路径使用本地固定的 `MAO_EGRESS_RELAY_IMAGE`。会话结束或取消时清理隔离代理及容器。 [出网规范](egress.md)
 - Windows 原生 Claude Code 直接通过 PATH 找到的 `claude.exe` 启动。PATH 命中 npm 的 `claude.cmd` 时，优先启动同一安装目录下官方包附带的 `node_modules/@anthropic-ai/claude-code/bin/claude.exe`，使包含换行的提示词原样进入 CLI。找不到原生文件时沿用 PATH 启动。
 - 取消 Windows 原生 Harness 会终止控制面本次启动且仍在运行的进程树。取消官方 CLI 会话也会取消正在等待的输出读取，避免 npm 命令包装器的子进程持有管道导致会话无法结束。
 - 带 `image` 的 Foreman 和 Operator 会在启动官方 Harness 前调用当前 ContainerProvider 的 readiness。并发启动共享一次 readiness promise，失败时不会启动 Harness
 - Linux Kiri 与 Podman 中的容器厂长通过当前轮的文件邮箱管理业务。容器获得 `/mao/foreman/requests` 写入权限和 `/mao/foreman/responses` 读取权限。请求包含 `id`、`op` 和 `args`，写入临时文件后以 0644 权限原子重命名为 `<id>.json`。MAO 调用固定的业务 API 来查询工位、更新 DAG、绑定 Operator、登记产物与转换、派发运行，并在同名响应文件返回结果。项目接收轮的操作范围是该项目及其所属业务系统，普通厂长轮可操作当轮列出的业务系统。文件通过引用登记。正常结束后处理已提交请求，取消时停止接收新请求，然后清理本轮目录。
+- 厂长邮箱除了写入业务图、绑定、记录、转换和运行，还可以读取 `business.runs`、`business.artifacts`、`business.materials` 和 `business.conversions`。返回值只保留状态、标识、引用和面向人的摘要，厂长据此继续执行失败恢复和转换维护。
 - 厂长发现缺少必需配置时，使用邮箱操作 `project.secret.request` 为当前项目申请一个密钥，参数包括 `projectId`、`name` 和可选的 `purpose`、`scope`。响应只含请求 ID 和状态。项目接收轮只允许当前项目，普通对话轮可以操作该轮列出或新登记的业务系统中的项目。Web 收到 `secret.requested` 后更新厂长面板的项目资源入口，用户可查看请求项目和密钥名并在资源抽屉提交配置。
 - 原生厂长通过 `factory project secret request <project-id> --name <KEY> --purpose <用途>` 提交同样的项目资源请求。每次指定一个实际缺少的配置，返回请求 ID 和状态。
 - 在普通厂长对话中，`project.register` 使用 `repoUrl` 和可选的 `name`、`systemId` 登记仓库，返回 `projectId` 和 `systemId`。提供 `systemId` 时，该系统必须在当前轮范围内，包含本轮新建的系统。省略 `systemId` 时创建业务系统。可在同一轮使用返回的 ID 配置 Operator、DAG 和运行。省略名称时使用仓库路径最后一段并去除 `.git`。链接须为 HTTP(S)、SSH 或 Git URL，且不携带用户信息、查询参数或片段。登记后发布项目事件，当前厂长继续处理本轮。
@@ -331,6 +335,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `POST /api/web/harnesses/verify` 为配置创建一次连通性检查，返回 `202` 和 `requested` 状态。同一配置的并发请求复用当前检查。检查通过官方 CLI 或 ACP 开一个新会话，在临时工作目录请求固定的简短文本。项目数据、保险箱凭据和已有会话都不进入检查。启动带 `image` 的 Harness 前同样检查运行时就绪。
 - 连接就绪、会话启动及响应共用 45 秒时限。收到预期文本且会话正常结束后保存 `verified`，其他情况保存 `failed` 和固定说明。`harness.profile.verification.completed` 事件和配置读模型只提供验证状态、说明和时间。重新保存配置将取消原检查，旧结果不会覆盖新配置。
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
+- SSE 发生读取错误时，前端连接状态进入 `degraded`，恢复收到事件后回到 `connected`。发送 Foreman 消息失败时保留输入内容并显示错误，不能清空输入后伪装成已提交。
 - `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
 - `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Linux Kiri 先探测套接字并复用在线服务，需要时请求 systemd 启动官方 `kiri.service`。自定义套接字使用部署方的服务管理。不可用时返回 503 和诊断。
 
@@ -353,7 +358,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 
 厂长与 Operator 使用同一份项目来源投影。仓库 URL 的密码和凭据查询参数在交给 Harness 前移除。上传文件使用内容摘要引用，可通过项目文件路由读取。本地 Linux Kiri 和 Podman 中，接收项目的厂长和执行该项目的 Operator 都可在来源摘要中看到文件名或文件夹名，以及 `/mao/sources/<序号>` 下的只读位置。每个位置只挂载该项目登记的上传文件或用户选择的本地目录。宿主目录须为规范绝对路径，符号链接路径及与工厂存储重叠的目录不可挂载。本地目录沿用宿主文件访问权限。私有上传文件按轮暂存，正常结束、失败或取消后清理。主机上的 Harness 可读取用户提交的原始文件夹位置，其他容器运行方式使用来源引用。
 
-Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。业务运行只调度 Operator，Machine 作为被操作的软件项目和 DAG 节点存在。Operator Harness 输出 `mao.record` 事件后，控制面把记录写入该项目并通过事件流返回产物或物料状态。
+Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。业务运行同时保留两类基础单元的生命周期，Machine 负责项目来源激活，Operator 负责通过官方 Harness 操作软件项目。Operator Harness 输出 `mao.record` 事件后，控制面把记录写入该项目并通过事件流返回产物或物料状态。
 
 容器运行时默认采用 Podman。设置 `MAO_CONTAINER_RUNTIME=kiri` 后，Linux 通过 `/run/kiri/docker.sock` 与官方 Kiri headless 服务通信。Windows 上 Kiri 使用自己的 WSL 后端。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。
 

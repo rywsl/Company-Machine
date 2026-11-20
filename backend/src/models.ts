@@ -31,7 +31,7 @@ export interface BusinessUnit {
 }
 
 export type BusinessRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
-export type UnitRunStatus = "queued" | "running" | "waiting_resources" | "completed" | "failed" | "blocked";
+export type UnitRunStatus = "queued" | "running" | "waiting_resources" | "completed" | "failed" | "blocked" | "cancelled";
 
 export interface BusinessRun {
   id: string;

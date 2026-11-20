@@ -1,4 +1,4 @@
-import type { AssetPageData, Bootstrap, ForemanTurn, Graph, EventRecord, HarnessRecord, HarnessProfile, OperatorBindingView, SecretRecord, StreamEvent, TalkMessage } from "./types";
+import type { AssetPageData, Bootstrap, BusinessRun, ForemanTurn, Graph, EventRecord, HarnessRecord, HarnessProfile, OperatorBindingView, SecretRecord, StreamEvent, TalkMessage } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -68,6 +68,25 @@ export const sendTalk = (text: string) => api<{ state: string; message: TalkMess
 });
 export const cancelForemanTurn = (id: string) =>
   api<{ foremanTurn: ForemanTurn }>(`/api/v1/foreman/inbox/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+
+export const getBusinessRuns = (systemId: string) =>
+  api<BusinessRun[]>(`/api/v1/business-systems/${encodeURIComponent(systemId)}/runs`);
+
+export const createBusinessRun = (systemId: string, inputs: string[] = []) =>
+  api<BusinessRun>(`/api/v1/business-systems/${encodeURIComponent(systemId)}/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trigger: "web", inputs }),
+  });
+
+export const dispatchBusinessRun = (runId: string) =>
+  api<{ state: string; run_id: string }>(`/api/v1/runs/${encodeURIComponent(runId)}/dispatch`, { method: "POST" });
+
+export const cancelBusinessRun = (runId: string) =>
+  api<BusinessRun>(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+
+export const retryBusinessRun = (runId: string) =>
+  api<BusinessRun>(`/api/v1/runs/${encodeURIComponent(runId)}/retry`, { method: "POST" });
 
 export function submitProjectIntake(payload: {
   business_system_id?: string;

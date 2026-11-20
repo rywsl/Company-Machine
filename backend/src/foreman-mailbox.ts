@@ -15,7 +15,7 @@ export const foremanMailboxContract = [
   "普通对话可用 project.register 登记仓库，传入 repoUrl 和可选 name。提供当前轮可见的 systemId 把项目添加到该业务系统，省略时新建业务系统。响应提供 projectId 和 systemId，后续操作直接使用这些 ID。",
   "business.bind 使用 systemId、unitId、harness 和可选 model。",
   "business.artifact 使用 projectId、kind、ref、summary 和可选的 recordType、files。files 只含文件引用。",
-  "business.conversion 使用 systemId、kind、summary 和可选 inputs、outputs。business.run 使用 systemId 和可选 inputs。",
+  "business.conversion 使用 systemId、kind、summary 和可选 inputs、outputs。business.conversions 读取转换状态。business.runs 读取运行和 Operator 状态。business.artifacts 与 business.materials 读取业务记录。business.run 使用 systemId 和可选 inputs。",
   "缺少必要密钥时使用 project.secret.request，提供 projectId、name 和可选 purpose、scope。每次申请一个所需密钥。响应只包含请求 id 和状态，请勿传入密钥值。",
   "文件和物料使用引用。",
 ].join(" ");
@@ -74,6 +74,14 @@ function operation(op: string, args: Record<string, unknown>, scope: Scope): Ope
   switch (op) {
     case "business.units":
       return { method: "GET", path: path + "/units" };
+    case "business.runs":
+      return { method: "GET", path: path + "/runs" };
+    case "business.artifacts":
+      return { method: "GET", path: path + "/artifacts" };
+    case "business.materials":
+      return { method: "GET", path: path + "/materials" };
+    case "business.conversions":
+      return { method: "GET", path: path + "/conversions" };
     case "business.graph":
       if (object(graph)) return { method: "POST", path: path + "/graph", body: { graph, by: "foreman" } };
       return;
@@ -96,6 +104,25 @@ function reported(op: string, value: unknown): unknown {
   if (op === "business.units") {
     if (!Array.isArray(value)) return [];
     return value.filter(object).map(({ id, kind, projectId, name, status }) => ({ id, kind, projectId, name, status }));
+  }
+  if (["business.runs", "business.artifacts", "business.materials", "business.conversions"].includes(op)) {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => {
+      if (!object(item)) return null;
+      const { id, status, trigger, ref, kind, summary, record_type: recordType, recordType: camelRecordType, units, inputs, outputs } = item;
+      return {
+        ...(typeof id === "string" ? { id } : {}),
+        ...(typeof status === "string" ? { status } : {}),
+        ...(typeof trigger === "string" ? { trigger } : {}),
+        ...(typeof ref === "string" ? { ref } : {}),
+        ...(typeof kind === "string" ? { kind } : {}),
+        ...(typeof summary === "string" ? { summary } : {}),
+        ...(typeof recordType === "string" ? { record_type: recordType } : typeof camelRecordType === "string" ? { record_type: camelRecordType } : {}),
+        ...(Array.isArray(units) ? { units } : {}),
+        ...(Array.isArray(inputs) ? { inputs } : {}),
+        ...(Array.isArray(outputs) ? { outputs } : {}),
+      };
+    }).filter(Boolean);
   }
   if (!object(value)) return null;
   if (op === "project.secret.request") return { id: value.request_id, status: value.state };

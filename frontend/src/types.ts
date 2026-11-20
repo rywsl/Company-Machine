@@ -50,6 +50,33 @@ export interface EventRecord {
   [key: string]: unknown;
 }
 
+export type BusinessRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | string;
+export type UnitRunStatus = "queued" | "running" | "waiting_resources" | "completed" | "failed" | "blocked" | string;
+
+export interface UnitRun {
+  id: string;
+  runId: string;
+  unitId: string;
+  status: UnitRunStatus;
+  sessionId?: string;
+  inputs: string[];
+  outputs: string[];
+  error?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BusinessRun {
+  id: string;
+  businessSystemId: string;
+  status: BusinessRunStatus;
+  trigger: string;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+  units: UnitRun[];
+}
+
 export interface StreamEvent {
   id?: string;
   type: string;

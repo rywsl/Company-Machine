@@ -6,7 +6,7 @@ import type { PrepareProjectSources, PreparedProjectSources } from "./project-so
 import { foremanMailboxContract, openForemanMailbox } from "./foreman-mailbox";
 import type { RegisterRepository } from "./project-registration";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
-import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, resolveOfficialHarness, type OfficialSpawn } from "./harness";
+import { OfficialCliTransport, requireDeclaredTransport, harnessControlPlaneRoot, harnessEndpointEnv, resolveOfficialHarness, type OfficialSpawn } from "./harness";
 import { HarnessTurn } from "./harness-turn";
 import { ForemanReplyRedactor, foremanCredential, redactForemanText } from "./foreman-credentials";
 
@@ -47,7 +47,8 @@ export class ForemanCoordinator {
   private readonly active = new Map<string, Promise<void>>();
   private readonly turns = new Map<string, ActiveForemanTurn>();
   private readonly replies = new Map<string, string>();
-  private tail: Promise<void> = Promise.resolve();
+  private readonly activeProfiles = new Set<string>();
+  private readonly profileTails = new Map<string, Promise<void>>();
   private closed = false;
   private readonly cwd: string;
 
@@ -58,8 +59,17 @@ export class ForemanCoordinator {
   dispatch(id: string): Promise<void> {
     const existing = this.active.get(id);
     if (existing) return existing;
-    const work = this.tail.then(() => this.run(id)).finally(() => this.active.delete(id));
-    this.tail = work.catch(() => {});
+    // Native resumable sessions must remain ordered per profile. Container
+    // mailbox turns have isolated workspaces and can run concurrently. This
+    // replaces the old global queue, so one profile cannot hold other profiles.
+    const profile = this.options.store.listHarnessProfiles().find((item) => item.role === "foreman");
+    const serializedProfile = profile && !profile.image ? profile.id : undefined;
+    const prior = serializedProfile ? this.profileTails.get(serializedProfile) : undefined;
+    const work = (prior ?? Promise.resolve()).then(() => this.run(id)).finally(() => {
+      this.active.delete(id);
+      if (serializedProfile && this.profileTails.get(serializedProfile) === work) this.profileTails.delete(serializedProfile);
+    });
+    if (serializedProfile) this.profileTails.set(serializedProfile, work.catch(() => {}));
     this.active.set(id, work);
     return work;
   }
@@ -112,6 +122,22 @@ export class ForemanCoordinator {
       this.options.events.publish("foreman.session.failed", { inboxId: id, reason: "foreman-harness-not-configured" });
       return;
     }
+    const acpAvailable = Boolean(
+      this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1" || profile.image
+        || (definition.transportPreference === "acp" && Bun.which(definition.executable)),
+    );
+    if (definition.transportPreference === "acp" && !acpAvailable) {
+      const claimed = this.options.store.claimForemanMessage(id);
+      if (claimed) {
+        const event = this.options.store.failForemanMessage(id, {
+          sessionId: `${definition.id}:${claimed.messageId}`,
+          harness: definition.id,
+          reason: "official-acp-unavailable",
+        });
+        if (event) this.options.events.notifyCommitted(event);
+      }
+      return;
+    }
     if (profile.image && this.options.ensureRuntime) {
       try {
         await this.options.ensureRuntime();
@@ -129,13 +155,14 @@ export class ForemanCoordinator {
     const owner: ActiveForemanTurn = { turn };
     this.turns.set(id, owner);
     const credential = foremanCredential(profile);
-    const useAcp = chooseTransport(definition, Boolean(definition.id === "kimi-code" || this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
+    const useAcp = requireDeclaredTransport(definition, acpAvailable) === "acp";
     const transport = useAcp
       ? new AcpTransport(definition, turn.ownProcess(this.options.acpSpawn ?? defaultAcpSpawn))
       : new OfficialCliTransport(definition, turn.ownCliProcess(this.options.spawn), this.options.store.clock);
     let mailbox: ReturnType<typeof openForemanMailbox> | undefined;
     let sourceMounts: PreparedProjectSources | undefined;
     let finishing = false;
+    let persistentProfile = false;
     const stopped = () => this.closed || owner.cancelled;
     const fail = (reason: string) => {
       const event = this.options.store.failForemanMessage(id, { sessionId, harness: definition.id, reason });
@@ -147,7 +174,11 @@ export class ForemanCoordinator {
       this.options.events.publish("foreman.session.started", { inboxId: id, sessionId, harness: definition.id });
       if (stopped()) return;
       const persistent = !profile.image && (useAcp || definition.id === "codex" || definition.id === "claude-code");
-      const resumeId = persistent ? this.options.store.foremanSession(profile.id) : undefined;
+      const resumeId = persistent && !this.activeProfiles.has(profile.id) ? this.options.store.foremanSession(profile.id) : undefined;
+      if (persistent) {
+        persistentProfile = true;
+        this.activeProfiles.add(profile.id);
+      }
       let officialId = resumeId;
       const message = this.options.store.talkMessageMetadata(claimed.messageId);
       const intake = message.source === "project-intake";
@@ -267,6 +298,7 @@ export class ForemanCoordinator {
         try { mailbox?.remove(); }
         finally {
           this.turns.delete(id);
+          if (persistentProfile) this.activeProfiles.delete(profile.id);
           sourceMounts?.close();
         }
       }

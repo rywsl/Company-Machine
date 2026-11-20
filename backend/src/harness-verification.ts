@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
-import { OfficialCliTransport, chooseTransport, harnessEndpointEnv, resolveOfficialHarness, type HarnessSession, type OfficialSpawn } from "./harness";
+import { OfficialCliTransport, requireDeclaredTransport, harnessEndpointEnv, resolveOfficialHarness, type HarnessSession, type OfficialSpawn } from "./harness";
 import type { HarnessProfile } from "./models";
 import { foremanCredential } from "./foreman-credentials";
 
@@ -30,7 +30,7 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
   } catch {
     return failed("Harness Base URL 无效");
   }
-  const useAcp = chooseTransport(definition, Boolean(options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
+  const useAcp = requireDeclaredTransport(definition, Boolean(options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1")) === "acp";
 
   let stopped = false;
   let workspace: string | undefined;
