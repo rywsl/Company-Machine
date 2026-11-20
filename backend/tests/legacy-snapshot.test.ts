@@ -193,6 +193,7 @@ describe("Frozen Bun Registry snapshots", () => {
       expect([...snapshot.always("memo@1")]).toEqual([]);
       expect(snapshot.properties("memo.indexed@1")).toEqual({ non_empty: "bean.facts.chars > 0", short: "bean.facts.chars <= 280" });
       expect(snapshot.validators("memo.text@1")).toMatchObject([{ name: "count-text", run: ["count-text", "/bean/payload/note.txt"] }]);
+      expect(snapshot.validators("memo.text@1")[0].image).toMatch(/sha256:[0-9a-f]{64}$/);
       expect(snapshot.validators("memo.indexed@1").map(({ name }) => name)).toEqual(["index-counter"]);
       expect(snapshot.validators("memo@1")).toEqual([]);
       const validators = snapshot.validators("memo.text@1");
@@ -204,6 +205,12 @@ describe("Frozen Bun Registry snapshots", () => {
       expect(snapshot.factsDecl("memo.text@1").chars).toBe("int");
       expect(snapshot.properties("memo.text@1").short).toBe("bean.facts.chars <= 280");
       expect([...snapshot.always("memo.text@1")]).toEqual(["non_empty"]);
+      const inheritedSubject = snapshot.propertySubject("memo.indexed@1", "non_empty");
+      expect(inheritedSubject).toBe("Type:memo@1.0/properties.non_empty");
+      const indexedProperty = snapshot.compiled(inheritedSubject!);
+      if (indexedProperty.kind !== "expression") throw new Error("Expected an inherited property expression");
+      expect(indexedProperty.evaluate({ bean: { facts: { chars: 3 } } })).toBe(true);
+      expect(indexedProperty.evaluate({ bean: { facts: { chars: 0 } } })).toBe(false);
 
       const latest = join(root, "types", "memo.text-1.1.yaml");
       const retired = JSON.parse(readFileSync(latest, "utf8"));

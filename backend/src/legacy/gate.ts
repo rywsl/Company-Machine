@@ -234,7 +234,8 @@ export class Gate {
     if (!problems.length && spec.admit?.length) {
       const environment = recipeEnv(result, paramsValue(this.snapshot, station, params));
       for (const [index, expr] of (spec.admit as string[]).entries()) {
-        if (!this.evaluate(expr, environment)) problem("", index, "admit", "admit[" + index + "]");
+        const subject = `${station}/admit[${index}]`;
+        if (!this.evaluate(expr, environment, subject)) problem("", index, "admit", "admit[" + index + "]");
       }
     }
     if (problems.length) throw new FactoryError("INTAKE_REJECTED", "来料检验未通过", { problems });
@@ -305,7 +306,7 @@ export class Gate {
         const accepts = typeof declaration.accept === "string" ? [declaration.accept] : declaration.accept ?? [];
         for (const [index, expression] of accepts.entries()) {
           const name = "accept[" + index + "]";
-          const ok = this.evaluate(expression, environment);
+          const ok = this.evaluate(expression, environment, `${station}/outputs.${port}.${name}`);
           checks.push({ port, index: -1, stage: "accept", name, ok, detail: ok ? "" : name });
         }
       }
@@ -357,7 +358,7 @@ export class Gate {
     const environment = propertyEnv(bean);
     return names.map((name) => {
       const expr = properties[name];
-      return { name, ok: typeof expr === "string" && this.evaluate(expr, environment) };
+      return { name, ok: typeof expr === "string" && this.evaluate(expr, environment, this.snapshot.propertySubject(type, name)) };
     });
   }
 
@@ -386,8 +387,12 @@ export class Gate {
     return contract;
   }
 
-  private evaluate(source: string, values: JsonObject): boolean {
+  private evaluate(source: string, values: JsonObject, subject?: string): boolean {
     try {
+      const checked = subject === undefined ? undefined : this.snapshot.result.compiledSites.get(subject);
+      if (checked?.kind === "expression" && checked.source === source) {
+        return checked.evaluate(values as EvalEnvironment) === true;
+      }
       const key = Object.keys(values).sort().join(",") + ":" + source;
       let predicate = this.predicates.get(key);
       if (!predicate) {

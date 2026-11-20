@@ -14,7 +14,7 @@ type IndexedType = {
   key: string;
   supertypes: Set<string>;
   facts: Map<string, string>;
-  properties: Map<string, string>;
+  properties: Map<string, { source: string; subject: string }>;
   always: Set<string>;
 };
 
@@ -36,14 +36,16 @@ export class Snapshot {
     for (const [type, property, owner] of rows.type_prop) {
       const ownerKey = this.typeKey(owner);
       const source = docs[ownerKey]?.spec?.properties?.[property];
-      if (typeof source === "string") this.types.get(type)?.properties.set(property, source);
+      if (typeof source === "string") this.types.get(type)?.properties.set(property, {
+        source, subject: `${ownerKey}/properties.${property}`,
+      });
     }
   }
 
   keys(kind?: string): string[] { return Object.keys(this.docs).filter((key) => !kind || key.startsWith(`${kind}:`)).sort(); }
   key(kind: string, ref: string): string { return ref.includes(":") ? ref : `${kind}:${ref}`; }
   doc(key: string): any { if (!(key in this.docs)) throw new FactoryError("SPEC_NOT_FOUND", `找不到 Spec ${key}`, { key }); return clone(this.docs[key]); }
-  spec(key: string): any { return clone(this.doc(key).spec); }
+  spec(key: string): any { return this.doc(key).spec; }
   private type(typeId: string): IndexedType {
     const found = this.types.get(typeId);
     if (!found) throw new FactoryError("TYPE_NOT_FOUND", `类型 ${typeId} 在快照中不存在`, { tid: typeId });
@@ -58,7 +60,12 @@ export class Snapshot {
     const validators = this.docs[this.typeKey(typeId)]?.spec?.validators;
     return Array.isArray(validators) ? clone(validators) : [];
   }
-  properties(typeId: string): Record<string, string> { return Object.fromEntries(this.type(typeId).properties); }
+  properties(typeId: string): Record<string, string> {
+    return Object.fromEntries([...this.type(typeId).properties].map(([name, { source }]) => [name, source]));
+  }
+  propertySubject(typeId: string, name: string): string | undefined {
+    return this.type(typeId).properties.get(name)?.subject;
+  }
   always(typeId: string): Set<string> { return new Set(this.type(typeId).always); }
   compiled(subject: string): CompiledSite {
     const site = this.result.compiledSites.get(subject);

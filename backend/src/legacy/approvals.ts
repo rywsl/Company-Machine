@@ -175,7 +175,7 @@ export class Approvals {
         throw new FactoryError("APPROVAL_STATE_INVALID", "当前 Job 尝试无法开启审批", { jobId: job.id, attempt: options.attempt });
       }
       const settings = this.snapshot.spec(job.station).approval;
-      const { route, note } = this.resolveRoute("in_run", settings?.in_run, payload, options);
+      const { route, note } = this.resolveRoute(job.station, "in_run", settings?.in_run, payload, options);
       const id = ids.new("a");
       const requestId = options.requestId ?? id;
       const internalRequestId = "mailbox:" + canonicalJson([job.id, options.attempt, requestId]);
@@ -222,7 +222,7 @@ export class Approvals {
       }
       const settings = this.snapshot.spec(job.station).approval;
       if (!settings?.propose) throw new FactoryError("APPROVAL_RULE_MISSING", "工位缺少方案审批规则", { station: job.station });
-      const { route, note } = this.resolveRoute("propose", settings.propose, rulePayload, options);
+      const { route, note } = this.resolveRoute(job.station, "propose", settings.propose, rulePayload, options);
       if (route === "review" && this.reviewQuorum() === undefined) {
         throw new FactoryError("REVIEW_QUORUM_UNSET", "复核法定人数没有设置", { station: job.station });
       }
@@ -359,13 +359,15 @@ export class Approvals {
   }
 
   private resolveRoute(
-    phase: Approval["phase"], rule: ApprovalRoute | { auto_if: string; else: ApprovalRoute } | undefined,
+    station: string, phase: Approval["phase"], rule: ApprovalRoute | { auto_if: string; else: ApprovalRoute } | undefined,
     payload: ApprovalPayload | Omit<ProposalPayload, "plan">, options: ApprovalContext,
   ): { route: ApprovalRoute; note: string } {
     if (!rule || typeof rule === "string") return { route: rule ?? "missing", note: "" };
     try {
       const env = approvalEnv(phase, { ...payload }, options.inputs ?? {}, options.params ?? {});
-      const predicate = compileExpr(rule.auto_if, { environment: MRL_ENVIRONMENT[phase], expect: BOOL });
+      const checked = this.snapshot.result.compiledSites.get(`${station}/approval.${phase}`);
+      const predicate = checked?.kind === "expression" && checked.source === rule.auto_if
+        ? checked : compileExpr(rule.auto_if, { environment: MRL_ENVIRONMENT[phase], expect: BOOL });
       return { route: predicate.evaluate(env as EvalEnvironment) === true ? "auto" : rule.else, note: "" };
     } catch {
       return { route: rule.else === "auto" ? "foreman" : rule.else, note: "APPROVAL_EVAL_ERROR" };

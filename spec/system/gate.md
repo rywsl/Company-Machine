@@ -266,7 +266,7 @@ FactoryError("INTAKE_REJECTED", "来料检验未通过", problems=problems)
 `requires` 的求值：
 
 1. 属性必须在 `snapshot.properties(bean 的类型 id)` 里，否则 `requires`。类型 id 由 Bean 的 `type` 去掉 minor 得到。`type_key` 失败（类型不在快照里）也是 `type`，不是 `TYPE_NOT_FOUND` 冒泡。
-2. `compiled = properties(...)[name]`，`compiled.evaluate(property_env(bean))`。结果是 `True` 才算通过。`False` 或 `EvalError` 都是 `requires`，`detail` 里带属性名。
+2. 从类型闭包定位属性的声明类型及表达式主体，复用该 Registry 快照已编译的表达式并传入 `property_env(bean)`。结果是 `True` 才算通过。`False` 或 `EvalError` 都是 `requires`，`detail` 里带属性名。
 3. 未封存的 Bean 在求值之前就被 `unsealed` 拒绝，不会带着空 facts 去算 `requires`。
 
 列表端口的每个元素单独检查，`index` 是元素序号。标量端口的 `index` 是 0。
