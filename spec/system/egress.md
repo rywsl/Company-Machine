@@ -29,7 +29,11 @@
 | 自签 CA 的生成算法 | 标准库签不出证书。CA 由操作员放到指定路径；没有 CA 时按第 5.4 节失败关闭 |
 | 服务型机器的入站 webhook 监听 | M4。`ingress` 在 M2 只表示 Source **拉取**时的出站白名单 |
 
-Bun 业务入口使用 Podman 的受管网络实现同一边界。`egressNetwork` 必须指向由 MAO egress 服务创建的网络，`egressEnv` 只允许 `ALL_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。未配置受管网络时，Bun 运行时拒绝 `network="egress"`。Harness profile 的 `network: egress` 由 `MAO_EGRESS_NETWORK` 显式绑定到该网络，不能隐式使用宿主网络或批量继承宿主环境。
+Bun 的 Kiri Linux 和 Podman 接收同一形式的受管网络配置。`egressNetwork` 指向出网服务管理的网络，`egressEnv` 允许 `ALL_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。Harness profile 的 `network: egress` 由 `MAO_EGRESS_NETWORK` 显式绑定。Bun 工位当前在 `network: none` 环境中运行，受管代理绑定属于下一段执行路径。
+
+`backend/src/legacy/egress.ts` 的 `compileEgress(snapshot, station, profiles)` 从工位绑定的 Policy 编译不可变的 `EgressPlan`。计划携带完整工位键、策略键、网络选项、主机和 HTTP 方法允许列表，以及按需审批和监控元数据。只有显式的 `from-machine` 才从 Machine 的同级配置取值。命名档案由调用方提供。空的主机列表得到零条规则，空的方法列表拒绝全部方法。
+
+`matchesEgressAllowlist(plan, target, method)` 检查 HTTP(S) 的实际目标地址。主机按完整域名或第 5.1 节及 `capabilities.md` 5.2 的显式通配模式匹配。对于无法读取内部方法的 CONNECT，只有明确允许任意方法的规则才能匹配。代理接入需要消费同一份计划，并执行按需审批与监控策略。
 
 D10 禁止控制面自己当 agent 去调模型。模型代理不违反这一点：请求的发起者是沙箱内的 CLI，代理只注入密钥并记账。`mao.approvals`、`mao.scheduler`、`mao.contract` **禁止** import 本模块的转发函数。
 
