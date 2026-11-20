@@ -361,6 +361,12 @@ Docker 的命名卷在**第一次**挂到镜像里已有内容的路径时，会
 
 Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都进入显式依赖或环境错误。运行时状态进入 Web App 设置和日志上下文，业务系统数据不写入宿主个人路径或 Docker 状态。
 
+### 5.11 Kiri 嵌入式运行时
+
+`KiriProvider` 是第二个业务运行时实现。默认通过官方 `kiri` CLI 执行受限容器命令，保持与 `PodmanProvider` 相同的 `SandboxSpec`、非 root、只读根文件系统、能力降级、网络和资源约束。需要兼容 Kiri 创建的 Docker context 时，可以使用 `mode="docker-context"`，命令形如 `[docker, "--context", "kiri", ...]`。
+
+Kiri 自己管理 Windows/Linux 容器后端。控制面只调用 Kiri CLI，不挂载 docker.sock，不使用 `--network host`，不把 Kiri 的虚拟机状态伪装成 Podman machine。`MAO_CONTAINER_RUNTIME=kiri` 选择 Kiri，`MAO_KIRI_EXECUTABLE`、`MAO_KIRI_CONTEXT` 和 `MAO_KIRI_MODE` 分别覆盖 CLI、context 和兼容模式。未配置时，业务默认仍使用 Podman。
+
 ## 6. 错误
 
 | 错误码 | 触发条件 | detail |
