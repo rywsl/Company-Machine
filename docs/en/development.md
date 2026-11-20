@@ -1,21 +1,36 @@
 # Development
 
-Code, `spec/` and acceptance tests may be changed in the order required by verification. A specification does not have to be committed before its implementation.
+The active product is Bun and TypeScript. The former Python implementation and its acceptance fixtures live under `removed/python/` as historical evidence.
 
 ## Verify before submitting
 
-Run this command before committing or pushing:
+Run the Bun-native verifier before committing or pushing.
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
-`verify` checks MRL error codes and standard-library functions, the factory profile, `spec/system` chapter structure, and the two-way mapping between chapter 7 and `tests/acceptance/`. It then runs the mapped acceptance tests, MRL conformance, MRL coverage, and the code policy tests. Mapped acceptance tests must have zero failures, errors, and skips.
+The command runs the Bun business control plane, MRL, Podman and Kiri runtime tests. The full acceptance entry point is `bun run acceptance:bun`.
 
-## Editing workflow
+## Runtime selection
 
-When code, specification, and tests disagree, fix the disagreement in the same change and run `verify` again. The repository no longer requires task claiming, task start, stage gates, task status, protected-file locks, review artifacts, PreToolUse hooks, or Git hooks. Historical material in `plan/tasks/`, `plan/journal/`, and milestone files remains available for context, but it is not a current implementation entry point and `verify` does not read it.
+Podman is the default runtime. Set `MAO_PODMAN_EXECUTABLE` when a desktop process has an older PATH snapshot.
+
+```bash
+podman machine init --now podman-machine-default
+bun run backend/src/index.ts
+```
+
+Kiri can run through its headless CLI path.
+
+```powershell
+$env:MAO_CONTAINER_RUNTIME = "kiri"
+$env:MAO_KIRI_EXECUTABLE = "kiri"
+bun run backend/src/index.ts
+```
+
+Linux Kiri readiness may start `kiri daemon`. `MAO_KIRI_MODE=docker-context` selects Kiri's Docker Engine API context when the installation exposes `docker --context kiri`.
 
 ## Engineering rules
 
-Do not add dependencies, call an LLM API from the control plane, use `shell=True`, or weaken tests to make verification pass. Keep credentials out of logs, commits, and replies. Preserve unrelated changes. Commit and push only when explicitly requested.
+Do not add dependencies, call an LLM API from the control plane, use shell concatenation, or weaken tests to make verification pass. Keep credentials out of logs, commits, and replies. Preserve unrelated changes. Commit and push only when explicitly requested.

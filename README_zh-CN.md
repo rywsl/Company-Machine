@@ -62,7 +62,7 @@
 ### 前置条件
 
 - **Bun** 和 **TypeScript**
-- **Docker**（可选）：默认的 `docker` 沙箱提供者和 Docker 测试层需要它。本文所有内容也可以用 `--provider local` 运行。
+- **Podman 或 Kiri**：活动 Bun runtime。Kiri 支持 headless Linux CLI 路径。
 - **agent CLI**（可选）：真实工位用 Claude Code 或 Codex；测试用脚本化的 fake agent 代替。
 
 ### 安装与验证
@@ -70,37 +70,24 @@
 ```bash
 git clone https://github.com/rywsl/Company-Machine.git
 cd Company-Machine
-uv sync
-
-uv run factory --version
-uv run mrl --version
+bun install
 bun run verify:bun                       # 检查活动 Bun 实现
 ```
 
 ### 第一条产线
 
 ```bash
-# 1. 编译 registry（退出码 0 = 无错误，3 = 不合法）
-uv run factory check tests/fixtures/registry-m2
+# 1. 查看活动 Bun 控制面
+bun run factory status
 
-# 2. 导入物料，规划并运行产线
-uv run factory --root .factory --registry <registry> --provider local --local-commands commands.json \
-    bean import --type agent.task@1 --file task.json=./task.json
-uv run factory ... line plan note-pipeline@1
-uv run factory ... line run  note-pipeline@1 --in task=sha256:...
+# 2. 交给厂长搭建业务系统
+bun run factory project intake --name "视频生产系统" --repo https://example.test/repo.git
 
-# 3. 查看
-uv run factory ... line nodes <run-id>
-uv run factory ... bean lineage --direction up <bean-id>
-uv run factory ... status
+# 3. 使用 Web App
+bun run backend/src/index.ts
 ```
 
-`commands.json` 是本地提供者用的命令映射，把配方里的命令名对应到宿主机命令。快速上手指南会从测试夹具生成它。无人值守运行时，启动守护进程和只读控制台：
-
-```bash
-uv run factory serve                 # 触发、run、job、治理、审计、金丝雀、唤醒票
-uv run factory console               # http://127.0.0.1:8090，令牌在 $FACTORY_ROOT/console.token
-```
+项目来源、Operator、Machine、DAG、物料血缘、Foreman 对话、项目资源请求和运行时状态都从 Bun Web App 管理。Python 产线 CLI 和旧夹具保存在 `removed/python/`。
 
 ---
 
