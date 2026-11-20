@@ -48,10 +48,14 @@ export class LineRunner {
       const plan = this.runs.executionPlan(run);
       if (run.state === "PENDING") run = this.runs.transition(id, "RUNNING");
       const nodes = new Map(this.runs.nodes(id).map((node) => [node.nodeId, node]));
+      let settled = false;
       for (const node of nodes.values()) {
         if (node.state !== "SUBMITTED" || !node.jobId) continue;
         const job = this.runner.jobs.get(node.jobId);
-        if (terminalStates.has(job.state)) nodes.set(node.nodeId, this.runs.settleNode(id, node.nodeId, job));
+        if (terminalStates.has(job.state)) {
+          nodes.set(node.nodeId, this.runs.settleNode(id, node.nodeId, job));
+          settled = true;
+        }
       }
       const submitted: string[] = [];
       const descendantJobs: string[] = [];
@@ -60,9 +64,12 @@ export class LineRunner {
         if (planned.kind !== "subline") continue;
         const node = nodes.get(planned.id);
         if (node?.state === "WAITING" && typeof node.params?.child_run === "string") {
-          activeChild = this.advanceChild(run, node, nodes, submitted, descendantJobs) || activeChild;
+          const stillActive = this.advanceChild(run, node, nodes, submitted, descendantJobs);
+          activeChild ||= stillActive;
+          settled ||= !stillActive;
         }
       }
+      if (settled) run = this.runs.get(id);
       const failed = [...nodes.values()].find((node) => node.state === "FAILED");
       if (run.state === "RUNNING" && failed) {
         run = this.runs.transition(id, "FAILING", { error: { code: "NODE_FAILED", node: failed.nodeId } });

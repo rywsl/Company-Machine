@@ -18,6 +18,46 @@ function expectErrorCode(run: () => unknown, code: string, detail?: Record<strin
 }
 
 describe("Bun M1 core boundaries", () => {
+  test("initializes the default Bun job and run tables on a fresh database", () => {
+    const root = tempRoot("sqlite-schema-fresh");
+    const context = Context.open(root, { clock: new FakeClock(), ids: new CounterIds() });
+    try {
+      const { db, clock, ids } = context;
+      const jobs = new JobStore(db, clock, ids);
+      new RunStore(db, clock, ids);
+      const created = jobs.create({ station: "fixture@1", epoch: "fixture", inputs: {}, params: {} });
+      new JobStore(db, clock, ids);
+      new RunStore(db, clock, ids);
+      expect(jobs.get(created.id)).toMatchObject({ id: created.id, state: "PENDING", phase: "execute" });
+      expect(db.query("SELECT count(*) AS count FROM runs").get()).toEqual({ count: 0 });
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 0 });
+    } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("rolls back all RunStore schema changes when rebuilding a legacy index fails", () => {
+    const root = tempRoot("sqlite-schema-rollback");
+    const context = Context.open(root);
+    try {
+      const { db, clock, ids } = context;
+      db.exec(`
+        PRAGMA user_version = 2;
+        CREATE TABLE events (id TEXT PRIMARY KEY);
+        INSERT INTO events (id) VALUES ('legacy-event');
+      `);
+      expect(() => new RunStore(db, clock, ids)).toThrow(/no such column: seq/);
+      expect(db.query("SELECT name FROM sqlite_schema WHERE name='runs'").get()).toBeNull();
+      expect(db.query<{ name: string }>("PRAGMA table_info(events)").all().map(({ name }) => name)).toEqual(["id"]);
+      expect(db.query("SELECT id FROM events").all()).toEqual([{ id: "legacy-event" }]);
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+
+      db.exec("ALTER TABLE events ADD COLUMN seq INTEGER");
+      new RunStore(db, clock, ids);
+      expect(db.query("SELECT id, run_id FROM events").all()).toEqual([{ id: "legacy-event", run_id: null }]);
+      expect(db.query("SELECT name FROM sqlite_schema WHERE name='events_run'").get()).toEqual({ name: "events_run" });
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+    } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("upgrades an archived SQLite schema twice and preserves records and its migration version", () => {
     const root = tempRoot("sqlite-compatibility");
     let context = Context.open(root);

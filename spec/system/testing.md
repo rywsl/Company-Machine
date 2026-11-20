@@ -192,6 +192,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_id_prefix_validation` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 拒绝大写前缀 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_database_pragmas_and_rows` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | WAL 模式、5 秒忙等待和提交后的行查询 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_tx_commit_and_rollback` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | 外层异常撤销插入 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_migrate_default_dir` | `backend/tests/legacy-core.test.ts` | `initializes the default Bun job and run tables on a fresh database` | 新库通过 Bun 组件默认初始化建立可写作业表和运行表，重复初始化保留已写记录 |
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_epoch_is_tree_hash` | `backend/tests/legacy-snapshot.test.ts` | `matches an independent tree hash across directories and includes non-Spec files` | 格式和独立算出的 SHA-256 树摘要一致 |
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_epoch_ignores_absolute_path_and_changes_with_content` | `backend/tests/legacy-snapshot.test.ts` | `matches an independent tree hash across directories and includes non-Spec files` | 复制到其他目录得到相同 epoch，添加非规范文件后摘要改变 |
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_notes_registry_is_clean` | `backend/tests/legacy-snapshot.test.ts` | `indexes the kernel type closure and resolves current non-retired minors` | 校验真实 Registry 可加载且无错误和警告 |
@@ -260,6 +261,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_spend_today` | `backend/tests/status.test.ts` | `counts UTC model, transcript and Foreman spend once` | UTC 当天累计三类成本，排除旧记录和重复计费 |
 | `removed/python/tests/acceptance/m7/test_m7_01_status.py::test_metrics_text` | `backend/tests/status.test.ts` | `emits the documented Prometheus families with sorted and escaped sample labels` | 九组指标声明、组件状态和排序转义后的标签 |
 | `removed/python/tests/acceptance/m2/test_m2_01_runplan.py::test_templated_params_recorded` | `backend/tests/legacy-runplan.test.ts` | `orders the example by dependency layer and records parameters and budgets` | 归档示例产线的 `to_s3.prefix` 保留模板原文和模板字段标记 |
+| `removed/python/tests/acceptance/m2/test_m2_02_runs_store.py::test_run_value_shape` | `backend/tests/dynamic-subline.test.ts` | `uses settled child and station costs when submitting downstream Line jobs` | 持久化 Run 值包含标识、epoch、产线与预算，MRL 渲染使用结算后的已支出和剩余预算 |
+| `removed/python/tests/acceptance/m2/test_m2_03_line_runner.py::test_tick_idempotent` | `backend/tests/dynamic-subline.test.ts` | `uses settled child and station costs when submitting downstream Line jobs` | 重复推进不派发新 Job、不新增事件并保留唯一节点作业历史 |
 | `removed/python/tests/acceptance/m2/test_m2_03_line_runner.py::test_epoch_mismatch` | `backend/tests/legacy-snapshot.test.ts` | `rejects a Run tick from a LineRunner bound to a different epoch` | 不同 Registry 快照下拒绝推进同一个 Run |
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_m2_compiler_still_rejects` | `backend/tests/legacy-runplan.test.ts` | `rejects missing inputs, incompatible contracts, cycles and unsupported constructs` | 静态入口对 Map 返回 `LINE_UNSUPPORTED` |
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_plain_line_digest_matches_m2` | `backend/tests/dynamic-switch.test.ts` | `compiles ordered switch cases and preserves the static plan document` | 示例静态 Line 的两个编译入口生成相同计划 |
@@ -415,7 +418,7 @@ Bun 使用工作区固定版本的 TypeScript 编译器解析生产源码。校�
 
 同一检查覆盖 Bun 生产代码直接调用时钟、随机 ID 和当前目录 API 的情况，包括可静态识别的导入别名。`foundation.ts` 和独立的 `factoryctl` 提供运行时时钟与 ID，Vault 与出网转发器保留加密随机数。业务记录时钟、容器耗时、Kiri 就绪轮询以及 LocalProvider 的工作目录由对应 Bun 测试验证。
 
-`tools/module-policy.test.ts` 覆盖没有说明的空 `catch`、Node 文本文件的显式 UTF-8、允许的二进制读写，以及历史 SQL 编号和 `user_version` 边界。`backend/tests/legacy-core.test.ts` 使用归档 SQL 建库并通过活跃的 Bun 存储组件连续打开两次，确认历史记录可读、兼容列已补齐且迁移版本保留。
+`tools/module-policy.test.ts` 覆盖没有说明的空 `catch`、Node 文本文件的显式 UTF-8、允许的二进制读写，以及历史 SQL 编号和 `user_version` 边界。`backend/tests/legacy-core.test.ts` 使用归档 SQL 建库并通过活跃的 Bun 存储组件连续打开两次，确认历史记录可读、兼容列已补齐且迁移版本保留。另用缺少 `seq` 的旧事件表触发索引创建失败，验证事务回滚兼容列和其他 DDL，修复列后可重试。
 
 Bun MRL 表达式检查标准库参数、宏短路、集合顺序和嵌套深度。规则检查覆盖模块归属、关系签名、变量绑定、宿主事实类型、分层否定及聚合。Registry 事实交给规范中的 `kernel/refs.mrl`、`kernel/types.mrl`、`kernel/stations.mrl` 和 `kernel/lines.mrl`。内核检查业务引用、类型继承、工位契约和产线绑定，并生成转换解析表。测试可按完整 Line 键或省略 `Line:` 的键匹配解析条目。Registry 的宪法在同一规则程序上执行，编译失败时仍会返回内核诊断。完整 int64 精度和整数值与同值浮点数的身份尚需迁移。超过 JavaScript 安全整数范围的 YAML 用例会报告证据缺口。规范用例以 `spec/mrl/conformance/` 为准。
 

@@ -354,6 +354,7 @@ Bun 快照的 Registry 检查目前提供结构校验。`compileRunPlan` 从快�
      - `run.reserved_usd -= node.reserved_usd`，`node.reserved_usd = 0`；
      - `run.spent_usd += job.cost_usd`（缓存命中为 0）；
      - 写一条 `run.budget` 事件。
+   - 同一个 tick 内结算工位或子产线后，后继节点的参数模板和 Job 的 `run` 值使用结算后的已支出金额与剩余预算。
 3. **失败**：有节点 `FAILED` 且 run 为 `RUNNING` 时：
    - run 转为 `FAILING`；
    - `run.error = {code: "NODE_FAILED", message, node: 第一个失败节点的 id（按 ord）}`。

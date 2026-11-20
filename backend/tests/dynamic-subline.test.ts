@@ -17,6 +17,13 @@ async function fixture(root: string) {
   for (const [name, port, steps, cap] of [
     ["note-child", "shout", { shout: step }, 0.5],
     ["note-parent", "child", { child: { subline: "note-child@1", in: { note: "$inputs.note" } } }, 1],
+    ["note-budget-chain", "second", {
+      child: { subline: "note-child@1", in: { note: "$inputs.note" } },
+      second: { station: "upper@1", in: { note: "child.note" } },
+      publish: { station: "publish-templated@1", in: { note: "second.note" }, params: {
+        dir: "spent-{{ run.budget.spent_usd }}/remaining-{{ run.budget.remaining_usd }}",
+      } },
+    }, 1],
   ] as const) {
     writeFileSync(join(registry, "lines", `${name}.yaml`), Bun.YAML.stringify({
       apiVersion: "mao/v1", kind: "Line", metadata: { name, version: 1 },
@@ -112,5 +119,43 @@ test("settles child costs exactly once and propagates child failure", { timeout:
     expect(lines.runs.get(parent.id)).toMatchObject({ state: "FAILED", spentUsd: 0.2, reservedUsd: 0 });
     expect(lines.tick(parent.id)).toEqual([]);
     expect(lines.runs.get(parent.id).spentUsd).toBe(0.2);
+  } finally { context.close(); rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
+test("uses settled child and station costs when submitting downstream Line jobs", { timeout: 60_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-line-budget-context-"));
+  let context = Context.open(root);
+  try {
+    const snapshot = await fixture(root);
+    const provider = new LocalProvider(commands);
+    let runner = new Runner(context, snapshot, provider);
+    let lines = new LineRunner(runner);
+    const parent = lines.start("note-budget-chain@1", { inputs: { note: await seal(context) }, useCache: false });
+    const [childJob] = lines.tick(parent.id);
+    expect((await runner.run(childJob)).state).toBe("SEALED");
+    context.db.query("UPDATE jobs SET cost_usd = ? WHERE id = ?").run(0.25, childJob);
+
+    context.close();
+    context = Context.open(root);
+    runner = new Runner(context, snapshot, provider);
+    lines = new LineRunner(runner);
+    const [secondJob] = lines.tick(parent.id);
+    expect(runner.jobs.get(secondJob).runValue).toMatchObject({
+      budget: { cap_usd: 1, spent_usd: 0.25, remaining_usd: 0.75 },
+    });
+    expect((await runner.run(secondJob)).state).toBe("SEALED");
+    context.db.query("UPDATE jobs SET cost_usd = ? WHERE id = ?").run(0.125, secondJob);
+
+    const [publishJob] = lines.tick(parent.id);
+    expect(runner.jobs.get(publishJob)).toMatchObject({
+      runValue: { id: parent.id, epoch: parent.epoch, line: parent.line, budget: { cap_usd: 1, spent_usd: 0.375, remaining_usd: 0.625 } },
+      params: { dir: "spent-0.375/remaining-0.625" },
+    });
+    const events = context.db.query("SELECT seq, kind, data FROM events ORDER BY seq");
+    const after = events.all();
+    expect(lines.tick(parent.id)).toEqual([]);
+    expect(events.all()).toEqual(after);
+    expect(lines.runs.get(parent.id)).toMatchObject({ spentUsd: 0.375, reservedUsd: 0 });
+    expect(lines.runs.jobHistory(parent.id, "publish")).toEqual([publishJob]);
   } finally { context.close(); rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
 });
