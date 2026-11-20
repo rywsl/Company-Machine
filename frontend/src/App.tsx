@@ -556,6 +556,7 @@ function SecretDrawer({ secret, requests, onSelect, onClose, onSaved }: { secret
     <div className="secret-key"><strong>{secret.key}</strong><span className={`status-badge ${secret.configured ? "good" : "bad"}`}>{secret.configured ? "已配置" : "待补充"}</span></div>
     {secret.request?.purpose && <p>{display(secret.request.purpose)}</p>}
     <div className="context-line"><span>使用范围</span><strong>{display(secret.usage_scope ?? secret.request?.scope, "未声明")}</strong></div>
+    {secret.agent_generated_checks?.length ? <details className="detail-collapse" open><summary>Agent 生成的检查项</summary><ul className="check-list">{secret.agent_generated_checks.map((check, index) => <li key={`${check}-${index}`}><strong>{check}</strong></li>)}</ul></details> : null}
     {requestId && !secret.configured && <form className="secret-form" onSubmit={submit}>
       <label className="config-field"><span>填写这项项目密钥</span><input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoComplete="off" /></label>
       <button className="primary-button" type="submit" disabled={!value || saving}>{saving ? "写入中…" : "写入保险箱"}</button>
@@ -591,6 +592,7 @@ function AssetDrawer({ asset, onClose }: { asset: AssetRecord; onClose: () => vo
     <div className="context-line"><span>标识</span><strong className="breakable">{asset.id}</strong></div>
     <div className="context-line"><span>说明</span><strong>{display(asset.description || asset.summary, "暂无说明")}</strong></div>
     <div className="context-line"><span>封存</span><strong>{asset.sealed ? "已封存" : "处理中"}</strong></div>
+    <div className="context-line"><span>Validation Epoch</span><strong className="breakable">{display(asset.validation_epoch, "未声明")}</strong></div>
     <div className="context-line"><span>来源运行</span><strong>{display(asset.source?.run, "暂无")}</strong></div>
     <div className="context-line"><span>来源节点</span><strong>{display(asset.source?.node, "暂无")}</strong></div>
     <section className="asset-lineage" aria-label="产物物料流转图"><span className="eyebrow">MATERIAL FLOW</span><div className="asset-flow-track">

@@ -522,6 +522,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
           legacy_type: bean.type,
           legacy_meta: bean.meta,
           legacy_facts: bean.facts,
+          ...(typeof (run.metadata.kernel as Record<string, unknown> | undefined)?.epoch === "string"
+            ? { validation_epoch: (run.metadata.kernel as Record<string, unknown>).epoch } : {}),
         },
         producer: { machine: unit.id },
       });
@@ -1260,7 +1262,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     if (url.pathname === "/api/web/secrets" && request.method === "GET") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有全局密钥列表权限" }, 403);
-      return response(store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, usage_scope: secret.metadata.scope, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })));
+      return response(store.listSecretRequests().map(publicSecretRequest));
     }
     if (url.pathname === "/api/web/talk" && request.method === "POST") {
       const body = await readJson(request);
@@ -1296,7 +1298,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         graph: { factory: factoryGraph },
         assets, logs, talk,
         ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: "olderCursor" in assetPage ? assetPage.olderCursor : assetPage.older ? Buffer.from(JSON.stringify({ v: 1, ...assetPage.older })).toString("base64url") : null }),
-        harnesses: harnesses.map((item) => ({ ...item, configuration: systems ? null : publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: systems ? [] : store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: secrets.map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
+        harnesses: harnesses.map((item) => ({ ...item, configuration: systems ? null : publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: systems ? [] : store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: secrets.map(publicSecretRequest),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses(store.listHarnessProfiles()).map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : item.container_configured ? "configured" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: systems ? null : foremanProfile?.runtime ?? null, model: systems ? null : foremanProfile?.model ?? null, mode: systems ? null : foremanProfile?.mode ?? null, profile: systems ? null : publicProfile(foremanProfile, (ref) => vault.get(ref)) }, constitution: await constitutionProjection(storageRoot) });
     }
@@ -1446,7 +1448,36 @@ function publicArtifact(record: any) {
     project_id: record.projectId,
     source_id: record.sourceId,
     record_type: record.recordType,
+    validation_epoch: validationEpoch(record),
     created_at: record.createdAt,
+  };
+}
+
+function validationEpoch(record: any): string | undefined {
+  const metadata = record?.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata) ? record.metadata as Record<string, unknown> : {};
+  const value = metadata.validation_epoch ?? metadata.epoch;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function publicSecretRequest(secret: any) {
+  const checks = Array.isArray(secret.metadata?.checks)
+    ? secret.metadata.checks.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0).map((item: string) => redactText(item))
+    : [];
+  return {
+    id: secret.id,
+    key: secret.name,
+    configured: secret.status === "available",
+    status: secret.status,
+    usage_scope: secret.metadata.scope,
+    agent_generated_checks: checks,
+    request: {
+      id: secret.id,
+      project_id: secret.projectId,
+      project_name: secret.projectName,
+      status: secret.status,
+      purpose: secret.metadata.purpose,
+      scope: secret.metadata.scope,
+    },
   };
 }
 
@@ -1520,6 +1551,7 @@ function projectWebAssets(store: SqliteStore, records: Artifact[], archived: Art
       summary: typeof document.summary === "string" ? document.summary : undefined,
       purpose: typeof document.purpose === "string" ? document.purpose : undefined,
       status: typeof document.status === "string" ? document.status : undefined,
+      validation_epoch: validationEpoch({ metadata: document.metadata }),
       files: Array.isArray(document.files) ? document.files.map(publicArtifactFile) : [],
       inputs: publicReferences(document.inputs),
       outputs: publicReferences(document.outputs),
@@ -1542,6 +1574,7 @@ function projectWebAssets(store: SqliteStore, records: Artifact[], archived: Art
     summary: record.summary,
     purpose: record.purpose,
     status: record.status,
+    validation_epoch: validationEpoch(record),
     files: (record.files ?? []).flatMap((file, position) => {
       if (typeof file?.ref !== "string") return [];
       const { ref, path, mediaType, digest } = file;

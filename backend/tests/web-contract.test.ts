@@ -62,6 +62,19 @@ test("public artifact projection redacts metadata secrets", async () => {
   } finally { app.stop(); }
 });
 
+test("asset projection exposes a declared validation epoch without exposing private metadata", async () => {
+  const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
+  try {
+    const system = app.store.createBusinessSystem({ name: "Validation epoch" });
+    const project = app.store.createIntake({ business_system_id: system.id, name: "Validated project" });
+    app.store.addArtifact({ projectId: project.id, kind: "report", recordType: "material", ref: "material://validated", summary: "Validated", metadata: { validation_epoch: "e-test", api_key: "hidden" } });
+    const response = await app.fetch(new Request("http://localhost/api/web/assets"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).find((item: { ref: string }) => item.ref === "material://validated")).toMatchObject({ validation_epoch: "e-test" });
+    expect(JSON.stringify(await (await app.fetch(new Request("http://localhost/api/web/assets"))).json())).not.toContain("hidden");
+  } finally { app.stop(); }
+});
+
 test("public business projections redact local source and execution references", async () => {
   const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
   try {

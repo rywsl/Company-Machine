@@ -387,10 +387,17 @@ describe("Bun business backend", () => {
         headers: { "content-type": "application/json" },
       }));
       const request = await jsonResponse(requestResponse);
+      const checkedRequest = app.store.createSecretRequest({
+        projectId: project.id, name: "CHECKED_API_KEY", vaultRef: "vault://secret/checked",
+        metadata: { checks: ["确认项目权限", "匹配 Machine 环境"] },
+      });
       const bootstrap = await jsonResponse(await app.fetch(new Request("http://localhost/api/web/bootstrap")));
       expect(bootstrap.secrets.find((secret: { key: string }) => secret.key === "VIDEO_API_KEY")).toMatchObject({
         key: "VIDEO_API_KEY", configured: false,
         request: { project_id: project.id, project_name: "视频项目" },
+      });
+      expect(bootstrap.secrets.find((secret: { key: string }) => secret.key === "CHECKED_API_KEY")).toMatchObject({
+        id: checkedRequest.id, agent_generated_checks: ["确认项目权限", "匹配 Machine 环境"],
       });
       const valueResponse = await app.fetch(new Request(`http://localhost/api/v1/secrets/requests/${request.request_id}/value`, {
         method: "POST",
