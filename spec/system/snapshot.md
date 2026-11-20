@@ -245,7 +245,11 @@ Bun 在检查阶段取得上述关系和 `type_prop`，加载快照时按类型 
 
 `compiled(subject)` 只查 5.8 建好的缓存。没有就 `FactoryError("SUBJECT_UNKNOWN", f"快照中没有表达式位置 {subject}", subject=subject)`。不要在查找时重新编译，也不要因为主体“看起来像”就现解析。
 
+Bun 的 `Snapshot.compiled(subject)` 返回带 `source` 的编译结果。谓词的 `kind` 为 `expression`，使用 `evaluate` 求值。模板的 `kind` 为 `template`，使用 `render` 渲染。
+
 ### 5.8 加载时编译（第 4 章的全部位置）
+
+Bun 在 Registry 检查时用同一个类型环境生成诊断和可执行表达式。冻结记录保存主体、源文本、表达式种类和类型环境，重开时据此重建查找表。缺少该记录的旧快照使用冻结的文档与宪法补齐表达式位置。
 
 对 `result.extraction.sites` 的每一项 `site`（这就是 factory-profile 第 4 章的全部位置）：
 
@@ -367,7 +371,7 @@ Bun 在检查阶段取得上述关系和 `type_prop`，加载快照时按类型 
 bun test backend/tests/legacy-snapshot.test.ts
 ```
 
-活动 Bun 验收检查内核类型闭包、当前 minor 与退役回退、未知类型、继承属性来源及旧快照补齐。
+活动 Bun 验收检查内核类型闭包、当前 minor 与退役回退、未知类型、继承属性来源及旧快照补齐。表达式验收检查查找表复用、源文本、标量和列表输出验收、审批谓词、配方与运行时模板，以及未知主体和重开后的求值一致性。
 
 夹具 Registry 由 `tests/acceptance/m1/m1_data_helpers.py` 写出。该文件声明：Registry 必须零 error、零 warning，由 `test_notes_registry_is_clean` 守护。
 

@@ -4,6 +4,7 @@ import { relative, resolve } from "node:path";
 import { checkRegistry, type RegistryCheckResult } from "../../mrl/factory/check";
 import { listFiles } from "../../mrl/factory/paths";
 import { documentKey, isConstitution, layoutKind, registryFromTexts, type Registry } from "../../mrl/factory/registry";
+import { restoreCompiledSites, type CompiledSite } from "../../mrl/factory/sites";
 import { canonicalBytes, canonicalJson, digestBytes, digestFile, type Clock } from "./foundation";
 import { FactoryError } from "./errors";
 
@@ -59,7 +60,11 @@ export class Snapshot {
   }
   properties(typeId: string): Record<string, string> { return Object.fromEntries(this.type(typeId).properties); }
   always(typeId: string): Set<string> { return new Set(this.type(typeId).always); }
-  compiled(subject: string): unknown { throw new FactoryError("MRL_COMPILED_MISSING", `没有可用的编译表达式 ${subject}`, { subject }); }
+  compiled(subject: string): CompiledSite {
+    const site = this.result.compiledSites.get(subject);
+    if (!site) throw new FactoryError("SUBJECT_UNKNOWN", `快照中没有表达式位置 ${subject}`, { subject });
+    return site;
+  }
 }
 
 interface RegistryTree {
@@ -107,9 +112,10 @@ export async function loadSnapshot(root: string, _clock?: Clock): Promise<Snapsh
   return loadRegistryTree(await readRegistryTree(root));
 }
 
-type FrozenResult = Omit<RegistryCheckResult, "root" | "registry" | "typeRelations"> & {
+type FrozenResult = Omit<RegistryCheckResult, "root" | "registry" | "typeRelations" | "expressionSites" | "compiledSites"> & {
   registry: Omit<Registry, "root">;
   typeRelations?: RegistryCheckResult["typeRelations"];
+  expressionSites?: RegistryCheckResult["expressionSites"];
 };
 type FrozenRow = { tree_digest: string; payload: string; payload_digest: string };
 const frozenDigest = (treeDigest: string, payload: string) => digestBytes(new TextEncoder().encode(`${treeDigest}\n${payload}`));
@@ -152,13 +158,18 @@ export class RegistrySnapshotStore {
     if (existing) return this.restore(tree.epoch, existing, tree.digest, root);
 
     const snapshot = loadRegistryTree(tree);
-    const { root: _resultRoot, registry, ...result } = snapshot.result;
+    const { root: _resultRoot, registry, compiledSites: _compiledSites, ...result } = snapshot.result;
     const { root: _registryRoot, ...parsedRegistry } = registry;
     const payload = canonicalJson(clone({ version: 1, result: { ...result, registry: parsedRegistry } }));
-    this.db.query(`
+    const inserted = this.db.query(`
       INSERT INTO registry_snapshots (epoch, tree_digest, payload, payload_digest) VALUES (?, ?, ?, ?)
-      ON CONFLICT(epoch) DO NOTHING
-    `).run(tree.epoch, tree.digest, payload, frozenDigest(tree.digest, payload));
+      ON CONFLICT(epoch) DO NOTHING RETURNING epoch
+    `).get(tree.epoch, tree.digest, payload, frozenDigest(tree.digest, payload));
+    if (inserted && root !== undefined) return snapshot;
+    if (inserted) {
+      const frozenRoot = `registry:${tree.epoch}`;
+      return snapshotFromResult(tree.epoch, { ...snapshot.result, root: frozenRoot, registry: { ...registry, root: frozenRoot } });
+    }
     return this.restore(tree.epoch, this.find(tree.epoch)!, tree.digest, root);
   }
 
@@ -174,8 +185,11 @@ export class RegistrySnapshotStore {
       const stored = JSON.parse(row.payload) as { version: number; result: FrozenResult };
       if (stored.version !== 1 || stored.result.ok !== true) throw new Error("Invalid frozen Registry payload");
       const registry = { ...stored.result.registry, root };
-      const typeRelations = stored.result.typeRelations ?? checkRegistry(registry).typeRelations;
-      return snapshotFromResult(epoch, { ...stored.result, root, registry, typeRelations });
+      const fresh = stored.result.typeRelations && stored.result.expressionSites ? undefined : checkRegistry(registry);
+      const typeRelations = stored.result.typeRelations ?? fresh!.typeRelations;
+      const expressionSites = stored.result.expressionSites ?? fresh!.expressionSites;
+      const compiledSites = stored.result.expressionSites ? restoreCompiledSites(expressionSites) : fresh!.compiledSites;
+      return snapshotFromResult(epoch, { ...stored.result, root, registry, typeRelations, expressionSites, compiledSites });
     } catch {
       throw new FactoryError("EPOCH_CORRUPT", "Registry 快照的格式无法读取", { epoch });
     }

@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, LineRunner, LocalProvider, RegistrySnapshotStore, Runner, canonicalJson, compileRunPlan, digestBytes, loadSnapshot } from "../src/legacy";
+import type { EvalEnvironment } from "../mrl/evaluator";
 
 const registryFixture = "tests/fixtures/registry-m2";
 
@@ -27,6 +28,42 @@ function writeTypeFixtures(registry: string): void {
   writeType("memo.empty", "1.0", {});
 }
 
+async function writeCompiledSiteFixtures(root: string): Promise<void> {
+  const edit = async (file: string, update: (document: any) => void, output = file) => {
+    const document = Bun.YAML.parse(await Bun.file(join(root, file)).text());
+    update(document);
+    await Bun.write(join(root, output), JSON.stringify(document));
+  };
+  const suffix = { type: "string", default: "!" };
+  const times = { type: "int", default: 2 };
+  await edit("machines/toolbox/machine.yaml", ({ spec }) => {
+    spec.recipes.upper.params = { times };
+    spec.recipes.split = {
+      inputs: { note: { type: "note.text@1" } },
+      outputs: { parts: { type: "list<note.text@1>" } },
+      params: { suffix },
+      run: ["script", "{{ params.suffix }}"],
+    };
+  });
+  await edit("stations/upper.yaml", (document) => {
+    document.metadata.name = "split";
+    document.spec.recipe = "split";
+    document.spec.outputs = { parts: { type: "list<note.text@1>", accept: ["out.size() == 2"] } };
+    document.spec.params = { suffix };
+  }, "stations/split.yaml");
+  await edit("stations/upper.yaml", ({ spec }) => {
+    spec.params = { times };
+    spec.outputs.note.accept = ["out.facts.chars == inputs.note.facts.chars + params.times"];
+  });
+  await edit("runtimes/fake-agent.yaml", ({ spec }) => {
+    spec.invoke.resume = ["--resume", "{{ session.id }}"];
+    spec.env.MODEL = "{{ operator.model }}";
+  });
+  await edit("types/raw.yaml", ({ spec }) => {
+    spec.properties.untyped_meta = "bean.meta.unknown.rank > 0";
+  });
+}
+
 function referenceEpoch(root: string): string {
   const digests = new Map<string, string>();
   const visit = (prefix: string) => {
@@ -42,6 +79,74 @@ function referenceEpoch(root: string): string {
 }
 
 describe("Frozen Bun Registry snapshots", () => {
+  test("looks up typed predicates and templates by subject before and after reopening", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-compiled-sites-"));
+    const db = new Database(":memory:");
+    try {
+      cpSync(registryFixture, root, { recursive: true });
+      await writeCompiledSiteFixtures(root);
+      const snapshots = new RegistrySnapshotStore(db);
+      const initial = await snapshots.capture(root);
+      expect(initial.result.diagnostics.map(({ code }) => code)).toContain("W-PROPERTY-META");
+      expect(initial.result.expressionSites.length).toBeGreaterThan(10);
+      expect(new Set(initial.result.expressionSites.map(({ subject }) => subject)).size).toBe(initial.result.expressionSites.length);
+      const upper = await Bun.file(join(root, "stations", "upper.yaml")).text();
+      expect(upper).toContain("params.times");
+      await Bun.write(join(root, "stations", "upper.yaml"), upper.replace("params.times", "1"));
+      const reopened = await snapshots.materialize(initial.epoch);
+      expect(reopened.result.expressionSites).toEqual(initial.result.expressionSites);
+      const purposes = [
+        ["Type:note.text@1.0/properties.non_empty", "bean.facts.chars > 0"],
+        ["Station:upper@1/outputs.note.accept[0]", "out.facts.chars == inputs.note.facts.chars + params.times"],
+        ["Station:split@1/outputs.parts.accept[0]", "out.size() == 2"],
+        ["Station:quote@1/approval.in_run", "request.cost_usd <= 0.5"],
+        ["Machine:toolbox@1/recipes.split.run[1]", "{{ params.suffix }}"],
+        ["OperatorRuntime:fake-agent@1/invoke.argv[2]", "{{ brief.task }}"],
+        ["OperatorRuntime:fake-agent@1/invoke.argv[8]", "{{ limits.max_turns }}"],
+        ["OperatorRuntime:fake-agent@1/env.MODEL", "{{ operator.model }}"],
+      ];
+      const bean = (chars: number) => ({ id: "bean", type: "note.text@1.0", facts: { chars }, meta: {}, payload: [] });
+      for (const snapshot of [initial, reopened]) {
+        for (const { subject, source, kind } of snapshot.result.expressionSites) {
+          expect(snapshot.compiled(subject)).toMatchObject({ source, kind });
+          expect(snapshot.compiled(subject)).toBe(snapshot.compiled(subject));
+        }
+        for (const [subject, source] of purposes) expect(snapshot.compiled(subject).source).toBe(source);
+        const evaluate = (subject: string, env: EvalEnvironment) => {
+          const site = snapshot.compiled(subject);
+          if (site.kind !== "expression") throw new Error(`${subject} must be a predicate`);
+          return site.evaluate(env);
+        };
+        const render = (subject: string, env: EvalEnvironment) => {
+          const site = snapshot.compiled(subject);
+          if (site.kind !== "template") throw new Error(`${subject} must be a template`);
+          return site.render(env);
+        };
+        expect(evaluate("Type:note.text@1.0/properties.non_empty", { bean: bean(3) })).toBe(true);
+        expect(evaluate("Type:note.text@1.0/properties.non_empty", { bean: bean(0) })).toBe(false);
+        expect(evaluate("Type:note.raw@1.0/properties.untyped_meta", { bean: { ...bean(2), meta: { unknown: { rank: 1 } } } })).toBe(true);
+        const inputs = { note: bean(3) };
+        const params = { times: 2 };
+        expect(evaluate("Station:upper@1/outputs.note.accept[0]", { out: bean(5), inputs, params })).toBe(true);
+        expect(evaluate("Station:upper@1/outputs.note.accept[0]", { out: bean(1), inputs, params })).toBe(false);
+        expect(evaluate("Station:split@1/outputs.parts.accept[0]", { out: [bean(1), bean(1)] })).toBe(true);
+        expect(evaluate("Station:split@1/outputs.parts.accept[0]", { out: [bean(1)] })).toBe(false);
+        expect(evaluate("Station:quote@1/approval.in_run", { request: { cost_usd: 0.5 }, inputs, params })).toBe(true);
+        expect(evaluate("Station:quote@1/approval.in_run", { request: { cost_usd: 0.6 }, inputs, params })).toBe(false);
+        expect(render("Machine:toolbox@1/recipes.split.run[1]", { inputs, params: { suffix: "!" } })).toBe("!");
+        const runtime = { brief: { task: "hello" }, limits: { max_turns: 4 }, operator: { model: "fake" }, session: { id: "external-session" } };
+        expect(render("OperatorRuntime:fake-agent@1/invoke.argv[2]", runtime)).toBe("hello");
+        expect(render("OperatorRuntime:fake-agent@1/invoke.argv[8]", runtime)).toBe("4");
+        expect(render("OperatorRuntime:fake-agent@1/env.MODEL", runtime)).toBe("fake");
+        expect(render("OperatorRuntime:fake-agent@1/invoke.resume[1]", runtime)).toBe("external-session");
+        const absent = "Station:upper@1/nope";
+        let failure: unknown;
+        try { snapshot.compiled(absent); } catch (error) { failure = error; }
+        expect(failure).toMatchObject({ code: "SUBJECT_UNKNOWN", detail: { subject: absent } });
+      }
+    } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("indexes the kernel type closure and resolves current non-retired minors", async () => {
     const root = mkdtempSync(join(tmpdir(), "mao-snapshot-types-"));
     const db = new Database(":memory:");
@@ -112,12 +217,17 @@ describe("Frozen Bun Registry snapshots", () => {
       const row = db.query<{ tree_digest: string; payload: string }>("SELECT tree_digest, payload FROM registry_snapshots WHERE epoch=?").get(snapshot.epoch)!;
       const legacy = JSON.parse(row.payload);
       delete legacy.result.typeRelations;
+      delete legacy.result.expressionSites;
       const payload = canonicalJson(legacy);
       const digest = digestBytes(new TextEncoder().encode(`${row.tree_digest}\n${payload}`));
       db.query("UPDATE registry_snapshots SET payload=?, payload_digest=? WHERE epoch=?").run(payload, digest, snapshot.epoch);
       const reopened = await snapshots.materialize(snapshot.epoch);
       expect(reopened.typeKey("memo.text@1")).toBe("Type:memo.text@1.1");
       expect(reopened.result.typeRelations).toEqual(snapshot.result.typeRelations);
+      expect(reopened.result.expressionSites).toEqual(snapshot.result.expressionSites);
+      const inherited = reopened.compiled("Type:memo@1.0/properties.non_empty");
+      if (inherited.kind !== "expression") throw new Error("Expected an inherited property expression");
+      expect(inherited.evaluate({ bean: { facts: { chars: 1 } } })).toBe(true);
       expect(reopened.properties("memo.indexed@1")).toEqual(snapshot.properties("memo.indexed@1"));
     } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
   });

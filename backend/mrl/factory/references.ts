@@ -9,7 +9,7 @@ import type { MrlValue } from "../evaluator";
 import { MrlRuleError, buildRuleProgram, type RuleLocation } from "../rules";
 import { documentKey, documentKind, documentPosition, type HostDiagnostic, type Registry, type SpecDocument } from "./registry";
 import { resolutionFunctions } from "./resolve";
-import { checkExpressionSites } from "./sites";
+import { checkExpressionSites, type CompiledSite, type ExpressionSite } from "./sites";
 
 type ReferenceFacts = Record<string, MrlValue[][]>;
 type Location = { document: SpecDocument; path: string };
@@ -401,7 +401,13 @@ export function checkFactoryKernel(
   constitution: Registry["constitution"],
   host: Diagnostic[],
   onDiagnosticRule?: (location: RuleLocation) => void,
-): { diagnostics: Diagnostic[]; resolutions: FactoryResolution[]; typeRelations: FactoryTypeRelations } {
+): {
+  diagnostics: Diagnostic[];
+  resolutions: FactoryResolution[];
+  typeRelations: FactoryTypeRelations;
+  expressionSites: ExpressionSite[];
+  compiledSites: ReadonlyMap<string, CompiledSite>;
+} {
   const input = new ReferenceFactsBuilder(documents);
   program ??= buildRuleProgram(modules, resolutionFunctions);
   const errors = [...input.errors];
@@ -439,7 +445,7 @@ export function checkFactoryKernel(
     }
   };
   let result = run();
-  const sites = checkExpressionSites(input.validDocuments, input.facts, result);
+  const { diagnostics: sites, expressionSites, compiledSites } = checkExpressionSites(input.validDocuments, input.facts, result);
   if (sites.length) {
     input.facts.host_diag.push(...sites.map((item) => [item.code, item.subject, item.message]));
     result = run();
@@ -468,7 +474,10 @@ export function checkFactoryKernel(
     type_fact: result.rowsOf("type_fact").map(([type, fact, declaration]) => [String(type), String(fact), String(declaration)]),
     type_always_p: result.rowsOf("type_always_p").map(([type, property]) => [String(type), String(property)]),
   };
-  return { diagnostics: [...errors.filter((item) => !input.errors.includes(item)), ...diagnostics], resolutions, typeRelations };
+  return {
+    diagnostics: [...errors.filter((item) => !input.errors.includes(item)), ...diagnostics],
+    resolutions, typeRelations, expressionSites, compiledSites,
+  };
 }
 
 function constitutionError(error: unknown): Diagnostic {

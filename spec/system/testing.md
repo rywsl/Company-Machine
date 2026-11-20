@@ -125,7 +125,6 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/legacy-contract.test.ts` | validator 正反样例、GoldenSet、Baseline、转换等价、差分及 Sink 方案试运行恢复 |
 | `backend/tests/legacy-cache.test.ts` | 缓存键、候选可用性、失效范围与审计 |
 | `backend/tests/legacy-core.test.ts` | 规范 JSON、SQLite 仓库、并发 CAS 提交、快照和值投影 |
-| `backend/tests/legacy-snapshot.test.ts` | 目录树 epoch、冻结快照重启读取、旧记录补齐和跨 epoch 执行保护 |
 | `backend/tests/registry-epochs.test.ts` | Git 提交冻结、解析表保留、active 指针与引用、回滚、保留判定及签名边界 |
 | `backend/tests/legacy-gate.test.ts` | 来料检查和产物验收 |
 | `backend/tests/legacy-harvest.test.ts` | 工位产物采集、路径边界、匹配顺序和异常结果 |
@@ -176,6 +175,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_type_key_latest_and_retired` | `backend/tests/legacy-snapshot.test.ts` | `indexes the kernel type closure and resolves current non-retired minors` | 主版本解析到最新有效次版本，退役次版本回退 |
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_is_subtype_matches_kernel` | `backend/tests/legacy-snapshot.test.ts` | `indexes the kernel type closure and resolves current non-retired minors` | 读取内核关系的自反、父类型和未知类型断言 |
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_load_rejects_invalid_registry` | `backend/tests/legacy-snapshot.test.ts` | `recovers an older unfrozen epoch only from matching bytes and rejects invalid capture` | Registry 格式错误时拒绝捕获且保留历史快照 |
+| `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_compiled_covers_sites_and_envs` | `backend/tests/legacy-snapshot.test.ts` | `looks up typed predicates and templates by subject before and after reopening` | 全部表达式位置的源文本和按主体查找，属性、标量与列表验收、审批、配方和运行时模板 |
+| `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_compiled_unknown_subject` | `backend/tests/legacy-snapshot.test.ts` | `looks up typed predicates and templates by subject before and after reopening` | 未知表达式主体返回 `SUBJECT_UNKNOWN` 与原主体 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_nested_tx_uses_savepoints` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | 内层回滚保留外层事务 |
 | `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_put_file_cas_layout_and_idempotent` | `backend/tests/legacy-core.test.ts` | `streams file digests and keeps one empty blob at its exact CAS path` | 空 Blob 的摘要、仓库层级与重复写入 |
 | `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_bean_id_and_add_get` | `backend/tests/legacy-core.test.ts` | `preserves Bean identity and rejects invalid paths, types, digests and IDs` | Bean 身份、元数据副本、媒介类型及首次创建时间 |

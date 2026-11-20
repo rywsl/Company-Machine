@@ -1,6 +1,7 @@
 import { documentKind, documentPosition, documentSubject, loadRegistry, type HostDiagnostic, type Registry, type SpecDocument } from "./registry";
 import { checkFactoryKernel, type FactoryResolution, type FactoryTypeRelations } from "./references";
 import { registryKinds, schemaForKind, validate } from "./schema";
+import type { CompiledSite, ExpressionSite } from "./sites";
 import type { RuleLocation } from "../rules";
 
 export interface RegistryDiagnostic extends HostDiagnostic { severity: "error" | "warning" | "info"; }
@@ -10,6 +11,8 @@ export interface RegistryCheckResult {
   diagnostics: RegistryDiagnostic[];
   resolutions: FactoryResolution[];
   typeRelations: FactoryTypeRelations;
+  expressionSites: ExpressionSite[];
+  compiledSites: ReadonlyMap<string, CompiledSite>;
   stats: Record<string, number>;
   registry: Registry;
 }
@@ -58,8 +61,11 @@ export function checkRegistry(rootOrRegistry: string | Registry, onDiagnosticRul
   }
   const kernel = checkFactoryKernel(valid, registry.constitution, diagnostics, onDiagnosticRule);
   diagnostics.splice(0, diagnostics.length, ...kernel.diagnostics);
-  const { resolutions, typeRelations } = kernel;
+  const { resolutions, typeRelations, expressionSites, compiledSites } = kernel;
   stats.edges = resolutions.length;
   stats.conversions = resolutions.filter((item) => item.status === "convert").length;
-  return { root: registry.root, ok: diagnostics.every((item) => item.severity !== "error"), diagnostics, resolutions, typeRelations, stats, registry };
+  return {
+    root: registry.root, ok: diagnostics.every((item) => item.severity !== "error"),
+    diagnostics, resolutions, typeRelations, expressionSites, compiledSites, stats, registry,
+  };
 }

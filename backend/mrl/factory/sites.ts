@@ -1,5 +1,5 @@
-import { checkExpression, MrlStaticError } from "../checker";
-import type { MrlValue } from "../evaluator";
+import { MrlStaticError } from "../checker";
+import { compileExpr, type EvalEnvironment, type MrlValue } from "../evaluator";
 import type { RuleModel } from "../rules";
 import { compileTemplate } from "../template";
 import { BOOL, DYN, FLOAT, INT, NULL, NUM, STRING, list, lub, map, parseType, record, type MrlType, type TypeEnvironment } from "../types";
@@ -7,6 +7,51 @@ import { documentKey, documentKind, documentPosition, type HostDiagnostic, type 
 
 type Facts = Record<string, MrlValue[][]>;
 type SiteDiagnostic = HostDiagnostic & { severity: "error" | "warning" };
+export interface ExpressionSite {
+  subject: string;
+  source: string;
+  kind: "expression" | "template";
+  environment: TypeEnvironment;
+}
+
+export type CompiledSite = Readonly<
+  | { kind: "expression"; source: string; evaluate: (values: EvalEnvironment) => MrlValue }
+  | { kind: "template"; source: string; render: (values: EvalEnvironment) => string }
+>;
+
+function compileSite(site: ExpressionSite) {
+  return site.kind === "template"
+    ? { kind: site.kind, ...compileTemplate(site.source, { environment: site.environment }) }
+    : { kind: site.kind, source: site.source, ...compileExpr(site.source, { environment: site.environment, expect: BOOL }) };
+}
+
+function executableSite(compiled: ReturnType<typeof compileSite>): CompiledSite {
+  return compiled.kind === "template"
+    ? Object.freeze({ kind: compiled.kind, source: compiled.source, render: compiled.render })
+    : Object.freeze({ kind: compiled.kind, source: compiled.source, evaluate: compiled.evaluate });
+}
+
+function internType(type: MrlType): MrlType {
+  switch (type.kind) {
+    case "primitive": return parseType(type.name);
+    case "list":
+    case "map": return { ...type, element: internType(type.element) };
+    case "record": return {
+      ...type,
+      fields: Object.fromEntries(Object.entries(type.fields).map(([name, field]) =>
+        [name, { ...field, type: internType(field.type) }])),
+    };
+  }
+}
+
+export function restoreCompiledSites(sites: ExpressionSite[]): ReadonlyMap<string, CompiledSite> {
+  return new Map(sites.map((site) => {
+    // The checker uses singleton identity for primitive types including dyn and null.
+    const environment = Object.fromEntries(Object.entries(site.environment).map(([name, type]) =>
+      [name, typeof type === "string" ? type : internType(type)]));
+    return [site.subject, executableSite(compileSite({ ...site, environment }))];
+  }));
+}
 const payload = list(record({ path: STRING, digest: STRING, size: INT, media_type: STRING }));
 const anyBean = record({ id: STRING, type: STRING, facts: map(DYN), meta: map(DYN), payload });
 const run = record({ id: STRING, epoch: STRING, line: STRING, budget: record({ cap_usd: FLOAT, spent_usd: FLOAT, remaining_usd: FLOAT }) });
@@ -164,9 +209,11 @@ class SiteTypes {
   }
 }
 
-export function checkExpressionSites(documents: SpecDocument[], facts: Facts, model: RuleModel): SiteDiagnostic[] {
+export function checkExpressionSites(documents: SpecDocument[], facts: Facts, model: RuleModel) {
   const types = new SiteTypes(documents, facts, model);
   const diagnostics: SiteDiagnostic[] = [];
+  const expressionSites: ExpressionSite[] = [];
+  const compiledSites = new Map<string, CompiledSite>();
   const seen = new Set<string>();
   for (const doc of documents) {
     const key = documentKey(doc);
@@ -182,7 +229,10 @@ export function checkExpressionSites(documents: SpecDocument[], facts: Facts, mo
     const check = (value: unknown, path: string, environment: TypeEnvironment, template = false, metaWarning?: "property" | "admit", subject = path) => {
       if (typeof value !== "string") return;
       try {
-        const compiled = template ? compileTemplate(value, { environment }) : checkExpression(value, { environment, expect: BOOL });
+        const site: ExpressionSite = { subject: key + "/" + subject, source: value, kind: template ? "template" : "expression", environment };
+        const compiled = compileSite(site);
+        expressionSites.push(site);
+        compiledSites.set(site.subject, executableSite(compiled));
         for (const warning of compiled.warnings) emit("W-EXPR", path, warning.code + "：" + warning.message, subject);
         if (!("paths" in compiled)) return;
         if (metaWarning === "property" && compiled.paths.some((value) => /^bean\.meta(?:\.|$)/.test(value))) {
@@ -295,5 +345,6 @@ export function checkExpressionSites(documents: SpecDocument[], facts: Facts, mo
         break;
     }
   }
-  return diagnostics;
+  expressionSites.sort((left, right) => left.subject < right.subject ? -1 : left.subject > right.subject ? 1 : 0);
+  return { diagnostics, expressionSites, compiledSites };
 }
