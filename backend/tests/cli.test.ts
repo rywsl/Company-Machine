@@ -164,6 +164,46 @@ describe("Bun factory CLI", () => {
     }
   });
 
+  test("registers a repository in the current business and reads a saved graph through the CLI", { timeout: 60_000 }, async () => {
+    const root = resolve("tmp", "native-project-register-" + randomUUID());
+    const dbPath = join(root, "factory.db");
+    const store = new SqliteStore(dbPath, dbPath);
+    const run = (...args: string[]) => runCommand([Bun.argv[0], "run", "backend/src/cli.ts", ...args], {
+      env: { FACTORY_ROOT: root, FACTORY_DB_PATH: dbPath, BUSINESS_DB_PATH: dbPath },
+    });
+    const parse = (data: Uint8Array) => JSON.parse(new TextDecoder().decode(data));
+    try {
+      const system = store.createBusinessSystem({ name: "Existing system" });
+      const invalid = await run("project", "register", "--repo", "https://example.test/repo.git?token=fixture");
+      expect(invalid.exitCode).toBe(2);
+      const missing = await run("project", "register", "--repo", "https://example.test/missing.git", "--system", "nonexistent");
+      expect(missing.exitCode).toBe(1);
+      expect(store.listProjects()).toHaveLength(0);
+
+      const registered = await run("project", "register", "--repo", "https://example.test/team/video.git", "--system", system.id);
+      expect(registered.exitCode).toBe(0);
+      const { projectId, systemId } = parse(registered.stdout);
+      expect(systemId).toBe(system.id);
+      expect(store.getProject(projectId)).toMatchObject({ name: "video", businessSystemId: system.id });
+      expect(store.listBusinessSystems()).toHaveLength(1);
+      expect(store.listForemanInbox()).toHaveLength(0);
+
+      const graph = { nodes: [{ id: projectId + ":operator" }, { id: projectId + ":machine" }], edges: [] };
+      const graphFile = join(root, "update.json");
+      await Bun.write(graphFile, JSON.stringify(graph));
+      expect((await run("business", "graph", system.id, "--file", graphFile)).exitCode).toBe(0);
+      const read = await run("business", "graph", system.id);
+      expect(read.exitCode).toBe(0);
+      expect(parse(read.stdout)).toEqual(graph);
+      expect(store.listForemanInbox()).toHaveLength(0);
+      expect((await run("project", "intake", "--repo", "https://example.test/new.git")).exitCode).toBe(0);
+      expect(store.listForemanInbox()).toHaveLength(1);
+    } finally {
+      store.close();
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 75 });
+    }
+  });
+
   test("binds an Operator through the business CLI and preserves the binding across processes", { timeout: 30_000 }, async () => {
     const root = resolve("tmp", "operator-binding-" + randomUUID());
     mkdirSync(root, { recursive: true });

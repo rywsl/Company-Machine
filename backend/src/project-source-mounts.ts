@@ -5,8 +5,8 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Project } from "./models";
 import { projectSourceFacts } from "./project-sources";
 
-export type ForemanSourceMount = { source: string; index: number };
-export const foremanSourceRoot = "/mao/sources";
+export type ProjectSourceMount = { source: string; index: number };
+export const projectSourceRoot = "/mao/sources";
 
 type UploadedBlob = { path: string; size: number };
 type LookupUpload = (digest: string) => UploadedBlob | undefined;
@@ -32,12 +32,12 @@ function sourceFolder(folder: string, protectedPaths: readonly string[]): string
   catch { return; }
 }
 
-export async function prepareForemanSources(project: Project, uploadedBlob: LookupUpload, protectedPaths: readonly string[]) {
+export async function prepareProjectSources(project: Project, uploadedBlob: LookupUpload, protectedPaths: readonly string[]) {
   const protectedRoots = [...protectedPaths.filter((path) => path !== ":memory:").map((path) => {
     try { return realpathSync(path); } catch { return resolve(path); }
   }), ...(process.platform === "linux" ? ["/dev", "/proc", "/sys"] : [])];
   const facts = projectSourceFacts(project, false);
-  const mounts: ForemanSourceMount[] = [];
+  const mounts: ProjectSourceMount[] = [];
   let staging: string | undefined;
   const close = () => {
     if (staging) rmSync(staging, { recursive: true, force: true, maxRetries: 3 });
@@ -74,7 +74,7 @@ export async function prepareForemanSources(project: Project, uploadedBlob: Look
     return {
       mounts, close,
       facts: facts.map((fact, offset) => ({
-        ...fact, ...(mounted.has(offset + 1) ? { containerPath: foremanSourceRoot + "/" + (offset + 1) } : {}),
+        ...fact, ...(mounted.has(offset + 1) ? { containerPath: projectSourceRoot + "/" + (offset + 1) } : {}),
       })),
     };
   } catch (error) {
@@ -82,3 +82,6 @@ export async function prepareForemanSources(project: Project, uploadedBlob: Look
     throw error;
   }
 }
+
+export type PreparedProjectSources = Awaited<ReturnType<typeof prepareProjectSources>>;
+export type PrepareProjectSources = (project: Project) => Promise<PreparedProjectSources | undefined>;

@@ -123,8 +123,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱的原子发布与异常保护、资源恢复事务、对话入队与事件事务、SSE 分页回放与跨进程写入 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
-| `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |
-| `backend/tests/cli.test.ts` | Bun 工厂命令、只读 Registry 检查与用法、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
+| `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、Operator 项目来源只读交接、超时清理和启动前的运行时就绪 |
+| `backend/tests/cli.test.ts` | Bun 工厂命令、登记仓库与读取厂区 DAG、只读 Registry 检查与用法、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
 | `backend/tests/business-package.test.ts` | 业务包 CLI 跨目录移交、字节闭包校验、回滚和已知密钥拒绝 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |

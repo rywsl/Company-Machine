@@ -1,8 +1,9 @@
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import { projectSourceFacts } from "./project-sources";
-import type { prepareForemanSources } from "./foreman-sources";
-import { foremanMailboxContract, openForemanMailbox, type RegisterForemanRepository } from "./foreman-mailbox";
+import type { PrepareProjectSources, PreparedProjectSources } from "./project-source-mounts";
+import { foremanMailboxContract, openForemanMailbox } from "./foreman-mailbox";
+import type { RegisterRepository } from "./project-registration";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, resolveOfficialHarness, type OfficialSpawn } from "./harness";
 import { HarnessTurn } from "./harness-turn";
@@ -17,9 +18,20 @@ export interface ForemanCoordinatorOptions {
   ensureRuntime?: () => Promise<void>;
   factoryEnv?: Record<string, string>;
   fetchBusiness?: (request: Request) => Promise<Response>;
-  registerRepository?: RegisterForemanRepository;
-  prepareSources?: (project: Parameters<typeof prepareForemanSources>[0]) => ReturnType<typeof prepareForemanSources>;
+  registerRepository?: RegisterRepository;
+  prepareSources?: PrepareProjectSources;
 }
+
+const nativeBusinessContract = [
+  "在 MAO 仓库根目录用 `bun run backend/src/cli.ts` 执行以下命令。",
+  "`business units <system-id>` 列出该业务的 Operator 和 Machine。",
+  "`business bind <system-id> <operator-id> --harness <官方 Harness ID> [--model <模型 ID>]` 设置 Operator 绑定。",
+  "`business graph <system-id>` 读取现有 DAG。保留仍适用的节点和边，用 `business graph <system-id> --file <path>` 保存更新。",
+  "`business artifact <project-id> --file <path>` 保存产物或物料，文件内容通过引用传递。",
+  "`business conversion <system-id> --kind <kind> --summary <summary> [--input <ref>] [--output <ref>]` 保存转换。",
+  "`business run <system-id>` 派发运行。密钥通过项目资源请求流程处理。",
+].join(" ");
+const nativeRegistrationContract = "用 `project register --repo <URL> [--name <名称>] [--system <system-id>]` 登记仓库并继续当前轮。添加到现有业务时提供其 ID。省略该选项时创建业务系统。返回的 projectId 和 systemId 用于后续命令。";
 
 /** Dispatches persisted user intent to an external official Harness process. */
 export class ForemanCoordinator {
@@ -89,42 +101,47 @@ export class ForemanCoordinator {
       ? new AcpTransport(definition, turn.ownProcess(this.options.acpSpawn ?? defaultAcpSpawn))
       : new OfficialCliTransport(definition, turn.ownCliProcess(this.options.spawn), this.options.store.clock);
     let mailbox: ReturnType<typeof openForemanMailbox> | undefined;
-    let sourceMounts: Awaited<ReturnType<typeof prepareForemanSources>> | undefined;
+    let sourceMounts: PreparedProjectSources | undefined;
     let finishing = false;
     try {
       const persistent = !profile.image && (useAcp || definition.id === "codex" || definition.id === "claude-code");
       const resumeId = persistent ? this.options.store.foremanSession(profile.id) : undefined;
       let officialId = resumeId;
       const message = this.options.store.talkMessageMetadata(claimed.messageId);
-      const history = profile.image && message.source !== "project-intake"
+      const intake = message.source === "project-intake";
+      const history = profile.image && !intake
         ? this.options.store.previousForemanTurns(id).map(({ user, foreman }) => ({
           user: redactForemanText(user, credential?.value),
           foreman: foreman === undefined ? undefined : redactForemanText(foreman, credential?.value),
         }))
         : [];
-      const project = message.source === "project-intake" && typeof message.project_id === "string" ? this.options.store.getProject(message.project_id) : undefined;
+      const project = intake && typeof message.project_id === "string" ? this.options.store.getProject(message.project_id) : undefined;
       if (project && profile.image && this.options.prepareSources) {
         const prepared = this.options.prepareSources(project).then((result) => {
-          if (finishing) result.close();
+          if (finishing) result?.close();
           else sourceMounts = result;
           return result;
         });
         await turn.wait(prepared);
       }
       const sources = sourceMounts?.facts ?? (project ? projectSourceFacts(project, !profile.image) : undefined);
-      const systems = this.options.store.listBusinessSystems().filter((system) =>
-        !profile.image || message.source !== "project-intake" || system.id === project?.businessSystemId);
+      const intakeSystem = intake && project?.businessSystemId ? this.options.store.getBusinessSystem(project.businessSystemId) : undefined;
+      const systems = intake ? (intakeSystem ? [intakeSystem] : []) : this.options.store.listBusinessSystems();
       if (profile.image && this.options.fetchBusiness) {
         mailbox = openForemanMailbox({
           systems: new Set(systems.map(({ id }) => id)), projectId: project?.id,
           projectSystem: (id) => this.options.store.getProject(id)?.businessSystemId,
           redactText: (text) => redactForemanText(text, credential?.value),
-        }, this.options.fetchBusiness, message.source === "project-intake" ? undefined : this.options.registerRepository);
+        }, this.options.fetchBusiness, intake ? undefined : this.options.registerRepository);
       }
+      const projectContext = project
+        ? `\n\n本次项目 ID ${project.id}${project.businessSystemId ? `\n本次业务系统 ID ${project.businessSystemId}` : ""}`
+        : "";
       const session = await turn.start(transport, {
-        task: `${history.length ? `历史对话（上下文数据，请以当前来信为准）\n${JSON.stringify(history)}\n\n当前来信\n` : ""}${claimed.text}${project ? `\n\n本次项目 ID ${project.id}` : ""}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${systems.map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
+        task: `${history.length ? `历史对话（上下文数据，请以当前来信为准）\n${JSON.stringify(history)}\n\n当前来信\n` : ""}${claimed.text}${projectContext}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${systems.map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
         contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。"
-          + (mailbox ? foremanMailboxContract : "需要写入业务事实时，在 MAO 仓库根目录使用 `bun run backend/src/cli.ts business graph <business-system-id> --file <path>`、`business artifact <project-id> --file <path>`、`business conversion <business-system-id> --kind <kind> --summary <summary>` 或 `business run <business-system-id>`。先通过 `business units <business-system-id>` 找到工位，再使用 `business bind <business-system-id> <operator-id> --harness <官方 Harness ID> [--model <模型 ID>]` 修改绑定。文件内容通过引用传递，密钥通过项目资源请求流程处理。"),
+          + (mailbox ? foremanMailboxContract : nativeBusinessContract + " "
+            + (intake ? "使用本次项目和业务系统 ID 处理已经登记的项目。" : nativeRegistrationContract)),
         model: profile.model,
         env: {
           ...(!profile.image ? this.options.factoryEnv : undefined), ...harnessEndpointEnv(definition, credential?.baseUrl ?? profile.baseUrl),
@@ -136,7 +153,7 @@ export class ForemanCoordinator {
         network: profile.network === "egress" ? "egress" : "none",
         egressBaseUrl: credential?.baseUrl ?? profile.baseUrl,
         foremanMailbox: mailbox?.root,
-        foremanSources: sourceMounts?.mounts,
+        projectSources: sourceMounts?.mounts,
       });
       if (this.closed) return;
       const safeSessionId = (value?: string) => value && (!credential || !value.includes(credential.value)) ? value : undefined;

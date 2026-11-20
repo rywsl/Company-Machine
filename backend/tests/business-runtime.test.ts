@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
 import type { OfficialProcess } from "../src/harness";
-import { projectCredentialName } from "../src/operator";
+import { OperatorCoordinator, projectCredentialName } from "../src/operator";
+import { prepareProjectSources, type PreparedProjectSources } from "../src/project-source-mounts";
+import { Warehouse } from "../src/legacy/warehouse";
 import { VaultStore } from "../src/vault";
 
 function processForRecord(ref = "cas://report-1", summary = "项目已完成构建"): OfficialProcess {
@@ -21,6 +23,104 @@ function processForFailure(): OfficialProcess {
 }
 
 describe("Bun business execution loop", () => {
+  test("stages only the Operator project's registered sources and clears private upload copies", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-operator-sources-"));
+    const storageRoot = join(root, "factory");
+    const folder = join(root, "chosen");
+    mkdirSync(folder);
+    await Bun.write(join(folder, "readme.txt"), "chosen project");
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", storageRoot, dispatchWork: false });
+    const warehouse = new Warehouse(storageRoot, app.store.db, app.store.clock);
+    let mounts: PreparedProjectSources["mounts"] | undefined;
+    const operator = new OperatorCoordinator({
+      store: app.store, events: app.events,
+      prepareSources: (project) => prepareProjectSources(project, (digest) => {
+        const row = app.store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
+        return row ? { path: warehouse.blobPath(digest), size: row.size } : undefined;
+      }, [storageRoot]),
+      spawn: async (argv, options) => {
+        mounts = options.projectSources;
+        expect(options.foremanMailbox).toBeUndefined();
+        expect(mounts?.length).toBe(2);
+        const upload = mounts?.find(({ source }) => source !== folder);
+        expect(upload).toBeDefined();
+        expect(await Bun.file(upload!.source).text()).toBe("upload bytes");
+        expect(await Bun.file(join(mounts!.find(({ source }) => source === folder)!.source, "readme.txt")).text()).toBe("chosen project");
+        const prompt = argv.at(-1);
+        expect(prompt).toContain(`/mao/sources/${upload!.index}`);
+        expect(prompt).toContain("fixture upload.txt");
+        expect(prompt).not.toContain(root);
+        expect(prompt).not.toContain("other-project.invalid");
+        return processForRecord();
+      },
+    });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Source isolation" });
+      const form = new FormData();
+      form.set("name", "Source project");
+      form.set("business_system_id", system.id);
+      form.set("local_folder", folder);
+      form.set("files", new File(["upload bytes"], "fixture upload.txt"));
+      const created = await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", body: form }));
+      expect(created.status).toBe(201);
+      const { project_id } = await created.json() as { project_id: string };
+      const submitted = app.store.getProject(project_id)?.sources.find(({ kind }) => kind === "uploaded_file");
+      const blob = warehouse.blobPath(submitted!.fileRef!.slice(6));
+      chmodSync(blob, 0o600);
+      app.store.createIntake({ name: "Unrelated", business_system_id: system.id, repo_url: "https://other-project.invalid/repo" });
+      app.store.saveHarnessProfile({
+        runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session",
+        image: `registry.example/operator@sha256:${"a".repeat(64)}`,
+      });
+      const run = app.store.createBusinessRun(system.id)!;
+      const own = app.store.listUnitRuns(run.id).find(({ unitId }) => unitId === `${project_id}:operator`)!;
+      await operator.dispatch(run.id, own.id);
+      expect(app.store.getUnitRun(run.id, own.id)?.status).toBe("completed");
+      const temporary = mounts?.find(({ source }) => source !== folder);
+      if (process.platform !== "win32") {
+        expect(temporary?.source).not.toBe(blob);
+        expect(existsSync(temporary!.source)).toBe(false);
+      }
+      expect(await Bun.file(blob).text()).toBe("upload bytes");
+      expect(await Bun.file(join(folder, "readme.txt")).text()).toBe("chosen project");
+    } finally {
+      await operator.close();
+      app.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("discards a project source preparation that finishes after the Operator deadline", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    let started = false;
+    let closed = 0;
+    let prepared!: (value: PreparedProjectSources) => void;
+    const preparing = new Promise<PreparedProjectSources>((resolve) => { prepared = resolve; });
+    const operator = new OperatorCoordinator({
+      store: app.store, events: app.events,
+      prepareSources: () => { started = true; return preparing; },
+      spawn: () => { throw new Error("Cannot start an expired Operator"); },
+    });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Late source cleanup" });
+      app.store.createIntake({ name: "Source", business_system_id: system.id, repo_url: "https://example.invalid/repo" });
+      app.store.saveHarnessProfile({
+        runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session",
+        image: `registry.example/operator@sha256:${"a".repeat(64)}`, sessionTimeoutSeconds: 1,
+      });
+      const run = app.store.createBusinessRun(system.id)!;
+      await operator.dispatch(run.id);
+      expect(started).toBe(true);
+      expect(app.store.listUnitRuns(run.id)[0]).toMatchObject({ status: "failed", error: "SESSION_TIMEOUT" });
+      prepared({ facts: [], mounts: [], close: () => { closed += 1; } });
+      await preparing;
+      expect(closed).toBe(1);
+    } finally {
+      prepared({ facts: [], mounts: [], close() {} });
+      await operator.close();
+      app.stop();
+    }
+  });
   test("times out an Operator during ACP startup and releases the child", async () => {
     let killed = 0;
     let readsCancelled = 0;

@@ -14,8 +14,10 @@
 | `factory runtime status` | 读取当前 Podman 或 Kiri 健康状态。 |
 | `factory runtime ensure-ready` | 请求当前运行时就绪。不可用时退出码 4。 |
 | `factory project intake ...` | 通过仓库、文件夹或文件引用创建项目。 |
+| `factory project register --repo URL [--name NAME] [--system ID]` | 供当前厂长轮登记无凭据仓库，输出 `projectId` 和 `systemId`，并由当前轮继续搭建。指定 `--system` 时添加到该业务系统，省略时新建。 |
 | `factory project intake --file PATH`、`factory project fetch PROJECT SHA256 --output PATH` | 导入文件字节并通过稳定摘要取回。`--file` 可重复。 |
 | `factory business ...` | 读取或写入业务系统、DAG、运行、产物和转换。 |
+| `factory business graph ID [--file PATH]` | 读取已有 DAG。传入图文件时写入更新。 |
 | `factory registry check PATH [--json]` | 通过 Bun MRL 只读检查 Registry 的结构、schema 与引用。 |
 | `factory bean import --type TYPE --file PATH=HOST` | 检验并封存外部物料。可以重复传入 `--file`。 |
 | `factory bean lineage BEAN --direction up\|down` | 查询已封存物料的上下游工位和物料。 |

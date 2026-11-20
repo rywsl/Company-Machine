@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CtlServer, type CtlResponse } from "./legacy/factoryctl";
+import { parseRepositoryRegistration, type RegisterRepository } from "./project-registration";
 
 export const foremanMailboxTarget = "/mao/foreman";
 
@@ -20,7 +21,6 @@ export const foremanMailboxContract = [
 ].join(" ");
 
 type FetchBusiness = (request: Request) => Promise<Response>;
-export type RegisterForemanRepository = (input: { name: string; repoUrl: string; systemId?: string }) => { projectId: string; systemId: string } | undefined;
 type Scope = {
   systems: ReadonlySet<string>;
   projectSystem: (projectId: string) => string | undefined;
@@ -36,22 +36,6 @@ const text = (value: unknown): value is string => typeof value === "string" && B
 const reference = (value: unknown): value is string =>
   text(value) && !/^(?:[\\/]|[a-z]:[\\/]|(?:file|vault|secret):)/i.test(value.trim());
 const references = (value: unknown): boolean => value === undefined || Array.isArray(value) && value.every(reference);
-
-function repositoryInput(args: Record<string, unknown>, systems: ReadonlySet<string>): Parameters<RegisterForemanRepository>[0] | undefined {
-  if (!text(args.repoUrl) || (args.name !== undefined && !text(args.name))) return;
-  const { systemId } = args;
-  if (systemId !== undefined && (!identifier(systemId) || !systems.has(systemId))) return;
-  const source = args.repoUrl.trim();
-  if (!/^(?:https?|ssh|git):\/\//i.test(source) || /[\s\\?#]/.test(source)) return;
-  try {
-    const url = new URL(source);
-    const slug = url.pathname.split("/").filter(Boolean).at(-1)?.replace(/\.git$/i, "");
-    if (!url.hostname || url.username || url.password || !slug) return;
-    const name = typeof args.name === "string" ? args.name.trim() : decodeURIComponent(slug);
-    if (!name.trim() || name.length > 256 || /[\u0000-\u001f\u007f]/.test(name)) return;
-    return { name, repoUrl: url.href, systemId };
-  } catch { return; }
-}
 
 function projectInScope(projectId: unknown, scope: Scope): projectId is string {
   if (!identifier(projectId) || (scope.projectId && projectId !== scope.projectId)) return false;
@@ -125,7 +109,7 @@ function denied(id: string, code: string, message: string): CtlResponse {
   return { id, ok: false, result: null, error: { code, message } };
 }
 
-export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, registerRepository?: RegisterForemanRepository) {
+export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, registerRepository?: RegisterRepository) {
   const root = mkdtempSync(join(tmpdir(), "mao-foreman-"));
   let active = true;
   let stopped: Promise<void> | undefined;
@@ -138,13 +122,15 @@ export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, r
     chmodSync(responses, 0o755);
     const systems = new Set(scope.systems);
     const operations = { ...scope, systems };
-    const registrations = new Map<string, NonNullable<ReturnType<RegisterForemanRepository>>>();
+    const registrations = new Map<string, NonNullable<ReturnType<RegisterRepository>>>();
     const server = new CtlServer(root, {
       async handle({ id, op, args }) {
         if (!active) return denied(id, "FOREMAN_MAILBOX_CLOSED", "厂长邮箱已关闭");
         if (op === "project.register") {
-          const input = registerRepository && repositoryInput(args, systems);
-          if (!registerRepository || !input) return denied(id, "FOREMAN_OPERATION_INVALID", "登记需要无凭据的仓库 URL，指定业务系统时须在当前轮范围内");
+          const input = parseRepositoryRegistration(args);
+          if (!registerRepository || !input || (input.systemId !== undefined && !systems.has(input.systemId))) {
+            return denied(id, "FOREMAN_OPERATION_INVALID", "登记需要无凭据的仓库 URL，指定业务系统时须在当前轮范围内");
+          }
           const result = registrations.get(id) ?? registerRepository(input);
           if (!result) return denied(id, "FOREMAN_OPERATION_FAILED", "目标业务系统已不存在");
           registrations.set(id, result);

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createApp } from "../src/server";
 import type { OfficialProcess } from "../src/harness";
-import type { ForemanSourceMount } from "../src/foreman-sources";
+import type { ProjectSourceMount } from "../src/project-source-mounts";
 import { foremanCredential } from "../src/foreman-credentials";
 import { FakeClock } from "../src/legacy/foundation";
 
@@ -195,6 +195,39 @@ test("adds a repo to an existing system in scope without opening another Foreman
   } finally { app.stop(); }
 });
 
+test("guides a native Foreman to register repositories and read the assigned business graph", async () => {
+  const prompts: string[] = [];
+  const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, foreman: {
+    spawn: (argv) => {
+      prompts.push(argv.at(-1)!);
+      return fakeProcess([JSON.stringify({ type: "result", text: "已处理本轮" })]);
+    },
+  } });
+  try {
+    const assigned = app.store.createBusinessSystem({ name: "Assigned system" });
+    const separate = app.store.createBusinessSystem({ name: "Separate system" });
+    app.store.saveHarnessProfile({ runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+    const general = app.store.queueForemanMessage("ordinary-turn", "登记仓库");
+    await app.foreman.dispatch(general.id);
+    expect(prompts[0]).toContain("project register --repo <URL> [--name <名称>] [--system <system-id>]");
+    expect(prompts[0]).toContain("business graph <system-id>` 读取现有 DAG");
+    expect(prompts[0]).toContain(separate.id);
+
+    const response = await app.fetch(new Request("http://localhost/api/v1/projects/intake", {
+      method: "POST",
+      body: JSON.stringify({ business_system_id: assigned.id, repo_url: "https://example.test/assigned.git" }),
+    }));
+    expect(response.status).toBe(201);
+    const { project_id: projectId, foreman_inbox_id: inboxId } = await response.json() as { project_id: string; foreman_inbox_id: string };
+    await app.foreman.dispatch(inboxId);
+    expect(prompts[1]).toContain(`本次项目 ID ${projectId}`);
+    expect(prompts[1]).toContain(`本次业务系统 ID ${assigned.id}`);
+    expect(prompts[1]).toContain("https://example.test/assigned.git");
+    expect(prompts[1]).not.toContain(separate.id);
+    expect(prompts[1]).not.toContain("project register");
+  } finally { app.stop(); }
+});
+
 test("requests one project credential through the intake Foreman mailbox without exposing any value", { timeout: 15_000 }, async () => {
   const deploymentValue = "FOREMAN_FIXTURE_DEPLOYMENT_KEY";
   const rejectedValue = "fixture-value-from-disallowed-mailbox-argument";
@@ -284,12 +317,12 @@ test("gives the intake Foreman only registered upload bytes and the expressly se
   mkdirSync(projectFolder);
   await Bun.write(join(projectFolder, "readme.txt"), "selected folder");
   const bytes = Uint8Array.from([0, 1, 13, 255]);
-  const mountsByTurn: ForemanSourceMount[][] = [];
+  const mountsByTurn: ProjectSourceMount[][] = [];
   const app = createApp({
     dbPath: ":memory:", legacyPath: ":memory:", storageRoot, dispatchWork: false,
     runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
     foreman: { spawn: async (argv, options) => {
-      const mounts = options.foremanSources ?? [];
+      const mounts = options.projectSources ?? [];
       mountsByTurn.push(mounts);
       if (mounts.length) {
         const prompt = argv.join(" ");

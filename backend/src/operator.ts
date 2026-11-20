@@ -2,6 +2,7 @@ import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import type { BusinessUnit, UnitRun } from "./models";
 import { projectSourceFacts } from "./project-sources";
+import type { PrepareProjectSources, PreparedProjectSources } from "./project-source-mounts";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, type HarnessEvent, type OfficialSpawn } from "./harness";
 import { HarnessTurn } from "./harness-turn";
@@ -16,6 +17,7 @@ export interface OperatorCoordinatorOptions {
   onProgress?: (runId: string, completedUnitRunId?: string) => void;
   ensureRuntime?: () => Promise<void>;
   readSecret?: (ref: string) => string | undefined;
+  prepareSources?: PrepareProjectSources;
 }
 
 export function projectCredentialName(name: unknown): name is string {
@@ -107,9 +109,20 @@ export class OperatorCoordinator {
     const credentials: Record<string, string> = Object.create(null);
     const requested = new Set<string>();
     let recordedSessionId = sessionId;
+    let sourceMounts: PreparedProjectSources | undefined;
+    let finishing = false;
     try {
       if (profile.image && this.options.ensureRuntime) await turn.wait(this.options.ensureRuntime());
       if (this.closed) return;
+      const project = this.options.store.getProject(unit.projectId);
+      const ownProject = project?.businessSystemId === unit.businessSystemId ? project : undefined;
+      if (ownProject && profile.image && this.options.prepareSources) {
+        await turn.wait(this.options.prepareSources(ownProject).then((result) => {
+          if (finishing) result?.close();
+          else sourceMounts = result;
+        }));
+      }
+      const sources = sourceMounts?.facts ?? (ownProject ? projectSourceFacts(ownProject, !profile.image) : []);
       for (const resource of this.options.store.unitSecretRequests(unitRun.id)) {
         if (resource.projectId !== unit.projectId || resource.status !== "available" || !projectCredentialName(resource.name)) continue;
         const value = this.options.readSecret?.(resource.vaultRef);
@@ -117,7 +130,7 @@ export class OperatorCoordinator {
         credentials[resource.name] = value;
       }
       const session = await turn.start(transport, {
-        task: this.taskFor(unit, runId, unitRun, !profile.image),
+        task: this.taskFor(unit, runId, unitRun, sources),
         contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。缺少项目资源时输出 {\"type\":\"mao.secret_request\",\"name\":\"...\",\"purpose\":\"...\",\"scope\":\"...\"}，由项目资源请求流程向用户呈现。",
         model,
         requireModelSelection: explicitModel,
@@ -126,6 +139,7 @@ export class OperatorCoordinator {
         containerImage: profile.image,
         network: profile.network === "egress" ? "egress" : "none",
         egressBaseUrl: profile.baseUrl,
+        projectSources: sourceMounts?.mounts,
       });
       if (this.closed) return;
       if (useAcp) {
@@ -182,14 +196,16 @@ export class OperatorCoordinator {
       const completed = this.options.store.completeUnitRun(unitRun.id, "failed", [...outputIds], message);
       if (completed) this.options.events.publish("operator.run.failed", completed);
     } finally {
-      await turn.close();
-      this.turns.delete(unitRun.id);
+      finishing = true;
+      try { await turn.close(); }
+      finally {
+        this.turns.delete(unitRun.id);
+        sourceMounts?.close();
+      }
     }
   }
 
-  private taskFor(unit: BusinessUnit, runId: string, unitRun: UnitRun, localAccess: boolean): string {
-    const project = unit.projectId ? this.options.store.getProject(unit.projectId) : undefined;
-    const sources = project?.businessSystemId === unit.businessSystemId && project ? projectSourceFacts(project, localAccess) : [];
+  private taskFor(unit: BusinessUnit, runId: string, unitRun: UnitRun, sources: ReturnType<typeof projectSourceFacts>): string {
     const inputs = this.options.store.resolveBusinessMaterialRefs(unit.businessSystemId, unitRun.inputs).map(({ ref, record }) => {
       if (!record) return { ref };
       return {

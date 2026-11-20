@@ -1,6 +1,6 @@
 import type { HarnessDefinition, HarnessEvent, HarnessSession, HarnessSessionRequest, HarnessTransport } from "./harness";
 import { spawnOfficialProcess } from "./harness";
-import type { ForemanSourceMount } from "./foreman-sources";
+import type { ProjectSourceMount } from "./project-source-mounts";
 import { waitForHarness } from "./harness-turn";
 
 export type AcpProcess = {
@@ -14,7 +14,7 @@ export type AcpInput = {
   end?(): Promise<void> | void;
 };
 
-export type AcpSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string; foremanSources?: ForemanSourceMount[] }) => AcpProcess | Promise<AcpProcess>;
+export type AcpSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string; projectSources?: ProjectSourceMount[] }) => AcpProcess | Promise<AcpProcess>;
 
 const PROMPT_ID = 3;
 const START_TIMEOUT_MS = 30_000;
@@ -287,7 +287,7 @@ export class AcpTransport implements HarnessTransport {
       : nativeModel ? ["--model", request.model, "acp"] : [];
     const process = await this.spawn([this.definition.executable, ...args], {
       cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network,
-      egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox, foremanSources: request.foremanSources,
+      egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox, projectSources: request.projectSources,
     });
     const session = new AcpSession(process);
     let timeout: ReturnType<typeof setTimeout> | undefined;

@@ -106,9 +106,10 @@ async function ask(index, op, args) {
 }
 try {
   assert.equal(process.getuid(), 10001);
-  assert.equal(mode(mailbox + "/requests"), "rw");
-  assert.equal(mode(mailbox + "/responses"), "ro");
   const sources = JSON.parse(process.argv.at(-1));
+  const operator = sources?.operator === true;
+  assert.equal(mode(mailbox + "/requests"), operator ? undefined : "rw");
+  assert.equal(mode(mailbox + "/responses"), operator ? undefined : "ro");
   if (sources) {
     const folder = "/mao/sources/" + sources.folder;
     const file = "/mao/sources/" + sources.file;
@@ -116,7 +117,11 @@ try {
     assert.equal(mode(file), "ro");
     assert.equal(readFileSync(folder + "/readme.txt", "utf8"), folderText);
     assert.deepEqual([...readFileSync(file)], upload);
-    assert.equal((await ask(1, "project.register", { repoUrl })).error.code, "FOREMAN_OPERATION_INVALID");
+    if (operator) {
+      console.log(JSON.stringify({ type: "mao.record", record_type: "material", kind: "source-check", ref: "material://sources-checked", summary: "Read both registered project sources" }));
+    } else {
+      assert.equal((await ask(1, "project.register", { repoUrl })).error.code, "FOREMAN_OPERATION_INVALID");
+    }
   } else {
     assert.equal(mode("/mao/sources/1"), undefined);
     const registered = await ask(1, "project.register", { repoUrl });
@@ -154,25 +159,29 @@ async function verifyForeman(provider: string): Promise<void> {
   const sourceFolder = join(root, "selected project");
   const mailboxes: string[] = [];
   const uploads: string[] = [];
+  const sourceTargets = (prompt: string | undefined, sources: Array<{ index: number; source: string }>) => {
+    assert.equal(sources.length, 2);
+    const folder = sources.find(({ source }) => source === sourceFolder);
+    const file = sources.find(({ source }) => source !== sourceFolder);
+    assert.ok(folder && file, "缺少选定目录或上传文件的容器挂载");
+    uploads.push(file.source);
+    assert.ok(prompt?.includes("uploaded data.bin") && prompt.includes("/mao/sources/" + file.index));
+    assert.ok(!prompt.includes(root));
+    return { folder: folder.index, file: file.index };
+  };
   const app = createApp({
     dbPath: join(root, "business.db"), legacyPath: ":memory:", storageRoot, dispatchWork: false,
     foreman: { spawn: (argv, options) => {
       assert.ok(options.foremanMailbox);
       mailboxes.push(options.foremanMailbox);
-      const sources = options.foremanSources ?? [];
-      let targets = null;
-      if (sources.length) {
-        assert.equal(sources.length, 2);
-        const folder = sources.find(({ source }) => source === sourceFolder);
-        const file = sources.find(({ source }) => source !== sourceFolder);
-        assert.ok(folder && file, "缺少选定目录或上传文件的容器挂载");
-        uploads.push(file.source);
-        targets = { folder: folder.index, file: file.index };
-        const prompt = argv.at(-1);
-        assert.ok(prompt?.includes("uploaded data.bin") && prompt.includes("/mao/sources/" + file.index));
-        assert.ok(!prompt.includes(root));
-      }
+      const sources = options.projectSources ?? [];
+      const targets = sources.length ? sourceTargets(argv.at(-1), sources) : null;
       return spawnOfficialProcess(["bun", "-e", foremanFixture, JSON.stringify(targets)], { ...options, env: {}, stdin: undefined });
+    } },
+    operator: { spawn: (argv, options) => {
+      assert.equal(options.foremanMailbox, undefined);
+      const targets = sourceTargets(argv.at(-1), options.projectSources ?? []);
+      return spawnOfficialProcess(["bun", "-e", foremanFixture, JSON.stringify({ ...targets, operator: true })], { ...options, env: {}, stdin: undefined });
     } },
   });
   let passed = false;
@@ -219,10 +228,21 @@ async function verifyForeman(provider: string): Promise<void> {
     await chmod(blob, 0o600);
     await dispatch(foreman_inbox_id);
     assert.equal(uploads.length, 1);
-    assert.notEqual(uploads[0], blob);
+    app.store.saveHarnessProfile({
+      runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session", image, sessionTimeoutSeconds: 45,
+    });
+    const intakeProject = app.store.getProject(project_id);
+    assert.ok(intakeProject?.businessSystemId);
+    const run = app.store.createBusinessRun(intakeProject.businessSystemId);
+    assert.ok(run);
+    await app.operator.dispatch(run.id);
+    assert.equal(app.store.getBusinessRun(run.id)?.status, "completed", JSON.stringify(app.store.listUnitRuns(run.id)));
+    assert.ok(app.store.listArtifacts(project_id).some(({ ref }) => ref === "material://sources-checked"));
+    assert.equal(uploads.length, 2);
+    for (const path of uploads) assert.notEqual(path, blob);
     for (const path of [...mailboxes, ...uploads]) await assert.rejects(stat(path), { code: "ENOENT" });
     assert.equal(app.store.listTalkMessages().filter(({ body }) => body === checkedReply).length, 2);
-    console.log(`${provider}: 厂长邮箱、仓库登记、业务图、项目密钥申请、项目来源只读挂载和清理通过`);
+    console.log(`${provider}: 厂长邮箱、仓库登记、业务图、项目密钥申请、厂长与 Operator 的项目来源只读挂载和清理通过`);
     passed = true;
   } finally {
     app.stop();

@@ -10,12 +10,13 @@ import type { BusinessConversion, BusinessSystem, Event, HarnessProfile } from "
 import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
-import { prepareForemanSources } from "./foreman-sources";
+import { prepareProjectSources, type PrepareProjectSources } from "./project-source-mounts";
+import type { RegisterRepository } from "./project-registration";
 import { foremanCredential } from "./foreman-credentials";
 import { verifyHarness } from "./harness-verification";
 import { OperatorCoordinator, projectCredentialName } from "./operator";
 import { operatorBindingView, parseOperatorBinding } from "./operator-binding";
-import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, type OfficialSpawn } from "./harness";
+import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, supportsLocalProjectMounts, type OfficialSpawn } from "./harness";
 import type { AcpSpawn } from "./acp";
 import { validSessionTimeout } from "./harness-turn";
 
@@ -30,6 +31,7 @@ export interface BackendApp {
   vault: VaultStore;
   foreman: ForemanCoordinator;
   operator: OperatorCoordinator;
+  registerRepository: RegisterRepository;
   recoverQueuedWork(): void;
   fetch(request: Request): Response | Promise<Response>;
   stop(): void;
@@ -121,29 +123,31 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   };
   const verificationJobs = new Map<string, AbortController>();
   const databasePath = (path: string) => path === ":memory:" ? path : resolve(path);
+  const registerRepository: RegisterRepository = ({ name, repoUrl, systemId }) => {
+    const recorded = store.db.transaction(() => {
+      const system = systemId === undefined
+        ? store.createBusinessSystem({ name, metadata: { intake: true } })
+        : store.getBusinessSystem(systemId);
+      if (!system) return undefined;
+      const project = store.createIntake({ name, repo_url: repoUrl, business_system_id: system.id });
+      return { system, project };
+    }).immediate();
+    if (!recorded) return undefined;
+    const { system, project } = recorded;
+    if (systemId === undefined) events.publish("business-system.created", system);
+    events.publish("project.intake.created", publicProject(project));
+    return { projectId: project.id, systemId: system.id };
+  };
+  const prepareSources: PrepareProjectSources = (project) => prepareProjectSources(project, (digest) => {
+    const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
+    if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
+  }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)]);
   const foreman = new ForemanCoordinator({
     store, events, ...options.foreman, ensureRuntime,
     factoryEnv: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: databasePath(store.legacyPath), BUSINESS_DB_PATH: databasePath(store.dbPath) },
     fetchBusiness: (request) => fetch(request),
-    prepareSources: (project) => prepareForemanSources(project, (digest) => {
-      const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
-      if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
-    }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)]),
-    registerRepository: ({ name, repoUrl, systemId }) => {
-      const recorded = store.db.transaction(() => {
-        const system = systemId === undefined
-          ? store.createBusinessSystem({ name, metadata: { intake: true } })
-          : store.getBusinessSystem(systemId);
-        if (!system) return undefined;
-        const project = store.createIntake({ name, repo_url: repoUrl, business_system_id: system.id });
-        return { system, project };
-      }).immediate();
-      if (!recorded) return undefined;
-      const { system, project } = recorded;
-      if (systemId === undefined) events.publish("business-system.created", system);
-      events.publish("project.intake.created", publicProject(project));
-      return { projectId: project.id, systemId: system.id };
-    },
+    prepareSources,
+    registerRepository,
   });
   let stopped = false;
   const runInBackground = (work: Promise<void>) => {
@@ -151,7 +155,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (!stopped) console.error("Background dispatch failed", redactText(error instanceof Error ? error.message : String(error)));
     });
   };
-  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: dispatchOperatorRun, ensureRuntime, readSecret: (ref) => vault.get(ref) });
+  const operator = new OperatorCoordinator({
+    store, events, ...options.operator, onProgress: dispatchOperatorRun, ensureRuntime, readSecret: (ref) => vault.get(ref),
+    prepareSources: async (project) => supportsLocalProjectMounts() ? prepareSources(project) : undefined,
+  });
   const hasForeman = () => store.listHarnessProfiles().some((profile) => profile.role === "foreman");
   const dispatchForemanIfConfigured = (id: string) => {
     if (options.dispatchWork !== false && hasForeman()) runInBackground(foreman.dispatch(id));
@@ -550,7 +557,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
     return response({ error: "not found" }, 404);
   };
-  return { store, events, vault, foreman, operator, fetch, recoverQueuedWork, stop: () => {
+  return { store, events, vault, foreman, operator, registerRepository, fetch, recoverQueuedWork, stop: () => {
     stopped = true;
     eventStreams.abort();
     for (const job of verificationJobs.values()) job.abort();

@@ -10,7 +10,7 @@ import { resolveKiriClient } from "../runtime/kiri";
 import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
 import { prepareHarnessEgress } from "./harness-sandbox";
 import { foremanMailboxTarget } from "./foreman-mailbox";
-import { foremanSourceRoot, type ForemanSourceMount } from "./foreman-sources";
+import { projectSourceRoot, type ProjectSourceMount } from "./project-source-mounts";
 import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 
 export const harnessControlPlaneRoot = resolve(import.meta.dir, "../..");
@@ -39,7 +39,7 @@ export interface HarnessSessionRequest {
   network?: "none" | "egress";
   egressBaseUrl?: string;
   foremanMailbox?: string;
-  foremanSources?: ForemanSourceMount[];
+  projectSources?: ProjectSourceMount[];
 }
 
 export interface HarnessEvent {
@@ -69,7 +69,7 @@ export type OfficialProcess = {
   kill(): void | Promise<void>;
 };
 
-type SpawnOptions = { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string; foremanSources?: ForemanSourceMount[] };
+type SpawnOptions = { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string; projectSources?: ProjectSourceMount[] };
 type HarnessRelay = Awaited<ReturnType<typeof prepareHarnessEgress>>;
 export type OfficialSpawn = (argv: string[], options: SpawnOptions) => OfficialProcess | Promise<OfficialProcess>;
 
@@ -225,14 +225,14 @@ export class OfficialCliTransport implements HarnessTransport {
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
     const process = await this.spawn(officialCliInvocation(this.definition, request), {
       cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage,
-      network: request.network, egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox, foremanSources: request.foremanSources,
+      network: request.network, egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox, projectSources: request.projectSources,
     });
     return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${this.clock.now().getTime()}`);
   }
 }
 
 export function harnessProcessCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network">,
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "projectSources">,
 ): { command: string[]; env: Record<string, string> } {
   const { command, env } = processCommand(argv, options);
   return { command, env };
@@ -242,8 +242,16 @@ function validateImage(image?: string): void {
   if (image && !/^[^\s@]+(?:\/[^\s@]+)*@sha256:[0-9a-f]{64}$/i.test(image)) throw new Error("Harness image must be pinned by digest");
 }
 
+export function supportsLocalProjectMounts(): boolean {
+  if (process.platform !== "linux") return false;
+  const runtime = process.env.MAO_CONTAINER_RUNTIME?.toLowerCase() ?? "podman";
+  return runtime === "kiri"
+    ? resolveKiriClient().mode === "linux-socket"
+    : runtime === "podman" && !process.env.CONTAINER_HOST && !process.env.CONTAINER_CONNECTION;
+}
+
 function processCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "foremanSources">,
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "projectSources">,
   relay?: HarnessRelay, containerName?: string,
 ) {
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
@@ -278,14 +286,17 @@ function processCommand(
     );
   }
   const indexes = new Set<number>();
-  for (const { index, source } of options.foremanSources ?? []) {
-    if (!options.foremanMailbox || !Number.isSafeInteger(index) || index < 1 || indexes.has(index)
-        || !isAbsolute(source) || /[,\u0000-\u001f\u007f]/.test(source)) throw new Error("Invalid Foreman source mount");
+  if (options.projectSources?.length && (!image || !supportsLocalProjectMounts())) {
+    throw new Error("Project source mounts require a local Linux container runtime");
+  }
+  for (const { index, source } of options.projectSources ?? []) {
+    if (!Number.isSafeInteger(index) || index < 1 || indexes.has(index)
+        || !isAbsolute(source) || /[,\u0000-\u001f\u007f]/.test(source)) throw new Error("Invalid project source mount");
     try {
       if (realpathSync(source) !== source) throw new Error("Not a canonical source");
-    } catch { throw new Error("Foreman source mount is no longer available"); }
+    } catch { throw new Error("Project source mount is no longer available"); }
     indexes.add(index);
-    mounts.push("--mount", "type=bind,source=" + source + ",target=" + foremanSourceRoot + "/" + index + ",readonly");
+    mounts.push("--mount", "type=bind,source=" + source + ",target=" + projectSourceRoot + "/" + index + ",readonly");
   }
   const envFlags = envNames.flatMap((name) => ["--env", name]);
   const scratchFlags = Object.entries(scratch).flatMap(([name, value]) => ["--env", `${name}=${value}`]);

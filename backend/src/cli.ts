@@ -8,6 +8,7 @@ import { FactoryError } from "./legacy/errors";
 import { RandomIds } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
 import { businessPackageBlob, createBusinessPackage, publishBusinessDirectory, readBusinessPackage } from "./business-package";
+import { parseRepositoryRegistration } from "./project-registration";
 import { VaultStore } from "./vault";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
 export { CliUsageError } from "./station-cli";
@@ -25,12 +26,12 @@ function values(args: string[], name: string): string[] {
 
 export function usage(scope?: string): string {
   if (scope && isStationScope(scope)) return stationUsage(scope);
-  if (scope === "project") return `factory project commands\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH`;
-  if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID [--package DEST]\n  verify PACKAGE\n  import PACKAGE --root NEW_ROOT\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
+  if (scope === "project") return `factory project commands\n  register --repo URL [--name NAME] [--system ID]\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH`;
+  if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID [--package DEST]\n  verify PACKAGE\n  import PACKAGE --root NEW_ROOT\n  graph ID [--file PATH]\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID\n  conversion ls [--status open|in_progress|resolved] [--root PATH]`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
   if (scope === "registry") return "factory registry check PATH [--json]";
-  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
+  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project register --repo URL [--name NAME] [--system ID]\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID [--file PATH]\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
 
 function requireValue(args: string[], name: string): string {
@@ -132,6 +133,22 @@ async function runCommand(argv: string[]): Promise<number> {
       throw new CliUsageError(`unknown runtime command: ${args[0] ?? "(missing)"}`);
     }
     if (command === "project") {
+      if (args[0] === "register") {
+        const options = new Map<string, string>();
+        for (let index = 1; index < args.length; index += 2) {
+          const [flag, argument] = [args[index], args[index + 1]];
+          if (!["--repo", "--name", "--system"].includes(flag) || !argument || argument.startsWith("--") || options.has(flag)) {
+            throw new CliUsageError("project register expects --repo URL [--name NAME] [--system ID]");
+          }
+          options.set(flag, argument);
+        }
+        const input = parseRepositoryRegistration({ repoUrl: options.get("--repo"), name: options.get("--name"), systemId: options.get("--system") });
+        if (!input) throw new CliUsageError("project register requires a repository URL without credentials");
+        const result = app.registerRepository(input);
+        if (!result) throw new Error("business system was not found");
+        console.log(JSON.stringify(result, null, 2));
+        return 0;
+      }
       if (args[0] === "fetch") {
         const [, projectId, digest] = args;
         if (!projectId || !/^sha256:[0-9a-f]{64}$/.test(digest ?? "")) throw new CliUsageError("project id and sha256 digest are required");
@@ -210,11 +227,15 @@ async function runCommand(argv: string[]): Promise<number> {
       }
       if (subcommand === "graph" || subcommand === "artifact") {
         const id = args[1];
+        if (!id || id.startsWith("--")) throw new CliUsageError("target id is required");
+        const route = subcommand === "graph" ? `/api/v1/business-systems/${encodeURIComponent(id)}/graph` : `/api/v1/projects/${encodeURIComponent(id)}/artifacts`;
+        if (subcommand === "graph" && args.length === 2) {
+          console.log(JSON.stringify(await requestJson(app, route), null, 2));
+          return 0;
+        }
         const file = requireValue(args, "--file");
-        if (!id) throw new CliUsageError("target id is required");
         let document: unknown;
         try { document = JSON.parse(await Bun.file(file).text()); } catch (error) { throw new CliUsageError(`cannot read JSON file: ${error instanceof Error ? error.message : String(error)}`); }
-        const route = subcommand === "graph" ? `/api/v1/business-systems/${encodeURIComponent(id)}/graph` : `/api/v1/projects/${encodeURIComponent(id)}/artifacts`;
         const body = subcommand === "graph" && document && typeof document === "object" && "graph" in document ? (document as Record<string, unknown>).graph : document;
         console.log(JSON.stringify(await requestJson(app, route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(subcommand === "graph" ? { graph: body, by: "official-harness" } : body) }), null, 2));
         return 0;
