@@ -1,8 +1,12 @@
 # 产线执行（lines.md）
 
+活动 Bun 入口在 `backend/src/legacy/line-runner.ts`。调度一轮在 SQLite 事务内回收已结束的 Job、预留预算并提交就绪节点。容器启动和执行在事务外。工位输出通过绑定传到下游，缓存命中沿用已封存产物且费用为零。Bun CLI 提供 `line plan`、`line run` 和 `line exec`。
+
 > 规范性文档，M2。模块：`mao.runplan`（运行计划编译，纯函数）、`mao.runs`（run 存储、状态机、推进、触发）。
 > 依据：架构文档 3.7、6.5（run 的状态）、9.3（隐式转换步骤）、10.1（epoch）；`spec/mrl/kernel/lines.mrl`；factory-profile 第 4、5 章。
 > 跨组件约定见 `README.md`。本文件只能增加 README 第 4 节的接口，不能改变已列出的签名与语义。
+
+活动 Bun 编译入口为 `backend/src/legacy/runplan.ts` 的 `compileRunPlan(snapshot, lineRef)`。`RunPlan.toJSON()` 使用第 4.2 节的字段名，`RunPlan.fromJSON()` 恢复已持久化的计划，`digest()` 对规范 JSON 计算摘要。
 
 ---
 
@@ -288,6 +292,8 @@ CREATE INDEX events_run ON events(run_id, seq);
 
 ### 5.1 编译运行计划 `compile_run_plan`
 
+Bun 快照的 Registry 检查目前提供结构校验。`compileRunPlan` 从快照提取静态产线的类型、工位接口和转换库，按 factory-profile 第 5 章解析所用的边。自动解析仅使用 active 转换并限制链长和探索路径数。写为 `{from, via}` 的绑定支持禁用自动转换或指定转换链。编译器独立从工位预算和已解析的边投影静态 `cost_item` 关系并与展开后的节点预算对账。完整内核关系及其 Registry 诊断仍在迁移。
+
 输入：快照（已零 error）与 `line_ref`。步骤：
 
 1. `key = snapshot.key("Line", line_ref)`，`doc = snapshot.spec(key)`。
@@ -468,6 +474,10 @@ raise FactoryError("RUN_STUCK", run=run_id)
   - 全部用 `LocalProvider`，确定性时钟与 ID（`FakeClock`、`CounterIds`）。
 
 ### 7.2 测试清单
+
+活动测试 `backend/tests/legacy-runplan.test.ts` 检查拓扑分层、模板参数、节点预算、计划 JSON 往返、自动和显式转换、零转换约束、类型契约错误和静态构造限制。
+
+以下为历史验收映射。
 
 | 文件 | 测试 | 验证什么 |
 |---|---|---|

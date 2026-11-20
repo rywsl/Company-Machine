@@ -223,6 +223,10 @@ CREATE INDEX lineage_bean ON lineage(bean_id);
 
 ### 5.1 `put_file`
 
+Bun 从源文件描述符分块读取，每一块同时写入工厂根目录下的唯一临时文件并更新 SHA-256。Bean 的文件大小也取自这次复制的字节数。复制和哈希在 SQLite 写事务外完成，然后在短事务中检查该摘要是否已发布并原子改名。已有摘要保留原文件，释放竞争失败或复制中止时产生的临时文件。多个进程共享仓库时，每个已完成的 Blob 只需要一次发布。
+
+归档实现的处理顺序如下。
+
 1. `digest = digest_file(path)`。文件不存在让 `FileNotFoundError` 冒泡。禁止把整个文件读进内存再哈希（R20）。
 2. `dest = blob_path(digest)`。`dest` 已存在：不打开、不覆盖、不比较，直接返回 `digest`。内容若已被篡改，由 `verify` 报告，`put_file` 仍不改写。
 3. 否则：`root/tmp` 不存在就创建。把源文件按 1 MiB 分块复制到 `root/tmp/<hex>.<pid>.part`（同卷）。复制结束后 `os.replace` 到 `dest`。`dest.parent.mkdir(parents=True, exist_ok=True)` 在 replace 之前。

@@ -89,7 +89,7 @@ function validateNode(value: unknown, schema: JsonObject, path: string, errors: 
   if (isObject(value)) {
     if (typeof schema.minProperties === "number" && Object.keys(value).length < schema.minProperties) errors.push({ path, message: `must contain at least ${schema.minProperties} properties` });
     const required = Array.isArray(schema.required) ? schema.required.filter((entry): entry is string => typeof entry === "string") : [];
-    for (const key of required) if (!Object.hasOwn(value, key)) errors.push({ path: pathFor(path, key), message: "is required" });
+    for (const key of required) if (!Object.hasOwn(value, key)) errors.push({ path: pathFor(path, key), message: "'" + key + "' is a required property" });
     const properties = isObject(schema.properties) ? schema.properties : {};
     for (const [key, child] of Object.entries(properties)) if (Object.hasOwn(value, key) && isObject(child)) validateNode(value[key], child, pathFor(path, key), errors, rootSchema);
     for (const [key, child] of Object.entries(value)) {
@@ -133,3 +133,20 @@ export function validate(data: unknown): SchemaDiagnostic[] {
 }
 
 export function schemaForKind(kind: string): string | undefined { return Object.hasOwn(kindSchema, kind) ? kindSchema[kind] : undefined; }
+
+export function validateInlineSchema(value: unknown, schema: JsonObject): SchemaDiagnostic[] {
+  const stack: unknown[] = [schema];
+  while (stack.length) {
+    const item = stack.pop();
+    if (Array.isArray(item)) stack.push(...item);
+    else if (isObject(item)) {
+      if (typeof item.$ref === "string" && !item.$ref.startsWith("#")) {
+        throw new Error("inline metadata schemas require local JSON references");
+      }
+      stack.push(...Object.values(item));
+    }
+  }
+  const errors: SchemaDiagnostic[] = [];
+  validateNode(value, schema, "", errors);
+  return errors;
+}

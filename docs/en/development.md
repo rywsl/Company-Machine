@@ -21,23 +21,7 @@ podman machine init --now podman-machine-default
 bun run backend/src/index.ts
 ```
 
-Kiri can run through its headless CLI path.
-
-```powershell
-$env:MAO_CONTAINER_RUNTIME = "kiri"
-$env:MAO_KIRI_EXECUTABLE = "kiri"
-bun run backend/src/index.ts
-```
-
-On Linux, the same configuration uses Kiri's native headless package.
-
-```bash
-export MAO_CONTAINER_RUNTIME=kiri
-export MAO_KIRI_EXECUTABLE=kiri
-bun run backend/src/index.ts
-```
-
-Kiri readiness may start `kiri daemon` without a UI, or reuse a systemd-managed daemon. Set `MAO_KIRI_SOCKET=/run/kiri/docker.sock` and optionally `MAO_KIRI_DATA_DIR=/var/lib/kiri-daemon` for the official Linux service. `MAO_KIRI_MODE=docker-context` selects Kiri's Docker Engine API context when the installation exposes `docker --context kiri`.
+For headless Linux deployments, use the official `kiri.service` and its Unix socket. The setup and optional endpoint settings are in the [getting started guide](getting-started.md#use-headless-kiri-on-linux).
 
 ## Engineering rules
 

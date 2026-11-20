@@ -5,6 +5,8 @@
 > 本文件与上述规范冲突时，以本文件为准；其余以原文为准。
 > 回执核验沙箱注入秘密、登记 `check` 出网主体、使用机器的沙箱资源，见 `capabilities.md` 5.5、5.6（M11）。
 
+Bun 连接器入口见 `connectors.md`。`factory receipt void` 的 `--by` 可省略，此时使用 `FACTORY_HUMAN_BY`，再缺省为 `human`。`factory source run` 接受 `--param NAME=VALUE`，字符串可直接传入，其他类型使用 JSON 值。当前核验使用同一个容器运行时和镜像，在独立沙箱内按本地模式复核固定版本的工位和配方。
+
 ---
 
 ## 1. 目的与范围

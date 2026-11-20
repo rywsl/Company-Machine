@@ -34,23 +34,19 @@ bun run factory status
 
 Set `MAO_PODMAN_EXECUTABLE` when the desktop process has an old PATH snapshot.
 
-## Use headless Kiri
+## Use headless Kiri on Linux
 
-```powershell
-$env:MAO_CONTAINER_RUNTIME = "kiri"
-$env:MAO_KIRI_EXECUTABLE = "kiri"
-bun run backend/src/index.ts
-```
-
-On Linux, use the native headless package and export the same settings before starting Bun.
+For a headless host, install the official `kiri-lite` package and a Docker-compatible CLI. Grant the MAO account access to `kiri.service`, then refresh the login session before checking readiness.
 
 ```bash
-export MAO_CONTAINER_RUNTIME=kiri
-export MAO_KIRI_EXECUTABLE=kiri
-bun run backend/src/index.ts
+sudo kiri host-access "$USER"
+MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
+MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
 
-Readiness can start `kiri daemon` without opening a window. If the Linux package already runs the official systemd service, point the control plane at its socket with `MAO_KIRI_SOCKET=/run/kiri/docker.sock` and optionally `MAO_KIRI_DATA_DIR=/var/lib/kiri-daemon`, then the health probe reuses it. Use `MAO_KIRI_MODE=docker-context` when Kiri exposes the `kiri` Docker context instead of direct CLI commands.
+MAO connects through `/run/kiri/docker.sock`. Set `MAO_KIRI_SOCKET` for a custom deployment and `MAO_DOCKER_EXECUTABLE` to select the CLI. The official Linux path uses the Unix socket directly and works without a desktop session.
+
+For station jobs inside WSL, point `FACTORY_ROOT` to a Linux filesystem such as `$HOME/.local/share/mao`. The mailbox uses Linux directory permissions to protect host responses.
 
 ## Hand a project to Foreman
 

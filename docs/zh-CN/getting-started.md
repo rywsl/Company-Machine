@@ -34,23 +34,19 @@ bun run factory status
 
 桌面进程继承旧 PATH 时设置 `MAO_PODMAN_EXECUTABLE`。
 
-## 使用 headless Kiri
+## 在 Linux 上使用 headless Kiri
 
-```powershell
-$env:MAO_CONTAINER_RUNTIME = "kiri"
-$env:MAO_KIRI_EXECUTABLE = "kiri"
-bun run backend/src/index.ts
-```
-
-Linux 使用 Kiri 的原生 headless 包时，可以用下面的配置启动 Bun。
+无桌面环境可以安装 Kiri 官方 `kiri-lite` 包与 Docker 兼容 CLI。先授权运行 MAO 的账户访问 `kiri.service`，刷新登录会话后检查就绪状态。
 
 ```bash
-export MAO_CONTAINER_RUNTIME=kiri
-export MAO_KIRI_EXECUTABLE=kiri
-bun run backend/src/index.ts
+sudo kiri host-access "$USER"
+MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
+MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
 
-Linux readiness 可以在没有 UI 的情况下启动 `kiri daemon`，如果发行版已经通过 systemd 启动官方服务则直接复用。官方服务使用 `/run/kiri/docker.sock` 时设置 `MAO_KIRI_SOCKET=/run/kiri/docker.sock`，状态目录可设置为 `MAO_KIRI_DATA_DIR=/var/lib/kiri-daemon`。Kiri 只提供 `kiri` Docker context 时设置 `MAO_KIRI_MODE=docker-context`。
+MAO 通过 `/run/kiri/docker.sock` 连接。自定义部署可以设置 `MAO_KIRI_SOCKET` 和 `MAO_DOCKER_EXECUTABLE` 指定套接字和客户端。官方 Linux 路径直接使用 Unix 套接字，无需桌面会话。
+
+在 WSL 中运行工位时，将 `FACTORY_ROOT` 指向 Linux 文件系统，例如 `$HOME/.local/share/mao`。文件邮箱使用 Linux 目录权限保护宿主响应。
 
 ## 交给厂长
 

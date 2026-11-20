@@ -34,4 +34,31 @@ describe("Foreman official Harness dispatch", () => {
       await rm(dbPath, { force: true });
     }
   });
+
+  test("resumes the official session ID on the next native turn", async () => {
+    const calls: string[][] = [];
+    const sessionId = "a9919900-0000-4111-9111-100000000000";
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", foreman: { spawn: (argv) => {
+      calls.push(argv);
+      return fakeProcess([
+        JSON.stringify({ type: "thread.started", thread_id: sessionId }),
+        JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "进度已更新。" } }),
+        JSON.stringify({ type: "turn.completed" }),
+      ]);
+    } } });
+    try {
+      const profile = app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      const first = app.store.queueForemanMessage("turn-1", "创建项目");
+      const second = app.store.queueForemanMessage("turn-2", "接着做");
+      await Promise.all([app.foreman.dispatch(first.id), app.foreman.dispatch(second.id)]);
+      expect(app.store.foremanSession(profile.id)).toBe(sessionId);
+      expect(calls[0]).not.toContain("resume");
+      expect(calls[1].slice(0, 3)).toEqual(["codex", "exec", "resume"]);
+      expect(calls[1]).toContain(sessionId);
+      expect(app.store.listTalkMessages().map(({ body }) => body)).toEqual(["进度已更新。", "进度已更新。"]);
+    } finally {
+      await app.foreman.close();
+      app.stop();
+    }
+  });
 });

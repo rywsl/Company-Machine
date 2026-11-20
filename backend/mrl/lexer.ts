@@ -8,8 +8,7 @@ export interface Token {
 }
 
 export class MrlSyntaxError extends Error {
-  readonly code = "MRL-SYNTAX";
-  constructor(message: string, readonly offset = 0) {
+  constructor(message: string, readonly offset = 0, readonly code = "MRL-SYNTAX") {
     super(message);
     this.name = "MrlSyntaxError";
   }
@@ -18,7 +17,7 @@ export class MrlSyntaxError extends Error {
 const operators = ["==", "!=", "<=", ">=", "&&", "||", "<", ">", "!", "+", "-", "*", "/", "%", "?", ":", ".", ",", "(", ")", "[", "]", "{", "}"];
 
 export function tokenize(source: string): Token[] {
-  if (source.length > 1_048_576) throw new MrlSyntaxError("source exceeds MRL-LIMIT", 0);
+  if (source.length > 1_048_576) throw new MrlSyntaxError("source exceeds MRL-LIMIT", 0, "MRL-LIMIT");
   const out: Token[] = [];
   let i = 0;
   const push = (kind: TokenKind, text: string, value?: unknown, offset = i) => out.push({ kind, text, value, offset });
@@ -56,8 +55,8 @@ export function tokenize(source: string): Token[] {
       const text = source.slice(start, i);
       const integerDigits = text.match(/^[0-9]+/)?.[0] ?? "";
       if (integerDigits.length > 1 && integerDigits[0] === "0") throw new MrlSyntaxError("leading zero", start);
-      const value = Number(text);
-      if (!Number.isFinite(value)) throw new MrlSyntaxError("float literal out of range", start);
+      const value = floating ? Number(text) : undefined;
+      if (floating && !Number.isFinite(value)) throw new MrlSyntaxError("float literal out of range", start);
       push(floating ? "float" : "int", text, value, start);
       continue;
     }

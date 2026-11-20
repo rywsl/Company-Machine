@@ -109,7 +109,7 @@ async function runProcess(argv: string[], options: { cwd?: string; input?: strin
 }
 
 function commandArgv(tool: string, args: string[]): string[] {
-  return tool.endsWith(".ts") ? [Bun.argv[0], tool, ...args] : [tool, ...args];
+  return process.platform === "win32" || tool.endsWith(".ts") ? [Bun.argv[0], tool, ...args] : [tool, ...args];
 }
 
 class AgentError extends Error {}

@@ -31,7 +31,7 @@ export interface BusinessUnit {
 }
 
 export type BusinessRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
-export type UnitRunStatus = "queued" | "running" | "completed" | "failed" | "blocked";
+export type UnitRunStatus = "queued" | "running" | "waiting_resources" | "completed" | "failed" | "blocked";
 
 export interface BusinessRun {
   id: string;
@@ -153,7 +153,7 @@ export interface ForemanEnvelope {
   id: string;
   messageId: string;
   text: string;
-  status: "queued" | "claimed" | "done";
+  status: "queued" | "claimed" | "done" | "failed";
   createdAt: string;
   claimedAt?: string;
 }

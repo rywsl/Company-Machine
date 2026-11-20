@@ -1,9 +1,42 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type { ContainerProvider, Sandbox, SandboxSpec } from "../../runtime/podman";
+import { spawnLoggedProcess, type LoggedProcess } from "../../runtime/process-logs";
 import { FactoryError } from "./errors";
 
 export type LocalCommandMap = Record<string, string[]>;
+
+export function sandboxResources(value: unknown): Pick<SandboxSpec, "cpus" | "memoryMb" | "shmMb" | "tmpMb" | "pids" | "writable"> {
+  const invalid = (field: string): never => { throw new FactoryError("RESOURCES_INVALID", "资源声明不合法", { field }); };
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) return invalid("resources");
+  const resources = value as Record<string, unknown>;
+  const positiveInteger = (field: string): number | undefined => {
+    const amount = resources[field];
+    if (amount === undefined || amount === null) return undefined;
+    if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount < 1) return invalid(field);
+    return amount;
+  };
+  let cpus: number | undefined;
+  if (resources.cpus !== undefined && resources.cpus !== null) {
+    if (typeof resources.cpus !== "number" && typeof resources.cpus !== "string") return invalid("cpus");
+    cpus = Number(resources.cpus);
+    if (!Number.isFinite(cpus) || cpus <= 0) return invalid("cpus");
+  }
+  let memoryMb: number | undefined;
+  if (resources.memory !== undefined && resources.memory !== null) {
+    const memory = /^([0-9]+)(Mi|M|MB|Gi|G|GB)$/.exec(String(resources.memory));
+    if (!memory) return invalid("memory");
+    memoryMb = Number(memory[1]) * (memory[2].startsWith("G") ? 1024 : 1);
+    if (!Number.isSafeInteger(memoryMb) || memoryMb < 1) return invalid("memory");
+  }
+  const writable = resources.writable;
+  if (writable !== undefined && (!Array.isArray(writable) || writable.some((entry) => typeof entry !== "string") || new Set(writable).size !== writable.length)) {
+    return invalid("writable");
+  }
+  return { cpus, memoryMb, shmMb: positiveInteger("shm_mb"), tmpMb: positiveInteger("tmp_mb"), pids: positiveInteger("pids"), writable };
+}
+
 const inheritedKeys = ["PATH", "SystemRoot", "WINDIR", "TMP", "TEMP", "TMPDIR", "LANG", "LC_ALL"];
 const virtualEnvironment = {
   FACTORY_IN: "/factory/in",
@@ -34,7 +67,7 @@ export class LocalProvider implements ContainerProvider {
 }
 
 class LocalSandboxImpl implements Sandbox {
-  private readonly children = new Set<any>();
+  private readonly children = new Set<LoggedProcess>();
   private closed = false;
   constructor(private readonly spec: SandboxSpec, private readonly commands: LocalCommandMap) {}
   get name(): string { return this.spec.name; }
@@ -54,22 +87,13 @@ class LocalSandboxImpl implements Sandbox {
     if (factoryctl !== "/opt/factory/bin/factoryctl") environment.FACTORYCTL = factoryctl;
     const mappedWorkdir = replacePath(options.workdir ?? this.spec.workdir ?? "/workspace", mappings);
     const workdir = existsSync(mappedWorkdir) ? mappedWorkdir : process.cwd();
-    mkdirSync(dirname(options.stdout), { recursive: true });
-    mkdirSync(dirname(options.stderr), { recursive: true });
     const started = Date.now();
-    const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
-    if (!bun) throw new FactoryError("RUNTIME_UNAVAILABLE", "Bun runtime is required");
-    const child = bun.spawn(command, { cwd: workdir, env: environment, stdout: "pipe", stderr: "pipe" });
+    const child = spawnLoggedProcess(command, options, { cwd: workdir, env: environment });
     this.children.add(child);
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill(9); }, options.timeoutMs);
     try {
-      const [exitCode, stdout, stderr] = await Promise.all([
-        child.exited as Promise<number>,
-        new Response(child.stdout).arrayBuffer(),
-        new Response(child.stderr).arrayBuffer(),
-      ]);
-      await Promise.all([Bun.write(options.stdout, stdout), Bun.write(options.stderr, stderr)]);
+      const exitCode = await child.exited;
       return { exitCode: timedOut ? null : exitCode, timedOut, durationMs: Date.now() - started };
     } finally { clearTimeout(timer); this.children.delete(child); }
   }

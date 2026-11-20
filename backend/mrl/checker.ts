@@ -17,12 +17,14 @@ export interface FunctionSignature {
   maxArgs?: number;
   returns: MrlType;
   accepts?: (args: MrlType[]) => boolean;
+  inferReturn?: (args: MrlType[]) => MrlType;
 }
 
 export interface CheckOptions {
   environment?: TypeEnvironment;
   functions?: Record<string, FunctionSignature>;
   expect?: MrlType | string;
+  inferredTypes?: WeakMap<Expr, MrlType>;
 }
 
 export interface CheckResult {
@@ -32,28 +34,82 @@ export interface CheckResult {
   paths: string[];
 }
 
+type TypePredicate = (type: MrlType) => boolean;
+const anyType = () => true;
+const stringType: TypePredicate = (type) => isPrimitive(type, "string");
+const numericOrString: TypePredicate = (type) => isNumeric(type) || stringType(type);
+const mapType: TypePredicate = (type) => type.kind === "map" || type.kind === "record";
+const listElement = (type: MrlType) => type.kind === "list" ? type.element : DYN;
+const listOf = (accepts: TypePredicate): TypePredicate => (type) => type.kind === "list" && (isPrimitive(type.element, "dyn") || accepts(type.element));
+const listType = listOf(anyType);
+
+function reducedType(items: MrlType[]): MrlType {
+  return items.length ? items.reduce(lub) : DYN;
+}
+
+function mapElement(type: MrlType): MrlType {
+  if (type.kind === "map") return type.element;
+  if (type.kind === "record" && !type.open) return reducedType(Object.values(type.fields).map((field) => field.type));
+  return DYN;
+}
+
+function fixed(returns: MrlType, types: TypePredicate[], inferReturn?: FunctionSignature["inferReturn"]): FunctionSignature {
+  return {
+    minArgs: types.length,
+    maxArgs: types.length,
+    returns,
+    inferReturn,
+    accepts: (args) => args.every((type, index) => isPrimitive(type, "dyn") || types[index](type)),
+  };
+}
+
+const minMax: FunctionSignature = {
+  minArgs: 1,
+  returns: DYN,
+  accepts: (args) => {
+    if (args.length === 1) return isPrimitive(args[0], "dyn") || listOf(numericOrString)(args[0]);
+    return args.every((type) => isPrimitive(type, "dyn") || numericOrString(type))
+      && !(args.some(isNumeric) && args.some(stringType));
+  },
+  inferReturn: (args) => args.length === 1 ? listElement(args[0]) : reducedType(args),
+};
+
+const setSignature = fixed(list(DYN), [listType, listType], ([a, b]) => list(lub(listElement(a), listElement(b))));
+const stringPredicate = fixed(BOOL, [stringType, stringType]);
+const stringTransform = fixed(STRING, [stringType]);
 const signatures: Record<string, FunctionSignature> = {
-  size: { minArgs: 1, maxArgs: 1, returns: INT },
-  int: { minArgs: 1, maxArgs: 1, returns: INT },
-  float: { minArgs: 1, maxArgs: 1, returns: FLOAT },
-  string: { minArgs: 1, maxArgs: 1, returns: STRING },
-  abs: { minArgs: 1, maxArgs: 1, returns: NUM },
-  floor: { minArgs: 1, maxArgs: 1, returns: INT },
-  ceil: { minArgs: 1, maxArgs: 1, returns: INT },
-  round: { minArgs: 1, maxArgs: 1, returns: INT },
-  min: { minArgs: 1, maxArgs: 1, returns: NUM },
-  max: { minArgs: 1, maxArgs: 1, returns: NUM },
-  sum: { minArgs: 1, maxArgs: 1, returns: NUM },
-  startsWith: { minArgs: 2, maxArgs: 2, returns: BOOL },
-  endsWith: { minArgs: 2, maxArgs: 2, returns: BOOL },
-  contains: { minArgs: 2, maxArgs: 2, returns: BOOL },
-  lower: { minArgs: 1, maxArgs: 1, returns: STRING },
-  upper: { minArgs: 1, maxArgs: 1, returns: STRING },
-  trim: { minArgs: 1, maxArgs: 1, returns: STRING },
-  split: { minArgs: 2, maxArgs: 2, returns: list(STRING) },
-  join: { minArgs: 2, maxArgs: 2, returns: STRING },
-  replace: { minArgs: 3, maxArgs: 3, returns: STRING },
-  type: { minArgs: 1, maxArgs: 1, returns: STRING },
+  size: fixed(INT, [(type) => stringType(type) || listType(type) || mapType(type)]),
+  int: fixed(INT, [numericOrString]),
+  float: fixed(FLOAT, [numericOrString]),
+  string: fixed(STRING, [(type) => numericOrString(type) || isPrimitive(type, "bool")]),
+  abs: fixed(NUM, [isNumeric], ([type]) => isNumeric(type) ? type : NUM),
+  floor: fixed(INT, [isNumeric]),
+  ceil: fixed(INT, [isNumeric]),
+  round: fixed(INT, [isNumeric]),
+  min: minMax,
+  max: minMax,
+  sum: fixed(NUM, [listOf(isNumeric)], ([type]) => isNumeric(listElement(type)) ? listElement(type) : NUM),
+  startsWith: stringPredicate,
+  endsWith: stringPredicate,
+  contains: stringPredicate,
+  charsIn: stringPredicate,
+  glob: stringPredicate,
+  lower: stringTransform,
+  upper: stringTransform,
+  trim: stringTransform,
+  split: fixed(list(STRING), [stringType, stringType]),
+  join: fixed(STRING, [listOf(stringType), stringType]),
+  replace: fixed(STRING, [stringType, stringType, stringType]),
+  keys: fixed(list(STRING), [mapType]),
+  values: fixed(list(DYN), [mapType], ([type]) => list(mapElement(type))),
+  get: fixed(DYN, [mapType, stringType, anyType], ([type, , fallback]) => lub(mapElement(type), fallback)),
+  sort: fixed(list(DYN), [listOf(numericOrString)], ([type]) => list(listElement(type))),
+  unique: fixed(list(DYN), [listType], ([type]) => list(listElement(type))),
+  union: setSignature,
+  intersect: setSignature,
+  difference: setSignature,
+  isSubset: fixed(BOOL, [listType, listType]),
+  type: fixed(STRING, [anyType]),
 };
 
 const pathOf = (node: Expr): string | undefined => {
@@ -92,10 +148,12 @@ class Checker {
   private readonly paths = new Set<string>();
   private readonly environment: Record<string, MrlType>;
   private readonly functions: Record<string, FunctionSignature>;
+  private readonly inferredTypes?: WeakMap<Expr, MrlType>;
 
   constructor(options: CheckOptions) {
     this.environment = normalizeEnvironment(options.environment);
     this.functions = { ...signatures, ...(options.functions ?? {}) };
+    this.inferredTypes = options.inferredTypes;
   }
 
   run(ast: Expr, expected?: MrlType): CheckResult {
@@ -108,14 +166,24 @@ class Checker {
 
   private error(code: string, message: string) { this.diagnostics.push({ code, severity: "error", message }); }
   private warning(code: string, message: string) { this.diagnostics.push({ code, severity: "warning", message }); }
-  private lookup(name: string, scope: Record<string, MrlType>): MrlType | undefined { return scope[name] ?? this.environment[name]; }
+  private lookup(name: string, scope: Record<string, MrlType>): MrlType | undefined {
+    if (Object.hasOwn(scope, name)) return scope[name];
+    if (Object.hasOwn(this.environment, name)) return this.environment[name];
+    return undefined;
+  }
 
   private infer(node: Expr, scope: Record<string, MrlType>, guards: Set<string>): MrlType {
+    const type = this.inferType(node, scope, guards);
+    this.inferredTypes?.set(node, type);
+    return type;
+  }
+
+  private inferType(node: Expr, scope: Record<string, MrlType>, guards: Set<string>): MrlType {
     switch (node.kind) {
       case "literal":
         if (node.value === null) return NULL;
         if (typeof node.value === "boolean") return BOOL;
-        if (typeof node.value === "number") return Number.isInteger(node.value) ? INT : FLOAT;
+        if (node.numericKind) return node.numericKind === "float" ? FLOAT : INT;
         return STRING;
       case "identifier": {
         const type = this.lookup(node.name, scope);
@@ -123,21 +191,23 @@ class Checker {
         this.paths.add(node.name); return type;
       }
       case "list": {
-        let element: MrlType = DYN;
-        for (const item of node.items) element = element === DYN ? this.infer(item, scope, guards) : lub(element, this.infer(item, scope, guards));
-        return list(node.items.length ? element : DYN);
+        return list(reducedType(node.items.map((item) => this.infer(item, scope, guards))));
       }
       case "record": {
-        const fields: Record<string, MrlType> = {};
+        const fields = new Map<string, { type: MrlType; required: boolean }>();
+        const values: MrlType[] = [];
         for (const entry of node.entries) {
           const keyType = this.infer(entry.key, scope, guards);
           if (!isPrimitive(keyType, "string") && keyType !== DYN) this.error("MRL-TYPE", "record keys must be string");
+          const type = this.infer(entry.value, scope, guards);
+          values.push(type);
           if (entry.key.kind === "literal" && typeof entry.key.value === "string") {
-            if (fields[entry.key.value]) this.error("MRL-DUP-KEY", `duplicate key ${entry.key.value}`);
-            fields[entry.key.value] = this.infer(entry.value, scope, guards);
-          } else this.infer(entry.value, scope, guards);
+            if (fields.has(entry.key.value)) this.error("MRL-DUP-KEY", `duplicate key ${entry.key.value}`);
+            fields.set(entry.key.value, { type, required: true });
+          }
         }
-        return Object.keys(fields).length === node.entries.length ? { kind: "record", fields: Object.fromEntries(Object.entries(fields).map(([name, type]) => [name, { type, required: true }])), open: false } : map(DYN);
+        if (fields.size === node.entries.length && fields.size) return { kind: "record", fields: Object.fromEntries(fields), open: false };
+        return map(reducedType(values));
       }
       case "member": return this.select(node, scope, guards);
       case "index": return this.index(node, scope, guards);
@@ -162,7 +232,7 @@ class Checker {
     const object = this.infer(node.object, scope, guards);
     const path = pathOf(node); if (path) this.paths.add(path);
     if (object.kind === "record") {
-      const field = object.fields[node.field];
+      const field = Object.hasOwn(object.fields, node.field) ? object.fields[node.field] : undefined;
       if (!field) { if (object.open) return DYN; this.error("MRL-NO-FIELD", `record has no field ${node.field}`); return DYN; }
       if (!field.required && (!path || !guards.has(path))) this.warning("MRL-MAYBE-ABSENT", `field ${path ?? node.field} may be absent`);
       return field.type;
@@ -177,7 +247,7 @@ class Checker {
     if (object.kind === "map") { if (index !== DYN && !isPrimitive(index, "string")) this.error("MRL-TYPE", "map index requires string"); return object.element; }
     if (object.kind === "record") {
       if (node.index.kind === "literal" && typeof node.index.value === "string") {
-        const field = object.fields[node.index.value];
+        const field = Object.hasOwn(object.fields, node.index.value) ? object.fields[node.index.value] : undefined;
         if (!field) { if (object.open) return DYN; this.error("MRL-NO-FIELD", `record has no field ${node.index.value}`); return DYN; }
         return field.type;
       }
@@ -206,6 +276,10 @@ class Checker {
       return BOOL;
     }
     if (node.op === "+" && isPrimitive(left, "string") && isPrimitive(right, "string")) return STRING;
+    if (node.op === "+" && (left === DYN || right === DYN)) {
+      if (stringType(left) || stringType(right)) return STRING;
+      if (left.kind === "list" || right.kind === "list") return list(DYN);
+    }
     if (node.op === "+" && left.kind === "list" && right.kind === "list") return list(lub(left.element, right.element));
     if (!["+", "-", "*", "/", "%"].includes(node.op)) { this.error("MRL-SYNTAX", `unknown operator ${node.op}`); return DYN; }
     if (left !== DYN && !isNumeric(left) || right !== DYN && !isNumeric(right)) { this.error("MRL-TYPE", `${node.op} requires numeric operands`); return DYN; }
@@ -217,23 +291,28 @@ class Checker {
   private call(node: Extract<Expr, { kind: "call" }>, scope: Record<string, MrlType>, guards: Set<string>): MrlType {
     if (node.name === "has" && !node.receiver) {
       if (node.args.length !== 1 || node.args[0].kind !== "member") this.error("MRL-MACRO", "has requires one field selection");
-      else this.infer(node.args[0].object, scope, guards);
+      else {
+        const member = node.args[0];
+        const object = this.infer(member.object, scope, guards);
+        if (object.kind === "record" && !object.open && !Object.hasOwn(object.fields, member.field)) this.error("MRL-NO-FIELD", "record has no field " + member.field);
+        else if (object !== DYN && !mapType(object)) this.error("MRL-TYPE", "has requires a record");
+      }
       return BOOL;
     }
     const args = node.args.map((arg) => this.infer(arg, scope, guards));
     if (node.receiver) args.unshift(this.infer(node.receiver, scope, guards));
-    const signature = this.functions[node.name];
+    const signature = Object.hasOwn(this.functions, node.name) ? this.functions[node.name] : undefined;
     if (!signature) { this.error("MRL-UNDEFINED", `undefined function ${node.name}`); return DYN; }
     if (args.length < signature.minArgs || (signature.maxArgs !== undefined && args.length > signature.maxArgs)) { this.error("MRL-ARITY", `${node.name} received ${args.length} arguments`); return DYN; }
     if (signature.accepts && !signature.accepts(args)) this.error("MRL-TYPE", `arguments to ${node.name} have incompatible types`);
-    return signature.returns;
+    return signature.inferReturn?.(args) ?? signature.returns;
   }
 
   private macro(node: Extract<Expr, { kind: "macro" }>, scope: Record<string, MrlType>, guards: Set<string>): MrlType {
     const target = this.infer(node.target, scope, guards);
     const variable = target.kind === "list" ? target.element : target.kind === "map" || target.kind === "record" ? STRING : target === DYN ? DYN : undefined;
     if (!variable) { this.error("MRL-TYPE", `${node.name} requires list or map`); return DYN; }
-    if (scope[node.variable] || this.environment[node.variable]) this.error("MRL-SHADOW", `macro variable ${node.variable} shadows an existing name`);
+    if (this.lookup(node.variable, scope)) this.error("MRL-SHADOW", `macro variable ${node.variable} shadows an existing name`);
     const inner = { ...scope, [node.variable]: variable };
     if (node.predicate) { const predicate = this.infer(node.predicate, inner, guards); if (predicate !== DYN && !isPrimitive(predicate, "bool")) this.error("MRL-TYPE", `${node.name} predicate requires bool`); }
     if (node.name === "all" || node.name === "exists" || node.name === "exists_one") return BOOL;
@@ -242,9 +321,13 @@ class Checker {
   }
 }
 
-export function checkExpression(source: string, options: CheckOptions = {}): CheckResult {
+export function checkAst(ast: Expr, options: CheckOptions = {}): CheckResult {
   const expected = typeof options.expect === "string" ? normalizeEnvironment({ value: options.expect }).value : options.expect;
-  return new Checker(options).run(parseExpression(source), expected);
+  return new Checker(options).run(ast, expected);
+}
+
+export function checkExpression(source: string, options: CheckOptions = {}): CheckResult {
+  return checkAst(parseExpression(source), options);
 }
 
 export function standardSignatures(): Record<string, FunctionSignature> { return { ...signatures }; }

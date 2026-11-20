@@ -5,6 +5,14 @@
 > 跨组件约定见 `README.md`；run 的推进见 `lines.md`。
 > 生产路径的接线（`open_line_runner` 带 `JobCache`）与 `factory run` 的参数和输出见 `wiring.md`（M10），冲突时以 `wiring.md` 为准。
 
+## Bun 实现
+
+`backend/src/legacy/cache.ts` 提供 `JobCache` 和 `KeyMaterial`。工位、机器、OperatorRuntime 和策略的摘要排除描述性 metadata，键保留有序的 Bean ID、默认参数归一化结果和 variant。调用方使用 `material` 生成键，通过 `lookup` 查找可复用 Job，并在创建新 Job 的事务中调用 `bind`。
+
+SQLite 以键和绑定顺序定位已封存 Job。查找使用索引过滤失效范围及序号，检查产物是否存在、已封存、有效且未被隔离。失效记录与 `cache.invalidated` 事件一并写入，作用范围截至写入时已有的绑定。
+
+Bun 专项验收见 `backend/tests/legacy-cache.test.ts`。下文保留 M2 的原始接口和验收映射。
+
 ---
 
 ## 1. 目的与范围

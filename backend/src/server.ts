@@ -1,15 +1,19 @@
 import { EventBus } from "./event-bus";
 import { SqliteStore } from "./db";
 import { VaultStore } from "./vault";
+import { exportBusinessSystem, importBusinessSystem } from "./business-portability";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { extname, join, normalize } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { dirname, extname, join, normalize, resolve } from "node:path";
+import { RandomIds, SystemClock } from "./legacy/foundation";
+import { Warehouse } from "./legacy/warehouse";
 import type { BusinessConversion, BusinessSystem } from "./models";
-import { PodmanProvider, type RuntimeHealth } from "../runtime/podman";
-import { KiriProvider } from "../runtime/kiri";
+import type { RuntimeHealth } from "../runtime/podman";
+import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
-import { OperatorCoordinator } from "./operator";
-import type { OfficialSpawn } from "./harness";
+import { verifyHarness } from "./harness-verification";
+import { OperatorCoordinator, projectCredentialName } from "./operator";
+import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, type OfficialSpawn } from "./harness";
 import type { AcpSpawn } from "./acp";
 
 const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" };
@@ -49,13 +53,14 @@ function runtimeDependency(health: RuntimeHealth, provider = "podman") {
   };
 }
 
-export function createApp(options: { dbPath?: string; legacyPath?: string; runtime?: RuntimeProbe; foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn }; operator?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn } } = {}): BackendApp {
+export function createApp(options: { dbPath?: string; legacyPath?: string; runtime?: RuntimeProbe; vault?: VaultStore; storageRoot?: string; foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn }; operator?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn }; harnessVerificationTimeoutMs?: number } = {}): BackendApp {
   const store = new SqliteStore(options.dbPath, options.legacyPath);
   const events = new EventBus(store);
-  const vault = new VaultStore();
-  const runtime = options.runtime ?? (process.env.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
-    ? new KiriProvider({ kiriExecutable: process.env.MAO_KIRI_EXECUTABLE, dockerExecutable: process.env.MAO_DOCKER_EXECUTABLE, context: process.env.MAO_KIRI_CONTEXT, mode: process.env.MAO_KIRI_MODE === "docker-context" ? "docker-context" : "kiri", socket: process.env.MAO_KIRI_SOCKET, dataDir: process.env.MAO_KIRI_DATA_DIR, egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) })
-    : new PodmanProvider({ egressNetwork: process.env.MAO_EGRESS_NETWORK, egressEnv: Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])) }));
+  const vault = options.vault ?? new VaultStore();
+  const storageRoot = resolve(options.storageRoot ?? process.env.FACTORY_ROOT ?? dirname(process.env.FACTORY_DB_PATH ?? ".factory/factory.db"));
+  let uploadWarehouse: Warehouse | undefined;
+  const uploads = () => uploadWarehouse ??= new Warehouse(storageRoot, store.db, new SystemClock(), new RandomIds());
+  const runtime = options.runtime ?? selectedContainerProvider();
   const provider = runtimeProvider(runtime);
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
   const runtimeHealth = async (refresh = false) => {
@@ -81,10 +86,14 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       if (runtimeReadyPromise === pending) runtimeReadyPromise = undefined;
     }
   };
-  const ensureRuntime = async () => { await ensureRuntimeHealth(); };
+  const ensureRuntime = async () => {
+    const health = await ensureRuntimeHealth();
+    if (!health.available) throw new Error(`${provider} runtime unavailable: ${health.reason ?? "unknown"}`);
+  };
+  const verificationJobs = new Map<string, AbortController>();
   const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn, ensureRuntime });
   let dispatchOperatorRun = (_runId: string) => {};
-  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId), ensureRuntime });
+  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId), ensureRuntime, readSecret: (ref) => vault.get(ref) });
   const dispatchForemanIfConfigured = (id: string) => {
     if (store.listHarnessProfiles().some((profile) => profile.role === "foreman")) void foreman.dispatch(id);
   };
@@ -107,8 +116,9 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       } catch (error) {
         health = runtimeCache?.health ?? await runtime.health();
         runtimeCache = { at: Date.now(), health };
-        events.publish(`runtime.${provider}.checked`, runtimeDependency(health, provider));
-        return response({ provider, health, dependency: runtimeDependency(health, provider), error: error instanceof Error ? error.message : "runtime unavailable" }, 503);
+        const dependency = runtimeDependency(health, provider);
+        events.publish(`runtime.${provider}.checked`, dependency);
+        return response({ provider, health, dependency, message: dependency.message, error: error instanceof Error ? error.message : "runtime unavailable" }, 503);
       }
       events.publish(`runtime.${provider}.checked`, runtimeDependency(health, provider));
       return response({ provider, health, dependency: runtimeDependency(health, provider) }, health.available ? 200 : 503);
@@ -116,9 +126,9 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     if (url.pathname === "/api/v1/business-systems/import" && request.method === "POST") {
       const document = await readJson(request);
       try {
-        const imported = importBusinessSystem(store, document);
+        const imported = importBusinessSystem(store, document, validateDag);
         events.publish("business-system.imported", { id: imported.id, schema: document.schema });
-        return response(exportBusinessSystem(store, imported.id), 201);
+        return response(exportBusinessSystem(store, imported.id, () => graphProjection(store, "workarea", imported.id)), 201);
       } catch (error) {
         return response({ error: error instanceof Error ? error.message : "business system document is invalid" }, 400);
       }
@@ -179,7 +189,8 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     const exportMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/export$/);
     if (exportMatch && request.method === "GET") {
-      const document = exportBusinessSystem(store, exportMatch[1]);
+      const id = exportMatch[1];
+      const document = exportBusinessSystem(store, id, () => graphProjection(store, "workarea", id), (ref) => vault.get(ref));
       return document ? response(document) : response({ error: "business system was not found" }, 404);
     }
     const unitsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/units$/);
@@ -216,7 +227,24 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects().map(publicProject));
     if (url.pathname === "/api/v1/projects/intake" && request.method === "POST") {
-      const body = await readJson(request);
+      let body: Record<string, any>;
+      if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
+        let form: FormData;
+        try { form = await request.formData(); }
+        catch { return response({ error: "invalid project upload" }, 400); }
+        body = {};
+        for (const field of ["name", "repo_url", "local_folder", "business_system_id"]) {
+          const value = form.get(field);
+          if (typeof value === "string" && value.trim()) body[field] = value.trim();
+        }
+        const files = form.getAll("files").filter((file): file is File => typeof file !== "string" && Boolean(file.name));
+        body.uploaded_file_refs = form.getAll("uploaded_file_refs").filter((ref): ref is string => typeof ref === "string" && Boolean(ref.trim()));
+        if (files.length) body.files = await saveProjectUploads(storageRoot, uploads(), store, files);
+      } else body = await readJson(request);
+      if (body.secret_requests !== undefined && (!Array.isArray(body.secret_requests)
+        || body.secret_requests.some((item: any) => !item || !projectCredentialName(item.name)))) {
+        return response({ error: "project credential requests are invalid" }, 400);
+      }
       if (!body.repo_url && !body.local_folder && !(Array.isArray(body.files) && body.files.length) && !(Array.isArray(body.uploaded_file_refs) && body.uploaded_file_refs.length)) {
         return response({ error: "one project source is required" }, 400);
       }
@@ -226,7 +254,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
         events.publish("business-system.created", system);
       }
       const project = store.createIntake(body);
-      events.publish("project.intake.created", project);
+      events.publish("project.intake.created", publicProject(project));
       const intakeText = `项目「${project.name}」已提交。请厂长识别项目、建立 Operator 与 Machine，搭建业务 DAG，并说明下一步需要的项目资源。项目引用 ${project.id}。`;
       const intakeMessage = store.addTalkMessage({ role: "user", body: intakeText, metadata: { source: "project-intake", project_id: project.id } });
       store.bridgeHumanTalk(intakeMessage.id, intakeMessage.body);
@@ -235,6 +263,20 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       events.publish("foreman.message.queued", intakeEnvelope);
       dispatchForemanIfConfigured(intakeEnvelope.id);
       return response({ ...publicProject(project), project_id: project.id, state: "accepted", foreman_inbox_id: intakeEnvelope.id }, 201);
+    }
+    const projectFile = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/files\/(sha256:[0-9a-f]{64})$/);
+    if (projectFile && request.method === "GET") {
+      const [, projectId, digest] = projectFile;
+      const stored = store.db.query("SELECT 1 FROM intake_uploads WHERE digest=?").get(digest);
+      const source = store.getProject(projectId)?.sources.find((item) => item.fileRef === `cas://${digest}`);
+      if (!stored || !source) return response({ error: "project upload was not found" }, 404);
+      const path = uploads().blobPath(digest);
+      if (!existsSync(path)) return response({ error: "project upload was not found" }, 404);
+      const filename = typeof source.metadata.name === "string" ? source.metadata.name : digest;
+      return new Response(Bun.file(path), { headers: {
+        "content-type": "application/octet-stream", "x-content-type-options": "nosniff", "cache-control": "no-store",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      } });
     }
     const artifactMatch = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/artifacts$/);
     if (artifactMatch && request.method === "GET") return response(store.listArtifacts(artifactMatch[1]).map(publicArtifact));
@@ -289,11 +331,12 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     if (url.pathname === "/api/v1/secrets/requests" && request.method === "POST") {
       const body = await readJson(request);
-      if (typeof body.project_id !== "string" || typeof body.name !== "string") return response({ error: "project_id and name are required" }, 400);
+      if (typeof body.project_id !== "string" || !projectCredentialName(body.name)) return response({ error: "project_id and a valid credential name are required" }, 400);
       if (!store.getProject(body.project_id)) return response({ error: "project was not found" }, 404);
       const requestRecord = store.createSecretRequest({ projectId: body.project_id, name: body.name, vaultRef: `vault://secret/${randomUUID()}`, metadata: { purpose: body.purpose, scope: body.scope } });
-      events.publish("secret.requested", requestRecord);
-      return response({ request_id: requestRecord.id, state: requestRecord.status, request: requestRecord }, 201);
+      const { vaultRef: _vaultRef, ...visible } = requestRecord;
+      events.publish("secret.requested", visible);
+      return response({ request_id: requestRecord.id, state: requestRecord.status, request: visible }, 201);
     }
     const secretValueMatch = url.pathname.match(/^\/api\/v1\/secrets\/requests\/([^/]+)\/value$/);
     if (secretValueMatch && request.method === "POST") {
@@ -304,6 +347,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       vault.put(requestRecord.vaultRef, body.value);
       const available = store.markSecretAvailable(requestRecord.id);
       events.publish("secret.available", { id: requestRecord.id, projectId: requestRecord.projectId, name: requestRecord.name, status: available?.status ?? "available" });
+      for (const runId of store.resumeResourceRuns(requestRecord.id)) dispatchOperatorRun(runId);
       return response({ request_id: requestRecord.id, state: "available" }, 200);
     }
     // The existing web client uses these read-only projections while it migrates to v1.
@@ -312,9 +356,9 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       return response([...store.legacyTalk(), ...store.listTalkMessages()].slice(-Math.max(1, limit)));
     }
     if (url.pathname === "/api/web/logs" && request.method === "GET") {
-      const limit = Number(url.searchParams.get("limit") ?? 100);
-      const records = [...store.legacyEvents(), ...store.eventsAfter(0)].map((event) => ({ id: event.id, kind: event.type, at: event.createdAt, data: event.data }));
-      return response(records.slice(-Math.max(1, limit)));
+      const requested = Number(url.searchParams.get("limit") ?? 100);
+      const limit = Number.isSafeInteger(requested) ? Math.max(1, Math.min(1000, requested)) : 100;
+      return response(webLogs(store, limit));
     }
     if (url.pathname === "/api/web/graph" && request.method === "GET") {
       return response(graphProjection(store, url.searchParams.get("scope") ?? "factory", url.searchParams.get("workarea")));
@@ -324,18 +368,47 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     if (url.pathname === "/api/web/harnesses/configure" && request.method === "POST") {
       const body = await readJson(request);
-      if (typeof body.runtime !== "string" || typeof body.role !== "string" || typeof body.model !== "string" || typeof body.base_url !== "string") return response({ error: "runtime, role, model, and base_url are required" }, 400);
+      const definition = typeof body.runtime === "string" ? officialHarness(body.runtime) : undefined;
+      if (!definition || (body.role !== "foreman" && body.role !== "operator") || typeof body.model !== "string" || !body.model.trim()) {
+        return response({ error: "runtime, role, and model are required" }, 400);
+      }
       if (typeof body.api_key === "string" && body.api_key.length > 0) return response({ error: "密钥必须通过项目资源请求写入保险箱" }, 400);
-      const profile = store.saveHarnessProfile({ runtime: body.runtime, role: body.role, baseUrl: body.base_url, model: body.model, mode: typeof body.mode === "string" ? body.mode : "session", image: typeof body.image === "string" ? body.image : undefined, network: typeof body.network === "string" ? body.network : undefined, verification: { state: "pending", checkedAt: new Date().toISOString() } });
+      const baseUrl = typeof body.base_url === "string" ? body.base_url.trim() : "";
+      try { harnessEndpointEnv(definition, baseUrl); }
+      catch { return response({ error: "invalid Harness base URL" }, 400); }
+      const image = typeof body.image === "string" ? body.image.trim() : "";
+      if (image && !/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(image)) return response({ error: "Harness image must be pinned by digest" }, 400);
+      const profile = store.saveHarnessProfile({
+        runtime: definition.id, role: body.role, baseUrl, model: body.model.trim(), mode: typeof body.mode === "string" ? body.mode : "session",
+        image: image || undefined, network: image ? body.network === "egress" ? "egress" : "none" : undefined,
+        verification: { state: "pending", checkedAt: new Date().toISOString() },
+      });
+      verificationJobs.get(profile.id)?.abort();
+      verificationJobs.delete(profile.id);
       events.publish("harness.profile.saved", { id: profile.id, runtime: profile.runtime, role: profile.role });
-      return response({ profile: publicProfile(profile), foreman: { configured: profile.role === "foreman", runtime: profile.runtime, model: profile.model, mode: profile.mode, profile: publicProfile(profile) } }, 200);
+      const foremanProfile = profile.role === "foreman" ? profile : store.listHarnessProfiles().find((item) => item.role === "foreman");
+      return response({ profile: publicProfile(profile), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, profile: publicProfile(foremanProfile) } }, 200);
     }
     if (url.pathname === "/api/web/harnesses/verify" && request.method === "POST") {
       const body = await readJson(request);
       if (typeof body.profile_id !== "string") return response({ error: "profile_id is required" }, 400);
-      const profile = store.markHarnessVerification(body.profile_id, "requested", "官方 Harness 连通性验证已排队");
+      const existing = store.listHarnessProfiles().find((item) => item.id === body.profile_id);
+      if (!existing) return response({ error: "profile was not found" }, 404);
+      if (verificationJobs.has(existing.id)) return response({ profile: publicProfile(existing) }, 202);
+      const profile = store.markHarnessVerification(existing.id, "requested", "正在验证官方 Harness 连通性");
       if (!profile) return response({ error: "profile was not found" }, 404);
-      events.publish("harness.profile.verification.requested", { id: profile.id, runtime: profile.runtime });
+      const controller = new AbortController();
+      verificationJobs.set(profile.id, controller);
+      events.publish("harness.profile.verification.requested", { id: profile.id, runtime: profile.runtime, role: profile.role });
+      const transportOptions = profile.role === "operator" ? options.operator : options.foreman;
+      void verifyHarness(profile, { ...transportOptions, ensureRuntime, signal: controller.signal, timeoutMs: options.harnessVerificationTimeoutMs }).then(({ state, reason }) => {
+        if (verificationJobs.get(profile.id) !== controller) return;
+        verificationJobs.delete(profile.id);
+        const current = store.listHarnessProfiles().find((item) => item.id === profile.id);
+        if (current?.updatedAt !== profile.updatedAt || current.verification?.state !== "requested") return;
+        const completed = store.markHarnessVerification(profile.id, state, reason);
+        if (completed) events.publish("harness.profile.verification.completed", { id: profile.id, runtime: profile.runtime, role: profile.role, verification: publicProfile(completed)?.verification });
+      }).catch(() => {});
       return response({ profile: publicProfile(profile) }, 202);
     }
     if (url.pathname === "/api/web/assets" && request.method === "GET") {
@@ -362,8 +435,9 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       const factoryGraph = graphProjection(store, "factory", null);
       const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: new Date().toISOString() },
+        eventCursor: store.latestEventSequence(), pendingForemanReplies: foreman.pendingReplies(),
         graph: { factory: factoryGraph },
-        assets: webAssets(store), logs: store.legacyEvents(), talk: [...store.legacyTalk(), ...store.listTalkMessages()],
+        assets: webAssets(store), logs: webLogs(store, 100), talk: [...store.legacyTalk(), ...store.listTalkMessages()].slice(-80),
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });
@@ -372,7 +446,13 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
     return response({ error: "not found" }, 404);
   };
-  return { store, events, vault, foreman, operator, fetch, stop: () => { foreman.stop(); operator.stop(); store.close(); } };
+  return { store, events, vault, foreman, operator, fetch, stop: () => {
+    for (const job of verificationJobs.values()) job.abort();
+    verificationJobs.clear();
+    foreman.stop();
+    operator.stop();
+    store.close();
+  } };
 }
 
 function staticResponse(pathname: string): Response {
@@ -388,14 +468,11 @@ function staticResponse(pathname: string): Response {
 }
 
 function officialHarnesses() {
-  return [
-    { id: "claude-code", name: "Claude Code", kind: "agent-cli", source: "official", roles: ["operator", "foreman"], available: true, capabilities: { acp: false, resume: true, stream: true } },
-    { id: "codex", name: "Codex", kind: "agent-cli", source: "official", roles: ["operator", "foreman"], available: true, capabilities: { acp: false, resume: true, stream: true } },
-    { id: "deepseek-harness", name: "DeepSeek Harness", kind: "agent-cli", source: "official", roles: ["operator", "foreman"], available: false, capabilities: { acp: true, resume: true, stream: true } },
-    { id: "zcode", name: "ZCode", kind: "agent-cli", source: "official", roles: ["operator", "foreman"], available: false, capabilities: { acp: true, resume: true, stream: true } },
-    { id: "kimi-code", name: "Kimi Code", kind: "agent-cli", source: "official", roles: ["operator", "foreman"], available: false, capabilities: { acp: true, resume: true, stream: true } },
-    { id: "pi", name: "Pi", kind: "agent-cli", source: "official", roles: ["operator", "foreman"], available: false, capabilities: { acp: true, resume: true, stream: true } },
-  ];
+  return harnessDefinitions().map((definition) => ({
+    id: definition.id, name: definition.displayName, kind: "agent-cli", source: "official",
+    roles: ["operator", "foreman"], available: Boolean(Bun.which(definition.executable)),
+    capabilities: { acp: definition.transportPreference === "acp", resume: definition.supportsResume, stream: true },
+  }));
 }
 
 function publicProfile(profile: any) {
@@ -480,69 +557,11 @@ function webAssets(store: SqliteStore) {
   return [...legacy, ...business];
 }
 
-function exportBusinessSystem(store: SqliteStore, id: string) {
-  const system = store.listBusinessSystems().find((item) => item.id === id);
-  if (!system) return undefined;
-  const projects = store.listProjects().filter((project) => project.businessSystemId === id).map((project) => ({
-    id: project.id,
-    name: project.name,
-    metadata: portableValue(project.metadata),
-    sources: project.sources.map((source) => ({
-      kind: source.kind,
-      ref: source.kind === "repo_url" ? source.repoUrl : source.kind === "uploaded_file" ? source.fileRef : `intake://${project.id}`,
-      metadata: portableValue(source.metadata),
-    })),
-    secretRequests: project.secretRequests.map((secret) => ({ id: secret.id, name: secret.name, status: secret.status, metadata: portableValue(secret.metadata) })),
-  }));
-  const artifacts = store.listBusinessSystemArtifacts(id);
-  return {
-    schema: "mao.business-system/1",
-    exportedAt: new Date().toISOString(),
-    system: { ...system, metadata: portableValue(system.metadata) },
-    graph: system.metadata.graph ?? graphProjection(store, "workarea", id),
-    units: store.listBusinessUnits(id).map(publicUnit),
-    projects,
-    records: artifacts.map((record) => ({ ...publicArtifact(record), metadata: portableValue(record.metadata) })),
-    conversions: store.listBusinessConversions(id).map((conversion) => ({ ...conversion, metadata: portableValue(conversion.metadata) })),
-    runs: store.listBusinessRuns(id).map((run) => ({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) })),
-  };
-}
-
 function portableValue(value: unknown, key = ""): any {
   if (/(secret|token|password|api[_-]?key|authorization|cookie|local[_-]?folder|host[_-]?path)/i.test(key)) return "[REDACTED]";
   if (Array.isArray(value)) return value.map((item) => portableValue(item));
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, portableValue(item, name)]));
   return value;
-}
-
-function importBusinessSystem(store: SqliteStore, document: Record<string, any>): BusinessSystem {
-  if (document.schema !== "mao.business-system/1" || !document.system || typeof document.system.name !== "string") throw new Error("business system document schema or name is invalid");
-  const importedGraph = document.graph && typeof document.graph === "object" ? document.graph : undefined;
-  if (importedGraph) {
-    const graphError = validateDag(importedGraph);
-    if (graphError) throw new Error(`business system graph is invalid: ${graphError}`);
-  }
-  const system = store.createBusinessSystem({ name: document.system.name, description: typeof document.system.description === "string" ? document.system.description : undefined, metadata: document.system.metadata && typeof document.system.metadata === "object" ? document.system.metadata : {} });
-  const projectIds = new Map<string, string>();
-  for (const sourceProject of Array.isArray(document.projects) ? document.projects : []) {
-    if (!sourceProject || typeof sourceProject.name !== "string") continue;
-    const sources = Array.isArray(sourceProject.sources) ? sourceProject.sources : [];
-    const intake: Record<string, any> = { business_system_id: system.id, name: sourceProject.name, metadata: sourceProject.metadata && typeof sourceProject.metadata === "object" ? sourceProject.metadata : {}, portable_sources: sources.filter((source: any) => source && typeof source.kind === "string").map((source: any) => ({ kind: source.kind, ref: typeof source.ref === "string" ? source.ref : undefined })) };
-    const project = store.createIntake(intake);
-    if (typeof sourceProject.id === "string") projectIds.set(sourceProject.id, project.id);
-  }
-  for (const record of Array.isArray(document.records) ? document.records : []) {
-    if (!record || typeof record.kind !== "string" || typeof record.ref !== "string" || typeof record.summary !== "string") continue;
-    const projectId = projectIds.get(String(record.projectId ?? record.project_id));
-    if (!projectId) continue;
-    store.addArtifact({ projectId, recordType: record.recordType === "artifact" ? "artifact" : "material", sourceId: typeof record.sourceId === "string" ? record.sourceId : undefined, kind: record.kind, ref: record.ref, title: record.title, description: record.description, summary: record.summary, purpose: record.purpose, status: record.status, producer: record.producer, files: Array.isArray(record.files) ? record.files : undefined, inputs: Array.isArray(record.inputs) ? record.inputs : undefined, outputs: Array.isArray(record.outputs) ? record.outputs : undefined, lineage: Array.isArray(record.lineage) ? record.lineage : undefined, metadata: record.metadata && typeof record.metadata === "object" ? record.metadata : {} });
-  }
-  if (importedGraph) store.updateBusinessSystemMetadata(system.id, { graph: importedGraph, graph_updated_by: "import" });
-  for (const conversion of Array.isArray(document.conversions) ? document.conversions : []) {
-    if (typeof conversion.kind !== "string" || typeof conversion.summary !== "string") continue;
-    store.createBusinessConversion({ businessSystemId: system.id, kind: conversion.kind, summary: conversion.summary, status: conversion.status === "running" || conversion.status === "completed" || conversion.status === "failed" ? conversion.status : "planned", inputs: Array.isArray(conversion.inputs) ? conversion.inputs : [], outputs: Array.isArray(conversion.outputs) ? conversion.outputs : [], producer: conversion.producer, metadata: conversion.metadata && typeof conversion.metadata === "object" ? conversion.metadata : {} });
-  }
-  return system;
 }
 
 function graphProjection(store: SqliteStore, scope: string, workarea: string | null) {
@@ -615,6 +634,32 @@ async function readJson(request: Request): Promise<Record<string, any>> {
   try { const value = await request.json(); return value && typeof value === "object" ? value as Record<string, any> : {}; } catch { return {}; }
 }
 
+async function saveProjectUploads(root: string, warehouse: Warehouse, store: SqliteStore, files: File[]) {
+  const temp = join(root, "tmp");
+  mkdirSync(temp, { recursive: true });
+  const stage = mkdtempSync(join(temp, "intake-"));
+  try {
+    const registered: Array<{ name: string; digest: string; ref: string }> = [];
+    for (const [index, file] of files.entries()) {
+      const path = join(stage, String(index));
+      await Bun.write(path, file);
+      const digest = await warehouse.putFile(path);
+      store.db.query("INSERT OR IGNORE INTO intake_uploads(digest,size) VALUES (?,?)").run(digest, file.size);
+      registered.push({ name: file.name, digest, ref: `cas://${digest}` });
+    }
+    return registered;
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+function webLogs(store: SqliteStore, limit: number) {
+  return [...store.legacyEvents(limit), ...store.recentEvents(limit)]
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(-limit)
+    .map((event) => ({ id: event.id, kind: event.type, at: event.createdAt, data: event.data }));
+}
+
 function eventsResponse(request: Request, events: EventBus, cursor?: string): Response {
   const last = request.headers.get("last-event-id") ?? cursor;
   const cursorSeq = Number.isFinite(Number(last)) ? Number(last) : 0;
@@ -648,7 +693,14 @@ function eventsResponse(request: Request, events: EventBus, cursor?: string): Re
 
 export function startServer(options: { port?: number; hostname?: string; dbPath?: string; legacyPath?: string } = {}) {
   const app = createApp(options);
-  const server = Bun.serve({ port: options.port ?? Number(process.env.PORT ?? 3000), hostname: options.hostname ?? "127.0.0.1", fetch: app.fetch });
+  const server = Bun.serve({
+    port: options.port ?? Number(process.env.PORT ?? 3000),
+    hostname: options.hostname ?? "127.0.0.1",
+    fetch(request, server) {
+      if (request.method === "GET" && new URL(request.url).pathname === "/api/v1/events") server.timeout(request, 0);
+      return app.fetch(request);
+    },
+  });
   return { ...app, server, stop: () => { server.stop(); app.stop(); } };
 }
 

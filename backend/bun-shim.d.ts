@@ -43,6 +43,7 @@ declare module "node:fs" {
   export const statSync: (...args: any[]) => any;
   export const lstatSync: (...args: any[]) => any;
   export const cpSync: (...args: any[]) => void;
+  export const copyFileSync: (source: string, target: string, mode?: number) => void;
   export const renameSync: (...args: any[]) => void;
   export const unlinkSync: (...args: any[]) => void;
   export const rmSync: (...args: any[]) => void;

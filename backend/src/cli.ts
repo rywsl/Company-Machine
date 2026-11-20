@@ -1,7 +1,8 @@
+import { basename } from "node:path";
 import { createApp, startServer } from "./server";
 import { checkRegistry } from "../mrl/factory";
-
-export class CliUsageError extends Error {}
+import { CliUsageError, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
+export { CliUsageError } from "./station-cli";
 
 const redactText = (text: string) => text.replace(/(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
 
@@ -15,11 +16,12 @@ function values(args: string[], name: string): string[] {
 }
 
 export function usage(scope?: string): string {
-  if (scope === "project") return `factory project commands\n  intake --name NAME [--repo URL | --folder PATH | --file-ref REF]`;
+  if (scope === "bean" || scope === "job" || scope === "line" || scope === "source" || scope === "receipt" || scope === "approval" || scope === "schedule" || scope === "backup") return stationUsage(scope);
+  if (scope === "project") return `factory project commands\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH`;
   if (scope === "business") return `factory business commands\n  units ID\n  run ID [--input REF]\n  runs ID\n  export ID\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
-  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
+  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
 
 function requireValue(args: string[], name: string): string {
@@ -39,6 +41,9 @@ async function requestJson(app: ReturnType<typeof createApp>, path: string, init
 
 async function runCommand(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
+  if (["bean", "job", "line", "source", "receipt", "approval", "schedule", "backup", "--root", "--registry", "--provider", "--local-commands", "--json"].includes(command)) {
+    return runStationCli(argv);
+  }
   if (!command || command === "help" || command === "--help") {
     console.log(usage());
     return 0;
@@ -73,12 +78,34 @@ async function runCommand(argv: string[]): Promise<number> {
       throw new CliUsageError(`unknown runtime command: ${args[0] ?? "(missing)"}`);
     }
     if (command === "project") {
+      if (args[0] === "fetch") {
+        const [, projectId, digest] = args;
+        if (!projectId || !/^sha256:[0-9a-f]{64}$/.test(digest ?? "")) throw new CliUsageError("project id and sha256 digest are required");
+        const output = requireValue(args, "--output");
+        const result = await app.fetch(new Request(`http://localhost/api/v1/projects/${encodeURIComponent(projectId)}/files/${digest}`));
+        if (!result.ok) throw new Error("project upload was not found");
+        await Bun.write(output, result);
+        console.log(output);
+        return 0;
+      }
       if (args[0] !== "intake") throw new CliUsageError(`unknown project command: ${args[0] ?? "(missing)"}`);
       const repo = value(args, "--repo");
       const folder = value(args, "--folder");
       const fileRef = value(args, "--file-ref");
-      if (!repo && !folder && !fileRef) throw new CliUsageError("one source is required");
-      const body = await requestJson(app, "/api/v1/projects/intake", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: value(args, "--name") ?? "新项目", repo_url: repo, local_folder: folder, uploaded_file_refs: fileRef ? [fileRef] : [] }) });
+      const files = values(args, "--file");
+      if (!repo && !folder && !fileRef && !files.length) throw new CliUsageError("one source is required");
+      const name = value(args, "--name") ?? "新项目";
+      let request: RequestInit = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, repo_url: repo, local_folder: folder, uploaded_file_refs: fileRef ? [fileRef] : [] }) };
+      if (files.length) {
+        const form = new FormData();
+        form.set("name", name);
+        if (repo) form.set("repo_url", repo);
+        if (folder) form.set("local_folder", folder);
+        if (fileRef) form.append("uploaded_file_refs", fileRef);
+        for (const file of files) form.append("files", Bun.file(file), basename(file));
+        request = { method: "POST", body: form };
+      }
+      const body = await requestJson(app, "/api/v1/projects/intake", request);
       console.log(JSON.stringify(body, null, 2));
       return 0;
     }
@@ -177,7 +204,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
   try {
     return await runCommand(argv);
   } catch (error) {
-    const code = error instanceof CliUsageError ? 2 : 1;
+    const code = error instanceof CliUsageError ? 2 : stationErrorExit(error);
     console.error(error instanceof Error ? error.message : String(error));
     if (error instanceof CliUsageError) console.error(usage(argv[0]));
     return code;

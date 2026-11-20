@@ -5,6 +5,16 @@
 > 依据：README D7、第 4.6 节、第 5–6 节。架构文档 6.2 的命令名已经定了，**禁止改名**。
 > 新命令 `factoryctl ask`（`delegation.md` 3.4）与 `factoryctl handoff`（`inbox.md` 3.6），M11。
 
+## Bun 文件邮箱
+
+`backend/src/legacy/factoryctl.ts` 提供 Bun 客户端和宿主 `CtlServer`。 `check` 和 `approval request` 原子写入请求文件后等待对应响应。预检结果通过响应的 `verdict` 传递，审批拒绝或超时以退出码 1 返回。 `budget --json` 优先读取宿主发布的 `budget.json`，否则显示 `job.json` 的上限，并将实际支出和余额显示为空。
+
+`CtlServer` 只扫描协议命名的请求文件，支持历史 8 位和当前 32 位十六进制请求 ID。读取前校验目录和文件类型，单个邮箱文件上限为 1 MiB。Linux 宿主按已打开的目录定位请求和响应，响应目录必须由宿主控制。成功持久化响应后调用可选的 `afterResponse`。 `stop` 可等待，现有轮询和回调结束后返回。
+
+`factoryctl proposal --summary TEXT --cost-usd N --time-s N [--plan PATH]` 校验非负费用和预计时间，再原子写入 `proposal.json`。 `--plan` 读取可选的 JSON 对象并内嵌到方案里。宿主读取方案时拒绝链接和特殊文件。
+
+对应专项验收见 `backend/tests/legacy-mailbox.test.ts`。下列章节保留历史协议和接口映射。
+
 ---
 
 ## 1. 目的与范围
@@ -73,7 +83,10 @@ factoryctl budget [--json]
 factoryctl log <message>
 factoryctl fail <reason>
 factoryctl harvest
+factoryctl receipt --target TARGET [--locator KEY=VALUE]... [--item BEAN=LOCATOR[@DIGEST]]... [--note TEXT]
 ```
+
+`receipt` 由 `backend/src/legacy/factoryctl.ts` 写入 `FACTORY_CTL/receipt.json`，使用同目录临时文件原子发布。运行器按 `connectors.md` 第 4.2 节验证该文件。参数错误返回 2。
 
 `tests/fakes/fake_agent.py` 的 `ctl` 动作会执行 `sys.executable $FACTORYCTL <args>`，并把退出码对 `allow_exit`（默认 `[0]`）检查。所以：
 
@@ -263,6 +276,8 @@ Runner 在调用 `factoryctl harvest` 之前写好 `harvest.json`：
 3. 写 `meta.json`（若有 `--meta`）和 `submissions/<port>.json`（4.4）。
 4. 退出码 0。stdout 在 `--json` 时是 submissions 文件的内容，否则一行 `submitted <port> <basename>`。
 
+Bun 客户端使用同目录临时文件原子发布副本，`--meta KEY=VALUE` 可重复传入。缺少文件返回 1，无效端口或参数返回 2。
+
 同一端口再提交：覆盖出口文件和 `submissions/<port>.json`。harvest 之后看到这个文件就会跳过该端口。
 
 `log <message>`：追加一行到 `log.jsonl`，退出码 0。message 原样保存，不解释为格式串。
@@ -303,16 +318,18 @@ Runner 在调用 `factoryctl harvest` 之前写好 `harvest.json`：
 
 ### 5.6 `harvest`
 
+Bun 入口在 `backend/src/legacy/factoryctl.ts`。Runner 停止沙箱写入后，将编译的配方和本次执行目录传入 `harvest`。独立 `factoryctl harvest` 从邮箱读取 `harvest.json`。两条路径使用相同的匹配、复制和结果格式。
+
 1. 读 `harvest.json`。缺失或不是对象：退出码 2。
 2. 对 `outputs` 的每个端口（键名升序）：
    - `submissions/<port>.json` 已存在：跳过，不写入该端口的结果（Runner 用提交记录）。
-   - 展开 `harvest`。相对路径相对 `FACTORY_WORKSPACE`（缺省 `/workspace`）。模式里的 `*` 只匹配一个路径段，不跨越 `/`。不用 `**`。实现用 `pathlib.Path.glob`，模式是相对 workspace 的 POSIX 相对路径；绝对虚拟路径先经 5.1 映射。
+   - 展开 `harvest`。相对路径相对 `FACTORY_WORKSPACE`（缺省 `/workspace`）。绝对模式必须从 5.1 中的挂载前缀起始。Bun 按 POSIX 路径段匹配，拒绝 `**`、上级目录、符号链接和重解析路径。工作区匹配在报告中使用相对路径，其他挂载使用虚拟绝对路径。
    - 匹配数 0 且 `optional`：该端口 `ok: true`，`files: []`。
    - 匹配数 0 且非 optional：`ok: false`，`code: HARVEST_EMPTY`。
    - 非 list 且匹配数大于 1：`ok: false`，`code: HARVEST_AMBIGUOUS`。不复制。
    - 非 list 且匹配数等于 1：复制到 `/factory/out/<port>/<place_as>`。
    - list：按匹配路径升序，第 i 个复制到 `/factory/out/<port>/<i>/<place_as>`。
-   - 复制用 `shutil.copyfile`。IO 错误：该端口 `HARVEST_IO`，继续其他端口。
+   - Bun 用文件系统复制到同目录临时文件，再原子替换目标。出口路径的目录和文件拒绝符号链接。IO 错误记为该端口的 `HARVEST_IO`，其余端口继续收货。
 3. 原子写入 `harvest-result.json`。只要文件写出来了，退出码就是 0，即使顶层 `ok` 为 false。退出码 1 只留给写结果文件本身失败。
 
 夹具 `studio` 的配方是 `harvest: drafts/*.txt`，类型要求 `note.txt`。Runner 会把 `place_as` 写成 `note.txt`。一个匹配时，`drafts/a.txt` 变成 `/factory/out/note/note.txt`。
@@ -342,6 +359,8 @@ Runner 在调用 `factoryctl harvest` 之前写好 `harvest.json`：
 ---
 
 ## 7. 验收测试
+
+活动 Bun 测试 `backend/tests/legacy-harvest.test.ts` 验证虚拟绝对路径、显式提交优先、列表编号、异常结果、挂载边界和 CLI 退出码。`backend/tests/legacy-runner.test.ts` 验证 Runner 与收货的接线。
 
 文件：`tests/acceptance/m1/test_m1_05_factoryctl.py`。开头 `pytest.importorskip("mao.ctl")`。脚本路径是仓库里的 `src/mao/ctl/factoryctl.py`，用 `sys.executable` 运行。
 

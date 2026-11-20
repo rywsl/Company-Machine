@@ -1,7 +1,21 @@
-# operator：OperatorRuntime、transcript 与 Station Brief（mao.operator / mao.brief）
+# OperatorRuntime、transcript 与 Station Brief
 
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M1-07**。
-> 模块：`mao.operator`、`mao.brief`。依据：README D3、D10、第 4.3 节、第 4.8 节；factory-profile 第 4.2 节；`plan/risks.md` 的 S1、S2。
+> Bun 模块位于 `backend/src/legacy/operator.ts`。依据为 README D3、D10、第 4.3 节、第 4.8 节、factory-profile 第 4.2 节与 `plan/risks.md` 的 S1、S2。
+
+## Bun 接口
+
+- `renderBrief(snapshot, stationRef, { inputs, params, attempt, feedback, budgetUsd })` 输出 `{ task, factoryContract, markdown }`。配方通过 MRL 引用物料的 `facts`、`meta` 和参数。工厂契约列出物料只读目录、交付类型、保证、验收、预算和 `factoryctl` 提交指令。失败重试的反馈可加入 Markdown。调用参数要求正整数次数和有限预算。
+- `buildInvocation(snapshot, stationRef, brief, { inputs, params })` 输出 `{ argv, env, timeoutS, transcript }`。script 渲染配方的 `run`。agent-cli 渲染 runtime 的 argv 和 env，检查所选模型、轮数和整秒超时。声明为 float 的预算插值保留整数金额的小数点，例如 `1.0`。转录格式接受 `stream-json` 和 `codex-jsonl`，也可省略。
+- `expandControlVars(invocation, values)` 替换 `FACTORY_JOB_ID`、`FACTORY_ATTEMPT`、`MODEL_PROXY`、`EGRESS_PROXY` 的占位符。生成调用时拒绝未知占位符，解析已声明但缺值的占位符时抛出 `EGRESS_PROXY_UNAVAILABLE`。
+- `parseTranscript(path, format)` 输出 `{ costUsd, turns?, isError, result?, events, malformed, sessionId?, inputTokens, hasResult }`。Claude 从最后一条 `result` 事件读取总成本、轮数、错误状态和结果，解析会话 ID 以及结果事件中有效的输入 token 计数。未知事件只计入 `events`，非 JSON 对象计入 `malformed`。
+- Codex 的 `turn.completed` 计为一轮，最后一条已完成的 `agent_message` 提供结果文本。有 `error`、`turn.failed` 或没有已完成的轮次时视为失败。此格式的成本与输入 token 在摘要中均为 `0`。缺文件和不支持的格式分别抛出 `TRANSCRIPT_MISSING` 和 `TRANSCRIPT_FORMAT`。
+
+对应验收位于 `backend/tests/legacy-operator.test.ts`，使用 `tests/fixtures/registry-m1` 的 `upper@1`、`writer@1` 以及 `tests/fixtures/transcripts/` 下的 Claude、Codex 成功和失败样本。Runner 当前通过此模块生成工位调用，转录结算和审批的运行时接线由 Runner 单独实现。
+
+## Python 历史规范
+
+下列章节保存 M1 原始契约和测试映射。Python 实现和测试位于 `removed/python/`。Bun 的接口和已迁移行为见上节。
 
 ---
 

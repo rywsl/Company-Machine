@@ -1,56 +1,112 @@
-/**
- * Bun-native verification entry point for the TypeScript control plane.
- *
- * The legacy Python verifier remains available for the historical execution
- * plane. This command exercises the migrated backend without starting a shell
- * or calling a model provider.
- */
-
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-type Step = { label: string; argv: string[] };
+import { runMrlConformance } from "./mrl-conformance";
+import { acceptanceProblems, activePolicyProblems, inspectSpecifications, parseAcceptanceReport } from "./spec-consistency";
 
-// URL.pathname leaves drive letters prefixed with `/` and keeps percent
-// escapes on Windows. `fileURLToPath` handles both Windows and POSIX paths,
-// including repositories whose directory names contain spaces.
 const root = fileURLToPath(new URL("..", import.meta.url));
+const decoder = new TextDecoder();
 
-function run(step: Step): number {
-  const result = Bun.spawnSync(step.argv, { cwd: root, stdout: "pipe", stderr: "pipe" });
-  const stdout = new TextDecoder().decode(result.stdout);
-  const stderr = new TextDecoder().decode(result.stderr);
-  if (stdout) process.stdout.write(stdout);
-  if (stderr) process.stderr.write(stderr);
-  if (result.exitCode !== 0) console.error(`✖ ${step.label} exit=${result.exitCode}`);
-  else console.error(`✔ ${step.label}`);
-  return result.exitCode;
+function run(label: string, argv: string[], quiet = false): void {
+  const result = Bun.spawnSync(argv, { cwd: root, stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode !== 0 || !quiet) {
+    process.stdout.write(decoder.decode(result.stdout));
+    process.stderr.write(decoder.decode(result.stderr));
+  }
+  if (result.exitCode !== 0) throw new Error(`${label} exit=${result.exitCode}`);
 }
 
-const suites: Record<string, Step[]> = {
-  acceptance: [
-    { label: "Bun business acceptance", argv: ["bun", "test", "backend/tests"] },
-    { label: "Bun runtime acceptance", argv: ["bun", "test", "backend/runtime"] },
-    { label: "Bun MRL acceptance", argv: ["bun", "test", "backend/mrl"] },
-    { label: "Bun Harness fixture acceptance", argv: ["bun", "test", "tests/fakes"] },
-  ],
-  verify: [
-    { label: "Bun backend acceptance", argv: ["bun", "test", "backend"] },
-    { label: "Bun Harness fixture acceptance", argv: ["bun", "test", "tests/fakes"] },
-    { label: "Backend strict TypeScript check", argv: ["pnpm", "--filter", "@mao/web", "exec", "tsc", "--noEmit", "-p", "../backend/tsconfig.json", "--pretty", "false"] },
-    { label: "Web TypeScript check", argv: ["pnpm", "check:web"] },
-  ],
-};
-
-function usage(): never {
-  console.log("bun run tools/harness.ts <acceptance|verify>");
-  process.exit(2);
+function reportProblems(problems: string[]): void {
+  if (problems.length) throw new Error(problems.join("\n"));
 }
 
-const command = Bun.argv[2] ?? "verify";
-const steps = suites[command];
-if (!steps) usage();
+function acceptance(spec: ReturnType<typeof inspectSpecifications>, json: boolean) {
+  const directory = mkdtempSync(join(tmpdir(), "mao-acceptance-"));
+  try {
+    const report = join(directory, "bun.junit.xml");
+    run("Bun 验收", [process.execPath, "test", "--reporter=junit", `--reporter-outfile=${report}`, "backend", "tests/fakes"], json);
+    const cases = parseAcceptanceReport(root, readFileSync(report, "utf8"));
+    reportProblems(acceptanceProblems(spec, cases));
+    if (!json) console.error(`✔ Bun 验收全部通过（${cases.length} 项、${spec.mappedFiles.size} 个文件）`);
+    return cases.length;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 
-for (const step of steps) {
-  const code = run(step);
-  if (code !== 0) process.exit(code);
+function verifyMrl(spec: ReturnType<typeof inspectSpecifications>) {
+  const mrl = runMrlConformance(root, spec.kernelCodes);
+  const unwitnessedRules = spec.diagnosticRules.filter((rule) => !mrl.coveredRules[rule.file + ":" + rule.line]);
+  return { mrl, unwitnessedRules };
+}
+
+function verifyParity(spec: ReturnType<typeof inspectSpecifications>, caseCount: number, json: boolean): number {
+  const unmatched = [...spec.obligations].filter((item) => !spec.evidence.has(item)).sort();
+  const { mrl, unwitnessedRules } = verifyMrl(spec);
+  const checks = {
+    archivedAcceptance: {
+      files: spec.archivedFiles,
+      obligations: spec.obligations.size,
+      mapped: spec.evidence.size,
+      unmatched,
+      specMappingProblems: spec.historical,
+    },
+    mrl,
+    kernelRulesWithoutExecutionEvidence: unwitnessedRules,
+    policyMigrationRemaining: [
+      "时钟、随机数和工作目录边界",
+      "模块私有成员、导入对象修改和日志边界",
+      "示例 Registry 字面量、异常处理、文件编码与数据库迁移约束",
+    ],
+    activeAcceptance: { files: spec.mappedFiles.size, passed: caseCount },
+  };
+  if (json) {
+    console.log(JSON.stringify(checks, null, 2));
+  } else {
+    const total = Object.values(mrl.counts).reduce((sum, count) => sum + count, 0);
+    const passed = Object.values(mrl.passed).reduce((sum, count) => sum + count, 0);
+    console.error(`历史验收 ${spec.evidence.size}/${spec.obligations.size} 项有通过的 Bun 等价证据，规范映射问题 ${spec.historical.length} 项`);
+    console.error(`MRL ${passed}/${total} 项通过，${mrl.unverifiedCodes.length} 个诊断码缺少通过的覆盖用例，${checks.kernelRulesWithoutExecutionEvidence.length} 条内核规则尚无触发证据`);
+    console.error(`代码策略尚需迁移 ${checks.policyMigrationRemaining.join("、")}。逐条差异见 parity --json`);
+  }
+  return unmatched.length || spec.historical.length || mrl.failures.length || mrl.unverifiedCodes.length
+    || checks.kernelRulesWithoutExecutionEvidence.length || checks.policyMigrationRemaining.length ? 1 : 0;
+}
+
+function main(): number {
+  const [command = "verify", ...args] = Bun.argv.slice(2);
+  const json = args.length === 1 && args[0] === "--json";
+  if (!["acceptance", "verify", "parity"].includes(command) || (args.length > 0 && (command !== "parity" || !json))) {
+    console.error("bun run tools/harness.ts <acceptance|verify|parity [--json]>");
+    return 2;
+  }
+  const spec = inspectSpecifications(root);
+  reportProblems([...spec.problems, ...activePolicyProblems(root)]);
+  if (!json) console.error(`✔ 活动规范一致性（${spec.componentSpecs} 个组件、${spec.mappedFiles.size} 个验收文件）`);
+  const caseCount = acceptance(spec, json);
+  if (command === "parity") return verifyParity(spec, caseCount, json);
+  if (command === "verify") {
+    const { mrl, unwitnessedRules } = verifyMrl(spec);
+    reportProblems([
+      ...mrl.failures.map(({ name, reason }) => name + " " + reason),
+      ...mrl.unverifiedCodes.map((code) => "诊断码缺少通过的用例 " + code),
+      ...unwitnessedRules.map(({ file, line }) => `内核诊断规则缺少触发证据 ${file}:${line}`),
+    ]);
+    const count = Object.values(mrl.passed).reduce((sum, value) => sum + value, 0);
+    console.error(`✔ MRL 一致性（${count} 项，${spec.diagnosticRules.length} 条内核诊断规则有触发证据）`);
+    run("后端 TypeScript", ["pnpm", "--filter", "@mao/web", "exec", "tsc", "--noEmit", "-p", "../backend/tsconfig.json", "--pretty", "false"]);
+    run("Web TypeScript", ["pnpm", "check:web"]);
+    console.error("✔ 后端与 Web TypeScript");
+    console.error(`历史验收已有 ${spec.evidence.size}/${spec.obligations.size} 项 Bun 等价映射。运行 parity 检查完整迁移`);
+  }
+  return 0;
+}
+
+try {
+  process.exitCode = main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
 }

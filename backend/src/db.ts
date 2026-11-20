@@ -1,7 +1,8 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { ManagedDatabase } from "./sqlite";
 import type {
   Artifact,
   BusinessSystem,
@@ -19,6 +20,7 @@ import type {
 } from "./models";
 
 const now = () => new Date().toISOString();
+const defaultFactoryDatabase = () => process.env.FACTORY_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db");
 const json = (value: unknown) => JSON.stringify(value ?? {});
 const parseJson = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "string" || value.length === 0) return {};
@@ -47,9 +49,10 @@ export interface IntakeInput {
   uploaded_file_refs?: string[];
   files?: Array<{ name?: string; ref?: string; digest?: string }>;
   local_folder?: string;
-  portable_sources?: Array<{ kind: ProjectSource["kind"]; ref?: string }>;
+  portable_sources?: Array<{ kind: ProjectSource["kind"]; ref?: string; metadata?: Record<string, unknown> }>;
+  skip_default_units?: boolean;
   metadata?: Record<string, unknown>;
-  secret_requests?: Array<{ name: string; vault_ref: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }>;
+  secret_requests?: Array<{ name: string; metadata?: Record<string, unknown> }>;
 }
 
 export class SqliteStore {
@@ -57,15 +60,15 @@ export class SqliteStore {
   readonly legacy?: Database;
   private readonly bridgeLegacy: boolean;
 
-  constructor(dbPath = process.env.BUSINESS_DB_PATH ?? process.env.FACTORY_DB_PATH ?? ".factory/factory.db", legacyPath = process.env.FACTORY_DB_PATH ?? ".factory/factory.db") {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath, { create: true });
+  constructor(dbPath = process.env.BUSINESS_DB_PATH ?? defaultFactoryDatabase(), legacyPath = defaultFactoryDatabase()) {
+    if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
+    this.db = new ManagedDatabase(dbPath, { create: true });
     this.db.exec("PRAGMA journal_mode = WAL");
     this.init();
     this.bridgeLegacy = dbPath === legacyPath && /factory\.db$/i.test(dbPath.replaceAll("\\", "/"));
     if (dbPath === legacyPath) return;
     try {
-      this.legacy = new Database(`file:${legacyPath}?mode=ro&immutable=1`, { readonly: true });
+      this.legacy = new ManagedDatabase(`file:${legacyPath}?mode=ro&immutable=1`, { readonly: true });
     } catch {
       // A missing legacy database is normal for a new installation.
     }
@@ -85,6 +88,7 @@ export class SqliteStore {
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL,
         repo_url TEXT, file_ref TEXT, local_folder TEXT, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS intake_uploads (digest TEXT PRIMARY KEY, size INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS artifacts (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, source_id TEXT, kind TEXT NOT NULL,
         ref TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
@@ -109,6 +113,13 @@ export class SqliteStore {
         id TEXT PRIMARY KEY, message_id TEXT NOT NULL, text TEXT NOT NULL,
         status TEXT NOT NULL, created_at TEXT NOT NULL, claimed_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS foreman_sessions (
+        profile_id TEXT PRIMARY KEY, session_id TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS unit_secret_requests (
+        unit_run_id TEXT NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY (unit_run_id, request_id)
+      );
+      CREATE INDEX IF NOT EXISTS unit_secret_by_request ON unit_secret_requests(request_id);
       CREATE TABLE IF NOT EXISTS business_units (
         id TEXT PRIMARY KEY, business_system_id TEXT NOT NULL, project_id TEXT,
         kind TEXT NOT NULL, name TEXT NOT NULL, harness_runtime TEXT, model TEXT,
@@ -120,6 +131,7 @@ export class SqliteStore {
         trigger TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS business_run_graphs (run_id TEXT PRIMARY KEY, edges TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS unit_runs (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL, unit_id TEXT NOT NULL,
         status TEXT NOT NULL, session_id TEXT, inputs TEXT NOT NULL DEFAULT '[]',
@@ -223,39 +235,38 @@ export class SqliteStore {
     return this.saveHarnessProfile({ ...current, verification: { state, reason, checkedAt: now() } });
   }
 
-  createIntake(input: IntakeInput): Project {
+  createIntake(input: IntakeInput, identity?: { projectId: string; sourceIds: readonly string[] }): Project {
     const timestamp = now();
-    const project: Project = { id: randomUUID(), businessSystemId: input.business_system_id,
+    const project: Project = { id: identity?.projectId ?? randomUUID(), businessSystemId: input.business_system_id,
       name: input.name ?? input.project_name ?? "Untitled project", metadata: input.metadata ?? {},
       createdAt: timestamp, updatedAt: timestamp, sources: [], secretRequests: [] };
     this.db.query("INSERT INTO projects (id,business_system_id,name,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?)")
       .run(project.id, project.businessSystemId ?? null, project.name, json(project.metadata), timestamp, timestamp);
-    const addSource = (kind: ProjectSource["kind"], fields: { repoUrl?: string; fileRef?: string; localFolder?: string }) => {
-      const source: ProjectSource = { id: randomUUID(), projectId: project.id, kind, ...fields, metadata: {}, createdAt: timestamp };
+    const addSource = (kind: ProjectSource["kind"], fields: { repoUrl?: string; fileRef?: string; localFolder?: string }, metadata: Record<string, unknown> = {}) => {
+      const source: ProjectSource = { id: identity?.sourceIds[project.sources.length] ?? randomUUID(), projectId: project.id, kind, ...fields, metadata, createdAt: timestamp };
       this.db.query("INSERT INTO project_sources (id,project_id,kind,repo_url,file_ref,local_folder,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)")
-        .run(source.id, source.projectId, source.kind, source.repoUrl ?? null, source.fileRef ?? null, source.localFolder ?? null, "{}", timestamp);
+        .run(source.id, source.projectId, source.kind, source.repoUrl ?? null, source.fileRef ?? null, source.localFolder ?? null, json(metadata), timestamp);
       project.sources.push(source);
     };
     if (input.repo_url) addSource("repo_url", { repoUrl: input.repo_url });
     for (const fileRef of input.uploaded_file_refs ?? []) addSource("uploaded_file", { fileRef });
     for (const file of input.files ?? []) {
       const fileRef = file.ref ?? file.name;
-      if (fileRef) addSource("uploaded_file", { fileRef });
+      if (fileRef) addSource("uploaded_file", { fileRef }, {
+        ...(file.name ? { name: file.name } : {}), ...(file.digest ? { digest: file.digest } : {}),
+      });
     }
     if (input.local_folder) addSource("local_folder", { localFolder: input.local_folder });
     for (const source of input.portable_sources ?? []) {
-      if (source.kind === "repo_url" && source.ref) addSource("repo_url", { repoUrl: source.ref });
-      else if (source.kind === "uploaded_file" && source.ref) addSource("uploaded_file", { fileRef: source.ref });
-      else if (source.kind === "local_folder") addSource("local_folder", {});
+      if (source.kind === "repo_url" && source.ref) addSource("repo_url", { repoUrl: source.ref }, source.metadata);
+      else if (source.kind === "uploaded_file" && source.ref) addSource("uploaded_file", { fileRef: source.ref }, source.metadata);
+      else if (source.kind === "local_folder") addSource("local_folder", {}, source.metadata);
     }
     for (const request of input.secret_requests ?? []) {
-      const secret: SecretRequest = { id: randomUUID(), projectId: project.id, name: request.name, vaultRef: request.vault_ref,
-        status: request.status ?? "requested", metadata: request.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
-      this.db.query("INSERT INTO secret_requests (id,project_id,name,vault_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
-        .run(secret.id, secret.projectId, secret.name, secret.vaultRef, secret.status, json(secret.metadata), timestamp, timestamp);
-      project.secretRequests.push(secret);
+      const secret = this.createSecretRequest({ projectId: project.id, name: request.name, vaultRef: `vault://secret/${randomUUID()}`, metadata: request.metadata });
+      if (!project.secretRequests.some(({ id }) => id === secret.id)) project.secretRequests.push(secret);
     }
-    if (project.businessSystemId) {
+    if (project.businessSystemId && !input.skip_default_units) {
       const operatorRuntime = typeof project.metadata.operator_runtime === "string" ? project.metadata.operator_runtime : "codex";
       const operatorModel = typeof project.metadata.operator_model === "string" ? project.metadata.operator_model : "default";
       this.db.query("INSERT OR IGNORE INTO business_units (id,business_system_id,project_id,kind,name,harness_runtime,model,machine_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -272,23 +283,33 @@ export class SqliteStore {
     return this.db.query("SELECT * FROM business_units WHERE business_system_id = ? ORDER BY kind, created_at, id").all(businessSystemId).map((row: any) => this.businessUnitFromRow(row));
   }
 
+  createBusinessUnit(input: Omit<BusinessUnit, "createdAt" | "updatedAt">): BusinessUnit {
+    const timestamp = now();
+    this.db.query("INSERT INTO business_units (id,business_system_id,project_id,kind,name,harness_runtime,model,machine_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(input.id, input.businessSystemId, input.projectId ?? null, input.kind, input.name, input.harnessRuntime ?? null,
+        input.model ?? null, input.machineRef ?? null, input.status, json(input.metadata), timestamp, timestamp);
+    return { ...input, createdAt: timestamp, updatedAt: timestamp };
+  }
+
   getBusinessUnit(id: string): BusinessUnit | undefined {
     const row = this.db.query("SELECT * FROM business_units WHERE id = ?").get(id) as any;
     return row ? this.businessUnitFromRow(row) : undefined;
   }
 
   createBusinessRun(businessSystemId: string, trigger = "manual", metadata: Record<string, unknown> = {}, inputs: string[] = []): BusinessRun | undefined {
-    const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.kind === "operator");
-    if (!this.db.query("SELECT 1 FROM business_systems WHERE id = ?").get(businessSystemId)) return undefined;
-    const timestamp = now();
-    const value: BusinessRun = { id: randomUUID(), businessSystemId, status: units.length ? "queued" : "failed", trigger, metadata, createdAt: timestamp, updatedAt: timestamp };
-    this.db.query("INSERT INTO business_runs (id,business_system_id,status,trigger,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-      .run(value.id, value.businessSystemId, value.status, value.trigger, json(value.metadata), timestamp, timestamp);
-    for (const unit of units) {
-      this.db.query("INSERT INTO unit_runs (id,run_id,unit_id,status,session_id,inputs,outputs,error,created_at,updated_at) VALUES (?,?,?,?,NULL,?,'[]',NULL,?,?)")
-        .run(randomUUID(), value.id, unit.id, value.status === "failed" ? "blocked" : "queued", json(inputs), timestamp, timestamp);
-    }
-    return value;
+    return this.db.transaction(() => {
+      if (!this.db.query("SELECT 1 FROM business_systems WHERE id = ?").get(businessSystemId)) return undefined;
+      const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.kind === "operator");
+      const timestamp = now();
+      const run: BusinessRun = { id: randomUUID(), businessSystemId, status: units.length ? "queued" : "failed", trigger, metadata, createdAt: timestamp, updatedAt: timestamp };
+      this.db.query("INSERT INTO business_runs (id,business_system_id,status,trigger,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+        .run(run.id, businessSystemId, run.status, trigger, json(metadata), timestamp, timestamp);
+      this.db.query("INSERT INTO business_run_graphs (run_id, edges) VALUES (?,?)").run(run.id, json(this.businessGraph(businessSystemId).edges));
+      const insert = this.db.query("INSERT INTO unit_runs (id,run_id,unit_id,status,session_id,inputs,outputs,error,created_at,updated_at) VALUES (?,?,?,'queued',NULL,?,'[]',NULL,?,?)");
+      const serializedInputs = json(inputs);
+      for (const unit of units) insert.run(randomUUID(), run.id, unit.id, serializedInputs, timestamp, timestamp);
+      return run;
+    }).immediate();
   }
 
   listBusinessRuns(businessSystemId: string): BusinessRun[] {
@@ -305,79 +326,87 @@ export class SqliteStore {
   }
 
   listReadyUnitRuns(runId: string): UnitRun[] {
-    const run = this.getBusinessRun(runId);
-    if (!run) return [];
-    const unitRuns = this.listUnitRuns(runId);
-    this.reconcileBlockedUnitRuns(runId, unitRuns);
-    const refreshedUnitRuns = this.listUnitRuns(runId);
-    const statuses = new Map(refreshedUnitRuns.map((item) => [item.unitId, item.status]));
-    const outputs = new Map(refreshedUnitRuns.map((item) => [item.unitId, item.outputs]));
-    const predecessors = new Map<string, string[]>();
-    for (const edge of this.businessGraph(run.businessSystemId).edges) {
-      predecessors.set(edge.target, [...(predecessors.get(edge.target) ?? []), edge.source]);
-    }
-    const ready: UnitRun[] = [];
-    for (const item of refreshedUnitRuns.filter((candidate) => candidate.status === "queued")) {
-      const required = (predecessors.get(item.unitId) ?? []).filter((unitId) => statuses.has(unitId));
-      if (required.some((unitId) => statuses.get(unitId) !== "completed")) continue;
-      const inherited = required.flatMap((unitId) => outputs.get(unitId) ?? []);
-      const inputs = [...new Set([...item.inputs, ...inherited])];
-      if (inputs.length !== item.inputs.length || inputs.some((value, index) => value !== item.inputs[index])) {
-        this.db.query("UPDATE unit_runs SET inputs=?, updated_at=? WHERE id=? AND status='queued'").run(json(inputs), now(), item.id);
-        item.inputs = inputs;
+    return this.db.transaction(() => {
+      const run = this.getBusinessRun(runId);
+      if (!run || run.status === "cancelled") return [];
+      const unitRuns = this.listUnitRuns(runId);
+      const byUnit = new Map(unitRuns.map((item) => [item.unitId, item]));
+      const predecessors = new Map<string, UnitRun[]>();
+      const successors = new Map<string, UnitRun[]>();
+      for (const { source, target } of this.runEdges(run)) {
+        const before = byUnit.get(source);
+        const after = byUnit.get(target);
+        if (!before || !after) continue;
+        if (!predecessors.has(target)) predecessors.set(target, []);
+        if (!successors.has(source)) successors.set(source, []);
+        predecessors.get(target)!.push(before);
+        successors.get(source)!.push(after);
       }
-      ready.push(item);
-    }
-    return ready;
+      this.reconcileBlockedUnitRuns(run, unitRuns, successors);
+      const ready: UnitRun[] = [];
+      for (const item of unitRuns) {
+        if (item.status !== "queued") continue;
+        const required = predecessors.get(item.unitId) ?? [];
+        if (required.some((predecessor) => predecessor.status !== "completed")) continue;
+        const inputs = [...new Set([...item.inputs, ...required.flatMap((predecessor) => predecessor.outputs)])];
+        if (inputs.length !== item.inputs.length || inputs.some((value, index) => value !== item.inputs[index])) {
+          this.db.query("UPDATE unit_runs SET inputs=?, updated_at=? WHERE id=? AND status='queued'").run(json(inputs), now(), item.id);
+          item.inputs = inputs;
+        }
+        ready.push(item);
+      }
+      return ready;
+    }).immediate();
   }
 
   /** Propagate terminal failures through the DAG so a run cannot stay running forever. */
-  private reconcileBlockedUnitRuns(runId: string, unitRuns: UnitRun[]): void {
-    const run = this.getBusinessRun(runId);
-    if (!run) return;
-    const statuses = new Map(unitRuns.map((item) => [item.unitId, item.status]));
-    const predecessors = new Map<string, string[]>();
-    for (const edge of this.businessGraph(run.businessSystemId).edges) {
-      predecessors.set(edge.target, [...(predecessors.get(edge.target) ?? []), edge.source]);
-    }
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const item of unitRuns) {
+  private reconcileBlockedUnitRuns(run: BusinessRun, unitRuns: UnitRun[], successors: Map<string, UnitRun[]>): void {
+    const blocked = unitRuns.filter((item) => item.status === "failed" || item.status === "blocked");
+    const timestamp = now();
+    const update = this.db.query("UPDATE unit_runs SET status='blocked', error=?, updated_at=? WHERE id=? AND status='queued'");
+    for (let index = 0; index < blocked.length; index += 1) {
+      for (const item of successors.get(blocked[index].unitId) ?? []) {
         if (item.status !== "queued") continue;
-        const required = (predecessors.get(item.unitId) ?? []).filter((unitId) => statuses.has(unitId));
-        if (!required.some((unitId) => statuses.get(unitId) === "failed" || statuses.get(unitId) === "blocked")) continue;
-        const timestamp = now();
-        this.db.query("UPDATE unit_runs SET status='blocked', error=?, updated_at=? WHERE id=? AND status='queued'")
-          .run("predecessor-failed", timestamp, item.id);
-        const updated = this.db.query("SELECT status FROM unit_runs WHERE id=?").get(item.id) as { status?: string } | undefined;
-        if (updated?.status === "blocked") {
-          item.status = "blocked";
-          item.error = "predecessor-failed";
-          item.updatedAt = timestamp;
-          statuses.set(item.unitId, "blocked");
-          changed = true;
-        }
+        update.run("predecessor-failed", timestamp, item.id);
+        item.status = "blocked";
+        item.error = "predecessor-failed";
+        item.updatedAt = timestamp;
+        blocked.push(item);
       }
     }
-    const finalStatuses = [...statuses.values()];
+    const finalStatuses = unitRuns.map(({ status }) => status);
     const nextStatus: BusinessRun["status"] = finalStatuses.some((status) => status === "failed" || status === "blocked")
       ? "failed"
       : finalStatuses.length > 0 && finalStatuses.every((status) => status === "completed")
         ? "completed"
-        : finalStatuses.some((status) => status === "running" || status === "completed")
+        : finalStatuses.some((status) => status === "running" || status === "completed" || status === "waiting_resources")
           ? "running"
-          : "queued";
-    if (nextStatus !== run.status) this.db.query("UPDATE business_runs SET status=?, updated_at=? WHERE id=?").run(nextStatus, now(), runId);
+          : finalStatuses.length ? "queued" : "failed";
+    if (nextStatus !== run.status) this.db.query("UPDATE business_runs SET status=?, updated_at=? WHERE id=?").run(nextStatus, timestamp, run.id);
+  }
+
+  private runEdges(run: BusinessRun): Array<{ source: string; target: string }> {
+    const stored = this.db.query<{ edges: string }>("SELECT edges FROM business_run_graphs WHERE run_id=?").get(run.id);
+    if (stored) return JSON.parse(stored.edges);
+    const edges = this.businessGraph(run.businessSystemId).edges;
+    this.db.query("INSERT INTO business_run_graphs (run_id,edges) VALUES (?,?)").run(run.id, json(edges));
+    return edges;
   }
 
   claimUnitRun(runId: string, unitId: string, sessionId: string): UnitRun | undefined {
     const timestamp = now();
-    this.db.query("UPDATE unit_runs SET status='running', session_id=?, updated_at=? WHERE run_id=? AND unit_id=? AND status='queued'").run(sessionId, timestamp, runId, unitId);
-    this.db.query("UPDATE business_units SET status='running', updated_at=? WHERE id=?").run(timestamp, unitId);
-    this.db.query("UPDATE business_runs SET status='running', updated_at=? WHERE id=? AND status='queued'").run(timestamp, runId);
-    const row = this.db.query("SELECT * FROM unit_runs WHERE run_id=? AND unit_id=?").get(runId, unitId) as any;
-    return row ? this.unitRunFromRow(row) : undefined;
+    return this.db.transaction(() => {
+      const row = this.db.query("UPDATE unit_runs SET status='running', session_id=?, updated_at=? WHERE run_id=? AND unit_id=? AND status='queued' RETURNING *")
+        .get(sessionId, timestamp, runId, unitId);
+      if (!row) return undefined;
+      this.db.query("UPDATE business_units SET status='running', updated_at=? WHERE id=?").run(timestamp, unitId);
+      this.db.query("UPDATE business_runs SET status='running', updated_at=? WHERE id=? AND status='queued'").run(timestamp, runId);
+      return this.unitRunFromRow(row);
+    }).immediate();
+  }
+
+  noteUnitSession(id: string, sessionId: string): void {
+    this.db.query("UPDATE unit_runs SET session_id=? WHERE id=? AND status='running'").run(sessionId, id);
   }
 
   completeUnitRun(id: string, status: UnitRun["status"], outputs: string[] = [], error?: string): UnitRun | undefined {
@@ -445,7 +474,7 @@ export class SqliteStore {
     };
   }
 
-  addArtifact(input: Omit<Artifact, "id" | "createdAt">): Artifact {
+  addArtifact(input: Omit<Artifact, "id" | "createdAt">, id = randomUUID()): Artifact {
     const metadata: Record<string, unknown> = {
       ...(input.metadata ?? {}),
       record_type: input.recordType ?? (input.metadata?.record_type === "material" ? "material" : "artifact"),
@@ -453,10 +482,17 @@ export class SqliteStore {
       description: input.description ?? input.metadata?.description,
       status: input.status ?? input.metadata?.status,
       producer: input.producer ?? input.metadata?.producer,
+      summary: input.summary ?? input.metadata?.summary,
+      purpose: input.purpose ?? input.metadata?.purpose,
+      files: input.files ?? input.metadata?.files,
+      inputs: input.inputs ?? input.metadata?.inputs,
+      outputs: input.outputs ?? input.metadata?.outputs,
+      lineage: input.lineage ?? input.metadata?.lineage,
     };
     const value: Artifact = {
       ...input,
-      id: randomUUID(),
+      id,
+      metadata,
       createdAt: now(),
       recordType: metadata.record_type === "material" ? "material" : "artifact",
       title: typeof metadata.title === "string" ? metadata.title : undefined,
@@ -537,12 +573,40 @@ export class SqliteStore {
   }
 
   createSecretRequest(input: { projectId: string; name: string; vaultRef: string; status?: SecretRequest["status"]; metadata?: Record<string, unknown> }): SecretRequest {
-    const timestamp = now();
-    const value: SecretRequest = { id: randomUUID(), projectId: input.projectId, name: input.name, vaultRef: input.vaultRef,
-      status: input.status ?? "requested", metadata: input.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
-    this.db.query("INSERT INTO secret_requests (id,project_id,name,vault_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
-      .run(value.id, value.projectId, value.name, value.vaultRef, value.status, json(value.metadata), timestamp, timestamp);
-    return value;
+    return this.db.transaction(() => {
+      const existing = this.db.query<{ id: string }>("SELECT id FROM secret_requests WHERE project_id=? AND name=? ORDER BY status='available' DESC, created_at, id LIMIT 1")
+        .get(input.projectId, input.name);
+      if (existing) return this.getSecretRequest(existing.id)!;
+      const timestamp = now();
+      const value: SecretRequest = { id: randomUUID(), projectId: input.projectId, name: input.name, vaultRef: input.vaultRef,
+        status: input.status ?? "requested", metadata: input.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
+      this.db.query("INSERT INTO secret_requests (id,project_id,name,vault_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+        .run(value.id, value.projectId, value.name, value.vaultRef, value.status, json(value.metadata), timestamp, timestamp);
+      return value;
+    }).immediate();
+  }
+
+  linkUnitSecret(unitRunId: string, requestId: string): void {
+    this.db.query("INSERT OR IGNORE INTO unit_secret_requests (unit_run_id,request_id) VALUES (?,?)").run(unitRunId, requestId);
+  }
+
+  unitSecretRequests(unitRunId: string): SecretRequest[] {
+    const ids = this.db.query<{ request_id: string }>("SELECT request_id FROM unit_secret_requests WHERE unit_run_id=? ORDER BY request_id").all(unitRunId);
+    return ids.flatMap(({ request_id }) => this.getSecretRequest(request_id) ?? []);
+  }
+
+  resumeResourceRuns(requestId: string): string[] {
+    const rows = this.db.query<{ run_id: string }>(`
+      UPDATE unit_runs SET status='queued', session_id=NULL, error=NULL, updated_at=?
+      WHERE status='waiting_resources'
+        AND id IN (SELECT unit_run_id FROM unit_secret_requests WHERE request_id=?)
+        AND NOT EXISTS (
+          SELECT 1 FROM unit_secret_requests AS link JOIN secret_requests AS request ON request.id=link.request_id
+          WHERE link.unit_run_id=unit_runs.id AND request.status!='available'
+        )
+      RETURNING run_id
+    `).all(now(), requestId);
+    return [...new Set(rows.map(({ run_id }) => run_id))];
   }
 
   addTalkMessage(input: { role?: string; body: string; metadata?: Record<string, unknown> }): TalkMessage {
@@ -555,6 +619,11 @@ export class SqliteStore {
     return this.db.query("SELECT * FROM business_talk_messages ORDER BY created_at, id").all().map((row: any) => ({
       id: row.id, role: row.role, body: row.body, metadata: parseJson(row.metadata), createdAt: row.created_at,
     }));
+  }
+
+  talkMessageMetadata(id: string): Record<string, unknown> {
+    const row = this.db.query<{ metadata: string }>("SELECT metadata FROM business_talk_messages WHERE id=?").get(id);
+    return parseJson(row?.metadata);
   }
 
   queueForemanMessage(messageId: string, text: string): ForemanEnvelope {
@@ -597,12 +666,27 @@ export class SqliteStore {
     }));
   }
 
+  getForemanMessage(id: string): ForemanEnvelope | undefined {
+    const row = this.db.query<{ id: string; message_id: string; text: string; status: ForemanEnvelope["status"]; created_at: string; claimed_at: string | null }>(
+      "SELECT * FROM foreman_outbox WHERE id=?",
+    ).get(id);
+    return row && { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined } || undefined;
+  }
+
   claimForemanMessage(id: string): ForemanEnvelope | undefined {
     const claimedAt = now();
-    this.db.query("UPDATE foreman_outbox SET status='claimed', claimed_at=? WHERE id=? AND status='queued'").run(claimedAt, id);
-    const row = this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id) as any;
+    const row = this.db.query("UPDATE foreman_outbox SET status='claimed', claimed_at=? WHERE id=? AND status='queued' RETURNING *").get(claimedAt, id) as any;
     if (!row) return undefined;
     return { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined };
+  }
+
+  foremanSession(profileId: string): string | undefined {
+    return this.db.query<{ session_id: string }>("SELECT session_id FROM foreman_sessions WHERE profile_id=?").get(profileId)?.session_id;
+  }
+
+  saveForemanSession(profileId: string, sessionId: string): void {
+    this.db.query("INSERT INTO foreman_sessions (profile_id,session_id) VALUES (?,?) ON CONFLICT (profile_id) DO UPDATE SET session_id=excluded.session_id")
+      .run(profileId, sessionId);
   }
 
   completeForemanMessage(id: string): ForemanEnvelope | undefined {
@@ -610,6 +694,10 @@ export class SqliteStore {
     const row = this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id) as any;
     if (!row) return undefined;
     return { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined };
+  }
+
+  failForemanMessage(id: string): void {
+    this.db.query("UPDATE foreman_outbox SET status='failed' WHERE id=? AND status='claimed'").run(id);
   }
 
   listSecretRequests(): SecretRequest[] {
@@ -652,10 +740,23 @@ export class SqliteStore {
     }));
   }
 
-  legacyEvents(): Event[] {
+  recentEvents(limit: number): Event[] {
+    return this.db.query("SELECT * FROM business_events ORDER BY seq DESC LIMIT ?").all(limit).reverse().map((row: any) => ({
+      id: row.id, seq: Number(row.seq), type: row.type, data: JSON.parse(row.data), createdAt: row.created_at,
+    }));
+  }
+
+  latestEventSequence(): number {
+    return Number(this.db.query<{ seq: number }>("SELECT COALESCE(MAX(seq), 0) AS seq FROM business_events").get()?.seq ?? 0);
+  }
+
+  legacyEvents(limit?: number): Event[] {
     const source = this.legacy ?? this.db;
     if (!this.hasLegacyTable("events")) return [];
-    return source.query("SELECT seq,id,kind,data,at FROM events ORDER BY seq").all().map((row: any) => ({
+    const rows = limit === undefined
+      ? source.query("SELECT seq,id,kind,data,at FROM events ORDER BY seq").all()
+      : source.query("SELECT seq,id,kind,data,at FROM events ORDER BY seq DESC LIMIT ?").all(limit).reverse();
+    return rows.map((row: any) => ({
       seq: Number(row.seq), id: row.id, type: row.kind, data: parseJson(row.data), createdAt: row.at,
     }));
   }
@@ -690,16 +791,11 @@ export class SqliteStore {
   }
 
   close() {
-    // Bun may report a transient WAL lock while a just-finished read statement
-    // is being finalized. Checkpoint before closing and keep shutdown idempotent.
-    try { this.db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch { /* closing already in progress */ }
-    const bun = (globalThis as { Bun?: { gc?: (force?: boolean) => void } }).Bun;
-    bun?.gc?.(true);
-    try { this.db.close(true); } catch (error) {
-      if (!(error instanceof Error) || !error.message.toLowerCase().includes("locked")) throw error;
-      try { this.db.close(false); } catch { /* the process will release the handle */ }
+    try {
+      this.db.close();
+    } finally {
+      this.legacy?.close();
     }
-    try { this.legacy?.close(true); } catch { /* read-only legacy handles are best effort */ }
   }
 }
 

@@ -1,6 +1,6 @@
 # Source 与 Sink（connectors.md）
 
-> 规范性文档，M2。模块：`mao.connectors`（幂等键、回执、核验、Source 的来源证明）。
+> 规范性文档，M2。活动实现位于 `backend/src/legacy/connectors.ts`、`backend/src/legacy/runner.ts` 和 `backend/src/connector-cli.ts`。
 > 依据：架构文档 5.4（Source 与 Sink 的连接机制）、6.8（Sink 幂等）、7.6（回执核验）、12.2（权限矩阵）、12.3（I3、I6、I7）。
 > 跨组件约定见 `README.md`。
 > Sink 回执在生产路径上的取得、发布与核验，`factoryctl receipt`、`factory receipt …`、`factory source run`，以及对 5.3 的补充见 `wiring.md`（M10），冲突时以 `wiring.md` 为准。
@@ -20,6 +20,8 @@
   - 来源证明标记 `external: true`。
 - **凭据边界**（I6 的运行时部分）：工位的网络与秘密只按它的策略和角色注入。发布类秘密只给 Sink，摄入类秘密只给 Source，在 `Runner` 中二次检查（纵深防御）。
 - 为上述功能扩展 `factoryctl`（`receipt` 命令）、机器配方（`receipt` 模板）和 MRL profile（核验配方的静态检查）。
+
+Bun 的脚本型 Source 和 Sink 使用现有工位执行器及已选容器运行时。当前部署路径按 `network: none` 执行发布和核验，测试使用 `LocalProvider` 接入本机夹具目录。受控出网和连接器的凭据注入仍见 `egress.md`。
 
 **不做什么**
 
@@ -191,7 +193,7 @@ ALTER TABLE jobs ADD COLUMN run_value TEXT;
 | `sink.published` | `{receipt, target, locator}` |
 | `sink.verified` / `sink.verify_failed` | `{receipt, method, detail}` |
 | `receipt.voided` | `{receipt, by, reason}` |
-| `source.ingested` | `{job, station, outputs}` |
+| `source.ingested` | `{job, station, external: true, params, outputs}` |
 
 ---
 
@@ -215,6 +217,8 @@ ALTER TABLE jobs ADD COLUMN run_value TEXT;
 | `failed` | 抛出 `RECEIPT_UNVERIFIED_EXISTS`，job 进入 `DEAD` |
 
 部分唯一索引保证：并发的两个 job 只有一个能插入成功，另一个得到 `IDEMPOTENCY_CONFLICT`。
+
+工位版本升级沿用同一套状态判断。旧版本回执处于 `claimed`、`published` 或 `failed` 时，调用方可以根据返回的回执 ID 复核或作废。
 
 ### 5.3 Sink 的执行流程（execute 阶段）
 
@@ -307,6 +311,8 @@ ALTER TABLE jobs ADD COLUMN run_value TEXT;
 
 ## 7. 验收测试
 
+活动验收 `backend/tests/legacy-connectors.test.ts` 随 `bun run verify:bun` 运行，覆盖 Source 收货、检验与内容寻址，Sink 的占键、跨版本去重、结果未知、独立核验、作废重发与回执文件命令。
+
 夹具：`tests/fixtures/registry-m2/`（受保护）在 M1 夹具的基础上增加：
 
 - Sink `publish-local@1`：脚本操作工，把输入复制到参数 `dir` 指定的目录（测试给出 `tmp_path`），用 `factoryctl receipt` 留下回执；核验配方 `local-file-check` 检查文件存在、摘要一致。
@@ -338,7 +344,7 @@ ALTER TABLE jobs ADD COLUMN run_value TEXT;
 | | `test_service_form_unsupported` | `form: service` 的 Source → `FORM_UNSUPPORTED` |
 | | `test_policy_violation_defense` | 用补丁让快照里出现越权绑定（绕过宪法的夹具 Registry 使用空宪法 + 直接构造快照对象），`Runner` 仍然拒绝：`POLICY_VIOLATION` |
 
-验收命令：`uv run python tools/harness.py pytest <文件>`，断言 `out.failed == 0 && out.errors == 0 && out.skipped == 0`，`passed` 不少于上表的行数。
+表中 Python 用例是归档规范证据，位于 `removed/python/`。
 
 ---
 

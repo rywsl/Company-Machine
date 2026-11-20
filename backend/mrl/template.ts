@@ -1,6 +1,7 @@
-import { evaluate, type EvaluateOptions, type EvalEnvironment, type MrlValue } from "./evaluator";
+import { evaluate, formatFloat, type EvaluateOptions, type EvalEnvironment, type MrlValue } from "./evaluator";
 import { checkExpression, MrlStaticError, type CheckOptions, type CheckResult } from "./checker";
-import { BOOL, DYN, FLOAT, INT, NUM, STRING } from "./types";
+import { BOOL, DYN, FLOAT, INT, NUM, STRING, isPrimitive, type MrlType } from "./types";
+import { isInt, isMrlNumber, nativeNumber } from "./numbers";
 
 export type TemplatePart = { kind: "text"; value: string } | { kind: "expression"; source: string; check: CheckResult };
 
@@ -44,9 +45,10 @@ function splitTemplate(source: string): Array<{ kind: "text" | "expression"; val
   return parts;
 }
 
-function renderValue(value: MrlValue): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+function renderValue(value: MrlValue, type: MrlType): string {
+  if (typeof value === "string" || typeof value === "boolean") return String(value);
+  if (isInt(value) && !isPrimitive(type, "float")) return String(value);
+  if (isMrlNumber(value)) return formatFloat(Number(nativeNumber(value)));
   throw new MrlTemplateError("MRL-TYPE", "template interpolation must produce string, number, bool, or dyn");
 }
 
@@ -71,7 +73,9 @@ export function compileTemplate(source: string, options: CheckOptions = {}): Com
     parts,
     warnings: parts.flatMap((part) => part.kind === "expression" ? part.check.warnings : []),
     render(values, evaluateOptions = {}) {
-      return parts.map((part) => part.kind === "text" ? part.value : renderValue(evaluate(part.check.ast, values, evaluateOptions))).join("");
+      return parts.map((part) => part.kind === "text"
+        ? part.value
+        : renderValue(evaluate(part.check.ast, values, evaluateOptions), part.check.type)).join("");
     },
   };
 }

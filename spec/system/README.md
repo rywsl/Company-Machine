@@ -63,7 +63,7 @@
 | M1 基础值、Registry 快照、CAS、Bean、封存与血缘 | `backend/src/legacy/foundation.ts`、`backend/src/legacy/snapshot.ts`、`backend/src/legacy/warehouse.ts`、`backend/src/legacy/context.ts` | Bun 内置文件系统和 SQLite，结构检查复用 `backend/mrl/factory` |
 | M1 Gate、Operator、LocalProvider、factoryctl 和 Runner 最小闭环 | `backend/src/legacy/gate.ts`、`backend/src/legacy/operator.ts`、`backend/src/legacy/sandbox.ts`、`backend/src/legacy/factoryctl.ts`、`backend/src/legacy/runner.ts` | Bun 文件邮箱、脚本工位和本地测试运行时，Podman/Kiri 通过现有 ContainerProvider 接入 |
 | 厂长对话与官方 Harness 分配 | `backend/src/foreman.ts`、`backend/src/harness.ts`、`backend/src/acp.ts` | 只启动用户配置的官方 Harness CLI 或 ACP，不在控制面实现模型循环 |
-| 容器沙箱 | `backend/runtime/podman.ts`、`backend/runtime/kiri.ts` | 受控 argv 调用 Podman 或嵌入式 Kiri。Linux Kiri 使用 headless `kiri daemon`，禁止 shell 拼接和静默回退 |
+| 容器沙箱 | `backend/runtime/podman.ts`、`backend/runtime/kiri.ts` | 受控 argv 调用 Podman 或嵌入式 Kiri。Linux Kiri 使用官方 headless 服务的 Unix 套接字，禁止 shell 拼接和静默回退 |
 | MRL 表达式、模板、规则、Factory Registry 结构检查和 CLI | `backend/mrl/`、`backend/mrl/factory/`、`backend/mrl/cli.ts`、`backend/src/cli.ts` | Bun/TypeScript evaluator、Bun YAML/schema/Registry boundary、`bun run mrl` 与 `bun run factory registry check`，预算和稳定错误码由测试锁定 |
 | Web App 与图形化物料视图 | `frontend/src/`、`frontend/dist/` | 通过 API 读取业务投影，用户界面不直接展示物料 JSON |
 | 活动验收与校验 | `tools/harness.ts`、`backend/**/*.test.ts` | `bun run acceptance:bun` 和 `bun run verify:bun` |
@@ -99,7 +99,7 @@
 
 **D7 控制通道是文件邮箱。** 沙箱内的 `factoryctl` 与宿主之间只通过 `/factory/ctl` 下的文件通信：原子写入，即写临时文件后 rename。
 - 沙箱没有网络也能工作；**禁止**为控制通道开放网络端口。
-- `factoryctl` 是单文件、只用标准库的 Python 脚本，兼容 Python ≥ 3.8，**禁止** import `mao`。
+- `factoryctl` 由 TypeScript 源码打包成单文件 Bun 客户端。工位镜像通过 `PATH` 提供 Bun。沙箱只读挂载客户端，通过文件邮箱访问控制面。
 - 所有运行 agent 操作工、需要收货的机器镜像，都必须带 `python3`（≥ 3.8）和 `/bin/sh`。
 
 **D8 持久化。** 状态库是 `$FACTORY_ROOT/factory.db`（SQLite，WAL 模式），Blob 存在 `$FACTORY_ROOT/cas/`。
@@ -435,7 +435,7 @@ class DockerProvider:
 
 ### 4.6 `mao.ctl`（factoryctl.md）
 
-- 历史沙箱客户端位于 `removed/python/src/mao/ctl/factoryctl.py`。新的 Bun Harness 边界通过官方 CLI/ACP 协议工作，客户端安装逻辑保留在历史目录。
+- 工位客户端和文件邮箱在 `backend/src/legacy/factoryctl.ts`，安装由 `backend/src/legacy/context.ts` 负责。模型交互仍使用官方 CLI 或 ACP。
 - 宿主侧：
 
 ```python

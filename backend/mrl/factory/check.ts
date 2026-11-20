@@ -1,8 +1,17 @@
-import { documentKey, documentKind, documentPosition, documentSubject, loadRegistry, type HostDiagnostic, type Registry, type SpecDocument } from "./registry";
+import { documentKind, documentPosition, documentSubject, loadRegistry, type HostDiagnostic, type Registry, type SpecDocument } from "./registry";
+import { checkFactoryKernel, type FactoryResolution } from "./references";
 import { registryKinds, schemaForKind, validate } from "./schema";
+import type { RuleLocation } from "../rules";
 
 export interface RegistryDiagnostic extends HostDiagnostic { severity: "error" | "warning" | "info"; }
-export interface RegistryCheckResult { root: string; ok: boolean; diagnostics: RegistryDiagnostic[]; stats: Record<string, number>; registry: Registry; }
+export interface RegistryCheckResult {
+  root: string;
+  ok: boolean;
+  diagnostics: RegistryDiagnostic[];
+  resolutions: FactoryResolution[];
+  stats: Record<string, number>;
+  registry: Registry;
+}
 
 function asDiagnostic(document: SpecDocument | undefined, diagnostic: HostDiagnostic, severity: RegistryDiagnostic["severity"] = "error"): RegistryDiagnostic {
   if (!document) return { ...diagnostic, severity };
@@ -23,7 +32,7 @@ function validateDocument(document: SpecDocument): RegistryDiagnostic[] {
     return diagnostics;
   }
   if (schemaForKind(kind) && kind !== document.expectedKind) {
-    diagnostics.push(asDiagnostic(document, { code: "E-LAYOUT", subject: documentSubject(document), message: `this path requires ${document.expectedKind}, got ${kind}`, path: "kind" }));
+    diagnostics.push(asDiagnostic(document, { code: "E-LAYOUT", subject: documentSubject(document), message: `该位置只能放 ${document.expectedKind}，但文档的 kind 是 ${kind}`, path: "kind" }));
     return diagnostics;
   }
   for (const error of validate(document.data)) {
@@ -33,10 +42,10 @@ function validateDocument(document: SpecDocument): RegistryDiagnostic[] {
   return diagnostics;
 }
 
-export function checkRegistry(rootOrRegistry: string | Registry): RegistryCheckResult {
+export function checkRegistry(rootOrRegistry: string | Registry, onDiagnosticRule?: (location: RuleLocation) => void): RegistryCheckResult {
   const registry = typeof rootOrRegistry === "string" ? loadRegistry(rootOrRegistry) : rootOrRegistry;
   const diagnostics: RegistryDiagnostic[] = registry.diagnostics.map((diagnostic) => asDiagnostic(undefined, diagnostic));
-  const seen = new Map<string, SpecDocument>();
+  const valid: SpecDocument[] = [];
   const stats: Record<string, number> = {};
   for (const document of registry.docs) {
     const documentDiagnostics = validateDocument(document);
@@ -44,12 +53,12 @@ export function checkRegistry(rootOrRegistry: string | Registry): RegistryCheckR
     if (documentDiagnostics.length) continue;
     const kind = documentKind(document);
     if (kind) stats[`kind:${kind}`] = (stats[`kind:${kind}`] ?? 0) + 1;
-    const key = documentKey(document);
-    if (key) {
-      if (seen.has(key)) diagnostics.push(asDiagnostic(document, { code: "E-DUPLICATE", subject: key, message: `duplicate Spec key, first declared in ${seen.get(key)?.file}` }));
-      else seen.set(key, document);
-    }
+    valid.push(document);
   }
-  if (registry.constitution.length === 0) diagnostics.push({ code: "E-CONSTITUTION", subject: "Registry", message: "constitution directory has no MRL source", severity: "error" });
-  return { root: registry.root, ok: diagnostics.every((item) => item.severity !== "error"), diagnostics, stats, registry };
+  const kernel = checkFactoryKernel(valid, registry.constitution, diagnostics, onDiagnosticRule);
+  diagnostics.splice(0, diagnostics.length, ...kernel.diagnostics);
+  const { resolutions } = kernel;
+  stats.edges = resolutions.length;
+  stats.conversions = resolutions.filter((item) => item.status === "convert").length;
+  return { root: registry.root, ok: diagnostics.every((item) => item.severity !== "error"), diagnostics, resolutions, stats, registry };
 }

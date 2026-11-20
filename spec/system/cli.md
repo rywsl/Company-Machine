@@ -13,16 +13,31 @@
 | `factory runtime status` | 读取当前 Podman 或 Kiri 健康状态。 |
 | `factory runtime ensure-ready` | 请求当前运行时就绪。不可用时退出码 4。 |
 | `factory project intake ...` | 通过仓库、文件夹或文件引用创建项目。 |
+| `factory project intake --file PATH`、`factory project fetch PROJECT SHA256 --output PATH` | 导入文件字节并通过稳定摘要取回。`--file` 可重复。 |
 | `factory business ...` | 读取或写入业务系统、DAG、运行、产物和转换。 |
 | `factory registry check PATH [--json]` | 通过 Bun MRL 检查 Registry 结构与 schema。 |
+| `factory bean import --type TYPE --file PATH=HOST` | 检验并封存外部物料。可以重复传入 `--file`。 |
+| `factory bean lineage BEAN --direction up\|down` | 查询已封存物料的上下游工位和物料。 |
+| `factory job run STATION [--input PORT=BEAN] [--param NAME=JSON]` | 提交并执行一个工位，封存通过 Gate 的产物。列表端口允许重复传入 `--input`。 |
+| `factory job show JOB`、`factory job exec JOB` | 查询或继续执行已有工位。 |
+| `factory approval ls`、`show`、`approve`、`deny` | 查询邮箱审批并提交决定，决定者默认取 `FACTORY_HUMAN_BY`。 |
+| `factory source run`、`factory receipt ls`、`show`、`verify`、`void` | 执行摄入，查询、核验与作废发布回执。 |
+| `factory schedule enqueue`、`tick`、`dlq ls`、`quarantine`、`release` | 持久化待执行工位，推进调度并管理死信及物料隔离。`tick` 可用 `--config PATH` 指定文件。 |
+| `factory backup create DEST`、`verify DEST`、`restore DEST --root NEW_ROOT` | 将 SQLite 与 CAS 备份到独立目录，校验和恢复到显式指定的空目录。 |
+| `factory line plan LINE`、`factory line run LINE --in PORT=BEAN` | 编译产线计划并将执行进度、Job 与物料输出写入 SQLite。 |
+| `factory line ls`、`show`、`nodes`、`exec`、`cancel`、`retry`、`rebuild` | 查看与推进已保存的运行，或按当前 Registry 重建终态产线。 |
 | `factory foreman ...` | 查看、领取和完成厂长消息。 |
 | `factory talk ...` | 写入人的消息或厂长回复。 |
 
-活动 CLI 的稳定退出码为 `0` 成功、`1` 业务或运行时请求失败、`2` 用法错误、`4` 运行时设施不可用。活动测试位于 `backend/tests/cli.test.ts`，MRL CLI 测试位于 `backend/mrl/cli.test.ts`。历史章节中的 Python 签名、Docker provider、`factoryctl` 和旧验收路径不属于活动入口。
+Bean 与 Job 命令支持 `--root`、`--registry`、`--json`、`--provider podman|kiri|local`。工厂目录和 Registry 分别读取 `FACTORY_ROOT` 与 `FACTORY_REGISTRY`，缺省为 `.factory` 与 `registry`。容器引擎缺省采用 `MAO_CONTAINER_RUNTIME` 的设置，未配置时使用 Podman。`--local-commands FILE` 与显式的 `--provider local` 一起使用，文件内容为命令名到 argv 数组的 JSON 映射。
+
+活动 CLI 的退出码为 `0` 成功、`1` 业务或运行失败、`2` 用法错误、`3` 工位命令遇到无效 Registry、`4` 运行时设施不可用。活动测试位于 `backend/tests/cli.test.ts`，MRL CLI 测试位于 `backend/mrl/cli.test.ts`。
 
 ---
 
-## 1. 历史 Python M1 CLI 契约
+## 1. 目的与范围
+
+以下章节保留历史 Python M1 CLI 契约。活动 Bun 命令见第 0 章。
 
 **做什么（M1）**
 

@@ -64,6 +64,11 @@ export function compatible(source: MrlType, target: MrlType): Compatibility {
   if (isPrimitive(source, "num") && ["int", "float"].some((name) => isPrimitive(target, name as PrimitiveName))) return "maybe";
   if (source.kind === "list" && target.kind === "list") return compatible(source.element, target.element);
   if (source.kind === "map" && target.kind === "map") return compatible(source.element, target.element);
+  if (source.kind === "record" && target.kind === "map") {
+    const fields = Object.values(source.fields).map((field) => compatible(field.type, target.element));
+    if (fields.includes("no")) return "no";
+    return source.open || fields.includes("maybe") ? "maybe" : "yes";
+  }
   return "no";
 }
 

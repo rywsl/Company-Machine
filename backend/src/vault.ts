@@ -1,6 +1,6 @@
-import { randomBytes, createCipheriv } from "node:crypto";
+import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 type VaultRecord = { ref: string; iv: string; tag: string; ciphertext: string; updatedAt: string };
 
@@ -29,7 +29,10 @@ export class VaultStore {
   private readonly key: any;
   private readonly path: string;
 
-  constructor(path = process.env.MAO_VAULT_PATH ?? ".factory/vault.json", keyPath = process.env.MAO_VAULT_KEY_PATH ?? ".factory/vault.key") {
+  constructor(
+    path = process.env.MAO_VAULT_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "vault.json"),
+    keyPath = process.env.MAO_VAULT_KEY_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "vault.key"),
+  ) {
     this.path = path;
     this.key = keyFromEnvironment(keyPath);
     mkdirSync(dirname(path), { recursive: true });
@@ -54,6 +57,14 @@ export class VaultStore {
 
   has(ref: string): boolean {
     return Boolean(this.read()[ref]);
+  }
+
+  get(ref: string): string | undefined {
+    const record = this.read()[ref];
+    if (!record) return undefined;
+    const cipher = createDecipheriv("aes-256-gcm", this.key, Buffer.from(record.iv, "base64"));
+    cipher.setAuthTag(Buffer.from(record.tag, "base64"));
+    return Buffer.concat([cipher.update(Buffer.from(record.ciphertext, "base64")), cipher.final()]).toString("utf8");
   }
 
   private read(): Record<string, VaultRecord> {

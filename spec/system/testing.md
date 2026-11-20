@@ -72,15 +72,20 @@ M5 起增加的动作与规则（`supervisor.md` 第 7 章）：`run`（执行 a
 bun run build:test-images
 ```
 
-构建 `mao-test/tool`、`mao-test/studio`、`mao-test/operator`。上下文来自 `tests/fixtures/images/<名字>/`，并复制 `tests/fakes/`。复制时把文本文件的 CRLF 换成 LF。本命令不在阶段门里运行。
+构建 `mao-test/tool`、`mao-test/studio`、`mao-test/operator`。上下文来自 `tests/fixtures/images/<名字>/`，并复制 `tests/fakes/`。复制时把文本文件的 CRLF 换成 LF。Linux Kiri 的构建和镜像检查使用与控制面相同的 Unix 套接字。构建通过 Kiri 提供的经典 Docker build API 提交。
+
+在实际容器引擎上运行工位验收：
+
+```bash
+MAO_CONTAINER_RUNTIME=kiri bun run build:test-images
+MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
+```
+
+设为 `podman` 可以复用同一套验收。夹具在 UID 10001 下执行，核对只读输入和已安装的 `factoryctl`，并经文件邮箱完成预检和自动审批。宿主收货后核对封存内容、Gate facts 和来料血缘。失败保留临时工厂目录和日志以供复查。
 
 ### 5.2 端到端
 
-`backend/tests/business-runtime.test.ts`：
-
-1. Local：`render_registry` 到临时目录，`LocalProvider` 加 `local_commands()`，跑 `upper` 工位。输入是已封存的 note。输出 Bean 已封存，正文是大写。
-2. Podman/Kiri：同一夹具，镜像 digest 换成 `imageIds` 的结果。运行时由 `MAO_CONTAINER_RUNTIME` 选择，缺失时返回显式依赖错误。
-3. 两次得到的 facts 集合相同。Bean id 允许不同（路径字节可能因换行规范化不同），facts 与正文必须相同。
+活动 Bun 测试在 `backend/tests/legacy-runner.test.ts` 中用 `LocalProvider` 执行 `upper` 工位，检查已封存的输入、脚本执行和输出封存。业务 Harness 在容器启动前的就绪检查由 `backend/tests/business-runtime.test.ts` 覆盖。验证实际容器时，`MAO_CONTAINER_RUNTIME` 选择引擎，`imageIds` 提供已构建夹具的镜像 ID。用同一工位比较正文和 facts，Bean ID 可随规范化后的文件字节变化。
 
 ---
 
@@ -98,7 +103,113 @@ bun run build:test-images
 
 ## 7. 验收测试
 
-活动文件：`backend/tests/business-runtime.test.ts`。历史验收文件位于 `removed/python/tests/acceptance/m1/test_m1_10_e2e.py`。
+### 7.1 活动 Bun 验收
+
+`bun run verify:bun` 校验系统规范章节、MRL 诊断码与标准库说明、工厂内核声明以及本表与活动测试目录之间的双向映射。Bun 的 JUnit 报告须逐文件记录实际执行的用例，任何失败、跳过、待办或遗漏文件都会使验收失败。该命令还运行后端与 Web 的 TypeScript 检查，以及 `spec/mrl/conformance/` 中的 715 项一致性用例。通过的用例须覆盖全部内核诊断码，并实际触发全部 85 条内核诊断规则。
+
+| 文件 | 验证 |
+|---|---|
+| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱、SSE 回放 |
+| `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库字节、Git 引用、凭据边界和损坏情况 |
+| `backend/tests/business-records.test.ts` | 物料查询和业务 DAG 校验 |
+| `backend/tests/business-runtime.test.ts` | 业务 DAG、物料记录与启动前的运行时就绪 |
+| `backend/tests/cli.test.ts` | Bun 工厂命令、用法与 Registry 检查 |
+| `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
+| `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |
+| `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
+| `backend/tests/legacy-approvals.test.ts` | 工位审批的费用规则、尝试隔离、到期与拒绝 |
+| `backend/tests/legacy-cache.test.ts` | 缓存键、候选可用性、失效范围与审计 |
+| `backend/tests/legacy-core.test.ts` | 规范 JSON、SQLite 仓库、并发 CAS 提交、快照和值投影 |
+| `backend/tests/legacy-gate.test.ts` | 来料检查和产物验收 |
+| `backend/tests/legacy-harvest.test.ts` | 工位产物采集、路径边界、匹配顺序和异常结果 |
+| `backend/tests/legacy-connectors.test.ts` | Source 摄入与检验、Sink 幂等发布与核验、回执血缘和沙箱命令 |
+| `backend/tests/legacy-mailbox.test.ts` | 异步文件邮箱、并发请求、审批响应与异常路径 |
+| `backend/tests/legacy-operator.test.ts` | 工位任务渲染、调用参数和官方 CLI 转录 |
+| `backend/tests/legacy-runplan.test.ts` | 产线展开、绑定、执行顺序与计划持久化 |
+| `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
+| `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
+| `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
+| `backend/tests/legacy-sandbox.test.ts` | 本地夹具执行、超时和文件邮箱 |
+| `backend/tests/legacy-scheduler.test.ts` | 任务准入、资源预留、死信和审批到期 |
+| `backend/tests/legacy-triggers.test.ts` | 事件去重、游标恢复、并发准入和定时触发 |
+| `backend/tests/runtime.test.ts` | 运行时状态缓存、就绪去重与失败诊断 |
+| `backend/runtime/kiri.test.ts` | Linux 套接字、服务就绪与受限容器参数 |
+| `backend/runtime/podman.test.ts` | 沙箱参数、受管出网配置、rootless 探测和命令日志 |
+| `backend/mrl/checker.test.ts` | MRL 表达式静态类型和模板 |
+| `backend/mrl/cli.test.ts` | MRL 命令行输出和用法 |
+| `backend/mrl/factory.test.ts` | Registry YAML、布局和 schema |
+| `backend/mrl/mrl.test.ts` | MRL 求值、宏和关系查询 |
+| `backend/mrl/rules.test.ts` | MRL 规则解析、连接、守卫和否定 |
+| `tests/fakes/fakes.test.ts` | Bun validator、官方转录形状和模型上游夹具 |
+
+### 7.2 历史验收与迁移覆盖
+
+`bun run tools/harness.ts parity` 执行活动 Bun 验收和规范中的 MRL 一致性用例，并核对归档的 Python 验收。每个已验证等价的历史用例要记录完整的文件与函数名，以及 Bun 验收文件和用例名称。部分覆盖的用例继续待迁移。退出码 0 需要历史规范与用例映射一致、所有归档验收有通过的等价证据、MRL 一致性与内核覆盖通过、代码策略迁移完成。
+
+| 历史验收 | Bun 文件 | Bun 用例 | 验证 |
+|---|---|---|---|
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_canonical_json_sorting_and_separators` | `backend/tests/legacy-core.test.ts` | `serializes sorted compact UTF-8 JSON and hashes the known empty payload` | 字段排序、紧凑分隔符、序列与非 ASCII 内容 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_canonical_bytes_is_utf8` | `backend/tests/legacy-core.test.ts` | `serializes sorted compact UTF-8 JSON and hashes the known empty payload` | 规范 JSON 的 UTF-8 字节 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_digest_bytes_known_vector` | `backend/tests/legacy-core.test.ts` | `serializes sorted compact UTF-8 JSON and hashes the known empty payload` | 空字节串的 SHA-256 已知向量 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_digest_file_matches_bytes_and_streams` | `backend/tests/legacy-core.test.ts` | `streams file digests and keeps one empty blob at its exact CAS path` | 大于 1 MiB 的文件摘要匹配字节摘要 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_utc_iso_formats_and_truncates` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 毫秒精度及 UTC 偏移转换 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_parse_duration_table` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 毫秒、分钟、天和前导零 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_parse_duration_invalid` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 八种非法时长的 `DURATION_INVALID` |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_fake_clock` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 起点、读取、推进、睡眠和负数拒绝 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_counter_ids` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 按前缀独立编号 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_id_prefix_validation` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 拒绝大写前缀 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_database_pragmas_and_rows` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | WAL 模式和提交后的行查询 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_tx_commit_and_rollback` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | 外层异常撤销插入 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_nested_tx_uses_savepoints` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | 内层回滚保留外层事务 |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_put_file_cas_layout_and_idempotent` | `backend/tests/legacy-core.test.ts` | `streams file digests and keeps one empty blob at its exact CAS path` | 空 Blob 的摘要、仓库层级与重复写入 |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_bean_id_and_add_get` | `backend/tests/legacy-core.test.ts` | `preserves Bean identity and rejects invalid paths, types, digests and IDs` | Bean 身份、元数据副本、媒介类型及首次创建时间 |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_payload_path_and_type_rejected` | `backend/tests/legacy-core.test.ts` | `preserves Bean identity and rejects invalid paths, types, digests and IDs` | 拒绝非法路径、类型、摘要和未知 ID |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_seal_many_transaction_and_conflict` | `backend/tests/legacy-core.test.ts` | `rolls back a failed Bean seal and keeps facts stable across resealing` | 批次封存回滚、事实冲突及等价事实复封 |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_lineage_up_and_down` | `backend/tests/legacy-core.test.ts` | `stores, seals, materializes and traces Bean lineage` | 双向血缘及未知 Bean 导致写入回滚 |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_materialize_layouts` | `backend/tests/legacy-core.test.ts` | `materializes both warehouse layouts with identical canonical Bean metadata` | 两种落盘布局的字节和规范 Bean JSON |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_list_and_verify` | `backend/tests/legacy-core.test.ts` | `filters sealed and unsealed Beans and verifies modified blobs and identities` | 列表过滤及 Blob 和 Bean 身份损坏检测 |
+| `removed/python/tests/acceptance/m1/test_m1_04_sandbox.py::test_build_run_argv_locks_security_and_order` | `backend/runtime/podman.test.ts` | `emits the ordered Podman run contract and protects fixed environment entries` | Podman 的完整启动参数顺序、安全标志和固定环境变量 |
+| `removed/python/tests/acceptance/m1/test_m1_04_sandbox.py::test_build_run_argv_rejects_egress` | `backend/runtime/podman.test.ts` | `rejects egress until the managed proxy is enabled` | 默认拒绝无代理出网并返回对应错误细节 |
+| `removed/python/tests/acceptance/m1/test_m1_04_sandbox.py::test_build_run_argv_egress_switch_is_not_host` | `backend/runtime/podman.test.ts` | `builds a deterministic hardened argv` | 显式本地出网仍使用独立网络及沙箱限制 |
+| `removed/python/tests/acceptance/m1/test_m1_04_sandbox.py::test_build_run_argv_rejects_docker_sock` | `backend/runtime/podman.test.ts` | `rejects mounted engine sockets, invalid names and mutable image tags` | 拒绝引擎套接字挂载和非法沙箱名称 |
+| `removed/python/tests/acceptance/m1/test_m1_04_sandbox.py::test_image_ref_invalid` | `backend/runtime/podman.test.ts` | `rejects mounted engine sockets, invalid names and mutable image tags` | 镜像只接受合法固定摘要，校验先于引擎调用 |
+| `removed/python/tests/acceptance/m1/test_m1_04_sandbox.py::test_local_provider_rewrites_virtual_paths` | `backend/tests/legacy-sandbox.test.ts` | `maps argv, cwd and control environment and rejects execution after close` | 实际 Bun 子进程确认路径、工作目录、隔离环境及关闭语义 |
+| `removed/python/tests/acceptance/m1/test_m1_05_factoryctl.py::test_poll_once_writes_response_and_skips_done` | `backend/tests/legacy-mailbox.test.ts` | `dispatches a complete check once and skips both answered and partial requests` | 写入完整回执并跳过已响应请求和暂存文件 |
+| `removed/python/tests/acceptance/m1/test_m1_05_factoryctl.py::test_poll_once_rejects_invalid_request` | `backend/tests/legacy-mailbox.test.ts` | `rejects malformed request files and request paths that are directories` | 缺操作和 ID 不匹配的请求在转交前拒绝 |
+| `removed/python/tests/acceptance/m1/test_m1_05_factoryctl.py::test_poll_once_defers_when_handler_returns_none` | `backend/tests/legacy-mailbox.test.ts` | `defers an unanswered check, publishes its exact reply once and ignores partial files` | 未决请求无回执，后续轮询返回回复 |
+| `removed/python/tests/acceptance/m1/test_m1_05_factoryctl.py::test_factoryctl_harvest_places_single_match` | `backend/tests/legacy-harvest.test.ts` | `harvests virtual absolute paths and preserves an output already in place` | CLI 的单匹配收货、输出文件和完整报告 |
+| `removed/python/tests/acceptance/m1/test_m1_05_factoryctl.py::test_factoryctl_harvest_ambiguous_empty_and_submitted` | `backend/tests/legacy-harvest.test.ts` | `reports missing and ambiguous outputs, sorts list matches and honors submissions` | CLI 处理歧义、空匹配、可选项、列表和已有提交 |
+| `removed/python/tests/acceptance/m1/test_m1_05_factoryctl.py::test_factoryctl_fail_and_log` | `backend/tests/legacy-mailbox.test.ts` | `runs the check, log, fail and contract commands at the mailbox boundary` | 两条日志、失败报告和缺少邮箱或契约时的退出码 |
+| `removed/python/tests/acceptance/m1/test_m1_05_factoryctl.py::test_factoryctl_submit_and_inputs` | `backend/tests/legacy-sandbox.test.ts` | `submits file metadata and exposes inputs through the sandbox CLI` | 真实 CLI 提交、元数据、来料、预算及无效参数退出码 |
+| `removed/python/tests/acceptance/m1/test_m1_05_factoryctl.py::test_check_roundtrip_with_server` | `backend/tests/legacy-mailbox.test.ts` | `runs the check, log, fail and contract commands at the mailbox boundary` | CLI 发送指定参数并输出宿主的检验结果 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_check_inputs_rejects_unsealed` | `backend/tests/legacy-gate.test.ts` | `checks missing, unsealed, wrong type, properties and ordered input cardinality without opening a sandbox` | 拒绝未封存与未知物料，来料检查不创建沙箱 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_check_inputs_type_requires_cardinality` | `backend/tests/legacy-gate.test.ts` | `checks missing, unsealed, wrong type, properties and ordered input cardinality without opening a sandbox` | 区分类型、属性和端口基数三类错误 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_check_inputs_ok_and_list` | `backend/tests/legacy-gate.test.ts` | `checks missing, unsealed, wrong type, properties and ordered input cardinality without opening a sandbox` | 标量与列表接收、封存状态、输入顺序和沙箱开销 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_admit_external` | `backend/tests/legacy-gate.test.ts` | `admits an external card without validators and explains missing required metadata` | 外部物料入库但尚未封存，缺少元数据时拒绝 |
+| `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_report_json_and_digest` | `backend/tests/legacy-gate.test.ts` | `checks output structure, measured facts, guarantees, acceptance and metadata` | 报告字段、检查阶段和确定的规范摘要 |
+| `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_result_and_unknown` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 统计陌生合法事件并提取费用、轮数和结果 |
+| `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_malformed_and_last_result_wins` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 异常行计数、最后结果及非法字段类型 |
+| `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_errors` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 拒绝非法格式和缺失文件，区分空转录和未完成转录 |
+| `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_render_brief_contract_and_feedback` | `backend/tests/legacy-operator.test.ts` | `renders a brief and script invocation from the Registry snapshot` | 脚本工位的完整契约、反馈和尝试次数校验 |
+| `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_render_brief_contract_and_feedback` | `backend/tests/legacy-operator.test.ts` | `renders the configured agent's brief, model, turn limit and budget from Registry data` | Agent 工位的任务、输入路径和验收条件 |
+| `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_build_invocation_script_and_agent` | `backend/tests/legacy-operator.test.ts` | `renders a brief and script invocation from the Registry snapshot` | 脚本工位参数、环境和超时 |
+| `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_build_invocation_script_and_agent` | `backend/tests/legacy-operator.test.ts` | `renders the configured agent's brief, model, turn limit and budget from Registry data` | Agent 工位参数、环境、转录格式和超时 |
+| `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_terminal_states` | `backend/tests/legacy-runner.test.ts` | `treats only SEALED and DEAD jobs as terminal` | 仅 `SEALED` 和 `DEAD` 为终态 |
+| `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_submit_rejects_unsealed` | `backend/tests/legacy-runner.test.ts` | `rejects unsealed input before creating a job` | 未封存入参在创建任务前报 `INTAKE_REJECTED` |
+| `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_gate_reject_records_feedback` | `backend/tests/legacy-runner.test.ts` | `records gate rejection feedback and reaches DEAD without sealing any outputs` | Gate 退回时保留反馈和 `REJECTED` 事件，并结束任务 |
+| `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_operator_fail_retries_then_dead` | `backend/tests/legacy-runner.test.ts` | `retries operation failures to the configured limit and retains both attempt logs` | 执行失败按上限重试并保留每次尝试的日志 |
+| `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_budget_exceeded_does_not_seal_or_retry` | `backend/tests/legacy-runner.test.ts` | `harvests official-shaped Harness outputs and stops over-budget jobs before sealing` | 超预算任务停止封存和重试 |
+| `removed/python/tests/acceptance/m1/test_m1_08_runner.py::test_writer_harvests_and_seals` | `backend/tests/legacy-runner.test.ts` | `harvests official-shaped Harness outputs and stops over-budget jobs before sealing` | Runner 采集官方 Harness 形状的产物并封存正常任务 |
+| `removed/python/tests/acceptance/m1/test_m1_09_cli.py::test_bean_lineage_json` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | CLI 封存后向上追溯，结果只包含原输入 Bean |
+| `removed/python/tests/acceptance/m2/test_m2_01_runplan.py::test_templated_params_recorded` | `backend/tests/legacy-runplan.test.ts` | `orders the example by dependency layer and records parameters and budgets` | 归档示例产线的 `to_s3.prefix` 保留模板原文和模板字段标记 |
+| `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_not_cacheable_roles` | `backend/tests/legacy-cache.test.ts` | `uses result-affecting inputs without depending on epoch or descriptive metadata` | Sink 的缓存键请求返回 `CACHE_NOT_CACHEABLE` |
+| `removed/python/tests/acceptance/m7/test_m7_04_backup.py::test_restore_refuses` | `backend/tests/backup.test.ts` | `reports corrupt and missing blobs, extra files, and unsafe paths before restore` | 拒绝损坏备份和非空恢复目录，原 CAS 保留 |
+
+`parity --json` 输出逐条差异。历史 Python 验收文件只作为需求和证据索引读取。普通验证检查活动源码的依赖边界、Shell 与表达式调用约束，以及 Python 代码归档。完整代码策略中尚未迁移的检查会在 `parity` 中列出。通过的 Registry 用例会按规则文件和行号记录实际生成诊断的规则及触发用例。未触发的诊断规则仍列入覆盖缺口。
+
+Bun MRL 表达式检查标准库参数、宏短路、集合顺序和嵌套深度。规则检查覆盖模块归属、关系签名、变量绑定、宿主事实类型、分层否定及聚合。Registry 事实交给规范中的 `kernel/refs.mrl`、`kernel/types.mrl`、`kernel/stations.mrl` 和 `kernel/lines.mrl`。内核检查业务引用、类型继承、工位契约和产线绑定，并生成转换解析表。测试可按完整 Line 键或省略 `Line:` 的键匹配解析条目。Registry 的宪法在同一规则程序上执行，编译失败时仍会返回内核诊断。完整 int64 精度和整数值与同值浮点数的身份尚需迁移。超过 JavaScript 安全整数范围的 YAML 用例会报告证据缺口。规范用例以 `spec/mrl/conformance/` 为准。
+
+下表记录 `removed/python/tests/acceptance/m1/test_m1_10_e2e.py` 中的历史验收。
 
 | 测试 | 验证 |
 |---|---|

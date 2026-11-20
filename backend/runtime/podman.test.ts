@@ -30,16 +30,41 @@ describe("PodmanProvider", () => {
   test("builds a deterministic hardened argv", () => {
     const provider = new PodmanProvider({ executable: "podman-test", allowUnproxiedEgress: true });
     const argv = provider.buildRunArgv({ ...spec, network: "egress" });
-    expect(argv).toContain("--cap-drop");
-    expect(argv).toContain("ALL");
+    const flag = (name: string) => argv[argv.indexOf(name) + 1];
+    expect(flag("--user")).toBe("10001:10001");
+    expect(flag("--cap-drop")).toBe("ALL");
     expect(argv).toContain("--read-only");
-    expect(argv).toContain("--security-opt");
-    expect(argv).toContain("no-new-privileges");
-    expect(argv).toContain("--network");
-    expect(argv[argv.indexOf("--network") + 1]).toBe("bridge");
+    expect(flag("--security-opt")).toBe("no-new-privileges");
+    expect(flag("--pids-limit")).toBe("256");
+    expect(flag("--network")).toBe("bridge");
+    expect(argv.filter((arg) => arg === "--network")).toHaveLength(1);
     expect(argv.join(" ").toLowerCase()).not.toContain("docker.sock");
-    expect(argv).not.toContain("--privileged");
-    expect(argv).not.toContain("-v");
+    for (const absent of ["host", "--privileged", "--cap-add", "-v", "--volume", "--rm"]) expect(argv).not.toContain(absent);
+  });
+
+  test("emits the ordered Podman run contract and protects fixed environment entries", () => {
+    const provider = new PodmanProvider({ executable: "podman-test" });
+    const local = { ...spec,
+      mounts: [{ source: "/tmp/fixture/in", target: "/factory/in", readonly: true }, { source: "/tmp/fixture/out", target: "/factory/out", readonly: false }],
+      env: { FACTORY_JOB_ID: "job-1", B_EXTRA: "2", A_EXTRA: "1" }, memoryMb: 256,
+    };
+    expect(provider.buildRunArgv(local)).toEqual([
+      "podman-test", "run", "--name", "mao-job-1-1", "--detach", "--init", "--user", "10001:10001",
+      "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--pids-limit", "256",
+      "--network", "none", "--tmpfs", "/tmp:rw,nosuid,size=256m", "--cpus", "1", "--memory", "256m",
+      "--mount", "type=bind,source=/tmp/fixture/in,target=/factory/in,readonly",
+      "--mount", "type=bind,source=/tmp/fixture/out,target=/factory/out",
+      "--mount", "type=volume,source=workspace-1,target=/workspace",
+      "--env", "FACTORY_IN=/factory/in", "--env", "FACTORY_OUT=/factory/out",
+      "--env", "FACTORY_CTL=/factory/ctl", "--env", "FACTORY_WORKSPACE=/workspace",
+      "--env", "FACTORYCTL=/opt/factory/bin/factoryctl", "--env", "HOME=/tmp/home",
+      "--env", "PATH=/opt/factory/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "--env", "A_EXTRA=1", "--env", "B_EXTRA=2", "--env", "FACTORY_JOB_ID=job-1",
+      "--workdir", "/workspace", spec.image, "/bin/sh", "-c", "mkdir -p /tmp/home && exec sleep 2147483647",
+    ]);
+    const attempted = provider.buildRunArgv({ ...local, env: { FACTORY_IN: "/etc" } });
+    expect(attempted).not.toContain("FACTORY_IN=/etc");
+    expect(attempted.filter((arg) => arg === "FACTORY_IN=/factory/in")).toHaveLength(1);
   });
 
   test("rejects egress until the managed proxy is enabled", () => {

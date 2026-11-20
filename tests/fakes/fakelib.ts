@@ -1,5 +1,7 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { resolveKiriClient } from "../../backend/runtime/kiri";
+import { parseImageId, resolvePodmanExecutable, runCommand } from "../../backend/runtime/podman";
 
 export const REPO = join(import.meta.dir, "../..");
 export const FAKES = join(REPO, "tests", "fakes");
@@ -36,14 +38,15 @@ export function localCommands(): Record<string, string[]> {
 
 export class MissingImages extends Error {}
 
-export async function imageIds(executable = process.env.MAO_PODMAN_EXECUTABLE ?? "podman"): Promise<Record<string, string>> {
+export async function imageIds(executable?: string): Promise<Record<string, string>> {
+  const kiri = !executable && process.env.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri" ? resolveKiriClient() : undefined;
+  const command = kiri?.argv ?? [executable ?? resolvePodmanExecutable()];
   const result: Record<string, string> = {};
   const missing: string[] = [];
   for (const name of IMAGE_NAMES) {
-    const child = Bun.spawn([executable, "image", "inspect", "--format", "{{.Id}}", imageTag(name)], { stdout: "pipe", stderr: "pipe" });
-    const code = await child.exited;
-    const value = (await new Response(child.stdout).text()).trim();
-    if (code !== 0 || !/^sha256:[0-9a-f]{64}$/.test(value)) missing.push(imageTag(name));
+    const inspected = await runCommand([...command, "image", "inspect", "--format", "{{.Id}}", imageTag(name)], { env: kiri?.env });
+    const value = parseImageId(new TextDecoder().decode(inspected.stdout));
+    if (inspected.exitCode !== 0 || !value) missing.push(imageTag(name));
     else result[name] = value;
   }
   if (missing.length) throw new MissingImages(`测试镜像不存在：${missing.join("、")}。先运行 bun run build:test-images`);

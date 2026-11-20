@@ -4,7 +4,7 @@
  * provider authentication remain inside the official Harness.
  */
 
-import { buildKiriHarnessArgv, resolveKiriEnvironment } from "../runtime/kiri";
+import { buildKiriHarnessCommand } from "../runtime/kiri";
 import { resolvePodmanExecutable } from "../runtime/podman";
 
 export type OfficialHarnessName = "claude-code" | "codex" | "deepseek-harness" | "zcode" | "kimi-code" | "pi";
@@ -49,6 +49,7 @@ export interface HarnessTransport {
 
 export type OfficialProcess = {
   stdout: ReadableStream<Uint8Array>;
+  exited?: Promise<number>;
   stdin?: {
     write(data: Uint8Array): Promise<void> | void;
     end?(): Promise<void> | void;
@@ -79,9 +80,18 @@ export function chooseTransport(definition: HarnessDefinition, acpAvailable: boo
   return definition.transportPreference === "acp" && acpAvailable ? "acp" : "official-cli";
 }
 
+export function harnessEndpointEnv(definition: HarnessDefinition, baseUrl: string): Record<string, string> {
+  if (!baseUrl || (definition.id !== "claude-code" && definition.id !== "codex")) return {};
+  const url = new URL(baseUrl);
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new Error("Harness Base URL must be an HTTP(S) address without credentials");
+  return definition.id === "claude-code" ? { ANTHROPIC_BASE_URL: baseUrl } : { OPENAI_BASE_URL: baseUrl };
+}
+
 export function officialCliInvocation(definition: HarnessDefinition, request: HarnessSessionRequest): string[] {
   const prompt = `${request.contract}\n\n${request.task}`;
-  if (definition.id === "codex") return [definition.executable, "exec", "--json", "--skip-git-repo-check", "--model", request.model, prompt];
+  if (definition.id === "codex") return [definition.executable, "exec", ...(request.resumeId ? ["resume"] : []), "--json", "--skip-git-repo-check", "--model", request.model, ...(request.resumeId ? [request.resumeId] : []), prompt];
+  if (definition.id === "claude-code") return [definition.executable, "--print", "--model", request.model, "--output-format", "stream-json", "--verbose", "--include-partial-messages", ...(request.resumeId ? ["--resume", request.resumeId] : []), "--", prompt];
+  if (definition.id === "kimi-code") return [definition.executable, "--model", request.model, "--output-format", "stream-json", ...(request.resumeId ? ["--session", request.resumeId] : []), "--prompt", prompt];
   return [definition.executable, "-p", prompt, "--model", request.model, "--output-format", "stream-json"];
 }
 
@@ -94,13 +104,23 @@ export function decodeOfficialLine(line: string): HarnessEvent | null {
   const item = record.item && typeof record.item === "object" ? record.item as Record<string, unknown> : undefined;
   const message = record.message && typeof record.message === "object" ? record.message as Record<string, unknown> : undefined;
   const type = typeof record.type === "string" ? record.type : typeof item?.type === "string" ? item.type : "";
-  const sessionId = typeof record.session_id === "string" ? record.session_id : typeof record.sessionId === "string" ? record.sessionId : undefined;
+  const identifier = record.session_id ?? record.sessionId ?? record.thread_id;
+  const sessionId = typeof identifier === "string" ? identifier : undefined;
+  if (type === "stream_event") {
+    const event = record.event as { type?: string; delta?: { type?: string; text?: string } } | undefined;
+    return event?.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string"
+      ? { type: "text.delta", sessionId, text: event.delta.text, metadata: { partial: true } }
+      : null;
+  }
+  if (type === "user") return null;
   const content = message?.content;
   const contentText = Array.isArray(content)
     ? content.filter((part) => part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string").map((part) => (part as Record<string, unknown>).text as string).join("")
     : undefined;
-  const text = typeof record.text === "string" ? record.text : typeof record.delta === "string" ? record.delta : typeof item?.text === "string" ? item.text : contentText;
-  const eventType: HarnessEvent["type"] = type.includes("error") || type.includes("fail") ? "session.failed"
+  const text = typeof record.text === "string" ? record.text : typeof record.delta === "string" ? record.delta
+    : typeof item?.text === "string" ? item.text : typeof record.result === "string" ? record.result : contentText;
+  const eventType: HarnessEvent["type"] = type.includes("error") || type.includes("fail") || record.is_error === true ? "session.failed"
+    : type === "item.completed" && item?.type === "agent_message" ? "text.delta"
     : type.includes("start") || type.includes("init") ? "session.started"
       : type === "mao.record" || type === "record" ? "record"
       : type.includes("secret") && type.includes("request") ? "secret.request"
@@ -120,6 +140,32 @@ class OfficialCliSession implements HarnessSession {
     const reader = this.process.stdout.getReader();
     const decoder = new TextDecoder();
     let pending = "";
+    let partial = false;
+    let failed = false;
+    const decode = function* (line: string): Iterable<HarnessEvent> {
+      const event = decodeOfficialLine(line);
+      if (!event) return;
+      if (event.type === "session.failed") failed = true;
+      if (event.metadata?.partial === true) {
+        partial = true;
+        yield event;
+        return;
+      }
+      if (event.type === "text.delta" && event.text) {
+        const records = event.text.split(/\r?\n/).map((text) => text.trim()).filter(Boolean).map((text) => {
+          if (!text.startsWith("{")) return { text };
+          const record = decodeOfficialLine(text);
+          return record?.type === "record" || record?.type === "secret.request" ? { record } : { text };
+        });
+        for (const item of records) if (item.record) yield { ...item.record, sessionId: event.sessionId };
+        if (records.some((item) => item.record)) event.text = records.flatMap((item) => item.text ?? []).join("\n");
+        if (event.metadata?.type === "assistant" && partial) {
+          partial = false;
+          return;
+        }
+      }
+      if (event.type !== "text.delta" || event.text || event.sessionId) yield event;
+    };
     try {
       while (!this.closed) {
         const chunk = await reader.read();
@@ -127,9 +173,16 @@ class OfficialCliSession implements HarnessSession {
         pending += decoder.decode(chunk.value, { stream: true });
         const lines = pending.split(/\r?\n/);
         pending = lines.pop() ?? "";
-        for (const line of lines) { const event = decodeOfficialLine(line); if (event) yield event; }
+        for (const line of lines) {
+          if (line.length > 1024 * 1024) throw new Error("Official Harness emitted an oversized JSONL record");
+          yield* decode(line);
+        }
+        if (pending.length > 1024 * 1024) throw new Error("Official Harness emitted an oversized JSONL record");
       }
-      if (pending) { const event = decodeOfficialLine(pending); if (event) yield event; }
+      pending += decoder.decode();
+      if (pending) yield* decode(pending);
+      const exitCode = this.process.exited ? await this.process.exited : 0;
+      if (!this.closed && !failed && exitCode !== 0) yield { type: "session.failed", metadata: { exitCode } };
     } finally { reader.releaseLock(); }
   }
 
@@ -145,9 +198,9 @@ export class OfficialCliTransport implements HarnessTransport {
   }
 }
 
-function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress" }): OfficialProcess {
-  const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
-  if (!bun) throw new Error("Bun runtime is required");
+export function harnessProcessCommand(argv: string[], options: {
+  env: Record<string, string>; containerImage?: string; network?: "none" | "egress";
+}): { command: string[]; env: Record<string, string> } {
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
   const env: Record<string, string> = {};
   for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMP", "TEMP", "LANG", "LC_ALL"]) {
@@ -160,31 +213,37 @@ function defaultOfficialSpawn(argv: string[], options: { cwd: string; env: Recor
   const network = options.network ?? "none";
   if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
   let podmanNetwork = "none";
-  if (image && hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri") {
-    for (const [key, value] of Object.entries(resolveKiriEnvironment())) {
-      if (env[key] === undefined) env[key] = value;
-    }
-  }
-  if (network === "egress") {
-    for (const key of ["MAO_EGRESS_NETWORK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) {
+  if (image && network === "egress") {
+    for (const key of ["MAO_EGRESS_NETWORK", "ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) {
       const value = hostEnv[key];
       if (typeof value === "string" && env[key] === undefined) env[key] = value;
     }
     const managed = env.MAO_EGRESS_NETWORK;
-    if (!managed || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(managed)) throw new Error("Managed egress network is unavailable");
+    if (!managed || managed === "host" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(managed)) throw new Error("Managed egress network is unavailable");
     podmanNetwork = managed;
   }
+  const kiri = image && hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
+    ? buildKiriHarnessCommand(image, argv, network, { egressNetwork: env.MAO_EGRESS_NETWORK, envNames: harnessContainerEnv(options.env, env, network) })
+    : undefined;
+  const envFlags = harnessContainerEnv(options.env, env, network).flatMap((name) => ["--env", name]);
   const command = image
-    ? hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
-      ? buildKiriHarnessArgv(image, argv, network, { kiriExecutable: hostEnv.MAO_KIRI_EXECUTABLE, dockerExecutable: hostEnv.MAO_DOCKER_EXECUTABLE, context: hostEnv.MAO_KIRI_CONTEXT, mode: hostEnv.MAO_KIRI_MODE === "docker-context" ? "docker-context" : "kiri", egressNetwork: env.MAO_EGRESS_NETWORK })
-      : [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE), "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv]
+    ? kiri?.argv ?? [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE), "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", ...envFlags, image, ...argv]
     : argv;
-  const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "pipe" });
-  const stdin = process.stdin && typeof process.stdin.write === "function" ? {
-    write: async (data: Uint8Array) => { await process.stdin.write(data); await process.stdin.flush?.(); },
-    end: async () => { await process.stdin.end?.(); },
-  } : undefined;
-  return { stdout: process.stdout as ReadableStream<Uint8Array>, stdin, kill: () => process.kill() };
+  if (kiri) Object.assign(env, kiri.env);
+  return { command, env };
+}
+
+function defaultOfficialSpawn(argv: string[], options: Parameters<OfficialSpawn>[1]): OfficialProcess {
+  const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
+  if (!bun) throw new Error("Bun runtime is required");
+  const { command, env } = harnessProcessCommand(argv, options);
+  const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: "ignore", stderr: "ignore" });
+  return { stdout: process.stdout as ReadableStream<Uint8Array>, exited: process.exited, kill: () => process.kill() };
+}
+
+function harnessContainerEnv(configured: Record<string, string>, environment: Record<string, string>, network: "none" | "egress"): string[] {
+  const names = [...Object.keys(configured), ...(network === "egress" ? ["ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"] : [])];
+  return [...new Set(names)].filter((name) => /^[A-Z_][A-Z0-9_]*$/.test(name) && Object.hasOwn(environment, name));
 }
 
 export function resolveOfficialHarness(runtime: string): HarnessDefinition | undefined {

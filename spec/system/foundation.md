@@ -235,6 +235,8 @@ FACTORYCTL_SOURCE: Path                  # = Path(mao 包目录) / "ctl" / "fact
 
 ### 5.9 事务：`tx()` 与 `query()`
 
+活动 Bun 连接按 SQL 文本复用预编译语句。业务参数通过绑定值传入。关闭连接时先释放连接持有的预编译语句，再关闭 SQLite，使数据库和 WAL 文件在 Windows 等平台可立即清理。Bun 验收在一次事务中使用 64 条不同查询，验证语句复用和严格关闭。
+
 `tx()` 是上下文管理器，进入时先获取 RLock，退出时释放。
 
 - **外层**（`depth == 0`）：
@@ -275,6 +277,10 @@ FACTORYCTL_SOURCE: Path                  # = Path(mao 包目录) / "ctl" / "fact
 6. `migrate` 在执行期间持有 RLock，并且不能在 `tx()` 内部调用（`depth > 0` 时 `RuntimeError`）。
 
 ### 5.11 `Context.open` 与 `install_factoryctl`（M1-03）
+
+Bun 工位首次运行时，`installFactoryctl` 打包当前 `factoryctl.ts`，在 `$FACTORY_ROOT/tools/factory/bin/` 内以独占临时文件写入，再原子改名。进程复用相同的打包结果，目标内容相同时复用现有文件。Runner 把可执行文件只读挂载到 `/opt/factory/bin/factoryctl`。
+
+以下 Python 接口和步骤对应归档实现。
 
 `Context.open(root, *, provider, clock=None, ids=None)`：
 

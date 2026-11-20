@@ -61,7 +61,7 @@ The walkthrough in [docs/en/getting-started.md](docs/en/getting-started.md) show
 
 ### Prerequisites
 
-- **Bun** for the business control plane and **Podman** or **Kiri** for managed sandboxes. Kiri can run through its headless Linux-style CLI with `MAO_CONTAINER_RUNTIME=kiri`
+- **Bun** for the business control plane and **Podman** or **Kiri** for managed sandboxes. Set `MAO_CONTAINER_RUNTIME=kiri` to use the official headless Kiri service on Linux.
 - **An agent CLI** (optional): Claude Code or Codex for real stations. The tests use a scripted fake agent instead.
 
 ### Install and verify

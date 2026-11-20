@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createApp } from "../src/server";
 
 async function jsonResponse(response: Response) {
@@ -8,6 +11,32 @@ async function jsonResponse(response: Response) {
 }
 
 describe("Bun business backend", () => {
+  test("stores uploaded project bytes under a digest and fetches them through their project", async () => {
+    const storageRoot = mkdtempSync(join(tmpdir(), "mao-project-upload-"));
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", storageRoot });
+    try {
+      const files = new FormData();
+      const bytes = new Uint8Array([0x50, 0, 0xff, 0x42]);
+      files.set("name", "文件项目");
+      files.append("files", new Blob([bytes]), "项目数据.bin");
+      const intake = await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", body: files }));
+      expect(intake.status).toBe(201);
+      const created = await jsonResponse(intake);
+      const source = created.sources[0];
+      expect(source.metadata.name).toBe("项目数据.bin");
+      expect(source.fileRef).toBe(`cas://${source.metadata.digest}`);
+      const fileRoute = `/api/v1/projects/${created.id}/files/${source.metadata.digest}`;
+      const download = await app.fetch(new Request(`http://localhost${fileRoute}`));
+      expect(download.status).toBe(200);
+      expect(download.headers.get("content-type")).toBe("application/octet-stream");
+      expect(new Uint8Array(await download.arrayBuffer())).toEqual(bytes);
+      expect((await app.fetch(new Request(`http://localhost${fileRoute.replace(created.id, "missing-project")}`))).status).toBe(404);
+    } finally {
+      app.stop();
+      await rm(storageRoot, { recursive: true, force: true });
+    }
+  });
+
   test("creates a business system, intakes a project, and persists a talk event", async () => {
     const dbPath = `.factory/test-${randomUUID()}.db`;
     const app = createApp({ dbPath, legacyPath: dbPath });

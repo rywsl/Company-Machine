@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { open } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { canonicalBytes, canonicalJson, digestBytes, digestFile, utcIso, type Clock, type IdSource } from "./foundation";
 import { FactoryError } from "./errors";
 import { listFiles } from "../../mrl/factory/paths";
@@ -55,17 +57,53 @@ export class Warehouse {
     return join(this.root, "cas", "sha256", hex.slice(0, 2), hex.slice(2));
   }
   async putFile(source: string): Promise<string> {
-    const digest = await digestFile(source);
-    const destination = this.blobPath(digest);
-    if (existsSync(destination)) return digest;
-    const hex = digest.slice("sha256:".length);
-    const part = join(this.root, "tmp", `${hex}.${Date.now()}.part`);
-    mkdirSync(join(this.root, "tmp"), { recursive: true });
-    await copyFile(source, part);
-    mkdirSync(join(destination, ".."), { recursive: true });
-    try { if (existsSync(destination)) unlinkSync(part); else renameSync(part, destination); }
-    catch (error) { if (existsSync(part)) unlinkSync(part); if (!existsSync(destination)) throw error; }
-    return digest;
+    return (await this.storeFile(source)).digest;
+  }
+  private async storeFile(source: string): Promise<{ digest: string; size: number }> {
+    const scratch = join(this.root, "tmp");
+    mkdirSync(scratch, { recursive: true });
+    const part = join(scratch, `cas-${randomUUID()}.part`);
+    let ownsPart = false;
+    const hash = createHash("sha256");
+    const buffer = new Uint8Array(1024 * 1024);
+    let size = 0;
+    const input = await open(source, "r");
+    try {
+      try {
+        const output = await open(part, "wx");
+        ownsPart = true;
+        try {
+          while (true) {
+            const { bytesRead } = await input.read(buffer, 0, buffer.length, null);
+            if (bytesRead === 0) break;
+            let offset = 0;
+            while (offset < bytesRead) {
+              const { bytesWritten } = await output.write(buffer, offset, bytesRead - offset, null);
+              if (bytesWritten === 0) throw new Error("CAS staging file stopped accepting bytes");
+              offset += bytesWritten;
+            }
+            hash.update(buffer.subarray(0, bytesRead));
+            size += bytesRead;
+          }
+        } finally { await output.close(); }
+      } finally { await input.close(); }
+
+      const digest = `sha256:${hash.digest("hex")}`;
+      const destination = this.blobPath(digest);
+      if (!existsSync(destination)) {
+        mkdirSync(dirname(destination), { recursive: true });
+        // Serialize only publication across processes sharing the warehouse database.
+        this.db.transaction(() => {
+          if (!existsSync(destination)) {
+            renameSync(part, destination);
+            ownsPart = false;
+          }
+        }).immediate();
+      }
+      return { digest, size };
+    } finally {
+      if (ownsPart) unlinkSync(part);
+    }
   }
   async add(draft: BeanDraft): Promise<Bean> {
     if (!TYPE.test(draft.type)) throw new FactoryError("BEAN_TYPE_INVALID", "Bean 类型必须带 minor", { type: draft.type });
@@ -74,8 +112,8 @@ export class Warehouse {
     const payload: FileRef[] = [];
     for (const [path, source] of Object.entries(draft.files)) {
       checkPayloadPath(path);
-      const digest = await this.putFile(source);
-      payload.push({ path, digest, size: statSync(source).size, mediaType: mediaTypeOf(path) });
+      const { digest, size } = await this.storeFile(source);
+      payload.push({ path, digest, size, mediaType: mediaTypeOf(path) });
     }
     payload.sort((a, b) => a.path.localeCompare(b.path));
     const identity = { type: draft.type, meta, payload: payload.map((item) => ({ path: item.path, digest: item.digest, size: item.size, media_type: item.mediaType })) };
@@ -106,10 +144,9 @@ export class Warehouse {
     const rows = this.db.query(`SELECT id FROM beans${where} ORDER BY created_at,id`).all() as any[];
     return rows.map((row) => this.get(row.id)).filter((bean) => !options.typePrefix || bean.type.startsWith(options.typePrefix));
   }
-  async sealMany(items: Array<[string, Record<string, unknown>]>, jobId: string | null, reportDigest: string): Promise<void> {
+  sealMany(items: Array<[string, Record<string, unknown>]>, jobId: string | null, reportDigest: string): void {
     checkDigest(reportDigest);
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
+    this.db.transaction(() => {
       for (const [id, facts] of items) {
         const row = this.db.query("SELECT facts_json,sealed FROM beans WHERE id = ?").get(id) as any;
         if (!row) throw new FactoryError("BEAN_NOT_FOUND", `Bean ${id} 不存在`, { beanId: id });
@@ -121,8 +158,7 @@ export class Warehouse {
         } else if (row.facts_json !== factsJson) throw new FactoryError("FACTS_CONFLICT", "封存 facts 与首次封存不一致", { beanId: id });
         else if (!this.db.query("SELECT 1 FROM seals WHERE bean_id = ? AND report_digest = ? AND ifnull(job_id,'') = ifnull(?,'')").get(id, reportDigest, jobId)) this.db.query("INSERT INTO seals (bean_id,job_id,report_digest,facts_json,sealed_at) VALUES (?,?,?,?,?)").run(id, jobId, reportDigest, factsJson, utcIso(this.clock.now()));
       }
-      this.db.exec("COMMIT");
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    }).immediate();
   }
   async materialize(id: string, destination: string, layout: "port" | "bean"): Promise<void> {
     const bean = this.get(id);
@@ -135,13 +171,11 @@ export class Warehouse {
     const runtime = bun(); if (!runtime) throw new FactoryError("RUNTIME_UNAVAILABLE", "Bun runtime is required"); await runtime.write(join(destination, "bean.json"), canonicalBytes(body));
   }
   recordLineage(jobId: string, inputs: Record<string, string[]>, outputs: Record<string, string[]>): void {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
+    this.db.transaction(() => {
       for (const ids of [...Object.values(inputs), ...Object.values(outputs)]) for (const id of ids) { this.get(id); }
       this.db.query("DELETE FROM lineage WHERE job_id = ?").run(jobId);
       for (const [direction, ports] of [["in", inputs], ["out", outputs]] as const) for (const port of Object.keys(ports).sort()) ports[port].forEach((id, ordinal) => this.db.query("INSERT INTO lineage (job_id,direction,port,ordinal,bean_id) VALUES (?,?,?,?,?)").run(jobId, direction, port, ordinal, id));
-      this.db.exec("COMMIT");
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    }).immediate();
   }
   lineage(id: string, direction: "up" | "down"): { id: string; direction: "up" | "down"; jobs: Array<{ jobId: string; inputs: Record<string, string[]>; outputs: Record<string, string[]> }>; beans: string[] } {
     this.get(id);

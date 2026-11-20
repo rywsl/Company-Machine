@@ -6,6 +6,28 @@
 > `cache.md` 调用 `mao.scheduler.is_quarantined(bean_id)`。`connectors.md` 的 cron 由本文件触发。
 > **M12/M13 增补**：`Scheduler(..., instances=None)` 与实例准入见 `instances.md` 5.4（M12）。冲突时以新规范为准。
 
+## Bun 产线运行存储
+
+`backend/src/legacy/runs.ts` 的 `RunStore` 提供调度器使用的 SQLite 运行记录。创建运行时，把序列化的 RunPlan、摘要、初始节点和 `run.created` 事件写入同一事务。恢复时校验已持久化计划的摘要、产线和 epoch，并按计划顺序读取节点。计划、节点及事件沿用 `lines.md` 的持久化字段。
+
+调度器通过 `submitNode` 在同一数据库事务中创建 Job、登记节点的 Job 历史并预留预算。 `settleNode` 接收该节点已提交的终态 Job，释放预留、累加实际费用并登记事件。缓存命中时，`completeCachedNode` 原子登记已封存 Job 和它的产物，标记节点完成并记录命中事件，预算预留和新增支出均为零。重复结算或重复登记同一命中返回已记录的节点状态。错误收尾或取消等待已提交节点结算，之后在同一事务内跳过其余等待节点。
+
+`events(id, afterSeq)` 按 SQLite 序号返回该运行的增量事件。运行状态、节点状态和预算事件随对应变更提交。此接口由执行器负责协调 Job 执行，存储层承担状态和预算事务。
+
+## Bun 产线触发器
+
+`backend/src/legacy/triggers.ts` 提供 `TriggerEngine.process({ limit })` 和 `processCron({ enabled, limit })`。两者使用同一数据库创建 Run，返回新建的 Run ID。调用方可通过 `limit` 传入剩余运行名额。
+
+Bean 触发器按存储的事件游标读取封存事件。直接外部封存和标签变化也会把受影响的 Bean 加入待检队列。首次处理和 Registry epoch 变化时，队列从现有已封存且有效的 Bean 补齐。游标、待检队列、`(line, bean)` 去重记录和 Run 在同一事务提交。已有 Run 的 Bean 可跨重启去重。
+
+cron 触发器使用 `cron_fires.last_at` 检查 `every:<时长>`，首次扫描即到期。仅活跃且具有空输入接口的 Line 可创建 cron Run。非法时长或不兼容的输入接口以事件记录。创建 Run 和写入本次触发时间在同一事务中完成。专项验收见 `backend/tests/legacy-triggers.test.ts`。
+
+## Bun 调度队列
+
+`backend/src/legacy/scheduler.ts` 使用 SQLite 持久化 Job 队列。 `ScheduledExecutor.dispatch` 只登记任务。 `Scheduler.pump` 按 Job ID 顺序选取满足 CPU、内存、GPU、单工位在制品限制和物料隔离的 Job，并通过进程认领记录协调并发调度。认领进程退出后，后续调度可重新认领。每次实际调用 Runner 都在数据库事务之外，终态 Job 离开队列。
+
+`Scheduler.tick` 处理超时审批，随后在同一事务内为 Bean 和 cron 触发分配 `run_cap` 名额。之后记录死信并按需运行队列。死信保留首次错误及脱敏内容。已创建的产线运行由 LineRunner 推进。对应专项验收见 `backend/tests/legacy-scheduler.test.ts`。隔舱、令牌桶、熔断与自动隔离的完整规范仍见下文。
+
 ---
 
 ## 1. 目的与范围

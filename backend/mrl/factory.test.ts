@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { checkRegistry } from "./factory/check";
 import { layoutKind, loadRegistry } from "./factory/registry";
 import { validate } from "./factory/schema";
-import { loadDocuments } from "./factory/yamlio";
+import { loadDocuments, YamlError } from "./factory/yamlio";
 
 describe("Bun MRL factory registry", () => {
   test("loads the M1 and M2 fixture registries through the active Bun path", () => {
@@ -27,6 +27,28 @@ describe("Bun MRL factory registry", () => {
     expect(documents.map((document) => document.data)).toEqual([{ a: true }, { b: "on" }]);
     expect(documents.map((document) => document.index)).toEqual([1, 2]);
     expect(validate({ apiVersion: "mao/v1", kind: "Type", metadata: { name: "bad", version: "nope" }, spec: {} }).length).toBeGreaterThan(0);
+  });
+
+  test("reports nested duplicate YAML keys at their own source positions", () => {
+    const starts = "# comment\n---\n# document comment\n";
+    const duplicate = [
+      { text: "outer:\n  kind: Type\n  'kind': Type\n", col: 3 },
+      { text: 'outer: {\n  kind: Type,\n  "kind": Type}\n', col: 3 },
+    ];
+    for (const { text, col } of duplicate) {
+      let caught: unknown;
+      try {
+        loadDocuments(starts + text);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(YamlError);
+      expect(caught).toMatchObject({ message: "重复的键 'kind'", line: 6, col });
+    }
+    const independent = "items:\n  - key: value\n    body: |\n      key: text\n      key: text\n  - key: other\n";
+    expect(loadDocuments(independent)[0].data).toEqual({
+      items: [{ key: "value", body: "key: text\nkey: text\n" }, { key: "other" }],
+    });
   });
 
   test("checks nested Line bindings and exclusive step shapes", () => {

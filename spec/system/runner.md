@@ -1,6 +1,12 @@
 # runner：Job 状态机与 Runner（mao.jobs / mao.runner）
 
-活动 Bun Runner 的单工位路径通过 `ContainerProvider.open` 准备沙箱，再用一次 `Sandbox.exec` 执行配方命令。固定的 `FACTORY_*` 路径由 provider 提供，列表输入按端口声明写入 `in/<端口>/<序号>/`。`backend/tests/legacy-runner.test.ts` 验证脚本产物封存和单元素列表物化。
+活动 Bun Runner 通过 `ContainerProvider.open` 准备沙箱，再用 `Sandbox.exec` 执行当前阶段的配方命令。固定的 `FACTORY_*` 路径由 provider 提供，列表输入按端口声明写入 `in/<端口>/<序号>/`。`backend/tests/legacy-runner.test.ts` 验证脚本产物封存和单元素列表物化。
+
+Bun Runner 从同一 attempt 的持久化状态恢复。执行进程结束后，`GATING` 只收货和检验。失败与退回按各自事件计数应用重试上限。Harness 转录费用超额时直接进入 `DEAD`。Job 终态、Bean 封存、血缘和相关事件在同一 SQLite 事务中提交。
+
+工位使用只读挂载的 Bun `factoryctl` 访问邮箱。预检从沙箱读取单个普通文件，不超过 16 MiB，通过 Gate 检验指定输出端口。运行中审批使用 SQLite 决定记录，进程等待期间进入 `AWAITING_APPROVAL`，响应写入后恢复 `RUNNING`。执行进程结束时结案未决定的请求。
+
+两阶段工位持久化 `Job.phase`。方案待审时，Runner 返回 `AWAITING_APPROVAL`，释放执行锁。重入读取同一次尝试的已保存决定。批准后继续 execute，拒绝或超时进入失败重试流程。两个阶段在同一次尝试下使用各自的 in、out、ctl 和日志目录，并共用工作区。Sink 只在进入已获批的执行阶段后占用回执。`backend/tests/legacy-two-phase.test.ts` 验证了自动审批、数据库重开后人工批准、拒绝以及 Sink 回执边界。
 
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M1-08**。
 > 模块：`mao.jobs`、`mao.runner`。迁移：`src/mao/migrations/002_jobs.sql`。
@@ -278,6 +284,8 @@ PENDING → PROVISIONING → RUNNING ⇄ AWAITING_APPROVAL
 `PENDING → PROVISIONING` 之后：
 
 1. 创建 4.2 的目录。
+   Bun Runner 在 Linux 容器模式下设执行目录为 `0700`，`out/` 和 `workspace/` 对容器 UID 10001 可写。`ctl/` 和 `ctl/requests/` 保留 sticky 位。`ctl/responses/` 由宿主写入。`in/` 以只读方式挂载。工厂目录位于支持这些目录权限的 Linux 文件系统。
+   非 root 宿主运行时，沙箱在执行结束后向宿主共享由沙箱创建的输出文件与工作区目录权限，以便检验、恢复与清理。共享不跟随符号链接，依旧受执行目录的 `0700` 权限约束。
 2. 对每个输入端口、每个 Bean，`warehouse.materialize(bean_id, dest, layout="port")`。单 Bean 的 `dest` 是 `in/<port>/`；`list` 是 `in/<port>/<i>/`。`i` 从 0 开始。物化结果必须满足 README 第 5 节：payload 按 `path` 放置，另有 `bean.json`。
 3. 写 `ctl/job.json`、`ctl/contract.json`、`ctl/brief.md`。agent 工位的 brief 用 `render_brief(..., attempt=job.attempt, feedback=job.feedback, budget_usd=工位预算)`。输入 Bean 用 `warehouse.get`。
 4. 组装 `SandboxSpec`：

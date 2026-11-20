@@ -6,6 +6,16 @@
 > 两阶段 Sink 的 execute、占用幂等键、回执核验仍归 `connectors.md`。本文件只规定 propose，以及何时才可以进入 execute。
 > 路由改写（`bypass`）、`foreman` 路由的唤醒票、`human` 路由的收件箱、定向审批 `open_directed`、改道 `escalate`，以及 `Runner` 经 `Approvals` 处理 ctl 审批，见 `delegation.md`（M11），冲突时以 `delegation.md` 为准。
 
+## Bun 审批
+
+`backend/src/legacy/approvals.ts` 提供 M1 工位运行中的审批记录。 `openRequest` 绑定当前 Job 尝试，并按 Job、尝试编号和邮箱请求 ID 去重。重复投递返回已保存结果。工位使用 `approval.in_run` 和 MRL `auto_if` 路由，缺少规则时立即拒绝。 `foreman`、`human` 和 `review` 路由等待显式决定。M1 的默认等待时长为 600 秒，工位可通过 `approval.timeout` 指定时长。
+
+`applyDecision` 将决定、决定者、备注、时间和事件写入同一 SQLite 事务。 `expireDue` 处理到期的请求，超时的 ctl 响应使用 `APPROVAL_TIMEOUT`。尝试结束或中断时，`closePending` 结案该尝试剩余的审批。Runner 负责写邮箱响应和推进 Job 状态。摘要和备注写入前会对形如 `token=...` 的字段值脱敏。
+
+`readProposal` 校验 `proposal.json` 是符合协议的普通文件。 `openProposal` 每个 Job 尝试持久化一份方案，按 `approval.propose` 路由。MRL 只接收方案摘要、估价和预计时间。方案复核使用宪法中直接声明的 `limit("approval_review_quorum", N)`，按 Runtime 名称去重。未达到人数时继续等待，收到任一拒绝票时立即拒绝。方案期限来自工位配置，省略时持续等待。Runner 读取已持久化决定后推进阶段。Bun 阶段沙箱共用同一次尝试的工作区，使用独立的物料输出及邮箱目录，方案待审时释放沙箱和执行锁。
+
+对应专项验收见 `backend/tests/legacy-approvals.test.ts`。下列章节保留历史接口、两阶段审批和后续路由规范。
+
 ---
 
 ## 1. 目的与范围

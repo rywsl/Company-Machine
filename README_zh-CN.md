@@ -62,7 +62,7 @@
 ### 前置条件
 
 - **Bun** 和 **TypeScript**
-- **Podman 或 Kiri**：活动 Bun runtime。Kiri 支持 headless Linux CLI 路径。
+- **Podman 或 Kiri**：活动 Bun runtime。Linux 下设置 `MAO_CONTAINER_RUNTIME=kiri` 即可使用官方 Kiri headless 服务。
 - **agent CLI**（可选）：真实工位用 Claude Code 或 Codex；测试用脚本化的 fake agent 代替。
 
 ### 安装与验证

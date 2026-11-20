@@ -9,3 +9,7 @@ export * from "./gate";
 export * from "./operator";
 export * from "./jobs";
 export * from "./runner";
+export * from "./runplan";
+export * from "./runs";
+export * from "./line-runner";
+export * from "./cache";

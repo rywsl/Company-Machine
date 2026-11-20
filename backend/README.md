@@ -2,7 +2,7 @@
 
 The Bun backend is the TypeScript control-plane entry point for the business-system model. It owns deterministic storage, intake, event delivery, the vault boundary, and the Web API. Official Harness processes remain external runtimes.
 
-Run the development server from the repository root with `bun run backend/src/index.ts`. The default listener is `127.0.0.1:3000`. `BUSINESS_DB_PATH` or `FACTORY_DB_PATH` can point at an existing SQLite database. The default is `.factory/factory.db`, so new business tables share the existing MAO database.
+Run the development server from the repository root with `bun run backend/src/index.ts`. The default listener is `127.0.0.1:3000`. Set `FACTORY_ROOT` to choose the shared data directory for SQLite, CAS, station runs and the vault. The default is `.factory`. `BUSINESS_DB_PATH` and `FACTORY_DB_PATH` can select existing SQLite databases.
 
 The Web App is served from `frontend/dist` when that directory exists. Build the frontend before packaging. The event stream is available at `/api/v1/events` and accepts a `Last-Event-ID` header or `cursor` query parameter.
 
@@ -10,7 +10,7 @@ When a Foreman profile is configured, queued talk messages can be dispatched thr
 
 Podman and Kiri health and readiness are exposed at `/api/v1/runtime` and `/api/v1/runtime/ensure-ready`. A missing runtime dependency is reported to the Web App as an explicit runtime state. `MAO_PODMAN_EXECUTABLE` can point at a user-local Podman CLI when the parent desktop process has an older PATH snapshot.
 
-Set `MAO_CONTAINER_RUNTIME=kiri` to use Kiri's headless Linux-native CLI path. The default Kiri mode invokes `kiri ps`, `kiri run`, `kiri exec` and related commands directly. On Linux, readiness can start `kiri daemon` without opening the Kiri UI, while an existing systemd-managed daemon is reused. Set `MAO_KIRI_SOCKET=/run/kiri/docker.sock` and optionally `MAO_KIRI_DATA_DIR=/var/lib/kiri-daemon` when using the official Linux systemd service. `MAO_KIRI_MODE=docker-context` is available for installations exposing only `docker --context kiri`. `MAO_KIRI_EXECUTABLE` selects a user-local or packaged binary.
+On Linux, `MAO_CONTAINER_RUNTIME=kiri` connects to the official headless `kiri.service` at `/run/kiri/docker.sock`. The control plane and its Harness and ACP commands use the same endpoint. `MAO_KIRI_SOCKET` selects a custom Unix socket and `MAO_DOCKER_EXECUTABLE` selects the Docker-compatible client. Compatibility modes are `MAO_KIRI_MODE=kiri` for the official CLI and `MAO_KIRI_MODE=docker-context` for a named context.
 
 Secret values enter through `/api/v1/secrets/requests/:id/value` and are encrypted in the local vault. The database and event stream contain only the vault reference and status.
 

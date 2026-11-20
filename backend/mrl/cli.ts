@@ -2,13 +2,13 @@ import {
   buildRuleProgram,
   compileExpr,
   compileTemplate,
-  evaluate,
   MrlEvalError,
   MrlRuleError,
   MrlStaticError,
   parseType,
   type MrlValue,
 } from "./index";
+import { MAX_INT64, MIN_INT64, isInt, mrlJsonReplacer, nativeNumber, parseNumericScalar } from "./numbers";
 
 type JsonMap = Record<string, MrlValue>;
 
@@ -51,8 +51,16 @@ async function readMapping(value: string | undefined, label: string): Promise<Js
   const source = value.startsWith("@") ? await Bun.file(value.slice(1)).text() : value;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(source);
+    const parse = JSON.parse as (text: string, reviver: (key: string, value: unknown, context?: { source?: string }) => unknown) => unknown;
+    parsed = parse(source, (_key, value, context) => {
+      if (typeof value !== "number" || !context?.source) return value;
+      const number = parseNumericScalar(context.source);
+      if (isInt(number) && (number < MIN_INT64 || number > MAX_INT64)) throw new MrlEvalError("MRL-OVERFLOW", "int is outside int64");
+      if (!Number.isFinite(Number(nativeNumber(number)))) throw new MrlEvalError("MRL-DOMAIN", "non-finite number");
+      return number;
+    });
   } catch (error) {
+    if (error instanceof MrlEvalError) throw error;
     throw new Error(`${label} must be valid JSON${error instanceof Error ? `: ${error.message}` : ""}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${label} must be a JSON object`);
@@ -65,12 +73,7 @@ function typeEnvironment(spec: JsonMap, values: JsonMap): Record<string, string>
 }
 
 function output(value: unknown, jsonMode: boolean): void {
-  if (jsonMode) {
-    console.log(JSON.stringify(value, null, 2));
-    return;
-  }
-  if (typeof value === "string") console.log(value);
-  else console.log(JSON.stringify(value, null, 2));
+  console.log(!jsonMode && typeof value === "string" ? value : JSON.stringify(value, mrlJsonReplacer, 2));
 }
 
 function diagnostics(error: MrlStaticError, jsonMode: boolean): number {
@@ -91,22 +94,22 @@ function ruleError(error: MrlRuleError, jsonMode: boolean, command: "check" | "r
 async function expressionCommand(command: "eval" | "template", args: string[]): Promise<number> {
   const source = positional(args, new Set(["--env", "--types", "--budget"]))[0];
   if (!source) throw new Error(`${command} requires an expression or template`);
-  const values = await readMapping(flag(args, "--env"), "--env");
-  const typeSpec = await readMapping(flag(args, "--types"), "--types");
-  const environment = typeEnvironment(typeSpec, values);
   const budgetText = flag(args, "--budget");
   const budget = budgetText === undefined ? undefined : Number(budgetText);
   if (budget !== undefined && (!Number.isInteger(budget) || budget < 1)) throw new Error("--budget must be a positive integer");
   const jsonMode = hasFlag(args, "--json");
   try {
+    const values = await readMapping(flag(args, "--env"), "--env");
+    const typeSpec = await readMapping(flag(args, "--types"), "--types");
+    const environment = typeEnvironment(typeSpec, values);
     if (command === "template") {
       const compiled = compileTemplate(source, { environment });
       const value = compiled.render(values, { budget });
       output(jsonMode ? { ok: true, value, warnings: compiled.warnings } : value, jsonMode);
       return 0;
     }
-    const compiled = compileExpr(source, { environment });
-    const value = evaluate(compiled.ast, values, { budget });
+    const compiled = compileExpr(source, { environment, budget });
+    const value = compiled.evaluate(values);
     output(jsonMode ? { ok: true, value, type: compiled.type, warnings: compiled.warnings } : value, jsonMode);
     return 0;
   } catch (error) {
@@ -127,7 +130,11 @@ async function ruleCommand(command: "check" | "run", args: string[]): Promise<nu
   try {
     const program = buildRuleProgram(await sourceFiles(files));
     if (command === "check") {
-      output(jsonMode ? { ok: true, relations: program.relations.size, rules: program.rules.length } : `✔ ${program.relations.size} relations, ${program.rules.length} rules`, jsonMode);
+      if (jsonMode) output({ ok: true, relations: program.relations.size, rules: program.rules.length, warnings: program.warnings }, true);
+      else {
+        output(`✔ ${program.relations.size} relations, ${program.rules.length} rules`, false);
+        for (const warning of program.warnings) console.error(warning.code + " " + warning.message);
+      }
       return 0;
     }
     const facts = await readMapping(flag(args, "--facts"), "--facts");
