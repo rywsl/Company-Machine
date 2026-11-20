@@ -1206,7 +1206,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const profile = store.saveHarnessProfile({
         runtime: definition.id, role: body.role, baseUrl, model: body.model.trim(), mode: typeof body.mode === "string" ? body.mode : "session",
         sessionTimeoutSeconds,
-        image: image || undefined, network: image ? body.network === "egress" ? "egress" : "none" : undefined,
+        image: image || undefined,
+        network: image
+          ? body.network === "bridge" ? "bridge" : body.network === "egress" ? "egress" : "none"
+          : undefined,
         verification: { state: "pending", checkedAt: store.timestamp() },
       });
       verificationJobs.get(profile.id)?.abort();

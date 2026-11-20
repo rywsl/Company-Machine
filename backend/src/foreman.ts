@@ -239,7 +239,11 @@ export class ForemanCoordinator {
         cwd: this.cwd,
         resumeId,
         containerImage: profile.image,
-        network: profile.network === "egress" ? "egress" : "none",
+        // A trusted container Foreman needs ordinary container networking so
+        // it can fetch repositories and install project-specific tools. The
+        // bridge remains isolated from the host network and is only accepted
+        // by the trusted Foreman path in harness.ts.
+        network: profile.image ? (profile.network === "none" ? "none" : "bridge") : profile.network === "egress" ? "egress" : "none",
         egressBaseUrl: credential?.baseUrl ?? profile.baseUrl,
         foremanMailbox: mailbox?.root,
         trustedForeman: Boolean(profile.image),

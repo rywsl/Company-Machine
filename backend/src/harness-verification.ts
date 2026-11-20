@@ -87,8 +87,12 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
       cwd: workspace,
       env,
       containerImage: profile.image,
-      network: profile.network === "egress" ? "egress" : "none",
+      network: profile.role === "foreman" && profile.image
+        ? (profile.network === "none" ? "none" : "bridge")
+        : profile.network === "egress" ? "egress" : "none",
       egressBaseUrl: credential?.baseUrl ?? profile.baseUrl,
+      trustedForeman: profile.role === "foreman" && Boolean(profile.image),
+      foremanWorkspace: profile.role === "foreman" && profile.image ? workspace : undefined,
     });
     if (stopped) {
       await started.close();

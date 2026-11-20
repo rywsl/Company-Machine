@@ -70,7 +70,7 @@ bun run tools/verify-runtime.ts --foreman
 
 Registry 工位声明出网策略时，在 Linux 宿主设置 `MAO_EGRESS_RELAY_IMAGE`，指向当前引擎中已导入且含 Bun 的可信固定镜像。工位通过策略允许的地址出网。无需出网的工位可直接运行。
 
-在 Web App 厂长配置中填写含所选官方 Harness 的镜像摘要，网络选择 `egress`。厂长同样使用 `MAO_EGRESS_RELAY_IMAGE`。出网目标来自匹配的模型入口，也可在部署环境用 `MAO_HARNESS_EGRESS_HOSTS` 声明额外的主机名。
+在 Web App 厂长配置中填写含所选官方 Harness 的固定镜像摘要。可信厂长默认使用 `bridge` 网络，可以在容器内自由下载仓库和项目工具，但不会使用宿主网络或宿主引擎套接字。需要离线运行时选择 `none`。Operator 容器需要固定白名单出网时选择 `egress`，并配置 `MAO_EGRESS_RELAY_IMAGE` 和 `MAO_HARNESS_EGRESS_HOSTS`。
 
 在 MAO 服务的部署环境中配置所选 Harness 对应的 `MAO_FOREMAN_ANTHROPIC_API_KEY` 或 `MAO_FOREMAN_CODEX_API_KEY`。使用自定义模型入口时，同时配置对应的 `MAO_FOREMAN_ANTHROPIC_BASE_URL` 或 `MAO_FOREMAN_CODEX_BASE_URL`，并在 Web App 中保存匹配的地址。页面只显示凭证状态，业务项目所需密钥通过各自的资源请求配置。
 

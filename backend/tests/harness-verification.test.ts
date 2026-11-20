@@ -90,7 +90,7 @@ describe("Harness verification API", () => {
       expect(readinessChecks).toBe(1);
       expect(processArgs).toContain("selected-model");
       expect(processArgs.at(-1)).toContain("MAO-OK");
-      expect(processOptions).toMatchObject({ env: { ANTHROPIC_BASE_URL: "https://provider.example" }, containerImage: image, network: "egress" });
+      expect(processOptions).toMatchObject({ env: { ANTHROPIC_BASE_URL: "https://provider.example" }, containerImage: image, network: "bridge", trustedForeman: true });
       expect(Object.keys(processOptions?.env ?? {})).toEqual(["ANTHROPIC_BASE_URL"]);
       expect(existsSync(processOptions!.cwd)).toBe(false);
       expect(killed).toBe(1);

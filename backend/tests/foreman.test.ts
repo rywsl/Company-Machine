@@ -43,6 +43,7 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
       root = options.foremanMailbox;
       if (!root) throw new Error("Expected scoped mailbox");
       expect(options.trustedForeman).toBe(true);
+      expect(options.network).toBe("bridge");
       expect(options.foremanWorkspace).toBeTruthy();
       expect(options.foremanWorkspace && existsSync(options.foremanWorkspace)).toBe(true);
       sourcePrompt = argv.join(" ");

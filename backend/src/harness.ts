@@ -38,7 +38,7 @@ export interface HarnessSessionRequest {
   env?: Record<string, string>;
   resumeId?: string;
   containerImage?: string;
-  network?: "none" | "egress";
+  network?: "none" | "egress" | "bridge";
   egressBaseUrl?: string;
   foremanMailbox?: string;
   /** A trusted Foreman container gets a writable private root and root UID. */
@@ -345,7 +345,8 @@ function processCommand(
   validateImage(image);
   if (options.trustedForeman && !image) throw new Error("Trusted Foreman requires a pinned container image");
   const network = options.network ?? "none";
-  if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
+  if (network !== "none" && network !== "egress" && network !== "bridge") throw new Error("Harness network must be none, egress, or bridge");
+  if (network === "bridge" && !options.trustedForeman) throw new Error("Bridge network is reserved for a trusted Foreman");
   if (image && network === "egress" && !relay) throw new Error("Harness egress requires a verified isolated relay");
   const scratch = options.trustedForeman
     ? { HOME: "/root", XDG_CONFIG_HOME: "/root/.config", XDG_CACHE_HOME: "/root/.cache" }
@@ -408,7 +409,7 @@ function processCommand(
   const command = image
     ? [
       ...engine, "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m",
-      "--network", relay?.network ?? "none",
+      "--network", relay?.network ?? (network === "none" ? "none" : "bridge"),
       ...(options.trustedForeman ? ["--user", "0:0"] : ["--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only"]),
       ...(containerName ? ["--name", containerName] : []), ...(relay ? ["--pull=never"] : []),
       ...mounts, ...envFlags, ...scratchFlags, "--workdir", "/workspace", relay?.image ?? image, ...argv,
@@ -436,15 +437,18 @@ export async function spawnOfficialProcess(
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new Error("Bun runtime is required");
   const image = options.containerImage;
-  const needsRelay = image !== undefined && options.network === "egress";
+  const effectiveOptions = options.trustedForeman && options.network === "egress"
+    ? { ...options, network: "bridge" as const }
+    : options;
+  const needsRelay = image !== undefined && effectiveOptions.network === "egress";
   validateImage(image);
-  const initial = image ? processCommand(argv, options) : undefined;
+  const initial = image ? processCommand(argv, effectiveOptions) : undefined;
   const resolvedImage = image && initial ? await ensureContainerImage(image, initial.engine, initial.engineEnv) : image;
-  const effectiveOptions = resolvedImage === image ? options : { ...options, containerImage: resolvedImage };
-  const relay = needsRelay && resolvedImage ? await prepareEgress(resolvedImage, options.egressBaseUrl) : undefined;
+  const resolvedOptions = resolvedImage === image ? effectiveOptions : { ...effectiveOptions, containerImage: resolvedImage };
+  const relay = needsRelay && resolvedImage ? await prepareEgress(resolvedImage, effectiveOptions.egressBaseUrl) : undefined;
   const containerName = relay?.name ?? (resolvedImage ? `mao-harness-${randomUuid()}` : undefined);
   try {
-    const { command, env, engine, engineEnv, redactions } = processCommand(argv, effectiveOptions, relay, containerName);
+    const { command, env, engine, engineEnv, redactions } = processCommand(argv, resolvedOptions, relay, containerName);
     // The npm batch wrapper can interfere with prompts containing newlines.
     const claude = !image && process.platform === "win32" && command[0] === "claude"
       ? windowsClaudeExecutable(Bun.which("claude"))

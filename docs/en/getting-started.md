@@ -66,7 +66,7 @@ bun run tools/verify-runtime.ts --foreman
 
 If Kiri's image build request times out, run `bun run build:test-images --save-to /tmp/mao-test-images` on a Podman host with the same CPU architecture. Copy the directory to the Kiri host, run `MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --load-from /tmp/mao-test-images`, then run the same station verification command.
 
-For a containerized Foreman, select `egress` in the Web App and configure an image pinned by digest that contains the selected official Harness. Set `MAO_EGRESS_RELAY_IMAGE` to a trusted, digest-pinned local image with Bun. The relay allows the configured provider host and any additional hosts listed in `MAO_HARNESS_EGRESS_HOSTS`.
+For a containerized Foreman, configure an image pinned by digest that contains the selected official Harness. The default `bridge` network gives the trusted Foreman freedom to fetch repositories and project tools inside its container. It never uses host networking or a host engine socket. Choose `none` when the Foreman must be offline. Operator containers can select `egress` when their model traffic needs the fixed allowlist relay. Set `MAO_EGRESS_RELAY_IMAGE` to a trusted, digest-pinned local image with Bun. The relay allows the configured provider host and any additional hosts listed in `MAO_HARNESS_EGRESS_HOSTS`.
 
 Set the selected provider's deployment credential as `MAO_FOREMAN_ANTHROPIC_API_KEY` or `MAO_FOREMAN_CODEX_API_KEY`. For a custom endpoint, set the matching `MAO_FOREMAN_ANTHROPIC_BASE_URL` or `MAO_FOREMAN_CODEX_BASE_URL` and save the same URL in the Foreman profile. Users enter project credentials through the corresponding resource requests.
 

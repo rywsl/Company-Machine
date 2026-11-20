@@ -146,6 +146,18 @@ test("gives a trusted Foreman a root-only private workspace without host engine 
   }
 });
 
+test("allows only a trusted Foreman to use the isolated bridge network", () => {
+  const image = "registry.example/foreman@sha256:" + "a".repeat(64);
+  const result = harnessProcessCommand(["claude"], {
+    containerImage: image, network: "bridge", env: {}, trustedForeman: true,
+  });
+  expect(result.command).toContain("--network");
+  expect(result.command).toContain("bridge");
+  expect(() => harnessProcessCommand(["claude"], {
+    containerImage: image, network: "bridge", env: {},
+  })).toThrow("trusted Foreman");
+});
+
 test("mounts only validated Operator material files on a local Linux container engine", () => {
   const root = mkdtempSync(join(realpathSync(tmpdir()), "mao-harness-material-"));
   const outputDirectory = join(root, "outputs");
