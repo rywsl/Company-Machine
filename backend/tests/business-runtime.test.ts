@@ -197,7 +197,7 @@ describe("Bun business execution loop", () => {
     try {
       const system = await (await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers, body: JSON.stringify({ name: "DAG 业务" }) }))).json() as { id: string };
       const first = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "第一步", repo_url: "https://example.test/one.git" }) }))).json() as { id: string };
-      const second = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "第二步", repo_url: "https://example.test/two.git" }) }))).json() as { id: string };
+      const second = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "第二步", repo_url: "https://fixture:repo-password@example.test/two.git?access_token=repo-secret" }) }))).json() as { id: string };
       const firstOperator = `${first.id}:operator`;
       const secondOperator = `${second.id}:operator`;
       const graph = { nodes: [{ id: firstOperator, type: "operator" }, { id: secondOperator, type: "operator" }], edges: [{ source: firstOperator, target: secondOperator }] };
@@ -217,6 +217,9 @@ describe("Bun business execution loop", () => {
       expect(tasks[0]).not.toContain("外部业务私有内容");
       expect(tasks[1]).toContain('"title":"构建报告"');
       expect(tasks[1]).toContain('"path":"build/report.md"');
+      expect(tasks[1]).toContain('"repository":"https://example.test/two.git"');
+      expect(tasks[1]).not.toContain("repo-password");
+      expect(tasks[1]).not.toContain("repo-secret");
     } finally {
       app.stop();
       await rm(dbPath, { force: true });

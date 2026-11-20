@@ -76,12 +76,22 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   const runtime = options.runtime ?? selectedContainerProvider();
   const provider = runtimeProvider(runtime);
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
+  let runtimeHealthPromise: Promise<RuntimeHealth> | undefined;
   const runtimeHealth = async (refresh = false) => {
-    const current = Date.now();
-    if (!refresh && runtimeCache && current - runtimeCache.at < 5_000) return runtimeCache.health;
-    const health = await runtime.health();
-    runtimeCache = { at: current, health };
-    return health;
+    if (!refresh && runtimeCache && Date.now() - runtimeCache.at < 5_000) return runtimeCache.health;
+    const previous = runtimeCache;
+    const pending = runtimeHealthPromise ?? (runtimeHealthPromise = (async () => {
+      const health = await runtime.health();
+      // A readiness request can finish while an earlier passive probe is still running.
+      if (runtimeCache && runtimeCache !== previous) return runtimeCache.health;
+      runtimeCache = { at: Date.now(), health };
+      return health;
+    })());
+    try {
+      return await pending;
+    } finally {
+      if (runtimeHealthPromise === pending) runtimeHealthPromise = undefined;
+    }
   };
   let runtimeReadyPromise: Promise<RuntimeHealth> | undefined;
   const ensureRuntimeHealth = async (): Promise<RuntimeHealth> => {

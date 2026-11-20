@@ -310,6 +310,8 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
 - `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
 - `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Linux Kiri 先探测套接字并复用在线服务，需要时请求 systemd 启动官方 `kiri.service`。自定义套接字使用部署方的服务管理。不可用时返回 503 和诊断。
+
+并发的运行时状态查询共用一次在途探测，结果缓存 5 秒。主动就绪检查在并发的被动探测期间完成时，后返回的被动探测使用最新的就绪结果。
 - Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，运行时健康检查和带镜像的官方 Harness/ACP 启动必须复用同一解析结果，避免桌面进程继承旧 PATH 后误报运行时缺失
 - `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱
 
@@ -319,6 +321,8 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 
 下游 Operator 获得输入引用及当前业务系统内匹配的记录说明和文件引用。数据库先按记录 ID 解析，再按引用查询该业务系统内最新匹配。未登记的输入仍按原引用传递。
 
+厂长与 Operator 使用同一份项目来源投影。仓库 URL 的密码和凭据查询参数在交给 Harness 前移除。上传文件使用内容摘要引用，可通过项目文件路由读取。容器内的 Harness 收到本地文件夹来源的项目引用。主机上的 Harness 可读取用户提交的原始文件夹位置。
+
 Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。业务运行只调度 Operator，Machine 作为被操作的软件项目和 DAG 节点存在。Operator Harness 输出 `mao.record` 事件后，控制面把记录写入该项目并通过事件流返回产物或物料状态。
 
 容器运行时默认采用 Podman。设置 `MAO_CONTAINER_RUNTIME=kiri` 后，Linux 通过 `/run/kiri/docker.sock` 与官方 Kiri headless 服务通信。Windows 上 Kiri 使用自己的 WSL 后端。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。
@@ -326,6 +330,8 @@ Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。
 后端性能基线由 `backend/bench.ts` 生成。交互 API 的本地单用户 p95 目标为 200ms，Foreman 首个事件目标为 1s，事件增量延迟目标为 2s。读模型在一次请求内复用状态、Harness、运行和资产来源查询，业务系统级产物与物料使用一次 JOIN 读取，项目来源与资源请求使用批量投影和索引，事件流使用游标增量发送。
 
 厂区和业务导出查询按业务系统 ID 限定项目、来源与密钥请求。工厂图用 SQL 聚合项目数量。运行历史用两次查询读取运行和对应基础单元，结果维持原有顺序。DAG 校验按边累计入度并迭代移除就绪节点，时间复杂度随节点和边线性增长。
+
+Operator 完成时，SQLite 在同一个事务里保存运行输出、汇总业务运行状态并同步基础单元状态。
 
 ## 12. 真实 Web App 验收
 

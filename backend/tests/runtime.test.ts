@@ -67,4 +67,30 @@ describe("Bun Podman runtime boundary", () => {
       await rm(dbPath, { force: true });
     }
   });
+
+  test("shares a passive probe and retains newer runtime readiness", async () => {
+    let probes = 0;
+    let completeProbe: (health: RuntimeHealth) => void = () => {};
+    const passive = new Promise<RuntimeHealth>((resolve) => { completeProbe = resolve; });
+    const ready = { ...unavailable, available: true, reason: undefined };
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", runtime: {
+      health: async () => { probes += 1; return passive; },
+      ensureReady: async () => ready,
+    } });
+    try {
+      const status = () => app.fetch(new Request("http://localhost/api/v1/runtime"));
+      const pending = [status(), status(), status()];
+      expect(probes).toBe(1);
+      expect((await app.fetch(new Request("http://localhost/api/v1/runtime/ensure-ready", { method: "POST" }))).status).toBe(200);
+      completeProbe(unavailable);
+      for (const response of await Promise.all(pending)) {
+        expect(await response.json()).toMatchObject({ health: { available: true } });
+      }
+      expect(await (await status()).json()).toMatchObject({ health: { available: true } });
+      expect(probes).toBe(1);
+    } finally {
+      completeProbe(unavailable);
+      app.stop();
+    }
+  });
 });

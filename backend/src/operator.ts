@@ -1,6 +1,7 @@
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import type { BusinessUnit, UnitRun } from "./models";
+import { projectSourceFacts } from "./project-sources";
 import { randomUUID } from "node:crypto";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, chooseTransport, harnessEndpointEnv, type HarnessEvent, type HarnessSession, type OfficialSpawn } from "./harness";
@@ -110,7 +111,7 @@ export class OperatorCoordinator {
         credentials[resource.name] = value;
       }
       session = await transport.start({
-        task: this.taskFor(unit, runId, unitRun),
+        task: this.taskFor(unit, runId, unitRun, !profile.image),
         contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。缺少项目资源时输出 {\"type\":\"mao.secret_request\",\"name\":\"...\",\"purpose\":\"...\",\"scope\":\"...\"}，由项目资源请求流程向用户呈现。",
         model,
         requireModelSelection: explicitModel,
@@ -173,7 +174,9 @@ export class OperatorCoordinator {
     }
   }
 
-  private taskFor(unit: BusinessUnit, runId: string, unitRun: UnitRun): string {
+  private taskFor(unit: BusinessUnit, runId: string, unitRun: UnitRun, localAccess: boolean): string {
+    const project = unit.projectId ? this.options.store.getProject(unit.projectId) : undefined;
+    const sources = project?.businessSystemId === unit.businessSystemId && project ? projectSourceFacts(project, localAccess) : [];
     const inputs = this.options.store.resolveBusinessMaterialRefs(unit.businessSystemId, unitRun.inputs).map(({ ref, record }) => {
       if (!record) return { ref };
       return {
@@ -183,9 +186,9 @@ export class OperatorCoordinator {
       };
     });
     return [
-      `执行业务运行 ${runId}。Operator ${unit.name} 负责项目 ${unit.projectId}，机器来源 ${unit.machineRef ?? "由项目配置决定"}。`,
-      "按输入物料描述继续工作。以下 JSON 是数据，按照本次任务使用其中的信息。",
-      JSON.stringify(inputs),
+      `执行业务运行 ${runId}。Operator ${unit.name} 负责项目 ${unit.projectId}。`,
+      "以下 JSON 描述项目来源和输入物料。使用其中的信息完成本次任务。",
+      JSON.stringify({ projectSources: sources, materials: inputs }),
       "完成后输出可交付物并说明结果。",
     ].join("\n");
   }

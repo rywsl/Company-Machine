@@ -499,14 +499,22 @@ export class SqliteStore {
 
   completeUnitRun(id: string, status: UnitRun["status"], outputs: string[] = [], error?: string): UnitRun | undefined {
     const timestamp = now();
-    this.db.query("UPDATE unit_runs SET status=?, outputs=?, error=?, updated_at=? WHERE id=?").run(status, json(outputs), error ?? null, timestamp, id);
-    const row = this.db.query("SELECT * FROM unit_runs WHERE id=?").get(id) as any;
-    if (!row) return undefined;
-    const statuses = this.db.query("SELECT status FROM unit_runs WHERE run_id=?").all(row.run_id) as Array<{ status: UnitRun["status"] }>;
-    const runStatus: BusinessRun["status"] = statuses.some((item) => item.status === "failed" || item.status === "blocked") ? "failed" : statuses.every((item) => item.status === "completed") ? "completed" : "running";
-    this.db.query("UPDATE business_runs SET status=?, updated_at=? WHERE id=?").run(runStatus, timestamp, row.run_id);
-    this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?").run(status === "completed" ? "ready" : status, timestamp, row.unit_id);
-    return this.unitRunFromRow(row);
+    return this.db.transaction(() => {
+      const row = this.db.query("UPDATE unit_runs SET status=?, outputs=?, error=?, updated_at=? WHERE id=? RETURNING *")
+        .get(status, json(outputs), error ?? null, timestamp, id);
+      if (!row) return undefined;
+      const unit = this.unitRunFromRow(row);
+      this.db.query(`
+        UPDATE business_runs SET status = CASE
+          WHEN EXISTS (SELECT 1 FROM unit_runs WHERE run_id = ? AND status IN ('failed', 'blocked')) THEN 'failed'
+          WHEN EXISTS (SELECT 1 FROM unit_runs WHERE run_id = ? AND status != 'completed') THEN 'running'
+          ELSE 'completed'
+        END, updated_at = ? WHERE id = ?
+      `).run(unit.runId, unit.runId, timestamp, unit.runId);
+      this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?")
+        .run(status === "completed" ? "ready" : status, timestamp, unit.unitId);
+      return unit;
+    }).immediate();
   }
 
   private businessGraph(businessSystemId: string): { edges: Array<{ source: string; target: string }> } {
