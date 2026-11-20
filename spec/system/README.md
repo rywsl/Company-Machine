@@ -63,7 +63,7 @@
 
 **D1 语言与包。** 业务控制面使用 TypeScript，运行时为 Bun，源码入口在 `backend/src/`，命令行入口为 `factory:bun`。历史 Python 实现、旧验收、旧夹具和 Python 工具统一保存在 `removed/python/`，不再作为活动控制面入口。新的 BusinessSystem、Foreman Web API、物料投影、官方 Harness 信息分配和活动验收不得依赖 Python 进程。Bun 验收入口为 `bun run acceptance:bun`，完整活动校验入口为 `bun run verify:bun`。
 
-**D2 依赖。** Bun 业务控制面只使用 Bun 内置 SQLite、Web API、文件系统和进程接口，不调用模型厂商 API，不新增运行时依赖。前端只使用仓库已登记的 React 与 React Flow。Python 迁移兼容层继续遵守标准库、`pyyaml`、`jsonschema` 和本仓库 `mrl` 的约束。
+**D2 依赖。** Bun 业务控制面只使用 Bun 内置 SQLite、Web API、文件系统和进程接口，不调用模型厂商 API，不新增运行时依赖。前端只使用仓库已登记的 React 与 React Flow。历史 Python 依赖只存在于 `removed/python/`，活动入口不读取它们。
 - 不使用 Docker SDK 或 Podman SDK。容器能力经受控的 Podman CLI 边界调用，禁止 shell 拼接。
 - 不使用 ORM。业务表直接通过 SQLite 查询访问。
 - 历史目录不参与活动依赖解析，新的 Bun 实现不得新增 Python 依赖。
@@ -136,13 +136,12 @@
 仓库内：
 
 ```
-src/mao/            控制面（本规范）
-src/mrl/            MRL 参考实现（M0，已完成）
+backend/            Bun + TypeScript 活动控制面和 MRL 运行时
+frontend/           React Web App 与已构建静态资源
+removed/python/     Python 历史实现、旧 CLI、旧验收和旧夹具
 spec/system/        本目录
-tests/system/       实现者写的单元测试（可以自由增加）
-tests/acceptance/   预先写好的验收测试（受保护，只能由人修改）
-tests/fakes/        测试替身（受保护）
-tests/fixtures/     夹具：Registry、测试镜像、样例文件（受保护）
+backend/tests/      Bun 活动验收测试
+tests/fixtures/     仍被 Bun 测试使用的声明性夹具
 ```
 
 `FACTORY_ROOT` 的布局：根目录取值依次为 `--root`、环境变量 `FACTORY_ROOT`、当前目录下的 `.factory`。
