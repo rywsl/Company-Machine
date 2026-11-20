@@ -14,9 +14,13 @@
 
 解析和运行时错误保留 MRL 错误码。调用方应向用户展示可读的错误消息和字段路径，不应把 AST 或原始 JSON 直接作为 UI 内容。
 
-## 分阶段迁移
+## Factory Registry 运行时
 
-活动产品入口使用 Bun MRL 运行时和独立 Bun 验收。旧 Python MRL、factory profile 检查和完整历史一致性套件已经归档到 `removed/python/`，不参与活动控制面启动。表达式静态检查、模板 API 和 MRL-R 的模块、关系、事实、连接、守卫与否定原子求值由 TypeScript 测试锁定边界。历史 Python conformance 仅用于迁移审计。
+Registry 的活动结构检查位于 `backend/mrl/factory/`。`paths.ts` 解析 `MRL_SPEC_DIR` 或仓库内的 `spec/`，`yamlio.ts` 使用 Bun 原生 YAML 解析器处理 YAML 1.2 文档，`registry.ts` 按工厂 profile 的目录布局读取 Spec，`schema.ts` 解析 `spec/schemas/` 的 Draft 2020-12 结构约束，`check.ts` 输出布局、YAML、schema、重复键和宪法缺失诊断。
+
+命令行入口是 `bun run factory registry check <registry>`，加上 `--json` 输出稳定的机器可读诊断。`backend/mrl/factory.test.ts` 使用 `tests/fixtures/registry-m1` 和 `tests/fixtures/registry-m2` 锁定 YAML、布局和 schema 阶段。内核事实抽取、宪法求值、表达式位置类型环境、转换解析和完整诊断排序仍需在后续阶段接入同一个 Registry 结果，不得恢复 Python 入口。
+
+旧 Python MRL 和 factory profile 实现只保存在 `removed/python/`，不参与活动控制面启动。表达式静态检查、模板 API、MRL-R 规则和 Registry 结构检查由 TypeScript 测试锁定边界。
 
 ## 性能与安全约束
 
@@ -24,4 +28,4 @@
 
 ## 验证
 
-TypeScript 单元测试位于 `backend/mrl/mrl.test.ts`、`backend/mrl/checker.test.ts` 与 `backend/mrl/rules.test.ts`。CLI 可用 `bun run mrl --help`、`bun run mrl eval`、`bun run mrl template`、`bun run mrl check` 和 `bun run mrl run` 验证。每次变更应运行 `bun test backend/mrl`，活动提交前运行 `bun run verify:bun`。历史 Python 参考实现和旧映射位于 `removed/python/`。
+TypeScript 单元测试位于 `backend/mrl/mrl.test.ts`、`backend/mrl/checker.test.ts`、`backend/mrl/rules.test.ts` 和 `backend/mrl/factory.test.ts`。CLI 可用 `bun run mrl --help`、`bun run mrl eval`、`bun run mrl template`、`bun run mrl check`、`bun run mrl run` 和 `bun run factory registry check tests/fixtures/registry-m1` 验证。每次变更应运行 `bun test backend/mrl`，活动提交前运行 `bun run verify:bun`。历史 Python 参考实现和旧映射位于 `removed/python/`。

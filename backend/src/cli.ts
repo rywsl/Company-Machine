@@ -1,4 +1,5 @@
 import { createApp } from "./server";
+import { checkRegistry } from "../mrl/factory";
 
 const args = Bun.argv.slice(2);
 const command = args[0] ?? "help";
@@ -21,6 +22,7 @@ function usage(): void {
   business graph ID --file PATH
   business artifact PROJECT_ID --file PATH
   business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]
+  registry check PATH [--json]
   foreman inbox [--limit N]
   foreman claim ID
   foreman done ID
@@ -81,6 +83,19 @@ if (command === "serve") {
       const result = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${encodeURIComponent(id)}/conversions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind, summary, inputs, outputs }) }));
       if (!result.ok) throw new Error(await result.text());
       console.log(JSON.stringify(await result.json(), null, 2));
+    } else if (command === "registry" && args[1] === "check") {
+      const root = args[2];
+      if (!root) throw new Error("registry path is required");
+      const result = checkRegistry(root);
+      if (args.includes("--json")) console.log(JSON.stringify({ root: result.root, ok: result.ok, stats: result.stats, diagnostics: result.diagnostics }, null, 2));
+      else {
+        for (const diagnostic of result.diagnostics) {
+          const location = diagnostic.file ? `${diagnostic.file}:${diagnostic.line ?? 0}` : "(registry)";
+          console.log(`${diagnostic.severity === "error" ? "✖" : "⚠"} ${diagnostic.code} ${location} ${diagnostic.subject}\n    ${diagnostic.message}`);
+        }
+        console.log(result.ok ? "✔ registry passed" : "✖ registry failed");
+      }
+      if (!result.ok) process.exitCode = 1;
     } else if (command === "foreman" && args[1] === "inbox") {
       console.log(JSON.stringify(app.store.listForemanInbox(Number(value("--limit") ?? 50)), null, 2));
     } else if (command === "foreman" && (args[1] === "claim" || args[1] === "done")) {

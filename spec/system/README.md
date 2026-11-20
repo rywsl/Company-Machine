@@ -62,7 +62,7 @@
 | 业务系统、基础单元、DAG、物料、转换和事件 | `backend/src/models.ts`、`backend/src/db.ts`、`backend/src/server.ts` | Bun 内置 SQLite 和 Web API |
 | 厂长对话与官方 Harness 分配 | `backend/src/foreman.ts`、`backend/src/harness.ts`、`backend/src/acp.ts` | 只启动用户配置的官方 Harness CLI 或 ACP，不在控制面实现模型循环 |
 | 容器沙箱 | `backend/runtime/podman.ts`、`backend/runtime/kiri.ts` | 受控 argv 调用 Podman 或嵌入式 Kiri。Linux Kiri 使用 headless `kiri daemon`，禁止 shell 拼接和静默回退 |
-| MRL 表达式、模板、规则和 CLI | `backend/mrl/`、`backend/mrl/cli.ts` | Bun/TypeScript evaluator 与 `bun run mrl`，预算和稳定错误码由测试锁定 |
+| MRL 表达式、模板、规则、Factory Registry 结构检查和 CLI | `backend/mrl/`、`backend/mrl/factory/`、`backend/mrl/cli.ts`、`backend/src/cli.ts` | Bun/TypeScript evaluator、Bun YAML/schema/Registry boundary、`bun run mrl` 与 `bun run factory registry check`，预算和稳定错误码由测试锁定 |
 | Web App 与图形化物料视图 | `frontend/src/`、`frontend/dist/` | 通过 API 读取业务投影，用户界面不直接展示物料 JSON |
 | 活动验收与校验 | `tools/harness.ts`、`backend/**/*.test.ts` | `bun run acceptance:bun` 和 `bun run verify:bun` |
 

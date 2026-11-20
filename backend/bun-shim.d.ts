@@ -20,6 +20,8 @@ declare module "node:crypto" {
 
 declare module "node:fs" {
   export const mkdirSync: (...args: any[]) => void;
+  export const readdirSync: (...args: any[]) => any[];
+  export const statSync: (...args: any[]) => any;
   export const readFileSync: (...args: any[]) => any;
   export const writeFileSync: (...args: any[]) => void;
   export const existsSync: (...args: any[]) => boolean;
@@ -29,6 +31,7 @@ declare module "node:path" {
   export const dirname: (path: string) => string;
   export const extname: (path: string) => string;
   export const join: (...parts: string[]) => string;
+  export const resolve: (...parts: string[]) => string;
   export const normalize: (path: string) => string;
 }
 
@@ -45,12 +48,13 @@ declare module "bun:test" {
 
 declare const Bun: {
   argv: string[];
+  YAML: { parse(source: string): unknown };
   serve(options: { port: number; hostname?: string; fetch: (request: Request) => Response | Promise<Response> }): { url: URL; stop(): void };
   file(path: string): Blob;
 };
-declare const process: { env: Record<string, string | undefined>; cwd(): string; exit(code?: number): never };
+declare const process: { env: Record<string, string | undefined>; cwd(): string; exit(code?: number): never; exitCode?: number };
 declare const Buffer: {
   from(value: any, encoding?: string): any;
   concat(values: any[]): any;
 };
-interface ImportMeta { main?: boolean }
+interface ImportMeta { main?: boolean; dir: string }
