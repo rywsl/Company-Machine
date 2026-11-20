@@ -22,6 +22,8 @@ bun run mrl --help
 |---|---|
 | `status` | 输出本地业务系统和厂长队列摘要。 |
 | `serve` | 启动 Bun Web API 和 Web App。 |
+| `runtime status` | 读取当前 Podman 或 Kiri 运行时健康状态。 |
+| `runtime ensure-ready` | 请求当前运行时就绪。仍不可用时退出码为 `4`。 |
 | `project intake --name NAME --repo URL` | 从仓库链接创建项目。 |
 | `project intake --name NAME --folder PATH` | 从本地文件夹引用创建项目。 |
 | `project intake --name NAME --file-ref REF` | 从上传文件引用创建项目。 |

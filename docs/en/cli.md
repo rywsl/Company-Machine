@@ -22,6 +22,8 @@ The Web API can run in the foreground with `bun run factory serve`.
 |---|---|
 | `status` | Print the local business-system and Foreman queue summary. |
 | `serve` | Start the Bun Web API and Web App on `127.0.0.1:3000`. |
+| `runtime status` | Read the selected Podman or Kiri health state. |
+| `runtime ensure-ready` | Ask the selected runtime to become ready. Exit `4` when it remains unavailable. |
 | `project intake --name NAME --repo URL` | Create a project from a repository URL. |
 | `project intake --name NAME --folder PATH` | Create a project from a local folder reference. |
 | `project intake --name NAME --file-ref REF` | Create a project from an uploaded file reference. |
