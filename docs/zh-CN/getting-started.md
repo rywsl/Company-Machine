@@ -51,19 +51,22 @@ MAO 通过 `/run/kiri/docker.sock` 连接。自定义部署可以设置 `MAO_KIR
 
 在 WSL 中运行工位时，保留示例的 Linux 数据目录。文件邮箱使用 Linux 目录权限保护宿主响应。MAO 由系统服务启动时，对该服务的运行账户授权，并给服务配置相同的环境变量。
 
-可以用项目自带验证命令构建夹具镜像，并运行真实 Kiri 工位。
+可以用项目自带验证命令构建夹具镜像，并在 Kiri 中验证工位和厂长邮箱。
 
 ```bash
 export MAO_CONTAINER_RUNTIME=kiri
 bun run build:test-images
 bun run tools/verify-runtime.ts
+bun run tools/verify-runtime.ts --foreman
 ```
 
 若 Kiri 的镜像构建请求超时，可在同 CPU 架构的 Podman 主机上运行 `bun run build:test-images --save-to /tmp/mao-test-images`。将目录复制到 Kiri 主机，执行 `MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --load-from /tmp/mao-test-images`，再运行同一条工位验收命令。
 
 Registry 工位声明出网策略时，在 Linux 宿主设置 `MAO_EGRESS_RELAY_IMAGE`，指向当前引擎中已导入且含 Bun 的可信固定镜像。工位通过策略允许的地址出网。无需出网的工位可直接运行。
 
-容器化厂长使用官方 Claude Code 或 Codex 时，可在 MAO 服务的部署环境中分别配置 `MAO_FOREMAN_ANTHROPIC_API_KEY` 或 `MAO_FOREMAN_CODEX_API_KEY`。使用自定义模型入口时，同时配置对应的 `MAO_FOREMAN_ANTHROPIC_BASE_URL` 或 `MAO_FOREMAN_CODEX_BASE_URL`，并在 Web App 中保存匹配的地址。页面只显示凭证状态。
+在 Web App 厂长配置中填写含官方 Claude Code 或 Codex 的镜像摘要，网络选择 `egress`。厂长同样使用 `MAO_EGRESS_RELAY_IMAGE`。出网目标来自匹配的模型入口，也可在部署环境用 `MAO_HARNESS_EGRESS_HOSTS` 声明额外的主机名。
+
+在 MAO 服务的部署环境中配置所选 Harness 对应的 `MAO_FOREMAN_ANTHROPIC_API_KEY` 或 `MAO_FOREMAN_CODEX_API_KEY`。使用自定义模型入口时，同时配置对应的 `MAO_FOREMAN_ANTHROPIC_BASE_URL` 或 `MAO_FOREMAN_CODEX_BASE_URL`，并在 Web App 中保存匹配的地址。页面只显示凭证状态，业务项目所需密钥通过各自的资源请求配置。
 
 ## 交给厂长
 

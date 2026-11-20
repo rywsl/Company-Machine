@@ -308,6 +308,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - Harness profile 提供 digest 固定的 `image` 时，官方 CLI 和 ACP 使用活动容器运行时。Linux Kiri 默认以 `docker --host unix:///run/kiri/docker.sock run` 启动。沙箱使用非 root、只读根文件系统、`--init`、`--pids-limit 256`、`--tmpfs /tmp` 和 `cap-drop ALL`，默认网络为 `none`。
 - 容器内的 `HOME`、XDG 配置和缓存使用本轮的 `/tmp`。控制面给每个容器分配名称，会话停止时清理该名称对应的容器。
 - 容器 Harness 选择 `egress` 时，启动器先确认隔离代理就绪，再把官方 CLI 的 JSONL 或 ACP 的双向标准流接入会话。出网目标取已保存的 Base URL 主机和部署方配置的 `MAO_HARNESS_EGRESS_HOSTS`。该路径使用本地固定的 `MAO_EGRESS_RELAY_IMAGE`。会话结束或取消时清理隔离代理及容器。 [出网规范](egress.md)
+- Windows 原生 Claude Code 直接通过 PATH 找到的 `claude.exe` 启动。PATH 命中 npm 的 `claude.cmd` 时，优先启动同一安装目录下官方包附带的 `node_modules/@anthropic-ai/claude-code/bin/claude.exe`，使包含换行的提示词原样进入 CLI。找不到原生文件时沿用 PATH 启动。
 - 取消 Windows 原生 Harness 会终止控制面本次启动且仍在运行的进程树。取消官方 CLI 会话也会取消正在等待的输出读取，避免 npm 命令包装器的子进程持有管道导致会话无法结束。
 - 带 `image` 的 Foreman 和 Operator 会在启动官方 Harness 前调用当前 ContainerProvider 的 readiness。并发启动共享一次 readiness promise，失败时不会启动 Harness
 - Linux Kiri 与 Podman 中的容器厂长通过当前轮的文件邮箱管理业务。容器获得 `/mao/foreman/requests` 写入权限和 `/mao/foreman/responses` 读取权限。请求包含 `id`、`op` 和 `args`，写入临时文件后以 0644 权限原子重命名为 `<id>.json`。MAO 调用固定的业务 API 来查询工位、更新 DAG、绑定 Operator、登记产物与转换、派发运行，并在同名响应文件返回结果。项目接收轮的操作范围是该项目及其所属业务系统，普通厂长轮可操作当轮列出的业务系统。文件通过引用登记。正常结束后处理已提交请求，取消时停止接收新请求，然后清理本轮目录。

@@ -4,8 +4,8 @@
  * provider authentication remain inside the official Harness.
  */
 
-import { isAbsolute, join, resolve } from "node:path";
-import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { realpathSync, statSync } from "node:fs";
 import { resolveKiriClient } from "../runtime/kiri";
 import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
 import { prepareHarnessEgress } from "./harness-sandbox";
@@ -306,6 +306,14 @@ function defaultOfficialSpawn(argv: string[], options: SpawnOptions): Promise<Of
   return spawnOfficialProcess(argv, { ...options, stdin: undefined });
 }
 
+export function windowsClaudeExecutable(launcher: string | null): string | undefined {
+  if (!launcher) return undefined;
+  if (/\.exe$/i.test(launcher)) return launcher;
+  if (basename(launcher).toLowerCase() !== "claude.cmd") return undefined;
+  const executable = join(dirname(launcher), "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+  return statSync(executable, { throwIfNoEntry: false })?.isFile() ? executable : undefined;
+}
+
 export async function spawnOfficialProcess(
   argv: string[], options: SpawnOptions, prepareEgress = prepareHarnessEgress,
 ): Promise<OfficialProcess> {
@@ -318,7 +326,12 @@ export async function spawnOfficialProcess(
   const containerName = relay?.name ?? (image ? `mao-harness-${randomUuid()}` : undefined);
   try {
     const { command, env, engine, engineEnv } = processCommand(argv, options, relay, containerName);
-    const child = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "ignore" });
+    // The npm batch wrapper can interfere with prompts containing newlines.
+    const claude = !image && process.platform === "win32" && command[0] === "claude"
+      ? windowsClaudeExecutable(Bun.which("claude"))
+      : undefined;
+    const launch = claude ? [claude, ...command.slice(1)] : command;
+    const child = bun.spawn(launch, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "ignore" });
     let cleanup: Promise<void> | undefined;
     const removeContainer = () => cleanup ??= (async () => {
       if (relay) await relay.close();

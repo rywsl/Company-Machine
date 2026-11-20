@@ -131,7 +131,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/foreman.test.ts` | 厂长队列、官方 Harness 回复与完成事务、容器邮箱的业务持久化、项目范围、单个项目密钥请求、登记来源只读交接和暂存文件清理 |
 | `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
-| `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |
+| `backend/tests/harness.test.ts` | 官方 CLI、Windows 原生 Claude Code 路径、ACP 会话和事件流 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
 | `backend/tests/legacy-approvals.test.ts` | 工位审批的费用规则、尝试隔离、到期与拒绝 |
 | `backend/tests/legacy-contract.test.ts` | validator 正反样例、GoldenSet、Baseline、转换等价、差分及 Sink 方案试运行恢复 |

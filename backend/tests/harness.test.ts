@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chooseTransport, decodeOfficialLine, harnessProcessCommand, officialCliInvocation, officialHarness, officialHarnesses, OfficialCliTransport, spawnOfficialProcess } from "../src/harness";
+import { chooseTransport, decodeOfficialLine, harnessProcessCommand, officialCliInvocation, officialHarness, officialHarnesses, OfficialCliTransport, spawnOfficialProcess, windowsClaudeExecutable } from "../src/harness";
 import { harnessEgressPlan } from "../src/harness-sandbox";
 import { AcpTransport, decodeAcpLine } from "../src/acp";
 import type { HarnessEvent, HarnessSession } from "../src/harness";
@@ -25,6 +25,22 @@ test("cancels a pending official CLI event read when the owned stream stays open
   expect(await pending).toMatchObject({ done: true });
   expect(cancellations).toBe(1);
   expect(terminations).toBe(1);
+});
+
+test("finds the Windows native Claude executable in PATH or next to the official npm shim", () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-claude-executable-"));
+  try {
+    const launcher = join(root, "claude.cmd");
+    const nativeRoot = join(root, "node_modules", "@anthropic-ai", "claude-code", "bin");
+    const executable = join(nativeRoot, "claude.exe");
+    expect(windowsClaudeExecutable(null)).toBeUndefined();
+    expect(windowsClaudeExecutable(launcher)).toBeUndefined();
+    mkdirSync(nativeRoot, { recursive: true });
+    writeFileSync(executable, "");
+    expect(windowsClaudeExecutable(launcher)).toBe(executable);
+    expect(windowsClaudeExecutable(executable)).toBe(executable);
+    expect(windowsClaudeExecutable(join(root, "custom.cmd"))).toBeUndefined();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("terminates the owned Windows command wrapper and the native child holding its stdout", { timeout: 20_000 }, async () => {
