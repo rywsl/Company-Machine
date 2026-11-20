@@ -151,6 +151,8 @@ Operator 负责发现缺少的密钥或资源并主动提出请求。Foreman 根
 
 资产页面展示输入素材、输出资产、知识资产、封存状态、来源运行、来源节点、Validation Epoch 和 Lineage。资产详情可以使用时间线或折叠区域显示来源关系。
 
+资产列表显示总数，初始读取最近 100 项。用户可加载更早的资产或返回最新一页。收到资产新增事件后，页面更新总数和最新一页，继续保留用户正在查看的历史页。
+
 日志页面统一展示运行日志、Foreman 操作、自动验证、自动修复、资源请求、节点失败、条件结果、实例崩溃、密钥缺失、宪法冲突、ChangeSet、Epoch 和 Lineage。日志不是审批队列。普通日志使用自动执行时间线，异常日志进入上下文处理。
 
 ### 5.7 画布交互
@@ -239,6 +241,8 @@ M18 的正式用户入口由 `factory web` 启动。服务只绑定 `127.0.0.1`�
 - `GET /api/web/graph?scope=factory` 返回工厂层聚合图
 - `GET /api/web/graph?scope=workarea&workarea=<line-key>` 返回指定厂区内部图
 - `GET /api/web/assets?limit=<n>` 返回脱敏后的资产摘要和来源引用，默认读取最近 100 条。SQLite 先按时间和标识倒序选择所需的业务资产，再用历史资产补足额度。响应沿用历史资产在前的展示顺序，附件授权只查询入选的资产。
+- 浏览器使用 `GET /api/web/bootstrap?assetLimit=100` 获取首屏资产。响应在 `assets` 中返回该窗口，同时提供总数 `assetTotal` 和 `assetOlderCursor`。省略 `assetLimit` 时，`assets` 返回完整列表。
+- `GET /api/web/assets/page?limit=100&older=<cursor>` 返回 `items`、`total` 与 `olderCursor`。页大小接受 1 至 100，游标为空时读取最新一页。资产按历史库和业务库的展示顺序分页。在浏览较早资产期间新增的较新记录可回到最新页查看，继续翻页仍从当前游标读取更早的记录。
 - `GET /api/web/logs?limit=<n>&since=<cursor>` 返回事件、运行、验证、修复、资源请求和异常摘要
 - `GET /api/web/talk` 返回最近的 Foreman 对话，默认 80 条，`limit` 接受 1 到 1000。查询先取活动消息，条数不足时从归档对话补齐。页面引导响应使用相同查询。
 - `POST /api/web/talk` 接受 `{ "text": "..." }`，使用本地用户身份调用现有 `talk.post_human`，把消息投递给常驻 Foreman。控制面不在此请求中调用模型 API

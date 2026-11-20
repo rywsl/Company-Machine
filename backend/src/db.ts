@@ -59,6 +59,10 @@ export interface IntakeInput {
 
 type BusinessRunEdge = { source: string; target: string };
 export type ArtifactFileGrant = { artifactId: string; position: number; digest: string; size: number };
+type BusinessAssetCursor = { source: "business"; createdAt: string; id: string };
+type LegacyAssetCursor = { source: "legacy"; createdAt: string; rowId: string };
+export type AssetCursor = BusinessAssetCursor | LegacyAssetCursor;
+type LegacyAssetRow = { id: string; document: string; created_at: string; by_actor: string; row_id: string };
 
 export class SqliteStore {
   readonly db: Database;
@@ -739,11 +743,36 @@ export class SqliteStore {
     if (row) return { size: row.size, path: typeof row.path === "string" ? row.path : undefined };
   }
 
-  listAllArtifacts(limit?: number): Artifact[] {
-    const rows = limit === undefined
+  listAllArtifacts(limit?: number, older?: BusinessAssetCursor): Artifact[] {
+    const rows = older
+      ? this.db.query(`
+        SELECT * FROM artifacts WHERE (created_at, id) < (?, ?)
+        ORDER BY created_at DESC, id DESC LIMIT ?
+      `).all(older.createdAt, older.id, limit ?? -1).reverse()
+      : limit === undefined
       ? this.db.query("SELECT * FROM artifacts ORDER BY created_at, id").all()
       : this.db.query("SELECT * FROM artifacts ORDER BY created_at DESC, id DESC LIMIT ?").all(limit).reverse();
     return rows.map((row) => this.artifactFromRow(row));
+  }
+
+  assetPage(limit: number, older?: AssetCursor): { business: Artifact[]; legacy: Artifact[]; total: number; older: AssetCursor | null } {
+    const source = this.legacyAssetSource();
+    const business = older?.source === "legacy" ? [] : this.listAllArtifacts(limit + 1, older);
+    const legacy = source ? this.legacyAssetRows(source, limit + 1 - business.length, older?.source === "legacy" ? older : undefined) : [];
+    const total = this.db.query<{ count: number }>("SELECT COUNT(*) AS count FROM artifacts").get()!.count
+      + (source?.query<{ count: number }>("SELECT COUNT(*) AS count FROM asset_records").get()?.count ?? 0);
+    let next: AssetCursor | null = null;
+    if (business.length + legacy.length > limit) {
+      // Each source is already in display order. The extra row precedes the page.
+      if (legacy.length > 0) legacy.shift();
+      else business.shift();
+      const firstLegacy = legacy[0];
+      const firstBusiness = business[0];
+      next = firstLegacy
+        ? { source: "legacy", createdAt: firstLegacy.created_at, rowId: firstLegacy.row_id }
+        : { source: "business", createdAt: firstBusiness.createdAt, id: firstBusiness.id };
+    }
+    return { business, legacy: legacy.map((row) => this.legacyAssetFromRow(row)), total, older: next };
   }
 
   listBusinessSystemArtifacts(businessSystemId: string): Artifact[] {
@@ -1105,18 +1134,35 @@ export class SqliteStore {
   }
 
   legacyArtifacts(limit?: number): Artifact[] {
-    if (limit === 0 || !this.hasLegacyTable("asset_records")) return [];
-    const source = this.legacy ?? this.db;
-    const rows = limit === undefined
-      ? source.query("SELECT id,document,created_at,by_actor FROM asset_records ORDER BY created_at").all()
-      : source.query(`
-        SELECT id, document, created_at, by_actor FROM asset_records
-        WHERE rowid IN (SELECT rowid FROM asset_records ORDER BY created_at DESC, rowid DESC LIMIT ?)
-        ORDER BY created_at, rowid
-      `).all(limit);
-    return rows.map((row: any) => ({
+    if (limit === 0) return [];
+    const source = this.legacyAssetSource();
+    return source ? this.legacyAssetRows(source, limit).map((row) => this.legacyAssetFromRow(row)) : [];
+  }
+
+  private legacyAssetSource(): Database | undefined {
+    if (this.hasLegacyTable("asset_records")) return this.legacy ?? this.db;
+  }
+
+  private legacyAssetRows(source: Database, limit?: number, older?: LegacyAssetCursor): LegacyAssetRow[] {
+    if (limit === 0) return [];
+    if (limit === undefined) {
+      return source.query<LegacyAssetRow>("SELECT id,document,created_at,by_actor,CAST(rowid AS TEXT) AS row_id FROM asset_records ORDER BY created_at").all();
+    }
+    return source.query<LegacyAssetRow>(`
+      SELECT id, document, created_at, by_actor, CAST(rowid AS TEXT) AS row_id FROM asset_records
+      WHERE rowid IN (
+        SELECT rowid FROM asset_records
+        ${older ? "WHERE (created_at, rowid) < (?, CAST(? AS INTEGER))" : ""}
+        ORDER BY created_at DESC, rowid DESC LIMIT ?
+      )
+      ORDER BY created_at, rowid
+    `).all(...(older ? [older.createdAt, older.rowId, limit] : [limit]));
+  }
+
+  private legacyAssetFromRow(row: LegacyAssetRow): Artifact {
+    return {
       id: row.id, projectId: "legacy", kind: "asset", ref: row.id, metadata: { document: parseJson(row.document), byActor: row.by_actor }, createdAt: row.created_at,
-    }));
+    };
   }
 
   legacyTalk(limit?: number): TalkMessage[] {

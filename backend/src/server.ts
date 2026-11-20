@@ -1,12 +1,12 @@
 import { EventBus } from "./event-bus";
-import { SqliteStore } from "./db";
+import { SqliteStore, type AssetCursor } from "./db";
 import { VaultStore } from "./vault";
 import { exportBusinessSystem, importBusinessSystem } from "./business-portability";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { RandomIds, type Clock } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
-import type { BusinessConversion, BusinessSystem, Event, HarnessProfile } from "./models";
+import type { Artifact, BusinessConversion, BusinessSystem, Event, HarnessProfile } from "./models";
 import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
@@ -552,6 +552,13 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const limit = Math.trunc(Math.max(1, Number(url.searchParams.get("limit") ?? 100)));
       return response(webAssets(store, Number.isSafeInteger(limit) ? limit : undefined));
     }
+    if (url.pathname === "/api/web/assets/page" && request.method === "GET") {
+      const limit = assetPageLimit(url.searchParams.get("limit") ?? "100");
+      const token = url.searchParams.get("older");
+      const older = token ? decodeAssetCursor(token) : undefined;
+      if (limit === undefined || (token && !older)) return response({ error: "invalid asset page limit or cursor" }, 400);
+      return response(webAssetPage(store, limit, older));
+    }
     if (url.pathname === "/api/web/secrets" && request.method === "GET") {
       return response(store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, usage_scope: secret.metadata.scope, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })));
     }
@@ -565,16 +572,21 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response({ state: "accepted", message, foremanTurn: foreman.turnState(envelope) }, 201);
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
+      const assetLimit = url.searchParams.get("assetLimit");
+      const limit = assetLimit === null ? undefined : assetPageLimit(assetLimit);
+      if (assetLimit !== null && limit === undefined) return response({ error: "invalid asset page limit" }, 400);
       const health = await runtimeHealth();
       const eventCursor = store.latestEventSequence();
       const factoryGraph = graphProjection(store, "factory", null);
       const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
       const talk = store.recentTalk(80);
       const foremanTurns = store.listForemanTurns(talk.map(({ id }) => id)).map((turn) => foreman.turnState(turn));
+      const assetPage = limit === undefined ? undefined : webAssetPage(store, limit);
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: store.timestamp() },
         eventCursor, foremanTurns, pendingForemanReplies: foreman.pendingReplies(),
         graph: { factory: factoryGraph },
-        assets: webAssets(store), logs: webLogs(store, 100), talk,
+        assets: assetPage ? assetPage.items : webAssets(store), logs: webLogs(store, 100), talk,
+        ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: assetPage.olderCursor }),
         harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });
@@ -656,9 +668,42 @@ function publicArtifact(record: any) {
   return { ...record, project_id: record.projectId, source_id: record.sourceId, record_type: record.recordType, created_at: record.createdAt };
 }
 
+function assetPageLimit(raw: string): number | undefined {
+  return /^(?:[1-9][0-9]?|100)$/.test(raw) ? Number(raw) : undefined;
+}
+
+function decodeAssetCursor(token: string): AssetCursor | undefined {
+  if (token.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(token)) return;
+  try {
+    const value = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+    if (value?.v !== 1 || typeof value.createdAt !== "string" || value.createdAt.length === 0) return;
+    if (value.source === "business" && typeof value.id === "string" && value.id.length > 0) {
+      return { source: "business", createdAt: value.createdAt, id: value.id };
+    }
+    if (value.source === "legacy" && typeof value.rowId === "string" && /^-?[0-9]{1,19}$/.test(value.rowId)) {
+      return { source: "legacy", createdAt: value.createdAt, rowId: value.rowId };
+    }
+  } catch { return; }
+}
+
+function webAssetPage(store: SqliteStore, limit: number, older?: AssetCursor) {
+  return store.db.transaction(() => {
+    const page = store.assetPage(limit, older);
+    return {
+      items: projectWebAssets(store, page.business, page.legacy),
+      total: page.total,
+      olderCursor: page.older ? Buffer.from(JSON.stringify({ v: 1, ...page.older })).toString("base64url") : null,
+    };
+  })();
+}
+
 function webAssets(store: SqliteStore, limit?: number) {
   const records = store.listAllArtifacts(limit);
-  const legacy = store.legacyArtifacts(limit === undefined ? undefined : limit - records.length).map((record) => {
+  return projectWebAssets(store, records, store.legacyArtifacts(limit === undefined ? undefined : limit - records.length));
+}
+
+function projectWebAssets(store: SqliteStore, records: Artifact[], archived: Artifact[]) {
+  const legacy = archived.map((record) => {
     const document = record.metadata?.document && typeof record.metadata.document === "object" ? record.metadata.document as Record<string, unknown> : {};
     return {
       id: record.id,

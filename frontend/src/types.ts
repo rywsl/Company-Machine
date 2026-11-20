@@ -78,6 +78,12 @@ export interface AssetRecord {
   source?: { run?: string; node?: string } | null;
 }
 
+export interface AssetPageData {
+  items: AssetRecord[];
+  total: number;
+  olderCursor?: string | null;
+}
+
 export interface HarnessRecord {
   id: string;
   name: string;
@@ -152,6 +158,8 @@ export interface Bootstrap {
   };
   graph: { factory: Graph; workarea?: Graph | null };
   assets: AssetRecord[];
+  assetTotal?: number;
+  assetOlderCursor?: string | null;
   logs: EventRecord[];
   talk: TalkMessage[];
   harnesses: HarnessRecord[];

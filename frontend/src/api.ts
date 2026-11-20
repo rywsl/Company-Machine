@@ -1,4 +1,4 @@
-import type { Bootstrap, ForemanTurn, Graph, EventRecord, AssetRecord, HarnessRecord, HarnessProfile, OperatorBindingView, SecretRecord, StreamEvent, TalkMessage } from "./types";
+import type { AssetPageData, Bootstrap, ForemanTurn, Graph, EventRecord, HarnessRecord, HarnessProfile, OperatorBindingView, SecretRecord, StreamEvent, TalkMessage } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -32,11 +32,12 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return payload as T;
 }
 
-export const getBootstrap = () => api<Bootstrap>("/api/web/bootstrap");
+export const getBootstrap = () => api<Bootstrap>("/api/web/bootstrap?assetLimit=100");
 export const getGraph = (scope: "factory" | "workarea", workarea?: string) =>
   api<Graph>(`/api/web/graph?scope=${scope}${workarea ? `&workarea=${encodeURIComponent(workarea)}` : ""}`);
 export const getTalk = () => api<TalkMessage[]>("/api/web/talk?limit=80");
-export const getAssets = () => api<AssetRecord[]>("/api/web/assets?limit=100");
+export const getAssetsPage = (olderCursor?: string, signal?: AbortSignal) =>
+  api<AssetPageData>(`/api/web/assets/page?limit=100${olderCursor ? `&older=${encodeURIComponent(olderCursor)}` : ""}`, { signal });
 export const getLogs = () => api<EventRecord[]>("/api/web/logs?limit=100");
 export const getHarnesses = () => api<HarnessRecord[]>("/api/web/harnesses");
 export const configureHarness = (config: Record<string, unknown>) => api<{ profile: HarnessProfile; foreman: Bootstrap["foreman"] }>("/api/web/harnesses/configure", {

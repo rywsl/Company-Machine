@@ -16,10 +16,10 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from "@xyflow/react";
-import { ApiError, cancelForemanTurn, configureHarness, ensureRuntime, getAssets, getBootstrap, getGraph, getLogs, getTalk, putProjectSecret, sendTalk, submitProjectIntake, subscribeToEvents, verifyHarness } from "./api";
+import { ApiError, cancelForemanTurn, configureHarness, ensureRuntime, getAssetsPage, getBootstrap, getGraph, getLogs, getTalk, putProjectSecret, sendTalk, submitProjectIntake, subscribeToEvents, verifyHarness } from "./api";
 import { OperatorBindingForm } from "./OperatorBindingForm";
 import { WorkareaConversions } from "./WorkareaConversions";
-import type { AssetRecord, Bootstrap, DependencyStatus, EventRecord, ForemanTurn, Graph, GraphNode, HarnessProfile, LayoutGraph, LayoutState, OperatorBindingView, Page, Scope, SecretRecord, TalkMessage } from "./types";
+import type { AssetPageData, AssetRecord, Bootstrap, DependencyStatus, EventRecord, ForemanTurn, Graph, GraphNode, HarnessProfile, LayoutGraph, LayoutState, OperatorBindingView, Page, Scope, SecretRecord, TalkMessage } from "./types";
 
 type FlowNodeData = { source: GraphNode };
 type FlowNode = Node<FlowNodeData>;
@@ -107,7 +107,7 @@ function Dashboard({ bootstrap, onCompose, onIntake, onSecrets, onConstitution, 
     <div className="metric-grid"><MetricCard label="当前运行" value={active} note={active ? "正在由员工处理" : "当前无运行"} tone="running" /><MetricCard label="自治完成" value="—" note="由 Foreman 会话统计" tone="blue" /><MetricCard label="厂区" value={factory.nodes.length} note="从现有执行图聚合" tone="violet" /><MetricCard label="异常" value={exceptions} note={exceptions ? "进入日志上下文" : "Foreman 当前可继续"} tone={exceptions ? "bad" : "good"} /><button className="metric-card metric-action" onClick={onSecrets}><span className="eyebrow">密钥资源</span><strong className="metric-value violet">{configuredSecrets}/{secrets.length}</strong><small>查看项目资源请求</small></button></div>
     <div className="dashboard-columns"><section className="panel overview-panel"><div className="panel-head"><div><span className="eyebrow">WORKAREAS</span><h2>厂区</h2></div><button className="text-button" onClick={onCompose}>打开编排 <span>→</span></button></div>{factory.nodes.length ? <div className="workarea-list">{factory.nodes.map((node) => <button className="workarea-row" key={node.id} onClick={() => onWorkarea(node.id)}><span className={`status-ring ${statusTone(node.status)}`} /><span className="row-main"><strong>{node.label}</strong><small>{display(node.metadata?.brief, "现有执行图聚合")}</small></span><span className={`row-state ${statusTone(node.status)}`}>{statusLabel(node.status)}</span><span className="chevron">›</span></button>)}</div> : <EmptyState text="当前 Registry 没有可展示的厂区。" />}</section>
       <section className="panel boundary-panel"><div className="panel-head"><div><span className="eyebrow">HUMAN BOUNDARY</span><h2>厂长边界</h2></div><span className="signal good" /></div><p>人决定工厂方向。厂长管理工位和业务流程，项目只申请运行所需的密钥。</p><div className="boundary-chain"><span>人</span><b>→</b><span>Foreman</span><b>→</b><span>Operator</span><b>→</b><span>Machine</span></div><button className="boundary-action" onClick={onConstitution}><span><strong>宪法</strong><small>{display(bootstrap.constitution.version, "未配置")} · {display(bootstrap.constitution.status, "边界状态未知")}</small></span><b>›</b></button></section></div>
-    <section className="panel recent-panel"><div className="panel-head"><div><span className="eyebrow">RECENT ACTIVITY</span><h2>最近运行</h2></div><button className="text-button" onClick={onCompose}>进入编排</button></div><div className="recent-strip"><SummaryItem label="最近日志" value={`${bootstrap.logs.length} 条`} /><SummaryItem label="资产" value={`${bootstrap.assets.length} 项`} /><SummaryItem label="Foreman" value={bootstrap.foreman.configured ? "可用" : "待配置"} /><SummaryItem label="宪法" value={display(bootstrap.constitution.version, "未配置")} /></div></section></section>;
+    <section className="panel recent-panel"><div className="panel-head"><div><span className="eyebrow">RECENT ACTIVITY</span><h2>最近运行</h2></div><button className="text-button" onClick={onCompose}>进入编排</button></div><div className="recent-strip"><SummaryItem label="最近日志" value={`${bootstrap.logs.length} 条`} /><SummaryItem label="资产" value={`${bootstrap.assetTotal ?? bootstrap.assets.length} 项`} /><SummaryItem label="Foreman" value={bootstrap.foreman.configured ? "可用" : "待配置"} /><SummaryItem label="宪法" value={display(bootstrap.constitution.version, "未配置")} /></div></section></section>;
 }
 
 function CanvasView({ graph, layout, onLayout, onSelect, onOpenWorkarea }: { graph: Graph; layout: LayoutState; onLayout: (graph: Graph, nodes: FlowNode[], viewport: Viewport) => void; onSelect: (node: GraphNode | null) => void; onOpenWorkarea: (id: string) => void }): ReactElement {
@@ -399,13 +399,45 @@ function assetRecordLabel(asset: AssetRecord): string {
   return asset.record_type === "material" ? "物料" : "产物";
 }
 
-function AssetsPage({ assets, onOpen }: { assets: AssetRecord[]; onOpen: (asset: AssetRecord) => void }): ReactElement {
+function AssetsPage({ bootstrap, onOpen }: { bootstrap: Bootstrap; onOpen: (asset: AssetRecord) => void }): ReactElement {
+  const [olderPage, setOlderPage] = useState<AssetPageData>();
+  const [pendingCursor, setPendingCursor] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  const assets = olderPage?.items ?? bootstrap.assets;
+  const total = bootstrap.assetTotal ?? bootstrap.assets.length;
+  const olderCursor = olderPage ? olderPage.olderCursor : bootstrap.assetOlderCursor;
+
+  useEffect(() => {
+    if (!pendingCursor) return;
+    const controller = new AbortController();
+    void getAssetsPage(pendingCursor, controller.signal).then((page) => {
+      if (!controller.signal.aborted) setOlderPage(page);
+    }).catch(() => {
+      if (!controller.signal.aborted) setFailed(true);
+    }).finally(() => {
+      if (!controller.signal.aborted) setPendingCursor(undefined);
+    });
+    return () => controller.abort();
+  }, [pendingCursor]);
+
   return <section className="page list-page">
     <div className="page-heading">
       <div><span className="eyebrow">ASSET REGISTRY</span><h1>资产</h1><p>输入素材、输出资产与封存状态。完整 Lineage 在上下文中展开。</p></div>
-      <span className="count-badge">{assets.length} 项</span>
+      <span className="count-badge">{total} 项</span>
     </div>
-    <div className="panel list-panel">
+    {(olderPage || olderCursor) && <nav className="asset-page-actions" aria-label="资产分页">
+      {olderPage && <button type="button" className="secondary-button" onClick={() => {
+        setPendingCursor(undefined);
+        setOlderPage(undefined);
+        setFailed(false);
+      }}>返回最新</button>}
+      {olderCursor && <button type="button" className="secondary-button" disabled={Boolean(pendingCursor)} onClick={() => {
+        setFailed(false);
+        setPendingCursor(olderCursor);
+      }}>{pendingCursor ? "读取中…" : "加载更早"}</button>}
+      {failed && <span role="status">读取失败，请重试。</span>}
+    </nav>}
+    <div className="panel list-panel" aria-busy={Boolean(pendingCursor)}>
       <div className="list-head"><span>资产</span><span>来源</span><span>状态</span><span /></div>
       {assets.length ? assets.map((asset) => (
         <button className="asset-row" key={asset.id} onClick={() => onOpen(asset)}>
@@ -510,6 +542,7 @@ export function App(): ReactElement {
   const [eventCursor, setEventCursor] = useState<string>();
   const [workareaRevision, setWorkareaRevision] = useState(0);
   const [conversionRevision, setConversionRevision] = useState(0);
+  const [assetRevision, setAssetRevision] = useState(0);
   const activeWorkarea = useRef<string | null>(null);
   const startedEvents = useRef(false);
   const rememberTurn = useCallback((turn: ForemanTurn) => {
@@ -609,8 +642,7 @@ export function App(): ReactElement {
     const normalized = `${type} ${String(eventData?.kind ?? "")}`.toLowerCase();
     try {
       if (type === "artifact.created") {
-        const assets = await getAssets();
-        setBootstrap((current) => current ? { ...current, assets } : current);
+        setAssetRevision((revision) => revision + 1);
         return;
       }
       if (normalized.includes("talk")) {
@@ -637,6 +669,24 @@ export function App(): ReactElement {
   }, [rememberTurn, updateOperatorNode]);
   useEffect(() => { void retry(); }, [retry]);
   useEffect(() => eventCursor === undefined ? undefined : subscribeToEvents((event) => { void refreshLive(event.type, event.data); }, undefined, eventCursor), [eventCursor, refreshLive]);
+  useEffect(() => {
+    if (!assetRevision) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void getAssetsPage(undefined, controller.signal).then(({ items, total, olderCursor }) => {
+        if (controller.signal.aborted) return;
+        setBootstrap((current) => current ? {
+          ...current, assets: items, assetTotal: total, assetOlderCursor: olderCursor,
+        } : current);
+      }).catch(() => {
+        // Keep the previous page while a later event or retry refreshes the registry.
+      });
+    }, 75);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [assetRevision]);
   useEffect(() => {
     activeWorkarea.current = page === "compose" && scope === "workarea" ? workarea : null;
     if (!activeWorkarea.current) return;
@@ -680,5 +730,5 @@ export function App(): ReactElement {
     }
   };
   if (!bootstrap && connection === "connecting") return <div className="boot-screen"><div className="boot-mark">M</div><strong>正在连接本地工厂</strong><span>读取真实执行图与运行上下文…</span></div>;
-  return <div className={`app-shell dock-${sidebarDock}`}><Sidebar open={sidebarOpen} dock={sidebarDock} page={page} connection={connection} onClose={() => setSidebarOpen(false)} onNavigate={navigate} /><MaoButton dock={sidebarDock} top={maoTop} onToggle={() => setSidebarOpen((value) => !value)} onDock={(dock, top) => { setSidebarDock(dock); setMaoTop(top); }} /><main className="app-main">{error && <ErrorBanner message={error} onRetry={retry} />}{page === "dashboard" && bootstrap && <Dashboard bootstrap={bootstrap} onCompose={() => navigate("compose")} onIntake={() => setIntake({})} onSecrets={() => setActiveSecret(bootstrap.secrets.find((item) => !item.configured) ?? bootstrap.secrets[0] ?? null)} onConstitution={() => setConstitutionOpen(true)} onWorkarea={openWorkarea} onForemanConfig={openForemanConfig} />}{page === "compose" && bootstrap && activeGraph && <ComposePage bootstrap={bootstrap} graph={activeGraph} scope={scope} layout={layout} foremanOpen={foremanOpen} selected={selectedNode} talk={[...talk, ...Object.values(liveReplies)]} foremanTurns={foremanTurns} onCancelTalk={cancelTalk} harnessConfigRole={harnessConfigRole} harnessConfigRuntime={harnessConfigRuntime} onToggleForeman={() => setForemanOpen((value) => !value)} onBack={returnFactory} onLayout={updateGraphLayout} onSelect={setSelected} onOpenWorkarea={openWorkarea} onConfigureForeman={openForemanConfig} onConfigureOperator={openOperatorConfig} onBindingSaved={updateOperatorNode} onCloseHarnessConfig={closeHarnessConfig} onHarnessProfileSaved={updateHarnessProfile} onSendTalk={sendToForeman} onOpenSecret={setActiveSecret} materialConversions={workarea === activeGraph.id && <WorkareaConversions key={activeGraph.id} businessSystemId={activeGraph.id} revision={conversionRevision} />} onAddProject={() => { if (workarea === activeGraph.id) setIntake({ system: { id: activeGraph.id, title: activeGraph.title } }); }} />}{page === "settings" && bootstrap && <SettingsPage bootstrap={bootstrap} onRuntimeReady={retry} />}{page === "assets" && bootstrap && <AssetsPage assets={bootstrap.assets} onOpen={setActiveAsset} />}{page === "logs" && bootstrap && <LogsPage logs={bootstrap.logs} active={activeLog} onOpen={setActiveLog} />}</main>{intake && <IntakePanel system={intake.system} onClose={() => setIntake(null)} onSaved={retry} />}{activeSecret && <SecretDrawer key={activeSecret.id} secret={bootstrap?.secrets.find((item) => item.id === activeSecret.id) ?? activeSecret} requests={bootstrap?.secrets ?? []} onSelect={setActiveSecret} onClose={() => setActiveSecret(null)} />}{activeAsset && <AssetDrawer asset={activeAsset} onClose={() => setActiveAsset(null)} />}{constitutionOpen && bootstrap && <ConstitutionDrawer bootstrap={bootstrap} onClose={() => setConstitutionOpen(false)} />}</div>;
+  return <div className={`app-shell dock-${sidebarDock}`}><Sidebar open={sidebarOpen} dock={sidebarDock} page={page} connection={connection} onClose={() => setSidebarOpen(false)} onNavigate={navigate} /><MaoButton dock={sidebarDock} top={maoTop} onToggle={() => setSidebarOpen((value) => !value)} onDock={(dock, top) => { setSidebarDock(dock); setMaoTop(top); }} /><main className="app-main">{error && <ErrorBanner message={error} onRetry={retry} />}{page === "dashboard" && bootstrap && <Dashboard bootstrap={bootstrap} onCompose={() => navigate("compose")} onIntake={() => setIntake({})} onSecrets={() => setActiveSecret(bootstrap.secrets.find((item) => !item.configured) ?? bootstrap.secrets[0] ?? null)} onConstitution={() => setConstitutionOpen(true)} onWorkarea={openWorkarea} onForemanConfig={openForemanConfig} />}{page === "compose" && bootstrap && activeGraph && <ComposePage bootstrap={bootstrap} graph={activeGraph} scope={scope} layout={layout} foremanOpen={foremanOpen} selected={selectedNode} talk={[...talk, ...Object.values(liveReplies)]} foremanTurns={foremanTurns} onCancelTalk={cancelTalk} harnessConfigRole={harnessConfigRole} harnessConfigRuntime={harnessConfigRuntime} onToggleForeman={() => setForemanOpen((value) => !value)} onBack={returnFactory} onLayout={updateGraphLayout} onSelect={setSelected} onOpenWorkarea={openWorkarea} onConfigureForeman={openForemanConfig} onConfigureOperator={openOperatorConfig} onBindingSaved={updateOperatorNode} onCloseHarnessConfig={closeHarnessConfig} onHarnessProfileSaved={updateHarnessProfile} onSendTalk={sendToForeman} onOpenSecret={setActiveSecret} materialConversions={workarea === activeGraph.id && <WorkareaConversions key={activeGraph.id} businessSystemId={activeGraph.id} revision={conversionRevision} />} onAddProject={() => { if (workarea === activeGraph.id) setIntake({ system: { id: activeGraph.id, title: activeGraph.title } }); }} />}{page === "settings" && bootstrap && <SettingsPage bootstrap={bootstrap} onRuntimeReady={retry} />}{page === "assets" && bootstrap && <AssetsPage bootstrap={bootstrap} onOpen={setActiveAsset} />}{page === "logs" && bootstrap && <LogsPage logs={bootstrap.logs} active={activeLog} onOpen={setActiveLog} />}</main>{intake && <IntakePanel system={intake.system} onClose={() => setIntake(null)} onSaved={retry} />}{activeSecret && <SecretDrawer key={activeSecret.id} secret={bootstrap?.secrets.find((item) => item.id === activeSecret.id) ?? activeSecret} requests={bootstrap?.secrets ?? []} onSelect={setActiveSecret} onClose={() => setActiveSecret(null)} />}{activeAsset && <AssetDrawer asset={activeAsset} onClose={() => setActiveAsset(null)} />}{constitutionOpen && bootstrap && <ConstitutionDrawer bootstrap={bootstrap} onClose={() => setConstitutionOpen(false)} />}</div>;
 }

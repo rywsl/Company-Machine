@@ -156,6 +156,27 @@ describe("Bun business backend", () => {
         const response = await request("/api/web/assets?limit=" + limit);
         expect(await response.json()).toEqual(full.slice(-Math.max(1, limit)));
       }
+      const window = await jsonResponse(await request("/api/web/bootstrap?assetLimit=1"));
+      expect(window.assets).toEqual(full.slice(-1));
+      expect(window.assetTotal).toBe(4);
+      expect(typeof window.assetOlderCursor).toBe("string");
+      expect((await jsonResponse(await request("/api/web/assets/page?limit=1")))).toEqual({
+        items: window.assets, total: window.assetTotal, olderCursor: window.assetOlderCursor,
+      });
+
+      app.store.addArtifact(record, "active-zz");
+      const middle = await jsonResponse(await request("/api/web/assets/page?limit=2&older=" + window.assetOlderCursor));
+      expect(middle.items).toEqual(full.slice(1, 3));
+      expect(middle.total).toBe(5);
+      expect(typeof middle.olderCursor).toBe("string");
+      const oldest = await jsonResponse(await request("/api/web/assets/page?limit=2&older=" + middle.olderCursor));
+      expect(oldest).toEqual({ items: full.slice(0, 1), total: 5, olderCursor: null });
+      const refreshed = await jsonResponse(await request("/api/web/assets/page?limit=1"));
+      expect(refreshed.items[0].id).toBe("active-zz");
+      expect(refreshed.total).toBe(5);
+      expect((await request("/api/web/assets/page?limit=101")).status).toBe(400);
+      expect((await request("/api/web/assets/page?older=malformed")).status).toBe(400);
+      expect((await request("/api/web/bootstrap?assetLimit=0")).status).toBe(400);
     } finally {
       app.stop();
       await rm(root, { recursive: true, force: true });
