@@ -204,6 +204,60 @@ describe("Bun factory CLI", () => {
     }
   });
 
+  test("requests one credential through the CLI and reuses it within its project", { timeout: 60_000 }, async () => {
+    const root = resolve("tmp", "project-credential-request-" + randomUUID());
+    const dbPath = join(root, "factory.db");
+    const store = new SqliteStore(dbPath, dbPath);
+    const run = (projectId: string, ...args: string[]) => runCommand(
+      [Bun.argv[0], "run", "backend/src/cli.ts", "project", "secret", "request", projectId, ...args],
+      { env: { FACTORY_ROOT: root, FACTORY_DB_PATH: dbPath, BUSINESS_DB_PATH: dbPath } },
+    );
+    const parse = (bytes: Uint8Array) => JSON.parse(new TextDecoder().decode(bytes));
+    try {
+      const system = store.createBusinessSystem({ name: "Publishing" });
+      const otherSystem = store.createBusinessSystem({ name: "Other business" });
+      const project = store.createIntake({ name: "Video", business_system_id: system.id });
+      const otherProject = store.createIntake({ name: "Unrelated project", business_system_id: otherSystem.id });
+
+      const results = await Promise.all([
+        run(project.id, "--name", "PATH", "--purpose", "Reserved variable"),
+        run(project.id, "--name", "PUBLISH_TOKEN", "--purpose", "   "),
+        run(project.id, "--name", "PUBLISH_TOKEN", "--name", "ANOTHER_KEY", "--purpose", "Two keys"),
+        run(project.id, "--name", "PUBLISH_TOKEN", "--purpose", "Publish the clip", "--value", "fixture-value"),
+        run("missing-project", "--name", "PUBLISH_TOKEN", "--purpose", "Publish the clip"),
+      ]);
+      expect(results.map(({ exitCode }) => exitCode)).toEqual([2, 2, 2, 2, 1]);
+      expect(store.listSecretRequests()).toEqual([]);
+
+      const requested = await run(project.id, "--name", "PUBLISH_TOKEN", "--purpose", "Publish the approved clip, token: fixture-value");
+      expect(requested.exitCode).toBe(0);
+      const publicRequest = parse(requested.stdout);
+      expect(Object.keys(publicRequest).sort()).toEqual(["request_id", "state"]);
+      expect(typeof publicRequest.request_id).toBe("string");
+      expect(publicRequest.state).toBe("requested");
+      const duplicate = await run(project.id, "--name", "PUBLISH_TOKEN", "--purpose", "Publish the approved clip");
+      expect(duplicate.exitCode).toBe(0);
+      expect(parse(duplicate.stdout)).toEqual(publicRequest);
+      expect(store.getProject(project.id)?.secretRequests).toMatchObject([{
+        id: publicRequest.request_id, name: "PUBLISH_TOKEN", metadata: { purpose: "Publish the approved clip, token=[REDACTED]" },
+      }]);
+
+      const separate = await run(otherProject.id, "--name", "PUBLISH_TOKEN", "--purpose", "Publish a separate deliverable");
+      expect(separate.exitCode).toBe(0);
+      const separateRequest = parse(separate.stdout);
+      expect(Object.keys(separateRequest).sort()).toEqual(["request_id", "state"]);
+      expect(typeof separateRequest.request_id).toBe("string");
+      expect(separateRequest.state).toBe("requested");
+      expect(separateRequest.request_id).not.toBe(publicRequest.request_id);
+      expect(store.getProject(otherProject.id)?.secretRequests.map(({ id }) => id)).toEqual([separateRequest.request_id]);
+      expect(store.listSecretRequests()).toHaveLength(2);
+      expect(JSON.stringify(store.eventsAfter())).not.toContain("fixture-value");
+    } finally {
+      store.close();
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 75 });
+    }
+  });
+
   test("binds an Operator through the business CLI and preserves the binding across processes", { timeout: 30_000 }, async () => {
     const root = resolve("tmp", "operator-binding-" + randomUUID());
     mkdirSync(root, { recursive: true });

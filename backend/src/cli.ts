@@ -9,6 +9,7 @@ import { RandomIds } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
 import { businessPackageBlob, createBusinessPackage, publishBusinessDirectory, readBusinessPackage, registerVerifiedArtifactFiles } from "./business-package";
 import { parseRepositoryRegistration } from "./project-registration";
+import { projectCredentialName } from "./operator";
 import { VaultStore } from "./vault";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
 export { CliUsageError } from "./station-cli";
@@ -26,12 +27,12 @@ function values(args: string[], name: string): string[] {
 
 export function usage(scope?: string): string {
   if (scope && isStationScope(scope)) return stationUsage(scope);
-  if (scope === "project") return `factory project commands\n  register --repo URL [--name NAME] [--system ID]\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH`;
+  if (scope === "project") return `factory project commands\n  register --repo URL [--name NAME] [--system ID]\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH\n  secret request PROJECT --name KEY --purpose PURPOSE`;
   if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID [--package DEST]\n  verify PACKAGE\n  import PACKAGE --root NEW_ROOT\n  graph ID [--file PATH]\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID\n  conversion ls [--status open|in_progress|resolved] [--root PATH]`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
   if (scope === "registry") return "factory registry check PATH [--json]";
-  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project register --repo URL [--name NAME] [--system ID]\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID [--file PATH]\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
+  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project register --repo URL [--name NAME] [--system ID]\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  project secret request PROJECT --name KEY --purpose PURPOSE\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID [--file PATH]\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
 
 function requireValue(args: string[], name: string): string {
@@ -133,6 +134,30 @@ async function runCommand(argv: string[]): Promise<number> {
       throw new CliUsageError(`unknown runtime command: ${args[0] ?? "(missing)"}`);
     }
     if (command === "project") {
+      if (args[0] === "secret") {
+        const [, operation, projectId, ...flags] = args;
+        const usage = "project secret request expects PROJECT --name KEY --purpose PURPOSE";
+        if (operation !== "request" || !projectId || projectId.startsWith("--")) throw new CliUsageError(usage);
+        const options = new Map<string, string>();
+        for (let index = 0; index < flags.length; index += 2) {
+          const [flag, argument] = [flags[index], flags[index + 1]];
+          if ((flag !== "--name" && flag !== "--purpose") || !argument || argument.startsWith("--") || options.has(flag)) {
+            throw new CliUsageError(usage);
+          }
+          options.set(flag, argument);
+        }
+        const name = options.get("--name");
+        const purpose = options.get("--purpose")?.trim();
+        if (!projectCredentialName(name) || !purpose || /[\u0000-\u001f\u007f]/.test(purpose)) {
+          throw new CliUsageError("project secret request requires one valid credential name and a single-line purpose");
+        }
+        const { request_id, state } = await requestJson(app, "/api/v1/secrets/requests", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ project_id: projectId, name, purpose: redactText(purpose) }),
+        });
+        console.log(JSON.stringify({ request_id, state }, null, 2));
+        return 0;
+      }
       if (args[0] === "register") {
         const options = new Map<string, string>();
         for (let index = 1; index < args.length; index += 2) {

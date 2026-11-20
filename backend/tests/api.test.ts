@@ -54,6 +54,8 @@ describe("Bun business backend", () => {
 
   test("rolls back project intake when it cannot record the Foreman request", async () => {
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
+    const notifications: string[] = [];
+    app.events.subscribe(({ type }) => notifications.push(type));
     const intake = (business_system_id?: string) => app.fetch(new Request("http://localhost/api/v1/projects/intake", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Atomic intake", repo_url: "https://example.invalid/repo", business_system_id }),
@@ -66,6 +68,23 @@ describe("Bun business backend", () => {
       expect(app.store.listProjects()).toHaveLength(0);
       expect(app.store.listTalkMessages()).toHaveLength(0);
       expect(app.events.after()).toHaveLength(0);
+
+      app.store.db.exec(`
+        DROP TRIGGER reject_intake;
+        CREATE TRIGGER reject_intake_event BEFORE INSERT ON business_events WHEN NEW.type='foreman.message.queued'
+        BEGIN SELECT RAISE(ABORT, 'cannot record intake event'); END;
+      `);
+      await expect(Promise.resolve(intake())).rejects.toThrow("cannot record intake event");
+      expect(app.store.listBusinessSystems()).toEqual([]);
+      expect(app.store.listProjects()).toEqual([]);
+      expect(app.store.listTalkMessages()).toEqual([]);
+      expect(app.store.listForemanInbox()).toEqual([]);
+      expect(app.events.after()).toEqual([]);
+      expect(notifications).toEqual([]);
+
+      app.store.db.exec("DROP TRIGGER reject_intake_event");
+      expect((await intake()).status).toBe(201);
+      expect(notifications).toEqual(["business-system.created", "project.intake.created", "talk.message.created", "foreman.message.queued"]);
     } finally { app.stop(); }
   });
 

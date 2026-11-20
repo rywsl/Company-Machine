@@ -227,6 +227,7 @@ test("guides a native Foreman to register repositories and read the assigned bus
     expect(prompts[1]).toContain(`本次项目 ID ${projectId}`);
     expect(prompts[1]).toContain(`本次业务系统 ID ${assigned.id}`);
     expect(prompts[1]).toContain("https://example.test/assigned.git");
+    expect(prompts[1]).toContain("project secret request <project-id> --name <KEY> --purpose <用途>");
     expect(prompts[1]).not.toContain(separate.id);
     expect(prompts[1]).not.toContain("project register");
   } finally { app.stop(); }
@@ -684,6 +685,13 @@ describe("Foreman official Harness dispatch", () => {
         ]);
       } },
     });
+    const committedReplies: Array<string | undefined> = [];
+    app.events.subscribe(({ seq, type }) => {
+      if (type === "foreman.session.text.delta") {
+        const [reply] = app.events.after(seq, 1);
+        committedReplies.push(reply?.type === "foreman.reply.delta" ? (reply.data as { text?: string }).text : undefined);
+      }
+    });
     try {
       const profile = app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "https://example.invalid", model: "codex-test", mode: "session" });
       expect(profile.role).toBe("foreman");
@@ -691,7 +699,7 @@ describe("Foreman official Harness dispatch", () => {
       expect(response.status).toBe(201);
       for (let attempt = 0; attempt < 20 && app.store.listTalkMessages().filter((item) => item.role === "foreman").length === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 5));
       expect(app.store.listTalkMessages().some((item) => item.role === "foreman" && item.body.includes("我会先建立厂区。"))).toBe(true);
-      expect(app.events.after().map((event) => event.type)).toContain("foreman.reply.delta");
+      expect(committedReplies).toEqual(["我会先建立厂区。"]);
       expect(factoryEnv).toMatchObject({ FACTORY_ROOT: resolve(".factory"), BUSINESS_DB_PATH: resolve(dbPath), FACTORY_DB_PATH: resolve(dbPath) });
       expect(app.store.listForemanInbox()).toHaveLength(0);
     } finally {

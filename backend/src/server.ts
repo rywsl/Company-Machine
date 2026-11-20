@@ -355,16 +355,20 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         const intakeMessage = store.addTalkMessage({ role: "user", body: text, metadata: { source: "project-intake", project_id: project.id } });
         store.bridgeHumanTalk(intakeMessage.id, intakeMessage.body);
         const intakeEnvelope = store.queueForemanMessage(intakeMessage.id, intakeMessage.body);
-        return { createdSystem, project, intakeMessage, intakeEnvelope };
+        const visibleProject = publicProject(project);
+        const committed = [
+          ...(createdSystem ? [store.appendEvent("business-system.created", createdSystem)] : []),
+          store.appendEvent("project.intake.created", visibleProject),
+          store.appendEvent("talk.message.created", intakeMessage),
+          store.appendEvent("foreman.message.queued", intakeEnvelope),
+        ];
+        return { projectId: project.id, visibleProject, intakeEnvelope, committed };
       }).immediate();
       if (!recorded) return response({ error: "business system was not found" }, 404);
-      const { createdSystem, project, intakeMessage, intakeEnvelope } = recorded;
-      if (createdSystem) events.publish("business-system.created", createdSystem);
-      events.publish("project.intake.created", publicProject(project));
-      events.publish("talk.message.created", intakeMessage);
-      events.publish("foreman.message.queued", intakeEnvelope);
+      const { projectId, visibleProject, intakeEnvelope, committed } = recorded;
+      for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(intakeEnvelope.id);
-      return response({ ...publicProject(project), project_id: project.id, state: "accepted", foreman_inbox_id: intakeEnvelope.id }, 201);
+      return response({ ...visibleProject, project_id: projectId, state: "accepted", foreman_inbox_id: intakeEnvelope.id }, 201);
     }
     const projectFile = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/files\/(sha256:[0-9a-f]{64})$/);
     if (projectFile && request.method === "GET") {

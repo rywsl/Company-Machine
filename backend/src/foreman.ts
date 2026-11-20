@@ -30,7 +30,8 @@ const nativeBusinessContract = [
   "`business graph <system-id>` 读取现有 DAG。保留仍适用的节点和边，用 `business graph <system-id> --file <path>` 保存更新。",
   "`business artifact <project-id> --file <path>` 保存产物或物料，文件内容通过引用传递。",
   "`business conversion <system-id> --kind <kind> --summary <summary> [--input <ref>] [--output <ref>]` 保存转换。",
-  "`business run <system-id>` 派发运行。密钥通过项目资源请求流程处理。",
+  "`business run <system-id>` 派发运行。",
+  "执行确实缺少一个项目密钥时，用 `project secret request <project-id> --name <KEY> --purpose <用途>` 创建该项目的配置请求。用户在项目资源面板填写密钥。",
 ].join(" ");
 const nativeRegistrationContract = "用 `project register --repo <URL> [--name <名称>] [--system <system-id>]` 登记仓库并继续当前轮。添加到现有业务时提供其 ID。省略该选项时创建业务系统。返回的 projectId 和 systemId 用于后续命令。";
 
@@ -206,11 +207,9 @@ export class ForemanCoordinator {
       let failure: string | undefined;
       let receivedDelta = false;
       const redactor = new ForemanReplyRedactor(credential?.value);
-      const publishReply = (text: string, idForEvent = safeSessionId(session.id) ?? sessionId) => {
-        if (!text || stopped()) return;
+      const appendReply = (text: string) => {
         reply += text;
         this.replies.set(id, reply);
-        this.options.events.publish("foreman.reply.delta", { inboxId: id, sessionId: idForEvent, harness: definition.id, text });
       };
       for await (const event of turn.events(session)) {
         if (stopped()) return;
@@ -221,8 +220,17 @@ export class ForemanCoordinator {
         const text = event.text === undefined ? undefined : isReply ? redactor.write(event.text) : redactForemanText(event.text, credential?.value);
         if (event.type === "text.delta" && event.text) receivedDelta = true;
         const payload = { inboxId: id, sessionId: idForEvent, harness: definition.id, text };
-        this.options.events.publish(`foreman.session.${event.type}`, payload);
-        if (isReply && text) publishReply(text, idForEvent);
+        const sessionType = `foreman.session.${event.type}`;
+        if (isReply && text) {
+          const committed = this.options.store.db.transaction(() => [
+            this.options.store.appendEvent(sessionType, payload),
+            this.options.store.appendEvent("foreman.reply.delta", payload),
+          ])();
+          appendReply(text);
+          for (const update of committed) this.options.events.notifyCommitted(update);
+        } else {
+          this.options.events.publish(sessionType, payload);
+        }
         if (event.type === "session.failed") failure = text || "official-harness-failed";
       }
       if (stopped()) return;
@@ -232,7 +240,14 @@ export class ForemanCoordinator {
       }
       if (mailbox) await turn.wait(mailbox.flush());
       if (stopped()) return;
-      publishReply(redactor.finish());
+      const finalDelta = redactor.finish();
+      if (finalDelta) {
+        const event = this.options.store.appendEvent("foreman.reply.delta", {
+          inboxId: id, sessionId: safeSessionId(session.id) ?? sessionId, harness: definition.id, text: finalDelta,
+        });
+        appendReply(finalDelta);
+        this.options.events.notifyCommitted(event);
+      }
       const replyBody = reply.trim();
       const committed = this.options.store.finishForemanTurn(id, {
         reply: replyBody ? { body: replyBody, metadata: { turn_id: safeSessionId(session.id) ?? sessionId, harness: definition.id } } : undefined,
