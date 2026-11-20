@@ -946,6 +946,7 @@ export function startServer(options: BackendAppOptions & { port?: number; hostna
     const listening = server;
     const dataVersion = app.store.db.query<{ data_version: number }>("PRAGMA data_version");
     let version = dataVersion.get()?.data_version;
+    if (options.dispatchWork !== false) app.operator.reconcileInterruptedRuns();
     app.recoverQueuedWork();
     const externalWork = setInterval(() => {
       try {

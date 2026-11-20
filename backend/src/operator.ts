@@ -8,6 +8,7 @@ import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, chooseTransport, harnessControlPlaneRoot, harnessEndpointEnv, type HarnessEvent, type OfficialSpawn } from "./harness";
 import { HarnessTurn } from "./harness-turn";
 import { resolveOperatorBinding } from "./operator-binding";
+import { createUnitRunOwner, unitRunOwnerExited, unitRunProcessScope } from "./unit-run-owner";
 
 export interface OperatorCoordinatorOptions {
   store: SqliteStore;
@@ -69,6 +70,16 @@ export class OperatorCoordinator {
     return work;
   }
 
+  reconcileInterruptedRuns(): void {
+    if (!unitRunProcessScope || this.closed) return;
+    const { store, events } = this.options;
+    for (const owner of store.runningUnitRunOwners(unitRunProcessScope)) {
+      if (!unitRunOwnerExited(owner, unitRunProcessScope)) continue;
+      const failed = store.interruptUnitRun(owner.unitRunId, owner.token);
+      if (failed) events.notifyCommitted(failed);
+    }
+  }
+
   stop(): void {
     this.closed = true;
     for (const turn of this.turns.values()) void turn.close();
@@ -104,7 +115,8 @@ export class OperatorCoordinator {
       this.options.events.publish("operator.run.blocked", { runId, unitRunId, reason });
       return;
     }
-    const claimed = this.options.store.claimUnitRun(runId, unit.id, sessionId);
+    const owner = createUnitRunOwner();
+    const claimed = this.options.store.claimUnitRun(runId, unit.id, sessionId, owner);
     if (!claimed || claimed.status !== "running") return;
     this.options.events.publish("operator.run.claimed", { runId, unitRunId, unitId: unit.id, sessionId, harness: definition.id, model });
     const turn = new HarnessTurn(profile.sessionTimeoutSeconds);
@@ -158,7 +170,7 @@ export class OperatorCoordinator {
       });
       if (this.closed) return;
       if (useAcp) {
-        this.options.store.noteUnitSession(unitRun.id, session.id);
+        this.options.store.noteUnitSession(unitRun.id, session.id, owner.token);
         recordedSessionId = session.id;
       }
       const secretValues = Object.values(credentials);
@@ -168,7 +180,7 @@ export class OperatorCoordinator {
         if (this.closed) return;
         const event = redactCredentialValues(emitted, secretValues) as HarnessEvent;
         if (event.sessionId && event.sessionId !== recordedSessionId) {
-          this.options.store.noteUnitSession(unitRun.id, event.sessionId);
+          this.options.store.noteUnitSession(unitRun.id, event.sessionId, owner.token);
           recordedSessionId = event.sessionId;
         }
         if (event.type === "record") {
@@ -207,7 +219,7 @@ export class OperatorCoordinator {
       }
       if (this.closed) return;
       if (requested.size) {
-        const waiting = this.options.store.completeUnitRun(unitRun.id, "waiting_resources", [...outputIds]);
+        const waiting = this.options.store.completeUnitRun(unitRun.id, "waiting_resources", [...outputIds], undefined, owner.token);
         if (waiting) this.options.events.publish("operator.run.waiting_resources", waiting);
         this.options.store.resumeResourceRuns(requested.values().next().value!);
         return;
@@ -224,7 +236,7 @@ export class OperatorCoordinator {
         }
         const store = this.options.store;
         const saved = store.db.transaction(() => {
-          if (store.getUnitRun(runId, unitRun.id)?.status !== "running") throw new Error("Operator 已结束，无法登记产物");
+          if (!store.ownsRunningUnitRun(unitRun.id, owner.token)) throw new Error("Operator 已结束，无法登记产物");
           const outputs = [...outputIds];
           const events = settled.map(({ draft, byPosition }) => {
             const artifact = store.addArtifact(draft);
@@ -232,19 +244,19 @@ export class OperatorCoordinator {
             outputs.push(`${artifact.recordType}://${artifact.id}`);
             return store.appendEvent("artifact.created", artifact);
           });
-          return { events, completed: store.completeUnitRun(unitRun.id, "completed", [...new Set(outputs)]) };
+          return { events, completed: store.completeUnitRun(unitRun.id, "completed", [...new Set(outputs)], undefined, owner.token) };
         }).immediate();
         for (const event of saved.events) this.options.events.notifyCommitted(event);
         completed = saved.completed;
       } else {
-        completed = this.options.store.completeUnitRun(unitRun.id, failed ? "failed" : "completed", [...outputIds], failed ? "official-harness-failed" : undefined);
+        completed = this.options.store.completeUnitRun(unitRun.id, failed ? "failed" : "completed", [...outputIds], failed ? "official-harness-failed" : undefined, owner.token);
       }
       if (completed) this.options.events.publish("operator.run.completed", completed);
       if (completed?.status === "completed") return completed.id;
     } catch (error) {
       if (this.closed) return;
       const message = redactCredentialValues(error instanceof Error ? error.message : "official-harness-failed", Object.values(credentials)) as string;
-      const completed = this.options.store.completeUnitRun(unitRun.id, "failed", [...outputIds], message);
+      const completed = this.options.store.completeUnitRun(unitRun.id, "failed", [...outputIds], message, owner.token);
       if (completed) this.options.events.publish("operator.run.failed", completed);
     } finally {
       finishing = true;

@@ -6,6 +6,7 @@ import { ManagedDatabase } from "./sqlite";
 import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 import { defaultSessionTimeoutSeconds, validSessionTimeout } from "./harness-turn";
 import type { OperatorBinding } from "./operator-binding";
+import type { UnitRunOwner } from "./unit-run-owner";
 import type {
   Artifact,
   BusinessSystem,
@@ -173,6 +174,10 @@ export class SqliteStore {
         outputs TEXT NOT NULL DEFAULT '[]', error TEXT, created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL, UNIQUE(run_id, unit_id)
       );
+      CREATE TABLE IF NOT EXISTS unit_run_owners (
+        unit_run_id TEXT PRIMARY KEY REFERENCES unit_runs(id), token TEXT NOT NULL, scope TEXT, pid INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS unit_run_owners_scope ON unit_run_owners(scope);
       CREATE TABLE IF NOT EXISTS business_conversions (
         id TEXT PRIMARY KEY, business_system_id TEXT NOT NULL, kind TEXT NOT NULL,
         summary TEXT NOT NULL, status TEXT NOT NULL, inputs TEXT NOT NULL DEFAULT '[]',
@@ -592,40 +597,76 @@ export class SqliteStore {
     this.db.query("UPDATE business_run_graphs SET edges_indexed=1 WHERE run_id=?").run(runId);
   }
 
-  claimUnitRun(runId: string, unitId: string, sessionId: string): UnitRun | undefined {
+  claimUnitRun(runId: string, unitId: string, sessionId: string, owner?: UnitRunOwner): UnitRun | undefined {
     const timestamp = this.timestamp();
     return this.db.transaction(() => {
       const row = this.db.query("UPDATE unit_runs SET status='running', session_id=?, updated_at=? WHERE run_id=? AND unit_id=? AND status='queued' RETURNING *")
         .get(sessionId, timestamp, runId, unitId);
       if (!row) return undefined;
+      if (owner) {
+        this.db.query("INSERT INTO unit_run_owners (unit_run_id, token, scope, pid) VALUES (?,?,?,?)")
+          .run(row.id, owner.token, owner.scope, owner.pid);
+      }
       this.db.query("UPDATE business_units SET status='running', updated_at=? WHERE id=?").run(timestamp, unitId);
       this.db.query("UPDATE business_runs SET status='running', updated_at=? WHERE id=? AND status='queued'").run(timestamp, runId);
       return this.unitRunFromRow(row);
     }).immediate();
   }
 
-  noteUnitSession(id: string, sessionId: string): void {
-    this.db.query("UPDATE unit_runs SET session_id=? WHERE id=? AND status='running'").run(sessionId, id);
+  noteUnitSession(id: string, sessionId: string, ownerToken: string): void {
+    this.db.query(`UPDATE unit_runs SET session_id=? WHERE id=? AND status='running'
+      AND EXISTS (SELECT 1 FROM unit_run_owners WHERE unit_run_id=unit_runs.id AND token=?)`)
+      .run(sessionId, id, ownerToken);
   }
 
-  completeUnitRun(id: string, status: UnitRun["status"], outputs: string[] = [], error?: string): UnitRun | undefined {
-    const timestamp = this.timestamp();
+  runningUnitRunOwners(scope: string): Array<UnitRunOwner & { unitRunId: string }> {
+    return this.db.query<UnitRunOwner & { unitRunId: string }>(`
+      SELECT owner.unit_run_id AS unitRunId, owner.token, owner.scope, owner.pid
+      FROM unit_run_owners AS owner JOIN unit_runs AS unit ON unit.id=owner.unit_run_id
+      WHERE owner.scope=? AND unit.status='running'
+      ORDER BY owner.unit_run_id
+    `).all(scope);
+  }
+
+  ownsRunningUnitRun(id: string, token: string): boolean {
+    return Boolean(this.db.query(`
+      SELECT 1 FROM unit_runs AS unit JOIN unit_run_owners AS owner ON owner.unit_run_id=unit.id
+      WHERE unit.id=? AND unit.status='running' AND owner.token=?
+    `).get(id, token));
+  }
+
+  completeUnitRun(id: string, status: UnitRun["status"], outputs?: string[], error?: string, ownerToken?: string): UnitRun | undefined {
+    return this.db.transaction(() => this.writeUnitRunOutcome(id, status, outputs ?? [], error, ownerToken)).immediate();
+  }
+
+  interruptUnitRun(id: string, ownerToken: string): Event | undefined {
     return this.db.transaction(() => {
-      const row = this.db.query("UPDATE unit_runs SET status=?, outputs=?, error=?, updated_at=? WHERE id=? RETURNING *")
-        .get(status, json(outputs), error ?? null, timestamp, id);
-      if (!row) return undefined;
-      const unit = this.unitRunFromRow(row);
-      this.db.query(`
-        UPDATE business_runs SET status = CASE
-          WHEN EXISTS (SELECT 1 FROM unit_runs WHERE run_id = ? AND status IN ('failed', 'blocked')) THEN 'failed'
-          WHEN EXISTS (SELECT 1 FROM unit_runs INDEXED BY unit_runs_unfinished WHERE run_id = ? AND status != 'completed') THEN 'running'
-          ELSE 'completed'
-        END, updated_at = ? WHERE id = ?
-      `).run(unit.runId, unit.runId, timestamp, unit.runId);
-      this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?")
-        .run(status === "completed" ? "ready" : status, timestamp, unit.unitId);
-      return unit;
+      const interrupted = this.writeUnitRunOutcome(id, "failed", undefined, "CONTROL_PLANE_RESTART", ownerToken);
+      if (interrupted) return this.appendEvent("operator.run.failed", interrupted);
     }).immediate();
+  }
+
+  private writeUnitRunOutcome(id: string, status: UnitRun["status"], outputs: string[] | undefined, error?: string, token?: string): UnitRun | undefined {
+    const timestamp = this.timestamp();
+    const row = this.db.query(`
+      UPDATE unit_runs SET status=?, outputs=coalesce(?, outputs), error=?, updated_at=? WHERE id=? AND (
+        (? IS NULL AND status IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM unit_run_owners WHERE unit_run_id=unit_runs.id))
+        OR (status='running' AND EXISTS (SELECT 1 FROM unit_run_owners WHERE unit_run_id=unit_runs.id AND token=?))
+      ) RETURNING *
+    `).get(status, outputs === undefined ? null : json(outputs), error ?? null, timestamp, id, token ?? null, token ?? null);
+    if (!row) return undefined;
+    this.db.query("DELETE FROM unit_run_owners WHERE unit_run_id=?").run(id);
+    const unit = this.unitRunFromRow(row);
+    this.db.query(`
+      UPDATE business_runs SET status = CASE
+        WHEN EXISTS (SELECT 1 FROM unit_runs WHERE run_id = ? AND status IN ('failed', 'blocked')) THEN 'failed'
+        WHEN EXISTS (SELECT 1 FROM unit_runs INDEXED BY unit_runs_unfinished WHERE run_id = ? AND status != 'completed') THEN 'running'
+        ELSE 'completed'
+      END, updated_at = ? WHERE id = ?
+    `).run(unit.runId, unit.runId, timestamp, unit.runId);
+    this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?")
+      .run(status === "completed" ? "ready" : status, timestamp, unit.unitId);
+    return unit;
   }
 
   private businessGraph(businessSystemId: string): { edges: BusinessRunEdge[] } {
