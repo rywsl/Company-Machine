@@ -4,7 +4,7 @@ The active project is a Bun + TypeScript business control plane. Python source a
 
 ## Prerequisites
 
-- Bun
+- Bun 1.3.14 (validated with this project; the Registry and fixtures use `Bun.YAML`)
 - Podman 6 or Kiri 0.2+
 - An official Harness CLI such as Claude Code or Codex, when real operator sessions are needed
 

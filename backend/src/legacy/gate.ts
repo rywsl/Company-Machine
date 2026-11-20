@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { compileExpr, type EvalEnvironment } from "../../mrl/evaluator";
+import { compileExpr, MrlEvalError, type EvalEnvironment } from "../../mrl/evaluator";
 import { validateInlineSchema } from "../../mrl/factory/schema";
 import { BOOL, DYN, parseType as parseMrlType, type MrlType } from "../../mrl/types";
 import type { ContainerProvider } from "../../runtime/podman";
@@ -231,8 +231,13 @@ export class Gate {
     if (!problems.length && spec.admit?.length) {
       const environment = recipeEnv(result, paramsValue(this.snapshot, station, params));
       for (const [index, expr] of (spec.admit as string[]).entries()) {
-        const subject = `${station}/admit[${index}]`;
-        if (!this.evaluate(expr, environment, subject)) problem("", index, "admit", "admit[" + index + "]");
+        const name = `admit[${index}]`;
+        try {
+          if (!this.evaluate(expr, environment, `${station}/${name}`)) problem("", index, "admit", name);
+        } catch (error) {
+          const detail = error instanceof MrlEvalError ? `${name}: ${error.code}` : name;
+          problem("", index, "admit", detail);
+        }
       }
     }
     if (problems.length) throw new FactoryError("INTAKE_REJECTED", "来料检验未通过", { problems });
@@ -307,7 +312,7 @@ export class Gate {
         const accepts = typeof declaration.accept === "string" ? [declaration.accept] : declaration.accept ?? [];
         for (const [index, expression] of accepts.entries()) {
           const name = "accept[" + index + "]";
-          const ok = this.evaluate(expression, environment, `${station}/outputs.${port}.${name}`);
+          const ok = this.passes(expression, environment, `${station}/outputs.${port}.${name}`);
           checks.push({ port, index: -1, stage: "accept", name, ok, detail: ok ? "" : name });
         }
       }
@@ -360,7 +365,7 @@ export class Gate {
     const environment = propertyEnv(bean);
     return names.map((name) => {
       const expr = properties[name];
-      return { name, ok: typeof expr === "string" && this.evaluate(expr, environment, this.snapshot.propertySubject(type, name)) };
+      return { name, ok: typeof expr === "string" && this.passes(expr, environment, this.snapshot.propertySubject(type, name)) };
     });
   }
 
@@ -390,18 +395,22 @@ export class Gate {
   }
 
   private evaluate(source: string, values: JsonObject, subject?: string): boolean {
+    const checked = subject === undefined ? undefined : this.snapshot.result.compiledSites.get(subject);
+    if (checked?.kind === "expression" && checked.source === source) {
+      return checked.evaluate(values as EvalEnvironment) === true;
+    }
+    const key = Object.keys(values).sort().join(",") + ":" + source;
+    let predicate = this.predicates.get(key);
+    if (!predicate) {
+      predicate = compile(source, values);
+      this.predicates.set(key, predicate);
+    }
+    return predicate.evaluate(values as EvalEnvironment) === true;
+  }
+
+  private passes(source: string, values: JsonObject, subject?: string): boolean {
     try {
-      const checked = subject === undefined ? undefined : this.snapshot.result.compiledSites.get(subject);
-      if (checked?.kind === "expression" && checked.source === source) {
-        return checked.evaluate(values as EvalEnvironment) === true;
-      }
-      const key = Object.keys(values).sort().join(",") + ":" + source;
-      let predicate = this.predicates.get(key);
-      if (!predicate) {
-        predicate = compile(source, values);
-        this.predicates.set(key, predicate);
-      }
-      return predicate.evaluate(values as EvalEnvironment) === true;
+      return this.evaluate(source, values, subject);
     } catch {
       return false;
     }

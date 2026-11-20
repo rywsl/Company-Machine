@@ -11,7 +11,7 @@ export function inputsValue(inputs: Record<string, Bean | Bean[]>): Record<strin
 function matches(declared: string, value: unknown): boolean {
   if (typeof value === "boolean") return declared === "bool";
   if (declared === "string") return typeof value === "string";
-  if (declared === "int") return typeof value === "number" && Number.isInteger(value);
+  if (declared === "int") return typeof value === "number" && Number.isSafeInteger(value);
   if (declared === "float") return typeof value === "number" && Number.isFinite(value) && !Number.isInteger(value);
   if (declared === "num") return typeof value === "number" && Number.isFinite(value);
   return false;

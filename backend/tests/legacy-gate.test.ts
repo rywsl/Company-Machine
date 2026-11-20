@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
-import { Context, CounterIds, FakeClock, Gate, LocalProvider, canonicalBytes, digestBytes, loadSnapshot } from "../src/legacy";
+import { Context, CounterIds, FakeClock, Gate, LocalProvider, Runner, canonicalBytes, digestBytes, loadSnapshot } from "../src/legacy";
 import type { Sandbox, SandboxSpec } from "../runtime/podman";
 
 const { cpSync, mkdirSync, rmSync } = fs;
@@ -91,6 +91,45 @@ describe("Bun M1 Gate boundary", () => {
       expect(opened).toEqual([]);
     } finally { context.close(); rmSync(context.root, { recursive: true, force: true }); }
   });
+  test("reports all admission failures and MRL error codes before creating a job", async () => {
+    const context = Context.open(join("tmp", `legacy-gate-admit-${randomUUID()}`));
+    try {
+      const registry = join(context.root, "registry");
+      cpSync("tests/fixtures/registry-m1", registry, { recursive: true });
+      const stationFile = join(registry, "stations", "upper.yaml");
+      await Bun.write(stationFile, (await Bun.file(stationFile).text()) + `
+  admit:
+    - inputs.note.facts.chars >= 3
+    - 4 / (inputs.note.facts.chars - 2) >= 2
+`);
+      const snapshot = await loadSnapshot(registry);
+      const runner = new Runner(context, snapshot, provider);
+      const source = join(context.root, "note.txt");
+      const note = async (body: string) => {
+        await Bun.write(source, body);
+        const bean = await context.warehouse.add({ type: "note.text@1.0", files: { "note.txt": source } });
+        context.warehouse.sealMany([[bean.id, { chars: body.length }]], null, "sha256:" + "ab".repeat(32));
+        return bean.id;
+      };
+      const rejected = (inputs: Record<string, string>, problems: unknown[]) => {
+        try {
+          runner.submit("upper@1", inputs, {});
+        } catch (error) {
+          expect(error).toMatchObject({ code: "INTAKE_REJECTED", detail: { problems } });
+          return;
+        }
+        throw new Error("Expected INTAKE_REJECTED");
+      };
+      const admit = (index: number, detail: string) => ({ port: "", index, reason: "admit", detail, bean_id: "" });
+      rejected({ note: await note("ab") }, [admit(0, "admit[0]"), admit(1, "admit[1]: MRL-DIV-ZERO")]);
+      rejected({ note: await note("a") }, [admit(0, "admit[0]"), admit(1, "admit[1]")]);
+      rejected({}, [{ port: "note", index: 0, reason: "missing", detail: "缺少必填端口", bean_id: "" }]);
+      expect(context.db.query("SELECT id FROM jobs").all()).toEqual([]);
+      expect(context.db.query("SELECT kind FROM job_events WHERE kind = 'job.created'").all()).toEqual([]);
+      expect(runner.submit("upper@1", { note: await note("abcd") }, {}).state).toBe("PENDING");
+    } finally { context.close(); rmSync(context.root, { recursive: true, force: true }); }
+  });
+
   test("validates external material and checks required properties on sealed inputs", { timeout: 60_000 }, async () => {
     const root = join("tmp", "legacy-gate-" + randomUUID());
     const snapshot = await loadSnapshot("tests/fixtures/registry-m1");

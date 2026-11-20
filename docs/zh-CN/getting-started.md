@@ -4,7 +4,7 @@
 
 ## 前置条件
 
-- Bun
+- Bun 1.3.14（本项目验收版本，Registry 和夹具使用 `Bun.YAML`）
 - Podman 6 或 Kiri 0.2+
 - 需要真实 Operator 会话时使用 Claude Code、Codex 等官方 Harness CLI
 

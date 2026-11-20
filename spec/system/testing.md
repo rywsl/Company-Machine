@@ -74,7 +74,7 @@ bun run build:test-images
 
 构建 `mao-test/tool`、`mao-test/studio`、`mao-test/operator`。上下文来自 `tests/fixtures/images/<名字>/`，并复制 `tests/fakes/`。复制时把文本文件的 CRLF 换成 LF。Linux Kiri 的构建和镜像检查使用与控制面相同的 Unix 套接字。构建通过 Kiri 提供的经典 Docker build API 提交。
 
-`--save-to DIR` 为选中的每个夹具导出一个 Docker 格式的镜像归档。`--load-from DIR` 将归档装入所选引擎后检查夹具标签和摘要，供同架构的构建主机和无桌面 Kiri 主机之间传输。`--build-timeout SECONDS` 可覆盖经典 Kiri 构建的 300 秒默认时限。
+`--save-to DIR` 为选中的每个夹具导出一个 Docker 格式的镜像归档。`--load-from DIR` 将归档装入所选引擎后检查夹具标签和摘要，供同架构的构建主机和无桌面 Kiri 主机之间传输。`--build-timeout SECONDS` 可覆盖经典 Kiri 构建的 300 秒默认时限。实机验收在探测引擎前检查 Registry 夹具所用的 `Bun.YAML` 接口，缺失时报告当前 Bun 版本。
 
 在实际容器引擎上运行工位验收：
 
@@ -237,6 +237,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_inspect_list_port` | `backend/tests/legacy-gate.test.ts` | `checks list output ordering, facts and whole-port acceptance before sealing` | 列表索引、整端口验收和按序保留实测事实 |
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_admit_external` | `backend/tests/legacy-gate.test.ts` | `admits an external card without validators and explains missing required metadata` | 外部物料入库但尚未封存，缺少元数据时拒绝 |
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_report_json_and_digest` | `backend/tests/legacy-gate.test.ts` | `checks output structure, measured facts, guarantees, acceptance and metadata` | 报告字段、检查阶段和确定的规范摘要 |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_all_admit_failures_reported` | `backend/tests/legacy-gate.test.ts` | `reports all admission failures and MRL error codes before creating a job` | 按声明顺序报告所有为假的准入规则 |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_admit_eval_error_fails_closed` | `backend/tests/legacy-gate.test.ts` | `reports all admission failures and MRL error codes before creating a job` | 准入拒绝区分规则为假和 `MRL-DIV-ZERO`，拒绝时不写入作业或 `job.created` |
 | `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_result_and_unknown` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 统计陌生合法事件并提取费用、轮数和结果 |
 | `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_malformed_and_last_result_wins` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 异常行计数、最后结果及非法字段类型 |
 | `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_errors` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 拒绝非法格式和缺失文件，区分空转录和未完成转录 |

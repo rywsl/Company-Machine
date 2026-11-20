@@ -494,4 +494,21 @@ describe("Bun M1 core boundaries", () => {
     expect(() => paramsValue(snapshot, "test@1", { count: "bad" })).toThrow("工位参数不合法");
     expect(bean.id).toContain("sha256:");
   });
+
+  test("rejects unsafe integer station parameters and defaults", async () => {
+    const snapshot = await loadSnapshot("tests/fixtures/registry-m1");
+    const station = "Station:upper@1";
+    const declaration = { type: "int", default: Number.MAX_SAFE_INTEGER };
+    snapshot.docs[station].spec.params = { count: declaration };
+    expect(paramsValue(snapshot, station, {})).toEqual({ count: Number.MAX_SAFE_INTEGER });
+    expect(paramsValue(snapshot, station, { count: Number.MIN_SAFE_INTEGER })).toEqual({ count: Number.MIN_SAFE_INTEGER });
+
+    const { count } = JSON.parse('{"count":9007199254740993}');
+    for (const value of [count, -count]) {
+      const detail = { station, problems: [{ name: "count", reason: "type", expected: "int", value }] };
+      expectErrorCode(() => paramsValue(snapshot, station, { count: value }), "PARAM_INVALID", detail);
+      declaration.default = value;
+      expectErrorCode(() => paramsValue(snapshot, station, {}), "PARAM_INVALID", detail);
+    }
+  });
 });

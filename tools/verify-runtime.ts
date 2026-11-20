@@ -317,6 +317,9 @@ async function main(): Promise<void> {
   if (args.length && (args.length !== 1 || args[0] !== "--foreman")) {
     throw new Error("用法 bun run tools/verify-runtime.ts [--foreman]");
   }
+  if (typeof Bun.YAML?.parse !== "function" || typeof Bun.YAML?.stringify !== "function") {
+    throw new Error(`Bun ${Bun.version} 缺少运行时验收所需的 Bun.YAML 接口。请使用已验证的 Bun 1.3.14`);
+  }
   const provider = selectedContainerProvider();
   const health = await provider.ensureReady();
   assert.ok(health.available, health.reason ?? `${provider.name} unavailable`);
