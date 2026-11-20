@@ -78,6 +78,14 @@ export class Runner {
     const station = this.snapshot.key("Station", stationRef);
     const spec = this.snapshot.spec(station);
     const role = spec.role;
+    if (role === "source" && runValue !== undefined) {
+      const budget = runValue?.budget;
+      if (!runValue || !["id", "epoch", "line"].every((name) => Object.hasOwn(runValue, name))
+        || !budget || typeof budget !== "object" || Array.isArray(budget)
+        || !["cap_usd", "spent_usd", "remaining_usd"].every((name) => Object.hasOwn(budget, name))) {
+        throw new FactoryError("POLICY_VIOLATION", "运行值不完整，拒绝启动", { station, role, reason: "run" });
+      }
+    }
     if (options.proposalOnly && (role !== "sink" || !spec.phases?.includes("propose"))) {
       throw new FactoryError("CONTRACT_SINK_NO_PROPOSE", "试运行需要两阶段 Sink 工位", { station });
     }
@@ -104,6 +112,14 @@ export class Runner {
     const job = this.jobs.get(id);
     if (terminalStates.has(job.state)) return job;
     if (job.epoch !== this.snapshot.epoch) throw new FactoryError("EPOCH_MISMATCH", "Job snapshot does not match", { jobId: id });
+    const station = this.snapshot.spec(job.station);
+    if (station.role === "source") {
+      const machine = this.snapshot.key("Machine", station.machine);
+      const form = this.snapshot.spec(machine).form;
+      if (form === "service") {
+        throw new FactoryError("FORM_UNSUPPORTED", "Source 工位不支持服务型机器", { station: job.station, machine, form });
+      }
+    }
     if (job.proposalOnly && job.phase !== "propose") {
       throw new FactoryError("JOB_STATE_INVALID", "试运行任务只可执行方案阶段", { jobId: id, state: job.state });
     }

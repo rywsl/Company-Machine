@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { CounterIds, FakeClock, utcIso } from "../src/legacy/foundation";
+import { Context } from "../src/legacy/context";
 import { JobStore } from "../src/legacy/jobs";
 import { compileRunPlan } from "../src/legacy/runplan";
 import { RunStore } from "../src/legacy/runs";
@@ -41,6 +42,7 @@ describe("Bun line triggers", () => {
       warehouse.sealMany([[note.id, { chars: 1 }]], null, "sha256:" + "a".repeat(64));
       const job = jobs.create({ station: "Station:upper@1", epoch: snapshot.epoch, inputs: {}, params: {} });
       jobs.transition(job.id, "SEALED", { outputs: { note: [note.id] } });
+      warehouse.label(note.id, "line", "other", "operator");
       expect(triggers.process()).toEqual([]);
       expect(context.db.query<{ seq: number }>("SELECT seq FROM cursors WHERE name = 'trigger.bean.job-events'").get()?.seq)
         .toBeGreaterThan(0);
@@ -56,6 +58,55 @@ describe("Bun line triggers", () => {
       expect(runs.events(id).map((event) => event.kind)).toEqual(["run.created", "run.trigger"]);
       expect(triggers.process()).toEqual([]);
     } finally { close(); }
+  });
+
+  test("records TRIGGER_INVALID for a matching rule with multiple interface inputs", async () => {
+    const { context, warehouse, runs, snapshot, lines, close } = await fixture();
+    try {
+      const triggers = new TriggerEngine(context, snapshot, lines);
+      const bean = await warehouse.add({ type: "note.text@1.0", files: {}, meta: {} });
+      warehouse.sealMany([[bean.id, { chars: 1 }]], null, "sha256:" + "a".repeat(64));
+      warehouse.label(bean.id, "line", "note-two", "acceptance");
+      expect(triggers.process()).toEqual([]);
+      expect(runs.list()).toEqual([]);
+      const events = context.db.query<{ data: string }>("SELECT data FROM events WHERE kind='run.trigger'").all();
+      expect(events.map(({ data }) => JSON.parse(data))).toMatchObject([
+        { line: "Line:note-two@1", code: "TRIGGER_INVALID" },
+      ]);
+    } finally { close(); }
+  });
+
+  test("preserves recorded trigger cursors across database reopening", async () => {
+    const root = join("tmp", "legacy-trigger-reopen-" + randomUUID());
+    const snapshot = await loadSnapshot("tests/fixtures/registry-m2");
+    let context = Context.open(root);
+    const trigger = (runs: RunStore) => new TriggerEngine(context, snapshot, {
+      start: (line, options) => runs.create(compileRunPlan(snapshot, line), options),
+    });
+    const cursor = () => context.db.query<{ seq: number }>("SELECT seq FROM cursors WHERE name='trigger.bean'").get()?.seq;
+    try {
+      const runs = new RunStore(context.db, context.clock, context.ids);
+      const triggers = trigger(runs);
+      const bean = await context.warehouse.add({ type: "note.text@1.0", files: {}, meta: {} });
+      context.warehouse.sealMany([[bean.id, { chars: 1 }]], null, "sha256:" + "a".repeat(64));
+      context.warehouse.label(bean.id, "line", "note-trigger", "acceptance");
+      context.db.query("INSERT INTO events (id, at, kind, data) VALUES (?, ?, 'bean.sealed', ?)")
+        .run(context.ids.new("ev"), utcIso(context.clock.now()), JSON.stringify({ bean: bean.id }));
+      const [fired] = triggers.process();
+      expect(fired).toBeDefined();
+      const before = cursor();
+      expect(before).toBeGreaterThan(0);
+      context.close();
+
+      context = Context.open(root);
+      const restored = new RunStore(context.db, context.clock, context.ids);
+      expect(cursor()).toBe(before);
+      expect(trigger(restored).process()).toEqual([]);
+      expect(restored.list().map(({ id }) => id)).toEqual([fired]);
+    } finally {
+      context.close();
+      rmSync(root, { recursive: true, force: true, maxRetries: 4 });
+    }
   });
 
   test("rolls back a Run and cursor after a failed transaction, and honors admission limits", async () => {

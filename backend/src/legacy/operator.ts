@@ -41,12 +41,14 @@ function stationBinding(snapshot: Snapshot, stationRef: string) {
     const reason = `机器没有配方 ${spec.recipe}`;
     throw new FactoryError("INVOCATION_INVALID", reason, { station: key, recipe: spec.recipe, reason });
   }
-  return { key, spec, recipe };
+  return { key, spec, recipe, recipeSubject: `${machineKey}/recipes.${spec.recipe}` };
 }
 
-function renderItem(text: string, values: JsonObject, environment: Record<string, MrlType>): string {
+function renderItem(snapshot: Snapshot, subject: string, text: string, values: JsonObject, environment: Record<string, MrlType>): string {
   if (!text.includes("{{")) return text;
-  return compileTemplate(text, { environment }).render(values as EvalEnvironment);
+  const checked = snapshot.result.compiledSites.get(subject);
+  const template = checked?.kind === "template" && checked.source === text ? checked : compileTemplate(text, { environment });
+  return template.render(values as EvalEnvironment);
 }
 
 export function renderBrief(snapshot: Snapshot, stationRef: string, options: InvocationOptions & {
@@ -54,7 +56,7 @@ export function renderBrief(snapshot: Snapshot, stationRef: string, options: Inv
 }): Brief {
   if (!Number.isInteger(options.attempt) || options.attempt < 1) throw new RangeError("attempt 必须 >= 1");
   if (!Number.isFinite(options.budgetUsd)) throw new RangeError("budgetUsd 必须是有限数");
-  const { key, spec, recipe } = stationBinding(snapshot, stationRef);
+  const { key, spec, recipe, recipeSubject } = stationBinding(snapshot, stationRef);
   const params = paramsValue(snapshot, key, options.params ?? {});
   const outputPorts = spec.outputs ?? {};
   const delivery = Object.keys(outputPorts).sort().map((port) => {
@@ -84,7 +86,7 @@ export function renderBrief(snapshot: Snapshot, stationRef: string, options: Inv
   ].join("\n");
   let task: string;
   try {
-    task = renderItem(recipe.task_template ?? "", recipeEnv(options.inputs ?? {}, params), RECIPE_TYPES);
+    task = renderItem(snapshot, recipeSubject + ".task_template", recipe.task_template ?? "", recipeEnv(options.inputs ?? {}, params), RECIPE_TYPES);
   } catch (error) {
     throw new FactoryError("BRIEF_RENDER_FAILED", "任务模板渲染失败", { station: key, error: String(error) });
   }
@@ -120,16 +122,16 @@ export function expandControlVars(invocation: Invocation, values: Record<string,
 }
 
 function renderArgv(
-  argv: unknown, values: JsonObject, environment: Record<string, MrlType>, station: string, reason: string,
+  snapshot: Snapshot, subject: string, argv: unknown, values: JsonObject, environment: Record<string, MrlType>, station: string, reason: string,
 ): string[] {
   if (!Array.isArray(argv) || argv.length === 0 || argv.some((text) => typeof text !== "string")) {
     throw new FactoryError("INVOCATION_INVALID", reason, { station, reason });
   }
-  return argv.map((text) => renderItem(text, values, environment));
+  return argv.map((text, index) => renderItem(snapshot, `${subject}[${index}]`, text, values, environment));
 }
 
 export function buildInvocation(snapshot: Snapshot, stationRef: string, brief: Brief, options: InvocationOptions): Invocation {
-  const { key, spec, recipe } = stationBinding(snapshot, stationRef);
+  const { key, spec, recipe, recipeSubject } = stationBinding(snapshot, stationRef);
   const params = paramsValue(snapshot, key, options.params ?? {});
   const rawTimeout = spec.limits?.timeout;
   const timeoutS = rawTimeout === undefined ? 600 : parseDuration(rawTimeout);
@@ -143,7 +145,8 @@ export function buildInvocation(snapshot: Snapshot, stationRef: string, brief: B
     if (proposing && (!Array.isArray(recipe.propose) || recipe.propose.length === 0)) {
       throw new FactoryError("PROPOSE_UNSUPPORTED", "script 工位的配方没有 propose", { station: key, recipe: spec.recipe });
     }
-    const argv = renderArgv(proposing ? recipe.propose : recipe.run, recipeEnv(options.inputs ?? {}, params), RECIPE_TYPES, key, "script 工位的配方没有运行参数");
+    const argv = renderArgv(snapshot, recipeSubject + (proposing ? ".propose" : ".run"),
+      proposing ? recipe.propose : recipe.run, recipeEnv(options.inputs ?? {}, params), RECIPE_TYPES, key, "script 工位的配方没有运行参数");
     return validateInvocation({ argv, env: {}, timeoutS, transcript: undefined });
   }
   if (runtime.kind !== "agent-cli") {
@@ -165,10 +168,10 @@ export function buildInvocation(snapshot: Snapshot, stationRef: string, brief: B
     { max_turns: maxTurns, timeout_s: timeoutS, budget_usd: spec.limits?.budget_usd ?? 0 },
     { model, runtime: runtimeKey.slice("OperatorRuntime:".length) },
   );
-  const argv = renderArgv(runtime.invoke?.argv, values, RUNTIME_TYPES, key, "runtime 没有 invoke.argv");
+  const argv = renderArgv(snapshot, runtimeKey + "/invoke.argv", runtime.invoke?.argv, values, RUNTIME_TYPES, key, "runtime 没有 invoke.argv");
   const env: Record<string, string> = {};
   const variables = runtime.env ?? {};
-  for (const name of Object.keys(variables).sort()) env[name] = renderItem(variables[name], values, RUNTIME_TYPES);
+  for (const name of Object.keys(variables).sort()) env[name] = renderItem(snapshot, runtimeKey + "/env." + name, variables[name], values, RUNTIME_TYPES);
   const transcript = runtime.transcript?.format;
   if (runtime.transcript !== undefined && transcript !== "stream-json" && transcript !== "codex-jsonl") {
     throw new FactoryError("TRANSCRIPT_FORMAT", "runtime transcript 格式不受支持", { format: transcript });

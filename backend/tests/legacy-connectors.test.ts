@@ -45,8 +45,8 @@ test("Sink receipt claims reject an unresolved older version and release after v
   expect(() => store.claim(next)).toThrow(/幂等键已被占用/);
   expect(() => store.publish(claim.receipt.id, { target: "foo", locator: {}, items: [null] })).toThrow(/回执载荷不合法/);
   expect(store.forJob(base.jobId)?.status).toBe("claimed");
-  store.publish(claim.receipt.id, { target: "foo", locator: {} });
-  store.settle(claim.receipt.id, { ok: true, detail: "matched" });
+  expect(store.publish(claim.receipt.id, { target: "foo", locator: {} }).status).toBe("published");
+  expect(store.settle(claim.receipt.id, { ok: true, detail: "matched" }).status).toBe("verified");
   expect(store.claim(next)).toMatchObject({ kind: "duplicate", receipt: { id: claim.receipt.id } });
   expect(store.forBean("bean-id").map(({ id }) => id)).toEqual([claim.receipt.id]);
   store.settle(claim.receipt.id, { ok: false, detail: "missing" });
@@ -55,6 +55,9 @@ test("Sink receipt claims reject an unresolved older version and release after v
   expect(store.claim(next)).toMatchObject({ kind: "new", receipt: { station: next.station } });
   expect(store.list({ station: "publish-local@2", status: "claimed" })).toHaveLength(1);
   expect(events(context, "job-1")).toEqual(["sink.claimed", "sink.published", "sink.verified", "sink.verify_failed", "receipt.voided"]);
+  const unresolved = store.claim({ ...base, key: "unresolved", jobId: "job-4" }).receipt;
+  expect(store.void(unresolved.id, { by: "operator", reason: "confirmed unpublished" }).status).toBe("void");
+  expect(store.claim({ ...base, key: "unresolved", jobId: "job-5" })).toMatchObject({ kind: "new", receipt: { status: "claimed" } });
 }));
 
 test("Sink renders recipe fallback from inputs and parameters and rejects an invalid receipt file", async () => setup(async (context) => {
@@ -65,7 +68,15 @@ test("Sink renders recipe fallback from inputs and parameters and rejects an inv
   const recipe = machine.recipes["publish-templated"];
   const params = { dir: "archive" };
   expect(sinkKey(snapshot, station, { note: bean }, params)).toBe(`${bean.id}:${params.dir}`);
-  expect(renderReceiptPayload(recipe.receipt, { note: bean }, params)).toEqual({ target: "archive", locator: { path: "archive/note.txt" } });
+  const payload = renderReceiptPayload(recipe.receipt, { note: bean }, params);
+  expect(payload).toEqual({ target: "archive", locator: { path: "archive/note.txt" } });
+  const store = new ReceiptStore(context);
+  const { receipt } = store.claim({ station: "Station:publish-templated@1", key: "template", inputs: {}, jobId: "job-1", verifyMethod: "local-file-check" });
+  let missingTarget: unknown;
+  try { store.publish(receipt.id, { locator: {} }); } catch (error) { missingTarget = error; }
+  expect(missingTarget).toMatchObject({ code: "RECEIPT_INVALID", detail: { job: "job-1", problems: ["target"] } });
+  expect(store.get(receipt.id).status).toBe("claimed");
+  expect(store.publish(receipt.id, payload)).toMatchObject({ status: "published", target: "archive", locator: { path: "archive/note.txt" } });
   const ctl = join(context.root, "ctl");
   expect(await readReceiptPayload(ctl)).toBeUndefined();
   await Bun.write(join(ctl, "receipt.json"), JSON.stringify({ target: "archive", locator: { path: 45 } }));
@@ -84,10 +95,15 @@ test("Source seals local input through Gate and records provenance for repeated 
   const first = await produce();
   expect(first.state).toBe("SEALED");
   expect(first.outputs.note).toHaveLength(1);
+  expect(context.warehouse.get(first.outputs.note[0]).sealed).toBe(true);
   const event = context.db.query<{ data: string }>("SELECT data FROM job_events WHERE job_id=? AND kind='source.ingested'").get(first.id);
   expect(JSON.parse(event!.data)).toMatchObject({ external: true, station: `Station:${station}`, params: { from_dir: from }, outputs: first.outputs });
+  const sealed = context.db.query<{ data: string }>("SELECT data FROM job_events WHERE job_id=? AND kind='bean.sealed'").get(first.id);
+  expect(JSON.parse(sealed!.data)).toMatchObject({ external: true, bean: first.outputs.note[0] });
   expect((await produce()).outputs).toEqual(first.outputs);
-  expect(() => runner.submit(station, { note: first.outputs.note[0] }, { from_dir: from })).toThrow();
+  let invalidInput: unknown;
+  try { runner.submit(station, { note: first.outputs.note[0] }, {}); } catch (error) { invalidInput = error; }
+  expect(invalidInput).toMatchObject({ code: "INTAKE_REJECTED" });
   await Bun.write(file, "");
   const rejected = await produce();
   expect(rejected).toMatchObject({ state: "DEAD", outputs: {} });
@@ -114,13 +130,42 @@ test("Sink verifies once, suppresses duplicate jobs and can be reaudited or void
   expect(existsSync(join(context.root, "jobs", same.id, "1"))).toBe(false);
   expect(events(context, same.id)).toContain("sink.duplicate");
   expect(store.forBean(bean)).toHaveLength(1);
+  const cli = join(import.meta.dir, "../src/cli.ts");
+  const downstream = await runCommand([Bun.argv[0], cli, "--root", context.root, "bean", "lineage", bean, "--down"]);
+  expect(downstream.exitCode).toBe(0);
+  expect(JSON.parse(new TextDecoder().decode(downstream.stdout))).toMatchObject({ id: bean, direction: "down", receipts: [receipt.id] });
 
   rmSync(join(dir, "note.txt"));
   expect(store.settle(receipt.id, await verifyReceipt(context, snapshot, provider, receipt)).status).toBe("failed");
+  expect(events(context, job.id)).toContain("sink.verify_failed");
   expect(await runner.run(submit(1).id)).toMatchObject({ state: "DEAD", error: { code: "RECEIPT_UNVERIFIED_EXISTS" } });
   store.void(receipt.id, { by: "human", reason: "target deleted" });
   expect((await runner.run(submit(2).id)).state).toBe("SEALED");
   expect(store.forBean(bean).map(({ status }) => status).sort()).toEqual(["verified", "void"]);
+}));
+
+test("rejects service Source execution and incomplete Source Run context before launching", async () => setup(async (context) => {
+  const snapshot = await loadSnapshot(registry);
+  let launches = 0;
+  class RecordingProvider extends LocalProvider {
+    override async open(spec: Parameters<LocalProvider["open"]>[0]) {
+      launches += 1;
+      return super.open(spec);
+    }
+  }
+  const runner = new Runner(context, snapshot, new RecordingProvider(localCommands));
+  let policyError: unknown;
+  try { runner.submit("pull-notes@1", {}, { from_dir: context.root }, { id: "x" }); } catch (error) { policyError = error; }
+  expect(policyError).toMatchObject({ code: "POLICY_VIOLATION", detail: { station: "Station:pull-notes@1", role: "source", reason: "run" } });
+  expect(context.db.query("SELECT id FROM jobs").all()).toEqual([]);
+
+  const service = runner.submit("service-source@1", {}, {});
+  await expect(runner.run(service.id)).rejects.toMatchObject({
+    code: "FORM_UNSUPPORTED", detail: { station: "Station:service-source@1", machine: "Machine:servicebox@1", form: "service" },
+  });
+  expect(runner.jobs.get(service.id)).toMatchObject({ state: "PENDING", attempt: service.attempt });
+  expect(existsSync(join(context.root, "jobs", service.id))).toBe(false);
+  expect(launches).toBe(0);
 }));
 
 test("Sink preserves the claim and prevents automatic retries after an uncertain result", { timeout: 90_000 }, async () => setup(async (context) => {

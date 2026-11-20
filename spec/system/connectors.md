@@ -258,11 +258,13 @@ ALTER TABLE jobs ADD COLUMN run_value TEXT;
 4. 写 `source.ingested` 事件。
 5. 摄入的内容相同就得到相同的 Bean ID，内容寻址天然去重。`bean` 触发器按 `(产线, Bean)` 去重（`lines.md` 5.6），所以同一份物料不会重复触发产线。
 6. 定时拉取：把 Source 作为产线的第一个步骤，产线配置 `trigger: [{on: cron, schedule: …}]`。cron 由 `scheduler.md` 处理。
-7. 机器 `form: service` 的 Source：`FORM_UNSUPPORTED`（M4）。
+7. Bun 的 Source 使用服务型机器时，Runner 在创建执行尝试之前返回 `FORM_UNSUPPORTED`。
 
 ### 5.6 凭据与网络的边界（纵深防御）
 
 `Runner` 在 `PROVISIONING` 时，根据工位的角色与策略做如下检查。快照已经通过了宪法检查，这里**再检查一次**：
+
+Bun 创建 Source Job 时，显式提供的 Run 上下文须包含 `id`、`epoch`、`line` 以及 `budget` 的总额、已花费和剩余额度。不完整时返回 `POLICY_VIOLATION`。
 
 | 条件 | 结果 |
 |---|---|
@@ -311,7 +313,7 @@ ALTER TABLE jobs ADD COLUMN run_value TEXT;
 
 ## 7. 验收测试
 
-活动验收 `backend/tests/legacy-connectors.test.ts` 随 `bun run verify:bun` 运行，覆盖 Source 收货、检验与内容寻址，Sink 的占键、跨版本去重、结果未知、独立核验、作废重发与回执文件命令。
+活动验收 `backend/tests/legacy-connectors.test.ts` 随 `bun run verify:bun` 运行，覆盖 Source 收货、检验、内容寻址和执行边界。Sink 验收覆盖回执占键、已核验回执跨版本去重、结果未知、独立核验、作废重发与下游血缘查询。
 
 夹具：`tests/fixtures/registry-m2/`（受保护）在 M1 夹具的基础上增加：
 

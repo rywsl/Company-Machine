@@ -46,7 +46,7 @@
 - `mao.values`：`params_value`、`recipe_env`、`runtime_env`。模板渲染只用这些，禁止自己拼一个“差不多”的 dict。
 - `mao.base`：`parse_duration`。
 - `mao.errors`：`FactoryError`。
-- `mrl` 的 `CompiledTemplate.render`。禁止 `str.format`、Jinja、`eval` 渲染 Spec 里的模板（D3）。
+- `mrl` 的 `CompiledTemplate.render`。Bun 为任务简报、配方参数和 Harness 环境复用工位快照的模板。禁止 `str.format`、Jinja、`eval` 渲染 Spec 里的模板（D3）。
 - 不 import `mao.sandbox`、`mao.runner`、`mao.ctl`。本组件不执行命令。
 
 ---
