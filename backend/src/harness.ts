@@ -6,7 +6,7 @@
 
 import { resolve } from "node:path";
 import { resolveKiriClient } from "../runtime/kiri";
-import { resolvePodmanExecutable } from "../runtime/podman";
+import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
 import { prepareHarnessEgress } from "./harness-sandbox";
 import { SystemClock, type Clock } from "./legacy/foundation";
 
@@ -142,11 +142,15 @@ export function decodeOfficialLine(line: string): HarnessEvent | null {
 class OfficialCliSession implements HarnessSession {
   readonly id: string;
   private closed = false;
+  private reader?: ReadableStreamDefaultReader<Uint8Array>;
+  private closing?: Promise<void>;
 
   constructor(private readonly process: OfficialProcess, id: string) { this.id = id; }
 
   async *events(): AsyncIterable<HarnessEvent> {
+    if (this.closed) return;
     const reader = this.process.stdout.getReader();
+    this.reader = reader;
     const decoder = new TextDecoder();
     let pending = "";
     let partial = false;
@@ -178,6 +182,7 @@ class OfficialCliSession implements HarnessSession {
     try {
       while (!this.closed) {
         const chunk = await reader.read();
+        if (this.closed) return;
         if (chunk.done) break;
         pending += decoder.decode(chunk.value, { stream: true });
         const lines = pending.split(/\r?\n/);
@@ -192,10 +197,21 @@ class OfficialCliSession implements HarnessSession {
       if (pending) yield* decode(pending);
       const exitCode = this.process.exited ? await this.process.exited : 0;
       if (!this.closed && !failed && exitCode !== 0) yield { type: "session.failed", metadata: { exitCode } };
-    } finally { reader.releaseLock(); }
+    } finally {
+      this.reader = undefined;
+      reader.releaseLock();
+    }
   }
 
-  async close(): Promise<void> { this.closed = true; await this.process.kill(); }
+  close(): Promise<void> {
+    return this.closing ??= this.stop();
+  }
+
+  private async stop(): Promise<void> {
+    this.closed = true;
+    void this.reader?.cancel().catch(() => {});
+    await this.process.kill();
+  }
 }
 
 export class OfficialCliTransport implements HarnessTransport {
@@ -271,12 +287,22 @@ export async function spawnOfficialProcess(
       write: async (data: Uint8Array) => { await child.stdin.write(data); await child.stdin.flush?.(); },
       end: async () => { await child.stdin.end?.(); },
     } : undefined;
+    let stopping: Promise<void> | undefined;
+    async function stop(): Promise<void> {
+      try {
+        if (!image && process.platform === "win32" && child.exitCode === null && child.signalCode === null
+            && Number.isSafeInteger(child.pid) && child.pid > 0) {
+          // npm's Windows command wrapper and its native descendants can share the stdout pipe.
+          const taskkill = resolve(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+          const result = await runCommand([taskkill, "/pid", String(child.pid), "/t", "/f"], { timeoutMs: 3_000 }).catch(() => undefined);
+          if (result?.exitCode === 0) return;
+        }
+        child.kill();
+      } finally { await relay?.close(); }
+    }
     return {
       stdin, stdout: child.stdout as ReadableStream<Uint8Array>, exited: child.exited,
-      kill: async () => {
-        try { child.kill(); }
-        finally { await relay?.close(); }
-      },
+      kill: () => stopping ??= stop(),
     };
   } catch (error) {
     await relay?.close().catch(() => {});

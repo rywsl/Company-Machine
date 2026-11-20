@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { chooseTransport, decodeOfficialLine, harnessProcessCommand, officialCliInvocation, officialHarness, officialHarnesses } from "../src/harness";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chooseTransport, decodeOfficialLine, harnessProcessCommand, officialCliInvocation, officialHarness, officialHarnesses, OfficialCliTransport, spawnOfficialProcess } from "../src/harness";
 import { harnessEgressPlan } from "../src/harness-sandbox";
 import { AcpTransport, decodeAcpLine } from "../src/acp";
 import type { HarnessEvent, HarnessSession } from "../src/harness";
@@ -7,6 +10,51 @@ import type { HarnessEvent, HarnessSession } from "../src/harness";
 const acpRequest = { task: "构建项目", contract: "你是厂长", model: "kimi", cwd: "/workspace" };
 const acpDefinition = officialHarness("kimi-code")!;
 const encoder = new TextEncoder();
+
+test("cancels a pending official CLI event read when the owned stream stays open", async () => {
+  let cancellations = 0;
+  let terminations = 0;
+  const transport = new OfficialCliTransport(officialHarness("claude-code")!, () => ({
+    stdout: new ReadableStream({ cancel() { cancellations++; } }),
+    kill() { terminations++; },
+  }));
+  const session = await transport.start(acpRequest);
+  const events = session.events()[Symbol.asyncIterator]();
+  const pending = events.next();
+  await Promise.all([session.close(), session.close()]);
+  expect(await pending).toMatchObject({ done: true });
+  expect(cancellations).toBe(1);
+  expect(terminations).toBe(1);
+});
+
+test("terminates the owned Windows command wrapper and the native child holding its stdout", { timeout: 20_000 }, async () => {
+  if (process.platform !== "win32") return;
+  const root = mkdtempSync(join(tmpdir(), "mao-owned-harness-"));
+  const script = join(root, "native.ts");
+  const launcher = join(root, "runner.cmd");
+  writeFileSync(script, 'console.log(process.pid); await Bun.sleep(30000);');
+  writeFileSync(launcher, '@echo off\r\n"' + Bun.argv[0] + '" "' + script + '"\r\n');
+  try {
+    const child = await spawnOfficialProcess([launcher], { cwd: root, env: {}, stdout: "pipe" });
+    const reader = child.stdout.getReader();
+    try {
+      const ready = await reader.read();
+      const nativePid = Number(new TextDecoder().decode(ready.value).trim());
+      expect(Number.isSafeInteger(nativePid) && nativePid > 0).toBe(true);
+      expect(process.kill(nativePid, 0)).toBe(true);
+      await child.kill();
+      expect(await reader.read()).toMatchObject({ done: true });
+      let nativeRunning = false;
+      try { nativeRunning = process.kill(nativePid, 0); }
+      catch (error) { if ((error as { code?: string }).code !== "ESRCH") throw error; }
+      expect(nativeRunning).toBe(false);
+    } finally {
+      await child.kill();
+      await reader.cancel();
+      reader.releaseLock();
+    }
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
 
 test("uses exact Harness profile and deployment hosts while refusing a named network bypass", () => {
   expect(harnessEgressPlan("https://Provider.Example/api", " AUTH.EXAMPLE.,provider.example").allow).toEqual([
