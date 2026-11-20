@@ -175,7 +175,7 @@ export function defaultAcpSpawn(argv: string[], options: { cwd: string; env: Rec
   const network = options.network ?? "none";
   if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
   let podmanNetwork = "none";
-  if (hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri") {
+  if (image && hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri") {
     for (const [key, value] of Object.entries(resolveKiriEnvironment())) {
       if (env[key] === undefined) env[key] = value;
     }
