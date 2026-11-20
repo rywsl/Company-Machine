@@ -6,6 +6,7 @@ import { createBackup, restoreBackup, verifyBackup } from "../src/backup";
 import { SqliteStore } from "../src/db";
 import { Context } from "../src/legacy/context";
 import { runCommand, type CommandResult } from "../runtime/podman";
+import { resolveGitExecutable } from "../runtime/git";
 
 async function inTemporaryDirectory(run: (root: string) => Promise<void>): Promise<void> {
   const root = join("tmp", `backup-${randomUUID()}`);
@@ -34,7 +35,7 @@ function makeFixtureRemovable(path: string): void {
 }
 
 async function git(root: string, ...args: string[]): Promise<string> {
-  const result = await runCommand(["git", "-C", root, ...args], {
+  const result = await runCommand([resolveGitExecutable(), "-C", root, ...args], {
     env: { GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
   });
   const decoder = new TextDecoder();
@@ -244,15 +245,17 @@ test("creates, verifies and restores a checkpoint through the factory CLI", { ti
     const created = await run(["create", destination, "--root", source, "--registry", registry, "--json"]);
     assertCliExit("create", created, 0);
     expect(json(created.stdout)).toMatchObject({ format: "mao-backup/bun/1", registry: { head_oid: oid } });
-    const verify = await run(["verify", destination, "--json"]);
+    const [verify, restored, positional] = await Promise.all([
+      run(["verify", destination, "--json"]),
+      run(["restore", destination, "--root", restoreRoot, "--json"]),
+      run(["restore", destination, join(root, "restored-positional"), "--json"]),
+    ]);
     assertCliExit("verify", verify, 0);
     expect(json(verify.stdout)).toEqual({ ok: true, problems: [] });
-    const restored = await run(["restore", destination, "--root", restoreRoot, "--json"]);
     assertCliExit("restore --root", restored, 0);
     const report = json(restored.stdout);
     expect(report.business_database).toBe(report.factory_database);
     expect(await git(report.registry, "rev-parse", "HEAD")).toBe(oid);
-    const positional = await run(["restore", destination, join(root, "restored-positional"), "--json"]);
     assertCliExit("restore", positional, 0);
     expect(await git(json(positional.stdout).registry, "rev-parse", "HEAD")).toBe(oid);
     const result = new SqliteStore(report.business_database, report.factory_database);

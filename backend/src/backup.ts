@@ -4,6 +4,7 @@ import { copyFile, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Database } from "bun:sqlite";
+import { resolveGitExecutable } from "../runtime/git";
 import { FactoryError } from "./legacy/errors";
 import { canonicalJson, SystemClock, utcIso, type Clock } from "./legacy/foundation";
 import { readGovernedRegistry } from "./legacy/registry-config";
@@ -269,7 +270,7 @@ type GitProcess = { exited: Promise<number>; stdout: ReadableStream; stderr: Rea
 async function git(cwd: string, args: string[], allowedExit = [0]): Promise<string> {
   const environment = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] =>
     !/^GIT_/i.test(entry[0]) && typeof entry[1] === "string"));
-  const argv = ["git", "-C", cwd, ...args];
+  const argv = [resolveGitExecutable(), "-C", cwd, ...args];
   const bun = Bun as unknown as { spawn(argv: string[], options: Record<string, unknown>): GitProcess };
   let child: GitProcess;
   try {

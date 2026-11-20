@@ -60,6 +60,8 @@ factory backup restore DEST NEW_ROOT [--json]
 
 `create` 和 `restore` 打印清单和恢复报告。`verify` 打印校验结果，完好时返回 0，发现损坏时返回 1。恢复报告的 `factory_database` 与 `business_database` 给出恢复库的位置，`secrets_missing` 列出需要重新提供的密钥名称。含 Git bundle 的备份也返回恢复后的 `registry` 路径。
 
+在 Windows 上，如果 PATH 选中的 Git 是 Git for Windows 的 `cmd/git.exe` 启动器，备份命令优先使用同一安装目录中的 Git 可执行文件。其他部署使用 PATH 解析到的 Git。
+
 归档接口
 
 ```python
