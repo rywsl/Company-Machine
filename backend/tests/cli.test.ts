@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { main } from "../src/cli";
 import { SqliteStore } from "../src/db";
 import { Context } from "../src/legacy/context";
+import { tailEvents } from "../src/legacy/events";
 
 async function capture(run: () => Promise<number>): Promise<{ code: number; output: string[]; errors: string[] }> {
   const output: string[] = [];
@@ -20,6 +21,70 @@ async function capture(run: () => Promise<number>): Promise<{ code: number; outp
     console.error = error;
   }
 }
+
+test("tails read-only factory events in sequence with inclusive time, literal prefix, limit and redaction", async () => {
+  const root = resolve("tmp", "event-evidence-" + randomUUID());
+  try {
+    const run = (args: string[]) => capture(() => main(["--root", root, "--json", "events", ...args]));
+    expect(await run([])).toMatchObject({ code: 0, output: ["[]"] });
+    expect(existsSync(root)).toBe(false);
+    const context = Context.open(root);
+    try {
+      context.db.exec("CREATE TABLE events (seq INTEGER PRIMARY KEY, id TEXT, at TEXT, kind TEXT, job_id TEXT, data TEXT)");
+      const event = context.db.query("INSERT INTO events (id,at,kind,job_id,data) VALUES (?,?,?,?,?)");
+      const records = [
+        ["ev-t1", "2027-01-01T00:00:00.000Z", "job.state", { to: "RUNNING" }],
+        ["ev-t2", "2027-01-01T00:00:01.000Z", "foreman.wake", { note: "token=fixture-key leaked", nested: [{ authorization: "Bearer fixture" }] }],
+        ["ev-t3", "2027-01-01T00:00:02.000Z", "foreman.session", { state: "ok" }],
+        ["ev-t4", "2027-01-01T00:00:03.000Z", "serve.tick", { tick: 1 }],
+      ] as const;
+      for (const [id, at, kind, data] of records) event.run(id, at, kind, null, JSON.stringify(data));
+    } finally { context.close(); }
+    const picked = await run(["--since", "2027-01-01T08:00:01+08:00", "--kind", "foreman."]);
+    expect(picked.code).toBe(0);
+    const rows = JSON.parse(picked.output[0]);
+    expect(rows.map(({ id }: { id: string }) => id)).toEqual(["ev-t2", "ev-t3"]);
+    expect(rows[0].data).toEqual({ note: "token=[REDACTED] leaked", nested: [{ authorization: "[REDACTED]" }] });
+    expect(tailEvents(root, { since: "2027-01-01T00:00:00.000Z", limit: 2 }).map(({ id }) => id)).toEqual(["ev-t3", "ev-t4"]);
+    expect(tailEvents(root, { since: "2027-01-01T00:00:01.000Z", kind: "foreman.", limit: 1 }).map(({ id }) => id)).toEqual(["ev-t3"]);
+    expect(tailEvents(root, { kind: "foreman_%" })).toEqual([]);
+    for (const query of [{ since: "yesterday" }, { since: "2027-02-30" }, { limit: 0 }, { limit: 10_001 }]) {
+      let rejected: unknown;
+      try { tailEvents(root, query); } catch (error) { rejected = error; }
+      expect(rejected).toMatchObject({ code: "EVENTS_QUERY_INVALID" });
+    }
+    for (const args of [["--since", "yesterday"], ["--limit", "10001"], ["--limit", "1", "--limit", "2"]]) {
+      expect(await run(args)).toMatchObject({ code: 2, output: [] });
+    }
+    expect(await capture(() => main(["--root", root, "line", "events", "absent"]))).toMatchObject({ code: 0, output: ["[]"] });
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
+test("reads job and run evidence through isolated scopes without a Registry", async () => {
+  const root = resolve("tmp", "scoped-evidence-" + randomUUID());
+  const context = Context.open(root);
+  try {
+    context.db.exec(`
+      CREATE TABLE events (seq INTEGER PRIMARY KEY, id TEXT, at TEXT, kind TEXT, job_id TEXT, data TEXT, run_id TEXT);
+      CREATE TABLE job_events (id TEXT, at TEXT, kind TEXT, job_id TEXT, data TEXT);
+    `);
+    const runEvent = context.db.query("INSERT INTO events (id,at,kind,job_id,data,run_id) VALUES (?,?,?,?,?,?)");
+    const jobEvent = context.db.query("INSERT INTO job_events (id,at,kind,job_id,data) VALUES (?,?,?,?,?)");
+    const at = "2027-01-01T00:00:01.000Z";
+    runEvent.run("e1", at, "run.state", null, "{}", "r1");
+    runEvent.run("e2", at, "run.state", null, "{}", "r2");
+    jobEvent.run("e3", at, "job.state", "j1", "{}");
+    jobEvent.run("e4", at, "job.state", "j2", "{}");
+    const command = async (...args: string[]) => {
+      const result = await capture(() => main(["--root", root, "--registry", join(root, "missing-registry"), ...args]));
+      expect(result.code).toBe(0);
+      return JSON.parse(result.output[0]).map(({ id }: { id: string }) => id);
+    };
+    expect(await command("events")).toEqual(["e1", "e2"]);
+    expect(await command("line", "events", "r1")).toEqual(["e1"]);
+    expect(await command("job", "events", "j2")).toEqual(["e4"]);
+  } finally { context.close(); rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
 
 describe("Bun factory CLI", () => {
   test("provides scoped help for active business commands", async () => {

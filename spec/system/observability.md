@@ -128,6 +128,8 @@ factory events [--since ISO] [--kind PREFIX] [--limit N] [--json]
 
 `tail_events` 返回 `[{"id", "kind", "at", "job_id", "data"}]`，按 `seq` 升序。`since` 是 `at` 的包含下界；`kind` 是前缀匹配（`"foreman."` 匹配所有厂长事件）。取满足条件的**最后** `limit` 条，再按 `seq` 升序返回。`data` 解析为 JSON 后，其中每个字符串值按 `foreman.md` 4.4 第 2 条的模式打码（不对 JSON 文本整体打码，那会破坏结构）。
 
+Bun 的 `factory events` 读取工厂事件表。`factory line events RUN` 按 `run_id` 限定该表，`factory job events JOB` 按 `job_id` 读取作业事件表并按插入顺序返回。三个命令均输出 JSON 数组，使用同样的 `--since`、`--kind` 和 `--limit`。时间下界按实际时间比较，事件类型按字面前缀匹配，输出保留事件顺序并在 JSON 投影中统一打码敏感字段和值。数据库或事件表尚未创建时返回空数组，读取过程无需加载 Registry 或创建工厂目录。
+
 ---
 
 ## 5. 行为
@@ -159,6 +161,8 @@ factory events [--since ISO] [--kind PREFIX] [--limit N] [--json]
 | | `test_spend_today` | 当天的模型用量、transcript 成本、厂长会话分别计入；前一天的不计入 |
 | | `test_metrics_text` | `# TYPE` 行的指标名集合恰好是 4.3 的表；`mao_up` 两个样本；`mao_jobs` 的样本与计数一致且按标签升序 |
 | | `test_tail_events` | `since` 包含下界、`kind` 前缀匹配、取最后 `limit` 条后升序；`data` 已打码 |
+
+活动 Bun 验收位于 `backend/tests/cli.test.ts`，覆盖事件查询的时间、排序、范围、脱敏及只读命令入口。
 
 ```
 uv run python tools/harness.py pytest tests/acceptance/m7/test_m7_01_status.py

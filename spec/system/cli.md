@@ -20,6 +20,7 @@
 | `factory bean lineage BEAN --direction up\|down` | 查询已封存物料的上下游工位和物料。 |
 | `factory job run STATION [--input PORT=BEAN] [--param NAME=JSON] [--cache]` | 执行工位并封存通过 Gate 的产物。`--cache` 可复用已有结果。列表端口允许重复传入 `--input`。 |
 | `factory job show JOB`、`factory job exec JOB` | 查询或继续执行已有工位。 |
+| `factory events`、`factory job events JOB`、`factory line events RUN` | 从工厂、作业或运行读取已记录的事件证据。支持 `--since ISO`、`--kind PREFIX`、`--limit N` 和 `--json`。 [事件规范](observability.md) |
 | `factory cache ls`、`explain JOB`、`invalidate` | 列出缓存记录，查看 JobKey，或使用指定范围和原因失效已有记录。 |
 | `factory approval ls`、`show`、`approve`、`deny` | 查询邮箱审批并提交决定，决定者默认取 `FACTORY_HUMAN_BY`。 |
 | `factory source run`、`factory receipt ls`、`show`、`verify`、`void` | 执行摄入，查询、核验与作废发布回执。 |

@@ -14,6 +14,7 @@ import { epochCommands, runEpochCli } from "./epoch-cli";
 import { readGovernedRegistry } from "./legacy/registry-config";
 import { RegistrySelection } from "./registry-selection";
 import { createBackup, restoreBackup, verifyBackup } from "./backup";
+import { tailEvents, type EventScope } from "./legacy/events";
 
 export class CliUsageError extends Error {}
 
@@ -31,9 +32,10 @@ const commands = {
   ...changesetCommands,
   ...epochCommands,
   bean: ["import --type TYPE --file PATH=HOST", "lineage BEAN --direction up|down"],
-  job: ["run STATION [--input PORT=BEAN] [--param NAME=JSON] [--cache]", "show JOB", "exec JOB"],
+  events: ["[--since ISO] [--kind PREFIX] [--limit N]"],
+  job: ["run STATION [--input PORT=BEAN] [--param NAME=JSON] [--cache]", "show JOB", "events JOB [--since ISO] [--kind PREFIX] [--limit N]", "exec JOB"],
   cache: ["ls [--station STATION]", "explain JOB", "invalidate (--key KEY|--job JOB|--station STATION|--bean BEAN) --reason TEXT"],
-  line: ["plan LINE", "run LINE [--in PORT=BEAN] [--budget USD] [--variant STEP=VALUE] [--no-cache]", "exec RUN", "ls [--state STATE]", "show RUN", "nodes RUN", "cancel RUN", "retry RUN NODE", "rebuild RUN"],
+  line: ["plan LINE", "run LINE [--in PORT=BEAN] [--budget USD] [--variant STEP=VALUE] [--no-cache]", "exec RUN", "ls [--state STATE]", "show RUN", "nodes RUN", "events RUN [--since ISO] [--kind PREFIX] [--limit N]", "cancel RUN", "retry RUN NODE", "rebuild RUN"],
   approval: ["ls [--job JOB] [--status STATUS]", "show APPROVAL", "approve APPROVAL [--note TEXT]", "deny APPROVAL [--note TEXT]"],
   schedule: ["tick [--config PATH]", "enqueue JOB...", "dlq ls", "quarantine BEAN --reason TEXT", "release BEAN"],
   contract: [
@@ -50,6 +52,7 @@ export function isStationScope(scope: string): scope is keyof typeof commands {
 }
 
 export function stationUsage(scope: keyof typeof commands): string {
+  if (scope === "events") return "factory events " + commands.events[0];
   return `factory ${scope} commands\n  ${commands[scope].join("\n  ")}`;
 }
 
@@ -143,11 +146,19 @@ export async function runStationCli(argv: string[]): Promise<number> {
   if (!isStationScope(scope)) {
     throw new CliUsageError("Unknown factory command");
   }
+  const root = options.root ?? process.env.FACTORY_ROOT ?? ".factory";
+  if (scope === "events" && operation !== "help" && operation !== "--help") {
+    return runEventsCli(root, operation === undefined ? [] : [operation, ...args]);
+  }
   if (!operation || operation === "help" || operation === "--help") {
     console.log(stationUsage(scope));
     return 0;
   }
-  const root = options.root ?? process.env.FACTORY_ROOT ?? ".factory";
+  if (operation === "events" && (scope === "job" || scope === "line")) {
+    const [id, ...flags] = args;
+    if (!id || id.startsWith("--")) throw new CliUsageError(scope === "job" ? "Job id is required" : "Run id is required");
+    return runEventsCli(root, flags, scope === "job" ? { job: id } : { run: id });
+  }
   const registry = options.registry ?? process.env.FACTORY_REGISTRY ?? "registry";
   if (scope === "backup") return await runBackupCli(operation, args, root, options);
   const isPlanning = scope === "line" && operation === "plan";
@@ -476,4 +487,19 @@ export function stationErrorExit(error: unknown): number {
   if (error.code === "REGISTRY_INVALID") return 3;
   if (["IMAGE_NOT_FOUND", "PODMAN_UNAVAILABLE", "PODMAN_FAILED", "RUNTIME_UNAVAILABLE", "GIT_FAILED", "REGISTRY_NOT_CONFIGURED"].includes(error.code)) return 4;
   return 1;
+}
+
+function runEventsCli(root: string, args: string[], scope?: EventScope): number {
+  const fields = readOptions(args, ["--since", "--kind", "--limit"]);
+  const since = fields.has("--since") ? required(fields, "--since") : undefined;
+  const kind = fields.has("--kind") ? required(fields, "--kind") : undefined;
+  const limit = fields.has("--limit") ? required(fields, "--limit") : undefined;
+  if (limit !== undefined && !/^\d+$/.test(limit)) throw new CliUsageError("limit 必须是整数");
+  try {
+    console.log(canonicalJson(tailEvents(root, { since, kind, limit: limit === undefined ? undefined : Number(limit), scope })));
+    return 0;
+  } catch (error) {
+    if (error instanceof FactoryError && error.code === "EVENTS_QUERY_INVALID") throw new CliUsageError(error.message);
+    throw error;
+  }
 }
