@@ -34,6 +34,7 @@ const suites: Record<string, Step[]> = {
   ],
   verify: [
     { label: "Bun backend acceptance", argv: ["bun", "test", "backend"] },
+    { label: "Backend strict TypeScript check", argv: ["pnpm", "--filter", "@mao/web", "exec", "tsc", "--noEmit", "-p", "../backend/tsconfig.json", "--pretty", "false"] },
     { label: "Web TypeScript check", argv: ["pnpm", "check:web"] },
   ],
 };
