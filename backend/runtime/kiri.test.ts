@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { egressRelayName, launchEgressRelay } from "./egress-relay";
 import { KiriProvider, buildKiriHarnessCommand, resolveKiriClient } from "./kiri";
 import type { CommandResult, SandboxSpec } from "./podman";
 
@@ -13,6 +17,80 @@ const spec: SandboxSpec = {
   mounts: [],
   network: "none",
 };
+
+test("starts the isolated relay, checks its upstream socket and removes failed starts", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mao-relay-fixture-"));
+  const socketPath = join(directory, "proxy.sock");
+  writeFileSync(socketPath, "");
+  const name = "mao-relay-fixture";
+  const commands: string[][] = [];
+  let closed = 0;
+  try {
+    await expect(launchEgressRelay({
+      name, image: spec.image,
+      plan: { station: "Station:relay-fixture@1", policy: "Policy:relay-fixture@1", network: "egress", allow: [], monitored: false, onUnlisted: "deny" },
+      command: (...args) => ["fixture", ...args],
+      run: async (argv) => {
+        commands.push(argv);
+        if (argv[1] === "run") return result("a".repeat(64));
+        if (argv[1] === "exec") return result("", "relay unreachable", 1);
+        return result();
+      },
+      startForwarder: async () => ({
+        endpoint: { socketPath }, authorization: "unused", close: async () => { closed++; },
+      }),
+    })).rejects.toMatchObject({ code: "EGRESS_PROXY_UNAVAILABLE" });
+    expect(commands[0].slice(1, 10)).toEqual(["run", "--name", egressRelayName(name), "--detach", "--pull=never", "--network", "none", "--init", "--user"]);
+    expect(commands[0]).toContain("type=bind,source=" + socketPath + ",target=/run/mao-egress.sock,readonly");
+    expect(commands[1].slice(1, 5)).toEqual(["exec", "a".repeat(64), "bun", "-e"]);
+    expect(commands[2]).toEqual(["fixture", "rm", "-f", egressRelayName(name)]);
+    expect(closed).toBe(1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("joins only the verified relay namespace and passes the credential through process environment", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mao-relay-provider-"));
+  const socketPath = join(directory, "proxy.sock");
+  writeFileSync(socketPath, "");
+  const token = "b".repeat(64);
+  const id = "a".repeat(64);
+  const authorization = "Basic " + Buffer.from("mao:" + token).toString("base64");
+  const commands: Array<{ argv: string[]; env?: Record<string, string> }> = [];
+  let closed = 0;
+  const provider = new KiriProvider({
+    platform: "linux", dockerExecutable: "docker-fixture", mode: "linux-socket", autoStart: false,
+    relayImage: spec.image, egressNetwork: "legacy-egress",
+    runner: async (argv, options) => {
+      commands.push({ argv, env: options?.env });
+      switch (argv[3]) {
+        case "info": return result("Kiri");
+        case "image": return result("sha256:" + id);
+        case "run": return result(id);
+        default: return result();
+      }
+    },
+    startForwarder: async () => ({ endpoint: { socketPath }, authorization, close: async () => { closed++; } }),
+  });
+  try {
+    const sandbox = await provider.open({
+      ...spec, network: "egress",
+      egressPlan: { station: "Station:relay-fixture@1", policy: "Policy:relay-fixture@1", network: "egress", allow: [], monitored: false, onUnlisted: "deny" },
+    });
+    try {
+      await sandbox.exec(["fixture-command"], {
+        timeoutMs: 100, stdout: join(directory, "stdout"), stderr: join(directory, "stderr"), env: { HTTPS_PROXY: "ignored" },
+      });
+      const workload = commands.find(({ argv }) => argv[3] === "run" && argv.includes(spec.name))?.argv ?? [];
+      expect(workload[workload.indexOf("--network") + 1]).toBe("container:" + id);
+      const execution = commands.find(({ argv }) => argv.includes("fixture-command"));
+      expect(execution?.argv).toContain("HTTPS_PROXY");
+      expect(execution?.env?.HTTPS_PROXY).toBe("http://mao:" + token + "@127.0.0.1:18080");
+      expect(commands.some(({ argv }) => argv.some((arg) => arg.includes(token) || arg === "legacy-egress"))).toBe(false);
+    } finally { await Promise.all([sandbox.close(), sandbox.close()]); }
+    expect(closed).toBe(1);
+    expect(commands.at(-1)?.argv.slice(3)).toEqual(["rm", "-f", egressRelayName(spec.name)]);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 describe("KiriProvider", () => {
   test("defaults to the packaged service socket on Linux", () => {

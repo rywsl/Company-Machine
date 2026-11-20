@@ -32,15 +32,16 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
   let stopped = false;
   let workspace: string | undefined;
   let session: HarnessSession | undefined;
-  let pendingKill: (() => void) | undefined;
+  let pendingKill: (() => Promise<void>) | undefined;
 
-  function trackProcess<T extends { kill(): void }>(child: T): T {
-    const kill = () => {
+  function trackProcess<T extends { kill(): void | Promise<void> }>(child: T): T {
+    const kill = async () => {
       if (pendingKill !== kill) return;
       pendingKill = undefined;
-      try { child.kill(); } catch { /* The process may already have exited. */ }
+      try { await child.kill(); } catch { /* The process may already have exited. */ }
     };
     pendingKill = kill;
+    if (stopped) void kill();
     return { ...child, kill };
   }
 
@@ -56,7 +57,7 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
   const timer = setTimeout(() => interrupt("官方 Harness 验证超时"), options.timeoutMs ?? 45_000);
   const acpSpawn = options.acpSpawn ?? (profile.role === "operator" ? options.spawn : undefined) ?? defaultAcpSpawn;
   const transport = useAcp
-    ? new AcpTransport(definition, (...args) => trackProcess(acpSpawn(...args)))
+    ? new AcpTransport(definition, async (...args) => trackProcess(await acpSpawn(...args)))
     : new OfficialCliTransport(definition, options.spawn);
 
   async function probe(): Promise<Outcome> {
@@ -79,6 +80,7 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
       env,
       containerImage: profile.image,
       network: profile.network === "egress" ? "egress" : "none",
+      egressBaseUrl: profile.baseUrl,
     });
     if (stopped) {
       await started.close();
@@ -114,7 +116,7 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
     clearTimeout(timer);
     options.signal.removeEventListener("abort", abort);
     try { await session?.close(); } catch { /* The process may already have exited. */ }
-    pendingKill?.();
+    await pendingKill?.();
     if (workspace) {
       try { rmSync(workspace, { recursive: true, force: true }); } catch { /* The process may still be exiting. */ }
     }

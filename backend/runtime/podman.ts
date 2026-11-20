@@ -8,6 +8,8 @@
 import { appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { EgressPlan } from "../src/legacy/egress";
+import type { startEgressForwarder } from "../src/legacy/egress-forwarder";
+import { egressRelayName, launchEgressRelay, type ContainerEgress } from "./egress-relay";
 import { spawnLoggedProcess, type LogPaths } from "./process-logs";
 
 export type NetworkMode = "none" | "egress";
@@ -263,6 +265,8 @@ export class PodmanProvider implements ContainerProvider {
   private readonly executable: string;
   private readonly machine: string | null;
   private readonly platformOverride: string | undefined;
+  private readonly relayImage: string | undefined;
+  private readonly startForwarder: typeof startEgressForwarder | undefined;
 
   constructor(options: {
     executable?: string;
@@ -274,6 +278,8 @@ export class PodmanProvider implements ContainerProvider {
     machine?: string;
     platform?: string;
     runner?: CommandRunner;
+    relayImage?: string;
+    startForwarder?: typeof startEgressForwarder;
   } = {}) {
     this.executable = resolvePodmanExecutable(options.executable);
     this.allowUnproxiedEgress = options.allowUnproxiedEgress ?? false;
@@ -290,6 +296,8 @@ export class PodmanProvider implements ContainerProvider {
     this.machine = options.machine ?? null;
     this.platformOverride = options.platform;
     this.run = options.runner ?? runCommand;
+    this.relayImage = options.relayImage ?? environment().MAO_EGRESS_RELAY_IMAGE;
+    this.startForwarder = options.startForwarder;
   }
 
   protected command(...args: string[]): string[] {
@@ -297,16 +305,21 @@ export class PodmanProvider implements ContainerProvider {
   }
 
   buildRunArgv(spec: SandboxSpec): string[] {
-    this.requireSupportedNetwork(spec);
-    const managedEgress = spec.network === "egress" && this.egressNetwork !== null;
+    return this.buildContainerArgv(spec);
+  }
+
+  private buildContainerArgv(spec: SandboxSpec, isolated?: ContainerEgress): string[] {
+    if (spec.egressPlan && !isolated) throw this.egressUnavailable(spec);
+    const managedEgress = spec.network === "egress" && (isolated !== undefined || this.egressNetwork !== null);
     assertSpec(spec, this.allowUnproxiedEgress || managedEgress);
-    const network = spec.network === "egress" ? (this.egressNetwork ?? "bridge") : "none";
+    const network = isolated?.network ?? (spec.network === "egress" ? (this.egressNetwork ?? "bridge") : "none");
     const tmpMb = spec.tmpMb ?? 256;
     const argv = [
       ...this.command("run"), "--name", spec.name, "--detach", "--init", "--user", "10001:10001",
       "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--pids-limit", String(spec.pids ?? 256),
       "--network", network, "--tmpfs", `/tmp:rw,nosuid,size=${tmpMb}m`,
     ];
+    if (isolated) argv.push("--pull=never");
     for (const path of spec.writable ?? []) {
       assertWritablePath(path);
       argv.push("--tmpfs", `${path}:rw,nosuid,size=${tmpMb}m,mode=1777`);
@@ -325,7 +338,7 @@ export class PodmanProvider implements ContainerProvider {
       if (FIXED_ENV.some(([fixed]) => fixed === key)) continue;
       argv.push("--env", `${key}=${spec.env?.[key]}`);
     }
-    if (spec.network === "egress") {
+    if (spec.network === "egress" && !isolated) {
       for (const key of Object.keys(this.egressEnv).sort()) {
         if (FIXED_ENV.some(([fixed]) => fixed === key) || Object.prototype.hasOwnProperty.call(spec.env ?? {}, key)) continue;
         argv.push("--env", `${key}=${this.egressEnv[key]}`);
@@ -403,21 +416,45 @@ export class PodmanProvider implements ContainerProvider {
   }
 
   async open(spec: SandboxSpec): Promise<Sandbox> {
-    this.requireSupportedNetwork(spec);
+    if (spec.egressPlan && (!this.relayImage || !this.supportsIsolatedEgress() || spec.network !== "egress" || spec.egressPlan.network !== "egress")) {
+      throw this.egressUnavailable(spec);
+    }
     await this.requireReady();
     const resolved = await this.resolveImage(spec.image);
+    const relayImage = spec.egressPlan && this.relayImage ? await this.resolveImage(this.relayImage) : undefined;
     if (spec.workspaceVolume) {
       const volume = await this.run(this.command("volume", "create", spec.workspaceVolume), { timeoutMs: 60_000 });
       if (volume.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", `${this.name} workspace volume creation failed`, { stderr: text(volume.stderr) });
     }
     await this.run(this.command("rm", "-f", spec.name), { timeoutMs: 60_000 });
-    const result = await this.run(this.buildRunArgv({ ...spec, image: resolved }), { timeoutMs: 120_000 });
-    if (result.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", `${this.name} run failed`, { stderr: text(result.stderr) });
-    return new PodmanSandbox(this, spec.name);
+    let egress: ContainerEgress | undefined;
+    try {
+      if (spec.egressPlan && relayImage) {
+        await this.run(this.command("rm", "-f", egressRelayName(spec.name)), { timeoutMs: 60_000 });
+        egress = await launchEgressRelay({
+          name: spec.name, image: relayImage, plan: spec.egressPlan, command: (...args) => this.command(...args),
+          run: this.run, startForwarder: this.startForwarder,
+        });
+      }
+      const result = await this.run(this.buildContainerArgv({ ...spec, image: resolved }, egress), { timeoutMs: 120_000 });
+      if (result.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", `${this.name} run failed`, { stderr: text(result.stderr) });
+      return new PodmanSandbox(this, spec.name, egress);
+    } catch (error) {
+      if (egress) {
+        await this.close(spec.name).catch(() => {});
+        await egress.close().catch(() => {});
+      }
+      throw error;
+    }
   }
 
-  private requireSupportedNetwork(spec: SandboxSpec): void {
-    if (spec.egressPlan) throw new PodmanError("EGRESS_UNSUPPORTED", "Registry egress requires an isolated proxy transport", { network: spec.network });
+  protected supportsIsolatedEgress(): boolean {
+    const env = environment();
+    return (this.platformOverride ?? platformName()) === "linux" && !env.CONTAINER_HOST && !env.CONTAINER_CONNECTION;
+  }
+
+  private egressUnavailable(spec: SandboxSpec): PodmanError {
+    return new PodmanError("EGRESS_UNSUPPORTED", "Registry egress requires a local Linux engine and a pinned MAO_EGRESS_RELAY_IMAGE", { network: spec.network });
   }
 
   private async requireReady(): Promise<void> {
@@ -447,19 +484,31 @@ export class PodmanProvider implements ContainerProvider {
       const result = await this.run(argv, { timeoutMs: 60_000 });
       if (result.exitCode === 0) removed += 1;
     }
+    if (this.relayImage && this.supportsIsolatedEgress()) {
+      const stopped = await this.run(this.command("rm", "-f", egressRelayName(name)), { timeoutMs: 15_000 });
+      if (stopped.exitCode === 0) removed += 1;
+    }
     if (await this.removeVolume(`${name}-operator`)) removed += 1;
     return removed;
   }
 
-  async exec(name: string, argv: string[], options: { timeoutMs: number; stdout: string; stderr: string; env?: Record<string, string>; workdir?: string }): Promise<ExecResult> {
+  async exec(name: string, argv: string[], options: Parameters<Sandbox["exec"]>[1], egress?: ContainerEgress): Promise<ExecResult> {
     if (!argv.length || options.timeoutMs <= 0) throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid exec request");
     const command = this.command("exec");
     if (options.workdir) command.push("--workdir", options.workdir);
-    for (const [key, value] of Object.entries(options.env ?? {})) command.push("--env", `${key}=${value}`);
+    const requested = options.env ?? {};
+    const managed = egress?.env(requested);
+    const processEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(managed ?? requested)) {
+      if (managed && /^(?:all|http|https|no)_proxy$/i.test(key)) {
+        processEnv[key] = value;
+        command.push("--env", key);
+      } else command.push("--env", `${key}=${value}`);
+    }
     command.push(name, ...argv);
     const started = Date.now();
     try {
-      const result = await this.run(command, { timeoutMs: options.timeoutMs, logs: { stdout: options.stdout, stderr: options.stderr } });
+      const result = await this.run(command, { timeoutMs: options.timeoutMs, logs: { stdout: options.stdout, stderr: options.stderr }, ...(managed ? { env: processEnv } : {}) });
       if (!result.logsWritten) {
         await writeBytes(options.stdout, result.stdout);
         await writeBytes(options.stderr, result.stderr);
@@ -480,12 +529,13 @@ export class PodmanProvider implements ContainerProvider {
 }
 
 class PodmanSandbox implements Sandbox {
-  constructor(private readonly provider: PodmanProvider, public readonly name: string) {}
+  private closing?: Promise<void>;
+  constructor(private readonly provider: PodmanProvider, public readonly name: string, private readonly egress?: ContainerEgress) {}
   exec(argv: string[], options: { timeoutMs: number; stdout: string; stderr: string; env?: Record<string, string>; workdir?: string }): Promise<ExecResult> {
-    return this.provider.exec(this.name, argv, options);
+    return this.provider.exec(this.name, argv, options, this.egress);
   }
-  async close(): Promise<void> {
-    await this.provider.close(this.name);
+  close(): Promise<void> {
+    return this.closing ??= this.provider.close(this.name).finally(() => this.egress?.close());
   }
 }
 

@@ -1,11 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { chooseTransport, decodeOfficialLine, officialCliInvocation, officialHarness, officialHarnesses } from "../src/harness";
+import { chooseTransport, decodeOfficialLine, harnessProcessCommand, officialCliInvocation, officialHarness, officialHarnesses } from "../src/harness";
+import { harnessEgressPlan } from "../src/harness-sandbox";
 import { AcpTransport, decodeAcpLine } from "../src/acp";
 import type { HarnessEvent, HarnessSession } from "../src/harness";
 
 const acpRequest = { task: "构建项目", contract: "你是厂长", model: "kimi", cwd: "/workspace" };
 const acpDefinition = officialHarness("kimi-code")!;
 const encoder = new TextEncoder();
+
+test("uses exact Harness profile and deployment hosts while refusing a named network bypass", () => {
+  expect(harnessEgressPlan("https://Provider.Example/api", " AUTH.EXAMPLE.,provider.example").allow).toEqual([
+    { tier: "providers", host: "auth.example", methods: ["*"] },
+    { tier: "providers", host: "provider.example", methods: ["*"] },
+  ]);
+  expect(() => harnessEgressPlan("", "")).toThrow("MAO_HARNESS_EGRESS_HOSTS");
+  expect(() => harnessEgressPlan("", "*.example.com")).toThrow("exact");
+  expect(() => harnessEgressPlan("https://provider.example:8443", "")).toThrow("standard");
+  const image = "registry.example/harness@sha256:" + "a".repeat(64);
+  expect(() => harnessProcessCommand(["codex"], {
+    containerImage: image, network: "egress", env: { MAO_EGRESS_NETWORK: "bridge", HTTPS_PROXY: "http://legacy.example" },
+  })).toThrow("verified isolated relay");
+});
 
 function frame(value: object): Uint8Array {
   return encoder.encode(JSON.stringify(value) + "\n");

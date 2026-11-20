@@ -4,8 +4,9 @@
  * provider authentication remain inside the official Harness.
  */
 
-import { buildKiriHarnessCommand } from "../runtime/kiri";
+import { resolveKiriClient } from "../runtime/kiri";
 import { resolvePodmanExecutable } from "../runtime/podman";
+import { prepareHarnessEgress } from "./harness-sandbox";
 
 export type OfficialHarnessName = "claude-code" | "codex" | "deepseek-harness" | "zcode" | "kimi-code" | "pi";
 export type HarnessTransportKind = "acp" | "official-cli";
@@ -29,6 +30,7 @@ export interface HarnessSessionRequest {
   resumeId?: string;
   containerImage?: string;
   network?: "none" | "egress";
+  egressBaseUrl?: string;
 }
 
 export interface HarnessEvent {
@@ -55,10 +57,12 @@ export type OfficialProcess = {
     write(data: Uint8Array): Promise<void> | void;
     end?(): Promise<void> | void;
   };
-  kill(): void;
+  kill(): void | Promise<void>;
 };
 
-export type OfficialSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress" }) => OfficialProcess;
+type SpawnOptions = { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string };
+type HarnessRelay = Awaited<ReturnType<typeof prepareHarnessEgress>>;
+export type OfficialSpawn = (argv: string[], options: SpawnOptions) => OfficialProcess | Promise<OfficialProcess>;
 
 const DEFINITIONS: Record<OfficialHarnessName, HarnessDefinition> = {
   "claude-code": { id: "claude-code", displayName: "Claude Code", executable: "claude", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: true },
@@ -187,64 +191,93 @@ class OfficialCliSession implements HarnessSession {
     } finally { reader.releaseLock(); }
   }
 
-  async close(): Promise<void> { this.closed = true; this.process.kill(); }
+  async close(): Promise<void> { this.closed = true; await this.process.kill(); }
 }
 
 export class OfficialCliTransport implements HarnessTransport {
   constructor(private readonly definition: HarnessDefinition, private readonly spawn: OfficialSpawn = defaultOfficialSpawn) {}
 
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
-    const process = this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network });
+    const process = await this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network, egressBaseUrl: request.egressBaseUrl });
     return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${Date.now()}`);
   }
 }
 
-export function harnessProcessCommand(argv: string[], options: {
-  env: Record<string, string>; containerImage?: string; network?: "none" | "egress";
-}): { command: string[]; env: Record<string, string> } {
+export function harnessProcessCommand(
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network">,
+): { command: string[]; env: Record<string, string> } {
+  return processCommand(argv, options);
+}
+
+function validateImage(image?: string): void {
+  if (image && !/^[^\s@]+(?:\/[^\s@]+)*@sha256:[0-9a-f]{64}$/i.test(image)) throw new Error("Harness image must be pinned by digest");
+}
+
+function processCommand(
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network">, relay?: HarnessRelay,
+): { command: string[]; env: Record<string, string> } {
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
   const env: Record<string, string> = {};
   for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMP", "TEMP", "LANG", "LC_ALL"]) {
     const value = hostEnv[key];
     if (typeof value === "string") env[key] = value;
   }
-  Object.assign(env, options.env);
+  const configured = relay?.env(options.env) ?? options.env;
+  Object.assign(env, configured);
   const image = options.containerImage;
-  if (image && !/^[^\s@]+(?:\/[^\s@]+)*@sha256:[0-9a-f]{64}$/i.test(image)) throw new Error("Harness image must be pinned by digest");
+  validateImage(image);
   const network = options.network ?? "none";
   if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
-  let podmanNetwork = "none";
-  if (image && network === "egress") {
-    for (const key of ["MAO_EGRESS_NETWORK", "ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) {
-      const value = hostEnv[key];
-      if (typeof value === "string" && env[key] === undefined) env[key] = value;
-    }
-    const managed = env.MAO_EGRESS_NETWORK;
-    if (!managed || managed === "host" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(managed)) throw new Error("Managed egress network is unavailable");
-    podmanNetwork = managed;
-  }
+  if (image && network === "egress" && !relay) throw new Error("Harness egress requires a verified isolated relay");
+  const envNames = Object.keys(configured).filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
   const kiri = image && hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
-    ? buildKiriHarnessCommand(image, argv, network, { egressNetwork: env.MAO_EGRESS_NETWORK, envNames: harnessContainerEnv(options.env, env, network) })
+    ? resolveKiriClient()
     : undefined;
-  const envFlags = harnessContainerEnv(options.env, env, network).flatMap((name) => ["--env", name]);
+  const envFlags = envNames.flatMap((name) => ["--env", name]);
+  const engine = kiri?.argv ?? [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE)];
   const command = image
-    ? kiri?.argv ?? [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE), "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", ...envFlags, image, ...argv]
+    ? [
+      ...engine, "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m",
+      "--network", relay?.network ?? "none", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+      "--read-only", ...(relay ? ["--name", relay.name, "--pull=never"] : []), ...envFlags, relay?.image ?? image, ...argv,
+    ]
     : argv;
   if (kiri) Object.assign(env, kiri.env);
   return { command, env };
 }
 
-function defaultOfficialSpawn(argv: string[], options: Parameters<OfficialSpawn>[1]): OfficialProcess {
-  const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
-  if (!bun) throw new Error("Bun runtime is required");
-  const { command, env } = harnessProcessCommand(argv, options);
-  const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: "ignore", stderr: "ignore" });
-  return { stdout: process.stdout as ReadableStream<Uint8Array>, exited: process.exited, kill: () => process.kill() };
+function defaultOfficialSpawn(argv: string[], options: SpawnOptions): Promise<OfficialProcess> {
+  return spawnOfficialProcess(argv, { ...options, stdin: undefined });
 }
 
-function harnessContainerEnv(configured: Record<string, string>, environment: Record<string, string>, network: "none" | "egress"): string[] {
-  const names = [...Object.keys(configured), ...(network === "egress" ? ["ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"] : [])];
-  return [...new Set(names)].filter((name) => /^[A-Z_][A-Z0-9_]*$/.test(name) && Object.hasOwn(environment, name));
+export async function spawnOfficialProcess(
+  argv: string[], options: SpawnOptions, prepareEgress = prepareHarnessEgress,
+): Promise<OfficialProcess> {
+  const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
+  if (!bun) throw new Error("Bun runtime is required");
+  const image = options.containerImage;
+  const needsRelay = image !== undefined && options.network === "egress";
+  validateImage(image);
+  const relay = needsRelay ? await prepareEgress(image, options.egressBaseUrl) : undefined;
+  try {
+    const { command, env } = processCommand(argv, options, relay);
+    const child = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "ignore" });
+    if (relay) void (child.exited as Promise<number>).finally(relay.close).catch(() => {});
+    const stdin = child.stdin && typeof child.stdin.write === "function" ? {
+      write: async (data: Uint8Array) => { await child.stdin.write(data); await child.stdin.flush?.(); },
+      end: async () => { await child.stdin.end?.(); },
+    } : undefined;
+    return {
+      stdin, stdout: child.stdout as ReadableStream<Uint8Array>, exited: child.exited,
+      kill: async () => {
+        try { child.kill(); }
+        finally { await relay?.close(); }
+      },
+    };
+  } catch (error) {
+    await relay?.close().catch(() => {});
+    throw error;
+  }
 }
 
 export function resolveOfficialHarness(runtime: string): HarnessDefinition | undefined {

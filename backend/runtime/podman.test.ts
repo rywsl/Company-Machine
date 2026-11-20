@@ -74,7 +74,7 @@ describe("PodmanProvider", () => {
 
   test("rejects Registry egress before querying an engine with only a configured bridge", async () => {
     const provider = new PodmanProvider({
-      egressNetwork: "mao-egress", runner: async () => { throw new Error("unexpected engine call"); },
+      egressNetwork: "mao-egress", relayImage: "", runner: async () => { throw new Error("unexpected engine call"); },
     });
     await expect(provider.open({
       ...spec, network: "egress",

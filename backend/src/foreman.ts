@@ -95,6 +95,7 @@ export class ForemanCoordinator {
         resumeId,
         containerImage: profile.image,
         network: profile.network === "egress" ? "egress" : "none",
+        egressBaseUrl: profile.baseUrl,
       });
       if (this.closed) return;
       if (useAcp) officialId = session.id;

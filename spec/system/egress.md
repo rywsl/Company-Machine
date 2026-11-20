@@ -29,7 +29,9 @@
 | 自签 CA 的生成算法 | 标准库签不出证书。CA 由操作员放到指定路径；没有 CA 时按第 5.4 节失败关闭 |
 | 服务型机器的入站 webhook 监听 | M4。`ingress` 在 M2 只表示 Source **拉取**时的出站白名单 |
 
-Bun 的 Kiri Linux 和 Podman 接收同一形式的受管网络配置。`egressNetwork` 指向出网服务管理的网络，`egressEnv` 允许 `ALL_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。Harness profile 的 `network: egress` 由 `MAO_EGRESS_NETWORK` 显式绑定。Bun 工位及回执核验从冻结 Registry 读取策略，并从工厂的 `egress/profiles.json` 读取命名档案。沙箱会收到对应的网络模式和可选出网计划。LocalProvider 通过注入式回环代理验证该路径，Kiri Linux 和 Podman 在隔离代理接入前拒绝带 Registry 出网计划的启动。
+Bun 工位及回执核验从冻结 Registry 读取策略，并从工厂的 `egress/profiles.json` 读取命名档案。沙箱会收到对应的网络模式和可选出网计划。Linux 宿主上的 rootless Podman 和 Kiri Unix 套接字模式执行 Registry 出网计划。部署方通过 `MAO_EGRESS_RELAY_IMAGE` 指定本地已安装、含 Bun 的可信固定镜像。运行时启动无网络的转发容器并确认它能访问作业专用的代理，然后让工作负载只加入该转发容器的网络命名空间。LocalProvider 通过注入式回环代理测试这一策略路径。
+
+容器化厂长及 Operator 的官方 Harness profile 同样通过隔离代理出网。允许列表包含该 profile 的显式 Base URL 主机和部署设置 `MAO_HARNESS_EGRESS_HOSTS` 中以逗号分隔的精确域名。使用官方 Harness 默认地址时，由部署方列出相关端点。缺少允许列表、可信镜像，或转发容器与套接字未就绪时，运行时拒绝启动。
 
 `backend/src/legacy/egress.ts` 的 `compileEgress(snapshot, station, profiles)` 从工位绑定的 Policy 编译不可变的 `EgressPlan`。计划携带完整工位键、策略键、网络选项、主机和 HTTP 方法允许列表，以及按需审批和监控元数据。只有显式的 `from-machine` 才从 Machine 的同级配置取值。命名档案由调用方提供。空的主机列表得到零条规则，空的方法列表拒绝全部方法。
 
@@ -39,7 +41,7 @@ Bun 的 Kiri Linux 和 Podman 接收同一形式的受管网络配置。`egressN
 
 代理在解析上游地址前验证凭证和允许列表。HTTP 使用请求中的绝对 URL，并用该 URL 的权威地址重建 Host。代理移除逐跳头和代理凭证。HTTPS 通过 443 端口的 CONNECT 传输，要求允许列表接受任意方法。DNS 结果只接受公开数字地址，连接使用已检查的地址。未列入的地址和要求监控审批的策略失败关闭。HTTP 使用 80 端口。当宿主配置了 Bun 的代理环境变量时，HTTP 转发返回 502，以维持地址固定。监听器对连接数、头部大小和连接总时长设限。
 
-Bun 测试通过注入解析和传输地址将流量限定在回环夹具。工位、厂长和 Operator 的容器接入需要在实际 Linux Podman 和 Kiri 上独立验收网络隔离及 Unix 套接字挂载。
+Bun 测试通过注入解析和传输地址将流量限定在回环夹具。Linux Podman 和 Kiri 的实机验收使用相同的生产 provider 入口，观察容器 UID、回环接口、认证后的代理转发和拒绝。官方 CLI 的 JSONL 和 ACP JSON-RPC 使用同一启动适配器，保持各自的标准输入及输出格式。
 
 D10 禁止控制面自己当 agent 去调模型。模型代理不违反这一点：请求的发起者是沙箱内的 CLI，代理只注入密钥并记账。`mao.approvals`、`mao.scheduler`、`mao.contract` **禁止** import 本模块的转发函数。
 

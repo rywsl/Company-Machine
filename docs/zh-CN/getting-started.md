@@ -39,15 +39,17 @@ bun run factory status
 从官方发布页下载与 Linux 发行版和 CPU 架构对应的 `kiri-lite` 包，并安装 Docker 兼容 CLI。Debian 和 Ubuntu 使用 `sudo apt install ./KIRI_PACKAGE.deb`，Fedora 使用 `sudo dnf install ./KIRI_PACKAGE.rpm`。将示例文件名替换为下载的文件名，再给运行 MAO 的账户授予访问权限。 [Kiri 官方发布页](https://runkiri.com/releases/)
 
 ```bash
+sudo systemctl enable --now kiri.service
 sudo kiri host-access "$USER"
 # 重新登录，再执行以下命令
+export FACTORY_ROOT="$HOME/.local/share/mao"
 MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
 
 MAO 通过 `/run/kiri/docker.sock` 连接。自定义部署可以设置 `MAO_KIRI_SOCKET` 和 `MAO_DOCKER_EXECUTABLE` 指定套接字和客户端。官方 Linux 路径直接使用 Unix 套接字，无需桌面会话。
 
-在 WSL 中运行工位时，将 `FACTORY_ROOT` 指向 Linux 文件系统，例如 `$HOME/.local/share/mao`。文件邮箱使用 Linux 目录权限保护宿主响应。
+在 WSL 中运行工位时，保留示例的 Linux 数据目录。文件邮箱使用 Linux 目录权限保护宿主响应。MAO 由系统服务启动时，对该服务的运行账户授权，并给服务配置相同的环境变量。
 
 可以用项目自带验证命令构建夹具镜像，并运行真实 Kiri 工位。
 
@@ -58,6 +60,8 @@ bun run tools/verify-runtime.ts
 ```
 
 若 Kiri 的镜像构建请求超时，可在同 CPU 架构的 Podman 主机上运行 `bun run build:test-images --save-to /tmp/mao-test-images`。将目录复制到 Kiri 主机，执行 `MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --load-from /tmp/mao-test-images`，再运行同一条工位验收命令。
+
+Registry 工位声明出网策略时，在 Linux 宿主设置 `MAO_EGRESS_RELAY_IMAGE`，指向当前引擎中已导入且含 Bun 的可信固定镜像。工位通过策略允许的地址出网。无需出网的工位可直接运行。
 
 ## 交给厂长
 

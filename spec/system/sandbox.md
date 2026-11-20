@@ -188,6 +188,8 @@ class DockerProvider:
 
 Bun 的 `LocalProvider` 支持使用显式注入的出网代理测试出网协议。`open` 要求 `network: egress` 与 `egressPlan.network` 一致，随后启动该作业专用的回环监听器。`exec` 使用该监听器生成的代理环境变量，覆盖调用方配置中的同名键。`close` 撤销监听器并关闭活动连接。代理缺失或启动失败时，`open` 返回相应的出网错误。此路径用于宿主运行的测试夹具，进程的网络隔离由容器运行时提供。
 
+Linux Podman 和 Kiri Linux 套接字模式通过本地固定镜像 `MAO_EGRESS_RELAY_IMAGE` 启动 Bun 转发容器。该容器使用 `--network none` 并仅监听回环地址，通过只读挂载的单个 Unix 套接字访问宿主代理。宿主套接字只在权限为 `0700` 的目录内可达，转发容器内的非 root UID 可以连接挂入的套接字。工作容器在就绪探测通过后加入转发容器的网络命名空间。运行时通过子进程环境传递代理凭证，命令参数只包含代理变量名。沙箱关闭和作业回收会移除转发容器。作业结束时宿主代理关闭并清理套接字。
+
 `exec` 的 `timeout_s` 必须 `> 0`，否则 `SANDBOX_SPEC_INVALID`。超时后终止进程，返回 `ExecResult(exit_code=None, timed_out=True, duration_s=...)`，**禁止**把 `subprocess.TimeoutExpired` 冒泡（README 3.7）。`duration_s` 是 `clock.monotonic()` 的差值，`>= 0`。stdout/stderr 以二进制写入给定路径（父目录不存在则创建）。调用方用 UTF-8、`errors="replace"` 读文本。
 
 Bun 后端在 `exec` 启动时将子进程 stdout 和 stderr 分别重定向到调用方指定的日志文件。Podman、Kiri 和 LocalProvider 的日志在进程返回前即可读取，控制面不需要在内存里保存完整输出。超时终止子进程后保留已写入内容，容器运行时的超时诊断追加到 stderr。`backend/runtime/podman.test.ts` 验证运行中可读取日志并在超时后保留。
@@ -253,7 +255,7 @@ Bun 后端在 `exec` 启动时将子进程 stdout 和 stderr 分别重定向到�
 
 `allow_unproxied_egress=True` 只把网络从 `none` 换成 `bridge`。安全标志一条都不能少。这是开发开关，不是出网代理（D12）。
 
-Bun 的 Podman 业务入口可提供 `egressNetwork` 和受管代理环境变量。此时 `network="egress"` 使用显式的 Podman 网络名（通常为 `mao-egress`），并把 `ALL_PROXY`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 作为受管配置注入，其他环境变量一律拒绝。没有 `egressNetwork` 时，业务入口拒绝 `egress`，不会回退到宿主网络。Harness profile 的 `network: egress` 同样必须由 `MAO_EGRESS_NETWORK` 指向已创建的受管网络，否则启动失败。
+Bun 的底层容器入口保留 `egressNetwork` 和代理环境变量配置。Registry 工位、回执核验及容器化官方 Harness 用各自的允许列表启动隔离代理，并拒绝缺少隔离代理的出网启动。Harness profile 的允许域名和镜像配置见 [egress.md](egress.md)。
 
 ### 5.3 镜像解析（S4）
 

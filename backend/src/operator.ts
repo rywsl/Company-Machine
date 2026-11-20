@@ -101,6 +101,7 @@ export class OperatorCoordinator {
     const outputIds = new Set(unitRun.outputs);
     const credentials: Record<string, string> = Object.create(null);
     const requested = new Set<string>();
+    let recordedSessionId = sessionId;
     try {
       if (profile.image) await this.options.ensureRuntime?.();
       if (this.closed) return;
@@ -119,16 +120,23 @@ export class OperatorCoordinator {
         cwd: this.cwd,
         containerImage: profile.image,
         network: profile.network === "egress" ? "egress" : "none",
+        egressBaseUrl: profile.baseUrl,
       });
       if (this.closed) return;
       this.sessions.set(unitRun.id, session);
-      if (useAcp) this.options.store.noteUnitSession(unitRun.id, session.id);
+      if (useAcp) {
+        this.options.store.noteUnitSession(unitRun.id, session.id);
+        recordedSessionId = session.id;
+      }
       const secretValues = Object.values(credentials);
       let failed = false;
       for await (const emitted of session.events()) {
         if (this.closed) return;
         const event = redactCredentialValues(emitted, secretValues) as HarnessEvent;
-        if (event.sessionId) this.options.store.noteUnitSession(unitRun.id, event.sessionId);
+        if (event.sessionId && event.sessionId !== recordedSessionId) {
+          this.options.store.noteUnitSession(unitRun.id, event.sessionId);
+          recordedSessionId = event.sessionId;
+        }
         if (event.type === "record") {
           const artifact = this.recordFromEvent(event, unit.projectId, unit, definition.id);
           if (artifact) {

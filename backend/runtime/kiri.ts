@@ -20,6 +20,8 @@ export type KiriProviderOptions = KiriClientOptions & {
   runner?: CommandRunner;
   egressNetwork?: string;
   egressEnv?: Record<string, string>;
+  relayImage?: string;
+  startForwarder?: NonNullable<ConstructorParameters<typeof PodmanProvider>[0]>["startForwarder"];
 };
 
 const SERVICE_SOCKET = "/run/kiri/docker.sock";
@@ -106,6 +108,8 @@ export class KiriProvider extends PodmanProvider {
       }),
       egressNetwork: options.egressNetwork,
       egressEnv: options.egressEnv,
+      relayImage: options.relayImage,
+      startForwarder: options.startForwarder,
     });
     this.client = client;
     this.commandRunner = runner;
@@ -114,6 +118,10 @@ export class KiriProvider extends PodmanProvider {
 
   protected command(...args: string[]): string[] {
     return [...this.client.argv, ...args];
+  }
+
+  protected supportsIsolatedEgress(): boolean {
+    return this.client.platform === "linux" && this.client.mode === "linux-socket";
   }
 
   async health(timeoutMs = 5_000): Promise<RuntimeHealth> {

@@ -1,10 +1,10 @@
 import type { HarnessDefinition, HarnessEvent, HarnessSession, HarnessSessionRequest, HarnessTransport } from "./harness";
-import { harnessProcessCommand } from "./harness";
+import { spawnOfficialProcess } from "./harness";
 
 export type AcpProcess = {
   stdout: ReadableStream<Uint8Array>;
   stdin?: AcpInput;
-  kill(): void;
+  kill(): void | Promise<void>;
 };
 
 export type AcpInput = {
@@ -12,7 +12,7 @@ export type AcpInput = {
   end?(): Promise<void> | void;
 };
 
-export type AcpSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress" }) => AcpProcess;
+export type AcpSpawn = (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string }) => AcpProcess | Promise<AcpProcess>;
 
 const PROMPT_ID = 3;
 const START_TIMEOUT_MS = 30_000;
@@ -267,7 +267,7 @@ class AcpSession implements HarnessSession {
     if (this.closed) return;
     this.closed = true;
     try {
-      this.process.kill();
+      await this.process.kill();
     } finally {
       void this.reader.cancel().catch(() => {});
       this.reader.releaseLock();
@@ -283,7 +283,7 @@ export class AcpTransport implements HarnessTransport {
     const nativeModel = !this.argvSuffix.length && this.definition.id === "kimi-code";
     const args = this.argvSuffix.length ? this.argvSuffix
       : nativeModel ? ["--model", request.model, "acp"] : [];
-    const process = this.spawn([this.definition.executable, ...args], { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network });
+    const process = await this.spawn([this.definition.executable, ...args], { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network, egressBaseUrl: request.egressBaseUrl });
     const session = new AcpSession(process);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -301,14 +301,6 @@ export class AcpTransport implements HarnessTransport {
   }
 }
 
-export function defaultAcpSpawn(argv: string[], options: { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin: "pipe"; containerImage?: string; network?: "none" | "egress" }): AcpProcess {
-  const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
-  if (!bun) throw new Error("Bun runtime is required");
-  const { command, env } = harnessProcessCommand(argv, options);
-  const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin, stderr: "ignore" });
-  const stdin = process.stdin && typeof process.stdin.write === "function" ? {
-    write: async (data: Uint8Array) => { await process.stdin.write(data); await process.stdin.flush?.(); },
-    end: async () => { await process.stdin.end?.(); },
-  } : undefined;
-  return { stdout: process.stdout as ReadableStream<Uint8Array>, stdin, kill: () => process.kill() };
+export function defaultAcpSpawn(argv: string[], options: Parameters<AcpSpawn>[1]): Promise<AcpProcess> {
+  return spawnOfficialProcess(argv, options);
 }
