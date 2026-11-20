@@ -363,6 +363,8 @@ Bun Runner 在工位沙箱关闭后清理当前尝试的操作工注入卷。中
 - 超时：`Popen.wait(timeout)`。超时后 `kill` 本地客户端，再 `docker kill <name>`（容器里的进程可能杀不掉，因为已经 `--cap-drop ALL`）。这次 exec 返回 `timed_out=True`。容器被 kill 之后，后续 `exec` 抛 `SANDBOX_CLOSED`；`close` 仍然 `docker rm -f`。
 - `docker` 退出码 137 且我们没有主动超时：当作进程被外部杀掉，`exit_code=137`，`timed_out=False`。
 
+Bun 的 Podman 和 Kiri 适配在 `exec` 超时时强制移除工作容器并关闭本次沙箱的出网转发，保留已写入 stdout 和 stderr 的日志。超时结果为 `exitCode=null`、`timedOut=true`，此后该沙箱拒绝执行并返回 `SANDBOX_CLOSED`。回收失败时将诊断追加到 stderr，后续 `close()` 可重试。工位 Runner 在超时后跳过容器内的文件权限调整，按 `OPERATOR_TIMEOUT` 处理。
+
 ---
 
 ### 5.10 Podman 运行时托管

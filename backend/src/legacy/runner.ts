@@ -379,7 +379,7 @@ export class Runner {
       } finally {
         await mailbox.stop();
       }
-      if (process.platform === "linux" && process.getuid?.() !== 0 && this.provider.name !== "local") {
+      if (!result.timedOut && process.platform === "linux" && process.getuid?.() !== 0 && this.provider.name !== "local") {
         const sharing = await sandbox.exec(["bun", "-e", SHARE_ATTEMPT_FILES], {
           timeoutMs: 30_000, stdout: join(logs, "permissions.stdout"), stderr: join(logs, "permissions.stderr"),
         });

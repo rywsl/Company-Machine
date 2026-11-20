@@ -49,6 +49,34 @@ test("starts the isolated relay, checks its upstream socket and removes failed s
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("retries relay removal without reopening the host forwarder", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mao-relay-retry-"));
+  const socketPath = join(directory, "proxy.sock");
+  writeFileSync(socketPath, "");
+  const authorization = "Basic " + Buffer.from("mao:" + "b".repeat(64)).toString("base64");
+  let removed = 0;
+  let closed = 0;
+  try {
+    const relay = await launchEgressRelay({
+      name: spec.name, image: spec.image,
+      plan: { station: "Station:relay-fixture@1", policy: "Policy:relay-fixture@1", network: "egress", allow: [], monitored: false, onUnlisted: "deny" },
+      command: (...args) => ["fixture", ...args],
+      run: async (argv) => {
+        if (argv[1] === "run") return result("a".repeat(64));
+        if (argv[1] === "rm" && ++removed === 1) return result("", "engine unavailable", 1);
+        return result();
+      },
+      startForwarder: async () => ({
+        endpoint: { socketPath }, authorization, close: async () => { closed++; },
+      }),
+    });
+    await expect(relay.close()).rejects.toMatchObject({ code: "EGRESS_PROXY_UNAVAILABLE" });
+    await Promise.all([relay.close(), relay.close()]);
+    expect(removed).toBe(2);
+    expect(closed).toBe(1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("joins only the verified relay namespace and passes the credential through process environment", async () => {
   const directory = mkdtempSync(join(tmpdir(), "mao-relay-provider-"));
   const socketPath = join(directory, "proxy.sock");

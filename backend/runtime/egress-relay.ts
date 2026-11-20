@@ -64,16 +64,23 @@ export async function launchEgressRelay(options: LaunchOptions): Promise<Contain
   let launched = false;
   let closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
-    try { await forwarder?.close(); }
+    try {
+      await forwarder?.close();
+      forwarder = undefined;
+    }
     finally {
       if (launched) {
         const result = await run(command("rm", "-f", name), { timeoutMs: 15_000 });
         if (result.exitCode !== 0 && !/no such container|no container with name|not found/i.test(new TextDecoder().decode(result.stderr))) {
           throw new FactoryError("EGRESS_PROXY_UNAVAILABLE", "无法清理沙箱出网代理", { name: options.name });
         }
+        launched = false;
       }
     }
-  })();
+  })().catch((error) => {
+    closing = undefined;
+    throw error;
+  });
   try {
     forwarder = await (options.startForwarder ?? startEgressForwarder)({ plan, socketDirectory: tmpdir() });
     if (!("socketPath" in forwarder.endpoint) || forwarder.endpoint.socketPath.includes(",")) throw new Error("Invalid relay socket mount");

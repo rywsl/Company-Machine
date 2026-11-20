@@ -534,13 +534,27 @@ export class PodmanProvider implements ContainerProvider {
 }
 
 class PodmanSandbox implements Sandbox {
+  private closed = false;
   private closing?: Promise<void>;
   constructor(private readonly provider: PodmanProvider, public readonly name: string, private readonly egress?: ContainerEgress) {}
-  exec(argv: string[], options: { timeoutMs: number; stdout: string; stderr: string; env?: Record<string, string>; workdir?: string }): Promise<ExecResult> {
-    return this.provider.exec(this.name, argv, options, this.egress);
+  async exec(argv: string[], options: Parameters<Sandbox["exec"]>[1]): Promise<ExecResult> {
+    if (this.closed) throw new PodmanError("SANDBOX_CLOSED", "Container sandbox is closed", { name: this.name });
+    const result = await this.provider.exec(this.name, argv, options, this.egress);
+    if (result.timedOut) {
+      try { await this.close(); }
+      catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        appendFileSync(options.stderr, `\nSandbox cleanup failed: ${detail}\n`, "utf8");
+      }
+    }
+    return result;
   }
   close(): Promise<void> {
-    return this.closing ??= this.provider.close(this.name).finally(() => this.egress?.close());
+    this.closed = true;
+    return this.closing ??= this.provider.close(this.name).finally(() => this.egress?.close()).catch((error) => {
+      this.closing = undefined;
+      throw error;
+    });
   }
 }
 

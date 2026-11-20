@@ -164,16 +164,23 @@ describe("PodmanProvider", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("real subprocess logs are readable during exec and survive a timeout", { timeout: 30_000 }, async () => {
+  test("streams subprocess logs and removes the sandbox before returning a timeout", { timeout: 30_000 }, async () => {
     const root = `tmp/podman-stream-${randomUUID()}`;
     const paths = { stdout: `${root}/logs/stdout`, stderr: `${root}/logs/stderr` };
     await mkdir(`${root}/logs`, { recursive: true });
     await Bun.write(paths.stdout, "previous run output that must be truncated");
-    const provider = new PodmanProvider({
-      runner: (_argv, options) => runCommand([Bun.argv[0], "-e", "console.log('stdout ready'); console.error('stderr ready'); setInterval(() => {}, 1000)"], options),
-    });
+    const calls: string[][] = [];
+    const provider = new PodmanProvider({ executable: "podman-test", runner: async (argv, options) => {
+      calls.push(argv.slice(1));
+      if (argv[1] === "info") return ok(JSON.stringify({ host: { security: { rootless: true } } }));
+      if (argv[1] === "image") return ok(`sha256:${"a".repeat(64)}`);
+      if (argv[1] === "exec") return runCommand([Bun.argv[0], "-e", "console.log('stdout ready'); console.error('stderr ready'); setInterval(() => {}, 1000)"], options);
+      return ok();
+    } });
+    const sandbox = await provider.open(spec);
+    calls.length = 0;
     let completed = false;
-    const execution = provider.exec("test-sandbox", ["test"], { ...paths, timeoutMs: 12_000 })
+    const execution = sandbox.exec(["test"], { ...paths, timeoutMs: 12_000 })
       .finally(() => { completed = true; });
     try {
       const errorLog = Bun.file(paths.stderr);
@@ -188,8 +195,37 @@ describe("PodmanProvider", () => {
       expect((await Bun.file(paths.stdout).text()).trim()).toBe("stdout ready");
       expect(await errorLog.text()).toContain("stderr ready");
       expect(await errorLog.text()).toContain("Container runtime command timed out");
+      await expect(sandbox.exec(["test"], { ...paths, timeoutMs: 100 })).rejects.toMatchObject({ code: "SANDBOX_CLOSED" });
+      await sandbox.close();
+      expect(calls).toEqual([["exec", spec.name, "test"], ["rm", "-f", spec.name]]);
     } finally {
       await Promise.allSettled([execution]);
+      await sandbox.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a sandbox closed when timeout cleanup has to be retried", async () => {
+    const root = `tmp/podman-cleanup-${randomUUID()}`;
+    const paths = { stdout: `${root}/stdout`, stderr: `${root}/stderr`, timeoutMs: 100 };
+    await mkdir(root, { recursive: true });
+    let cleanupAttempts = 0;
+    const provider = new PodmanProvider({ executable: "podman-test", runner: async (argv) => {
+      if (argv[1] === "info") return ok(JSON.stringify({ host: { security: { rootless: true } } }));
+      if (argv[1] === "image") return ok(`sha256:${"a".repeat(64)}`);
+      if (argv[1] === "exec") throw new PodmanError("PODMAN_TIMEOUT", "Command timed out");
+      if (argv[1] === "rm" && ++cleanupAttempts === 2) return { ...ok("", "engine unavailable"), exitCode: 1 };
+      return ok();
+    } });
+    const sandbox = await provider.open(spec);
+    try {
+      expect(await sandbox.exec(["test"], paths)).toMatchObject({ exitCode: null, timedOut: true });
+      expect(await Bun.file(paths.stderr).text()).toContain("Sandbox cleanup failed");
+      await expect(sandbox.exec(["test"], paths)).rejects.toMatchObject({ code: "SANDBOX_CLOSED" });
+      await Promise.all([sandbox.close(), sandbox.close()]);
+      expect(cleanupAttempts).toBe(3);
+    } finally {
+      await sandbox.close();
       await rm(root, { recursive: true, force: true });
     }
   });
