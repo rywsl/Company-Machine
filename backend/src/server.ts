@@ -65,20 +65,23 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     runtimeCache = { at: current, health };
     return health;
   };
-  let runtimeReadyPromise: Promise<void> | undefined;
-  const ensureRuntime = async () => {
-    if (!runtime.ensureReady) return;
+  let runtimeReadyPromise: Promise<RuntimeHealth> | undefined;
+  const ensureRuntimeHealth = async (): Promise<RuntimeHealth> => {
+    if (!runtime.ensureReady) throw new Error("runtime readiness is unavailable");
     const pending = runtimeReadyPromise ?? (runtimeReadyPromise = (async () => {
       const health = await runtime.ensureReady!();
       runtimeCache = { at: Date.now(), health };
-      if (!health.available) throw new Error(`${provider} runtime unavailable: ${health.reason ?? "unknown"}`);
+      return health;
     })());
     try {
-      await pending;
+      const health = await pending;
+      if (!health.available) throw new Error(`${provider} runtime unavailable: ${health.reason ?? "unknown"}`);
+      return health;
     } finally {
       if (runtimeReadyPromise === pending) runtimeReadyPromise = undefined;
     }
   };
+  const ensureRuntime = async () => { await ensureRuntimeHealth(); };
   const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn, ensureRuntime });
   let dispatchOperatorRun = (_runId: string) => {};
   const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId), ensureRuntime });
@@ -98,8 +101,15 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     if (url.pathname === "/api/v1/runtime/ensure-ready" && request.method === "POST") {
       if (!runtime.ensureReady) return response({ error: "runtime readiness is unavailable" }, 501);
-      const health = await runtime.ensureReady();
-      runtimeCache = { at: Date.now(), health };
+      let health: RuntimeHealth;
+      try {
+        health = await ensureRuntimeHealth();
+      } catch (error) {
+        health = runtimeCache?.health ?? await runtime.health();
+        runtimeCache = { at: Date.now(), health };
+        events.publish(`runtime.${provider}.checked`, runtimeDependency(health, provider));
+        return response({ provider, health, dependency: runtimeDependency(health, provider), error: error instanceof Error ? error.message : "runtime unavailable" }, 503);
+      }
       events.publish(`runtime.${provider}.checked`, runtimeDependency(health, provider));
       return response({ provider, health, dependency: runtimeDependency(health, provider) }, health.available ? 200 : 503);
     }

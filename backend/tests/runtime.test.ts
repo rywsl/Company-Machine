@@ -40,4 +40,29 @@ describe("Bun Podman runtime boundary", () => {
       await rm(dbPath, { force: true });
     }
   });
+
+  test("deduplicates concurrent readiness requests", async () => {
+    const dbPath = `.factory/runtime-ready-${randomUUID()}.db`;
+    let starts = 0;
+    const runtime: RuntimeProbe = {
+      health: async () => ({ ...unavailable, reason: "not-started" }),
+      ensureReady: async () => {
+        starts += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { ...unavailable, available: true, reason: undefined };
+      },
+    };
+    const app = createApp({ dbPath, legacyPath: dbPath, runtime });
+    try {
+      const responses = await Promise.all([
+        app.fetch(new Request("http://localhost/api/v1/runtime/ensure-ready", { method: "POST" })),
+        app.fetch(new Request("http://localhost/api/v1/runtime/ensure-ready", { method: "POST" })),
+      ]);
+      expect(responses.map((item) => item.status)).toEqual([200, 200]);
+      expect(starts).toBe(1);
+    } finally {
+      app.stop();
+      await rm(dbPath, { force: true });
+    }
+  });
 });

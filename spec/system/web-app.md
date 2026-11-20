@@ -327,6 +327,7 @@ Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。
 - Intake 创建的项目会进入 BusinessSystem 图并通过事件流刷新
 - Foreman 回复可以通过外部 Harness 回写同一 talk 线程
 - 带镜像的 Operator 启动前会等待运行时 readiness，运行时不可用时不启动 Harness
+- 并发的 runtime readiness 请求与带镜像的业务启动共享一次探测和启动操作
 - 项目资源请求只显示项目用途、范围、检查项和状态，密钥值进入保险箱
 - 当前容器运行时缺失时显示实际依赖状态，不把另一运行时状态伪装成在线
 - `/api/v1/runtime` 与 bootstrap 的 Podman 或 Kiri 状态来自实际探测，不能用另一运行时在线状态替代
