@@ -1,91 +1,126 @@
-import { createApp } from "./server";
+import { createApp, startServer } from "./server";
 import { checkRegistry } from "../mrl/factory";
 
-const args = Bun.argv.slice(2);
-const command = args[0] ?? "help";
-const value = (name: string) => {
-  const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : undefined;
-};
-const values = (name: string) => args.flatMap((item, index) => item === name && args[index + 1] ? [args[index + 1]] : []);
+export class CliUsageError extends Error {}
+
 const redactText = (text: string) => text.replace(/(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
 
-function usage(): void {
-  console.log(`factory-bun commands
-  serve
-  status
-  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]
-  business units ID
-  business run ID [--input REF]
-  business runs ID
-  business export ID
-  business graph ID --file PATH
-  business artifact PROJECT_ID --file PATH
-  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]
-  registry check PATH [--json]
-  foreman inbox [--limit N]
-  foreman claim ID
-  foreman done ID
-  talk send TEXT
-  talk reply TEXT --turn-id ID`);
-  process.exit(0);
+function value(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
 }
 
-if (command === "help") usage();
-if (command === "serve") {
-  const app = (await import("./server")).startServer({ port: Number(process.env.PORT ?? 3000) });
-  console.log(`Bun control plane listening on ${app.server.url}`);
-} else {
+function values(args: string[], name: string): string[] {
+  return args.flatMap((item, index) => item === name && args[index + 1] ? [args[index + 1]] : []);
+}
+
+export function usage(scope?: string): string {
+  if (scope === "project") return `factory project commands\n  intake --name NAME [--repo URL | --folder PATH | --file-ref REF]`;
+  if (scope === "business") return `factory business commands\n  units ID\n  run ID [--input REF]\n  runs ID\n  export ID\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
+  if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID`;
+  if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
+  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
+}
+
+function requireValue(args: string[], name: string): string {
+  const result = value(args, name);
+  if (!result) throw new CliUsageError(`${name} requires a value`);
+  return result;
+}
+
+async function requestJson(app: ReturnType<typeof createApp>, path: string, init?: RequestInit): Promise<any> {
+  const result = await app.fetch(new Request(`http://localhost${path}`, init));
+  const body = await result.text();
+  let parsed: unknown;
+  try { parsed = body ? JSON.parse(body) : {}; } catch { parsed = { error: body }; }
+  if (!result.ok) throw new Error(typeof parsed === "object" && parsed && "error" in parsed ? String((parsed as Record<string, unknown>).error) : `request failed with ${result.status}`);
+  return parsed;
+}
+
+async function runCommand(argv: string[]): Promise<number> {
+  const [command, ...args] = argv;
+  if (!command || command === "help" || command === "--help") {
+    console.log(usage());
+    return 0;
+  }
+  if (["project", "business", "foreman", "runtime"].includes(command) && (args[0] === "help" || args[0] === "--help")) {
+    console.log(usage(command));
+    return 0;
+  }
+  if (command === "serve") {
+    const started = startServer({ port: Number(process.env.PORT ?? 3000) });
+    console.log(`Bun control plane listening on ${started.server.url}`);
+    return 0;
+  }
+
   const app = createApp();
   try {
     if (command === "status") {
       console.log(JSON.stringify({ ok: true, businessSystems: app.store.listBusinessSystems().length, foremanInbox: app.store.listForemanInbox().length }, null, 2));
-    } else if (command === "project" && args[1] === "intake") {
-      const repo = value("--repo");
-      const folder = value("--folder");
-      const fileRef = value("--file-ref");
-      if (!repo && !folder && !fileRef) throw new Error("one source is required");
-      const name = value("--name") ?? "新项目";
-      const intakeResponse = await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, repo_url: repo, local_folder: folder, uploaded_file_refs: fileRef ? [fileRef] : [] }) }));
-      if (!intakeResponse.ok) throw new Error(await intakeResponse.text());
-      console.log(JSON.stringify(await intakeResponse.json(), null, 2));
-    } else if (command === "business" && ["units", "runs", "export"].includes(args[1] ?? "")) {
-      const id = args[2];
-      if (!id) throw new Error("business system id is required");
-      const route = args[1] === "units" ? `/api/v1/business-systems/${encodeURIComponent(id)}/units` : args[1] === "runs" ? `/api/v1/business-systems/${encodeURIComponent(id)}/runs` : `/api/v1/business-systems/${encodeURIComponent(id)}/export`;
-      const result = await app.fetch(new Request(`http://localhost${route}`));
-      if (!result.ok) throw new Error(await result.text());
-      console.log(JSON.stringify(await result.json(), null, 2));
-    } else if (command === "business" && args[1] === "run") {
-      const id = args[2];
-      if (!id) throw new Error("business system id is required");
-      const inputs = values("--input");
-      const result = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${encodeURIComponent(id)}/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) }));
-      if (!result.ok) throw new Error(await result.text());
-      console.log(JSON.stringify(await result.json(), null, 2));
-    } else if (command === "business" && (args[1] === "graph" || args[1] === "artifact")) {
-      const id = args[2];
-      const file = value("--file");
-      if (!id || !file) throw new Error("target id and --file are required");
-      const document = JSON.parse(await Bun.file(file).text());
-      const route = args[1] === "graph" ? `/api/v1/business-systems/${encodeURIComponent(id)}/graph` : `/api/v1/projects/${encodeURIComponent(id)}/artifacts`;
-      const body = args[1] === "graph" ? { graph: document.graph ?? document, by: "official-harness" } : document;
-      const result = await app.fetch(new Request(`http://localhost${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
-      if (!result.ok) throw new Error(await result.text());
-      console.log(JSON.stringify(await result.json(), null, 2));
-    } else if (command === "business" && args[1] === "conversion") {
-      const id = args[2];
-      const kind = value("--kind");
-      const summary = value("--summary");
-      if (!id || !kind || !summary) throw new Error("business system id, --kind, and --summary are required");
-      const inputs = values("--input");
-      const outputs = values("--output");
-      const result = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${encodeURIComponent(id)}/conversions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind, summary, inputs, outputs }) }));
-      if (!result.ok) throw new Error(await result.text());
-      console.log(JSON.stringify(await result.json(), null, 2));
-    } else if (command === "registry" && args[1] === "check") {
-      const root = args[2];
-      if (!root) throw new Error("registry path is required");
+      return 0;
+    }
+    if (command === "runtime") {
+      if (args[0] === "status") {
+        console.log(JSON.stringify(await requestJson(app, "/api/v1/runtime"), null, 2));
+        return 0;
+      }
+      if (args[0] === "ensure-ready") {
+        const result = await app.fetch(new Request("http://localhost/api/v1/runtime/ensure-ready", { method: "POST", headers: { "content-type": "application/json" } }));
+        const body = await result.json();
+        console.log(JSON.stringify(body, null, 2));
+        return result.ok ? 0 : 4;
+      }
+      throw new CliUsageError(`unknown runtime command: ${args[0] ?? "(missing)"}`);
+    }
+    if (command === "project") {
+      if (args[0] !== "intake") throw new CliUsageError(`unknown project command: ${args[0] ?? "(missing)"}`);
+      const repo = value(args, "--repo");
+      const folder = value(args, "--folder");
+      const fileRef = value(args, "--file-ref");
+      if (!repo && !folder && !fileRef) throw new CliUsageError("one source is required");
+      const body = await requestJson(app, "/api/v1/projects/intake", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: value(args, "--name") ?? "新项目", repo_url: repo, local_folder: folder, uploaded_file_refs: fileRef ? [fileRef] : [] }) });
+      console.log(JSON.stringify(body, null, 2));
+      return 0;
+    }
+    if (command === "business") {
+      const subcommand = args[0];
+      if (["units", "runs", "export"].includes(subcommand ?? "")) {
+        const id = args[1];
+        if (!id) throw new CliUsageError("business system id is required");
+        const route = subcommand === "units" ? `/api/v1/business-systems/${encodeURIComponent(id)}/units` : subcommand === "runs" ? `/api/v1/business-systems/${encodeURIComponent(id)}/runs` : `/api/v1/business-systems/${encodeURIComponent(id)}/export`;
+        console.log(JSON.stringify(await requestJson(app, route), null, 2));
+        return 0;
+      }
+      if (subcommand === "run") {
+        const id = args[1];
+        if (!id) throw new CliUsageError("business system id is required");
+        console.log(JSON.stringify(await requestJson(app, `/api/v1/business-systems/${encodeURIComponent(id)}/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs: values(args, "--input") }) }), null, 2));
+        return 0;
+      }
+      if (subcommand === "graph" || subcommand === "artifact") {
+        const id = args[1];
+        const file = requireValue(args, "--file");
+        if (!id) throw new CliUsageError("target id is required");
+        let document: unknown;
+        try { document = JSON.parse(await Bun.file(file).text()); } catch (error) { throw new CliUsageError(`cannot read JSON file: ${error instanceof Error ? error.message : String(error)}`); }
+        const route = subcommand === "graph" ? `/api/v1/business-systems/${encodeURIComponent(id)}/graph` : `/api/v1/projects/${encodeURIComponent(id)}/artifacts`;
+        const body = subcommand === "graph" && document && typeof document === "object" && "graph" in document ? (document as Record<string, unknown>).graph : document;
+        console.log(JSON.stringify(await requestJson(app, route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(subcommand === "graph" ? { graph: body, by: "official-harness" } : body) }), null, 2));
+        return 0;
+      }
+      if (subcommand === "conversion") {
+        const id = args[1];
+        if (!id) throw new CliUsageError("business system id is required");
+        const kind = requireValue(args, "--kind");
+        const summary = requireValue(args, "--summary");
+        console.log(JSON.stringify(await requestJson(app, `/api/v1/business-systems/${encodeURIComponent(id)}/conversions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind, summary, inputs: values(args, "--input"), outputs: values(args, "--output") }) }), null, 2));
+        return 0;
+      }
+      throw new CliUsageError(`unknown business command: ${subcommand ?? "(missing)"}`);
+    }
+    if (command === "registry" && args[0] === "check") {
+      const root = args[1];
+      if (!root) throw new CliUsageError("registry path is required");
       const result = checkRegistry(root);
       if (args.includes("--json")) console.log(JSON.stringify({ root: result.root, ok: result.ok, stats: result.stats, diagnostics: result.diagnostics }, null, 2));
       else {
@@ -95,35 +130,58 @@ if (command === "serve") {
         }
         console.log(result.ok ? "✔ registry passed" : "✖ registry failed");
       }
-      if (!result.ok) process.exitCode = 1;
-    } else if (command === "foreman" && args[1] === "inbox") {
-      console.log(JSON.stringify(app.store.listForemanInbox(Number(value("--limit") ?? 50)), null, 2));
-    } else if (command === "foreman" && (args[1] === "claim" || args[1] === "done")) {
-      const id = args[2];
-      if (!id) throw new Error("message id is required");
-      const result = args[1] === "claim" ? app.store.claimForemanMessage(id) : app.store.completeForemanMessage(id);
-      if (!result) throw new Error("message not found");
-      console.log(JSON.stringify(result, null, 2));
-    } else if (command === "talk" && args[1] === "send") {
-      const text = args.slice(2).join(" ").trim();
-      if (!text) throw new Error("text is required");
+      return result.ok ? 0 : 1;
+    }
+    if (command === "foreman") {
+      if (args[0] === "inbox") {
+        console.log(JSON.stringify(app.store.listForemanInbox(Number(value(args, "--limit") ?? 50)), null, 2));
+        return 0;
+      }
+      if (args[0] === "claim" || args[0] === "done") {
+        const id = args[1];
+        if (!id) throw new CliUsageError("message id is required");
+        const result = args[0] === "claim" ? app.store.claimForemanMessage(id) : app.store.completeForemanMessage(id);
+        if (!result) throw new Error("message not found");
+        console.log(JSON.stringify(result, null, 2));
+        return 0;
+      }
+      throw new CliUsageError(`unknown foreman command: ${args[0] ?? "(missing)"}`);
+    }
+    if (command === "talk" && args[0] === "send") {
+      const text = args.slice(1).join(" ").trim();
+      if (!text) throw new CliUsageError("text is required");
       const message = app.store.addTalkMessage({ body: redactText(text) });
       app.store.bridgeHumanTalk(message.id, message.body);
       const envelope = app.store.queueForemanMessage(message.id, message.body);
       app.events.publish("talk.message.created", message);
       app.events.publish("foreman.message.queued", envelope);
       console.log(JSON.stringify(message, null, 2));
-    } else if (command === "talk" && args[1] === "reply") {
-      const turnId = value("--turn-id");
-      const text = args.slice(2).filter((item) => item !== "--turn-id" && item !== turnId).join(" ").trim();
-      if (!text || !turnId) throw new Error("text and --turn-id are required");
+      return 0;
+    }
+    if (command === "talk" && args[0] === "reply") {
+      const turnId = requireValue(args, "--turn-id");
+      const text = args.filter((item) => item !== "--turn-id" && item !== turnId).join(" ").trim();
+      if (!text) throw new CliUsageError("text is required");
       const message = app.store.addTalkMessage({ role: "foreman", body: redactText(text), metadata: { turn_id: turnId } });
       app.events.publish("talk.foreman.replied", message);
       console.log(JSON.stringify(message, null, 2));
-    } else {
-      usage();
+      return 0;
     }
+    throw new CliUsageError(`unknown factory command: ${command}`);
   } finally {
     app.stop();
   }
 }
+
+export async function main(argv = Bun.argv.slice(2)): Promise<number> {
+  try {
+    return await runCommand(argv);
+  } catch (error) {
+    const code = error instanceof CliUsageError ? 2 : 1;
+    console.error(error instanceof Error ? error.message : String(error));
+    if (error instanceof CliUsageError) console.error(usage(argv[0]));
+    return code;
+  }
+}
+
+if (import.meta.main) process.exit(await main());
