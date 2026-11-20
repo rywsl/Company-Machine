@@ -27,6 +27,7 @@
 | `factory source run`、`factory receipt ls`、`show`、`verify`、`void` | 执行摄入，查询、核验与作废发布回执。 |
 | `factory schedule enqueue`、`tick`、`dlq ls`、`quarantine`、`release` | 持久化待执行工位，推进调度并管理死信及物料隔离。`tick` 可用 `--config PATH` 指定文件。 |
 | `factory backup create DEST`、`verify DEST`、`restore DEST --root NEW_ROOT` | 将 SQLite 与 CAS 备份到独立目录，校验和恢复到显式指定的空目录。 |
+| `factory business export ID --package DEST`、`verify PACKAGE`、`import PACKAGE --root NEW_ROOT` | 导出指定业务及其 CAS 文件，校验摘要和引用，再安装到新的工厂目录。 |
 | `factory line plan LINE`、`factory line run LINE --in PORT=BEAN` | 编译产线计划并将执行进度、Job 与物料输出写入 SQLite。 |
 | `factory line ls`、`show`、`nodes`、`exec`、`cancel`、`retry`、`rebuild` | 查看与推进已保存的运行，或按当前 Registry 重建终态产线。 |
 | `factory foreman ...` | 查看、领取和完成厂长消息。 |

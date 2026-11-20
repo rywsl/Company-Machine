@@ -117,6 +117,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
+| `backend/tests/business-package.test.ts` | 业务包 CLI 跨目录移交、字节闭包校验、回滚和已知密钥拒绝 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
 | `backend/tests/foreman.test.ts` | 厂长队列、官方 Harness 回复事件、容器邮箱的业务持久化、项目范围、登记来源只读交接和暂存文件清理 |
 | `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
@@ -354,6 +355,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m2/test_m2_11_source.py::test_service_form_unsupported` | `backend/tests/legacy-connectors.test.ts` | `rejects service Source execution and incomplete Source Run context before launching` | 服务型 Source 执行前返回 `FORM_UNSUPPORTED` |
 | `removed/python/tests/acceptance/m2/test_m2_11_source.py::test_policy_violation_defense` | `backend/tests/legacy-connectors.test.ts` | `rejects service Source execution and incomplete Source Run context before launching` | Run 上下文缺字段时拒绝创建 Source Job |
 | `removed/python/tests/acceptance/m7/test_m7_04_backup.py::test_restore_refuses` | `backend/tests/backup.test.ts` | `reports corrupt and missing blobs, extra files, and unsafe paths before restore` | 拒绝损坏备份和非空恢复目录，原 CAS 保留 |
+| `removed/python/tests/acceptance/m16/test_m16_05_package.py::test_verify_rejects_extra_bytes_and_unsafe_paths` | `backend/tests/business-package.test.ts` | `rejects extra bytes, unsafe manifest paths and changed bytes before installing` | Bun 业务包拒绝多余文件、穿越路径字段和被修改的文件，校验失败后无目标工厂 |
+| `removed/python/tests/acceptance/m16/test_m16_06_surface.py::test_package_verify_cli_reports_no_business_acceptance` | `backend/tests/business-package.test.ts` | `moves selected business data and file bytes into a fresh factory root` | `factory business verify` 只报告静态完整性，保留 `acceptance: "not_run"` |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_none_stays_none` | `backend/tests/legacy-egress.test.ts` | `leaves none isolated and expands only explicitly delegated Machine tiers` | 无出网策略得到空允许列表 |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_none_stays_none` | `backend/runtime/podman.test.ts` | `emits the ordered Podman run contract and protects fixed environment entries` | 容器使用 none 网络，未注入代理凭证 |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_allow_exact_host_and_method` | `backend/tests/legacy-egress.test.ts` | `compiles the example Registry and matches exact HTTP(S) hosts` | 真实示例 Registry 解析出指定服务商域名 |

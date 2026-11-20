@@ -405,6 +405,8 @@ bindings 的输入文件格式为 `{resources: {key: {kind, fingerprint, ref?, s
 
 ### 5.8 导出、校验与买家接手
 
+活动 Bun 业务包沿用 `mao.business-system/1` 业务文档。`factory business export ID --package DEST` 将该文档、文档中的 `cas://sha256:…` 引用对应的文件和 SHA-256 清单写入新目录，格式为 `mao.business-package/1`。文件名由内容摘要确定。导出扫描所选项目已配置的密钥值，发现匹配便终止发布。`factory business verify PACKAGE` 检查文件集合、文档引用、大小及摘要，校验报告显示 `acceptance: "not_run"`。`factory business import PACKAGE --root NEW_ROOT` 使用同级临时目录安装文件和业务定义，成功后发布到目标目录。买方获得新的业务和工位标识，以及待配置的密钥申请。导入的运行摘要可用于查看历史，执行队列从空状态开始。本入口提供业务定义与文件的跨工厂移交，M16 的披露审核、授权与契约验收使用以下规范。
+
 1. 从已 verify 的 checkpoint 读取 release，计算闭包，核对 review 摘要、资源与许可。默认拒绝未选择的字节；未经审核的原始历史不因存在 backup 就被导出。脱敏修改必须成为新 Bean/新 document，不修改内容地址或沿用不再匹配的证明。
 2. 校验 registry Bean 树（含脚本、样例、规范文件）通过既有 Registry 检查；禁止 .git、链接、设备文件、绝对路径、`..`、反斜线/盘符混淆、同路径/大小写折叠冲突。检查点和包的所有文件清单均遵守这些路径规则。
 3. 已知 SecretStore 值的扫描在源检查点生成时完成；发现匹配就拒绝而非悄悄改字节。导出对公开文本/JSON/路径再做现有密钥模式检查，对二进制仅流式检查已知值与已批准 hash。检测结果不打印原文。对未知 PII/版权/二进制内嵌身份，必须由业务脱敏与披露审核负责，不输出“自动保证完全脱敏”的结论。

@@ -1,8 +1,13 @@
-import { basename } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createApp, startServer } from "./server";
 import { checkRegistry } from "../mrl/factory";
 import { Context } from "./legacy/context";
 import { ConversionStore, conversionDocument } from "./legacy/conversion-requests";
+import { FactoryError } from "./legacy/errors";
+import { RandomIds } from "./legacy/foundation";
+import { Warehouse } from "./legacy/warehouse";
+import { businessPackageBlob, createBusinessPackage, publishBusinessDirectory, readBusinessPackage } from "./business-package";
+import { VaultStore } from "./vault";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
 export { CliUsageError } from "./station-cli";
 
@@ -20,7 +25,7 @@ function values(args: string[], name: string): string[] {
 export function usage(scope?: string): string {
   if (scope && isStationScope(scope)) return stationUsage(scope);
   if (scope === "project") return `factory project commands\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH`;
-  if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
+  if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID [--package DEST]\n  verify PACKAGE\n  import PACKAGE --root NEW_ROOT\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID\n  conversion ls [--status open|in_progress|resolved] [--root PATH]`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
   return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
@@ -45,6 +50,26 @@ async function runCommand(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
   if (command === "foreman" && args[0] === "conversion") {
     return listConversions(args.slice(1));
+  }
+  if (command === "business" && args[0] === "verify") {
+    if (args.length !== 2 || args[1].startsWith("--")) throw new CliUsageError("business verify expects a package directory");
+    try {
+      await readBusinessPackage(args[1]);
+      console.log(JSON.stringify({ ok: true, problems: [], acceptance: "not_run" }, null, 2));
+      return 0;
+    } catch (error) {
+      if (!(error instanceof FactoryError) || error.code !== "PACKAGE_CORRUPT") throw error;
+      console.log(JSON.stringify({ ok: false, problems: [error.detail], acceptance: "not_run" }, null, 2));
+      return 1;
+    }
+  }
+  if (command === "business" && args[0] === "import") {
+    if (args.length !== 4 || args[1].startsWith("--") || args[2] !== "--root" || args[3].startsWith("--")) {
+      throw new CliUsageError("business import expects PACKAGE --root NEW_ROOT");
+    }
+    const result = await importBusinessPackage(args[1], args[3]);
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
   }
   if (isStationScope(command) || ["--root", "--registry", "--provider", "--local-commands", "--epoch", "--json"].includes(command)) {
     return runStationCli(argv);
@@ -137,7 +162,16 @@ async function runCommand(argv: string[]): Promise<number> {
         const id = args[1];
         if (!id) throw new CliUsageError("business system id is required");
         const route = subcommand === "units" ? `/api/v1/business-systems/${encodeURIComponent(id)}/units` : subcommand === "runs" ? `/api/v1/business-systems/${encodeURIComponent(id)}/runs` : `/api/v1/business-systems/${encodeURIComponent(id)}/export`;
-        console.log(JSON.stringify(await requestJson(app, route), null, 2));
+        const document = await requestJson(app, route);
+        if (subcommand === "export" && args.length > 2) {
+          if (args.length !== 4 || args[2] !== "--package" || args[3].startsWith("--")) throw new CliUsageError("business export expects ID [--package DEST]");
+          const root = resolve(process.env.FACTORY_ROOT ?? dirname(app.store.legacyPath));
+          const secrets = app.store.listProjects(id).flatMap((project) => project.secretRequests.flatMap((request) => {
+            const value = request.status === "available" ? app.vault.get(request.vaultRef) : undefined;
+            return value ? [value] : [];
+          }));
+          console.log(JSON.stringify(await createBusinessPackage(args[3], document, root, secrets), null, 2));
+        } else console.log(JSON.stringify(document, null, 2));
         return 0;
       }
       if (subcommand === "run") {
@@ -220,6 +254,27 @@ async function runCommand(argv: string[]): Promise<number> {
   } finally {
     app.stop();
   }
+}
+
+async function importBusinessPackage(source: string, destination: string) {
+  const verified = await readBusinessPackage(source);
+  return publishBusinessDirectory(destination, async (stage) => {
+    const database = join(stage, "factory.db");
+    const vault = new VaultStore(join(stage, "vault.json"), join(stage, "vault.key"));
+    const buyer = createApp({ storageRoot: stage, dbPath: database, legacyPath: database, vault, dispatchWork: false });
+    try {
+      const warehouse = new Warehouse(stage, buyer.store.db, buyer.store.clock, new RandomIds());
+      for (const { digest, size } of verified.blobs) {
+        const actual = await warehouse.putFile(businessPackageBlob(verified.root, digest));
+        if (actual !== digest) throw new FactoryError("PACKAGE_CORRUPT", "安装时内容摘要不匹配", { digest });
+        buyer.store.db.query("INSERT INTO intake_uploads(digest,size) VALUES (?,?)").run(digest, size);
+      }
+      const document = await requestJson(buyer, "/api/v1/business-systems/import", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(verified.document),
+      });
+      return { root: resolve(destination), system: document.system, acceptance: "not_run" };
+    } finally { buyer.stop(); }
+  });
 }
 
 function listConversions(args: string[]): number {
