@@ -366,6 +366,8 @@ Bun 使用工作区固定版本的 TypeScript 编译器解析生产源码。校�
 
 同一检查覆盖 Bun 生产代码直接调用时钟、随机 ID 和当前目录 API 的情况，包括可静态识别的导入别名。`foundation.ts` 和独立的 `factoryctl` 提供运行时时钟与 ID，Vault 与出网转发器保留加密随机数。业务记录时钟、容器耗时、Kiri 就绪轮询以及 LocalProvider 的工作目录由对应 Bun 测试验证。
 
+`tools/module-policy.test.ts` 覆盖没有说明的空 `catch`、Node 文本文件的显式 UTF-8、允许的二进制读写，以及历史 SQL 编号和 `user_version` 边界。`backend/tests/legacy-core.test.ts` 使用归档 SQL 建库并通过活跃的 Bun 存储组件连续打开两次，确认历史记录可读、兼容列已补齐且迁移版本保留。
+
 Bun MRL 表达式检查标准库参数、宏短路、集合顺序和嵌套深度。规则检查覆盖模块归属、关系签名、变量绑定、宿主事实类型、分层否定及聚合。Registry 事实交给规范中的 `kernel/refs.mrl`、`kernel/types.mrl`、`kernel/stations.mrl` 和 `kernel/lines.mrl`。内核检查业务引用、类型继承、工位契约和产线绑定，并生成转换解析表。测试可按完整 Line 键或省略 `Line:` 的键匹配解析条目。Registry 的宪法在同一规则程序上执行，编译失败时仍会返回内核诊断。完整 int64 精度和整数值与同值浮点数的身份尚需迁移。超过 JavaScript 安全整数范围的 YAML 用例会报告证据缺口。规范用例以 `spec/mrl/conformance/` 为准。
 
 下表记录 `removed/python/tests/acceptance/m1/test_m1_10_e2e.py` 中的历史验收。

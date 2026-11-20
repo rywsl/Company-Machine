@@ -522,7 +522,7 @@ export class PodmanProvider implements ContainerProvider {
     } catch (error) {
       const diagnostic = error instanceof Error ? error.message : `${this.name} exec failed`;
       if (error instanceof PodmanError && error.detail.logsWritten === true) {
-        appendFileSync(options.stderr, `\n${diagnostic}\n`);
+        appendFileSync(options.stderr, `\n${diagnostic}\n`, "utf8");
       } else {
         await writeBytes(options.stdout, new Uint8Array());
         await writeBytes(options.stderr, new TextEncoder().encode(diagnostic));

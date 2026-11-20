@@ -54,7 +54,7 @@ export async function installFactoryctl(root: string): Promise<string> {
   const directory = dirname(target);
   mkdirSync(directory, { recursive: true });
   const part = join(directory, `.factoryctl.${randomUuid()}.part`);
-  writeFileSync(part, data, { mode: 0o755, flag: "wx" });
+  writeFileSync(part, data, { encoding: "utf8", mode: 0o755, flag: "wx" });
   try {
     renameSync(part, target);
   } catch (error) {

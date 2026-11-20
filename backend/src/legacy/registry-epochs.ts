@@ -132,7 +132,7 @@ export class EpochStore {
     }
     rmSync(archivePath);
     const checked = await loadSnapshot(registry);
-    writeFileSync(join(stage, "resolutions.json"), canonicalJson(checked.result.resolutions.map((item) => ({ ...item, origin: "precomputed" }))));
+    writeFileSync(join(stage, "resolutions.json"), canonicalJson(checked.result.resolutions.map((item) => ({ ...item, origin: "precomputed" }))), "utf8");
     const root = join(this.context.root, "epochs", commit, "registry");
     return new Snapshot(root, commit, checked.docs, { ...checked.result, root, registry: { ...checked.result.registry, root } });
   }

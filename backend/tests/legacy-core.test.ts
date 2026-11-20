@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Context, CounterIds, FakeClock, canonicalBytes, canonicalJson, digestBytes, digestFile, loadSnapshot, mediaTypeOf, paramsValue, parseDuration, runtimeEnv, utcIso, type Bean } from "../src/legacy";
+import { JobStore } from "../src/legacy/jobs";
+import { RunStore } from "../src/legacy/runs";
 
 function tempRoot(label: string): string {
   const root = join("tmp", `legacy-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -16,6 +18,31 @@ function expectErrorCode(run: () => unknown, code: string): void {
 }
 
 describe("Bun M1 core boundaries", () => {
+  test("upgrades an archived SQLite schema twice and preserves records and its migration version", () => {
+    const root = tempRoot("sqlite-compatibility");
+    let context = Context.open(root);
+    const at = "2026-01-01T00:00:00.000Z";
+    try {
+      const migration = join(import.meta.dir, "../../removed/python/src/mao/migrations/002_jobs.sql");
+      context.db.exec(readFileSync(migration, "utf8"));
+      context.db.exec("PRAGMA user_version=2");
+      context.db.query(`INSERT INTO jobs (id,station,epoch,state,attempt,inputs,params,created_at,updated_at)
+        VALUES ('job-archived','station@1','epoch','PENDING',1,'{}','{}',?,?)`).run(at, at);
+      context.db.query(`INSERT INTO events (id,at,kind,job_id,data)
+        VALUES ('ev-archived',?,'job.created','job-archived','{}')`).run(at);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        context.close();
+        context = Context.open(root);
+        const { db, clock, ids } = context;
+        const jobs = new JobStore(db, clock, ids);
+        new RunStore(db, clock, ids);
+        expect(jobs.get("job-archived")).toMatchObject({ id: "job-archived", phase: "execute", createdAt: at });
+        expect(db.query("SELECT id, job_id, run_id FROM events WHERE id='ev-archived'").get()).toEqual({ id: "ev-archived", job_id: "job-archived", run_id: null });
+        expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+      }
+    } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("serializes sorted compact UTF-8 JSON and hashes the known empty payload", () => {
     expect(canonicalJson({ b: 1, a: [1.5, "中"] })).toBe('{"a":[1.5,"中"],"b":1}');
     expect(canonicalJson([1, 2])).toBe("[1,2]");

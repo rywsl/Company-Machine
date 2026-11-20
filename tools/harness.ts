@@ -60,9 +60,7 @@ function verifyParity(spec: ReturnType<typeof inspectSpecifications>, caseCount:
     },
     mrl,
     kernelRulesWithoutExecutionEvidence: unwitnessedRules,
-    policyMigrationRemaining: [
-      "异常处理、文件编码与数据库迁移约束",
-    ],
+    policyMigrationRemaining: [],
     activeAcceptance: { files: spec.mappedFiles.size, passed: caseCount },
   };
   if (json) {
@@ -72,7 +70,6 @@ function verifyParity(spec: ReturnType<typeof inspectSpecifications>, caseCount:
     const passed = Object.values(mrl.passed).reduce((sum, count) => sum + count, 0);
     console.error(`历史验收 ${spec.evidence.size}/${spec.obligations.size} 项有通过的 Bun 等价证据，规范映射问题 ${spec.historical.length} 项`);
     console.error(`MRL ${passed}/${total} 项通过，${mrl.unverifiedCodes.length} 个诊断码缺少通过的覆盖用例，${checks.kernelRulesWithoutExecutionEvidence.length} 条内核规则尚无触发证据`);
-    console.error(`代码策略尚需迁移 ${checks.policyMigrationRemaining.join("、")}。逐条差异见 parity --json`);
   }
   return unmatched.length || spec.historical.length || mrl.failures.length || mrl.unverifiedCodes.length
     || checks.kernelRulesWithoutExecutionEvidence.length || checks.policyMigrationRemaining.length ? 1 : 0;

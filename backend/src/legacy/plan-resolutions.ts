@@ -84,7 +84,7 @@ export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows
     const temporary = `${path}.${randomUuid()}.part`;
     mkdirSync(dirname(path), { recursive: true });
     try {
-      writeFileSync(temporary, canonicalJson([...existing, ...fresh]), { flag: "wx" });
+      writeFileSync(temporary, canonicalJson([...existing, ...fresh]), { encoding: "utf8", flag: "wx" });
       renameSync(temporary, path);
     } finally { rmSync(temporary, { force: true }); }
   }).immediate();

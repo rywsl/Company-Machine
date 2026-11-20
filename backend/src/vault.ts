@@ -54,7 +54,7 @@ export class VaultStore {
       ciphertext: ciphertext.toString("base64"),
       updatedAt: utcIso(this.clock.now()),
     };
-    writeFileSync(this.path, JSON.stringify(records), { mode: 0o600 });
+    writeFileSync(this.path, JSON.stringify(records), { encoding: "utf8", mode: 0o600 });
   }
 
   has(ref: string): boolean {

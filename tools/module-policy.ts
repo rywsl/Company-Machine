@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import ts from "../frontend/node_modules/typescript/lib/typescript.js";
+import { listFiles } from "../backend/mrl/factory/paths";
 
 const stdoutEntrypoints = new Set([
   "backend/src/cli.ts", "backend/src/connector-cli.ts", "backend/src/changeset-cli.ts",
@@ -17,6 +18,9 @@ const nativeTime = new Set(["backend/src/legacy/foundation.ts", "backend/src/leg
 const secretEntropy = new Set(["backend/src/vault.ts", "backend/src/legacy/egress-forwarder.ts"]);
 const randomFunctions = new Set(["randomUUID", "randomBytes", "randomInt", "randomFill", "randomFillSync", "getRandomValues"]);
 const cwdEntrypoints = new Set(["backend/src/cli.ts", "backend/src/index.ts"]);
+const fileReads = new Set(["readFile", "readFileSync"]);
+const fileWrites = new Set(["writeFile", "writeFileSync", "appendFile", "appendFileSync"]);
+const sqliteMethods = new Set(["exec", "run", "query", "prepare"]);
 
 function unwrap(expression: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression) ||
@@ -84,6 +88,35 @@ function nodeBuiltinMember(target: ts.Expression, module: string, checker: ts.Ty
   return binding && (binding.propertyName ?? binding.name).text;
 }
 
+function fileEncoding(options: ts.Expression | undefined, checker: ts.TypeChecker): string | undefined {
+  if (!options) return undefined;
+  const value = unwrap(options);
+  if (ts.isStringLiteralLike(value)) return value.text;
+  if (ts.isObjectLiteralExpression(value)) {
+    const property = value.properties.find((entry) => ts.isPropertyAssignment(entry) &&
+      (ts.isIdentifier(entry.name) || ts.isStringLiteralLike(entry.name)) && entry.name.text === "encoding");
+    if (property && ts.isPropertyAssignment(property)) return fileEncoding(property.initializer, checker);
+  }
+  const type = checker.getTypeAtLocation(value);
+  const property = checker.getPropertyOfType(type, "encoding");
+  const encoding = property ? checker.getTypeOfSymbolAtLocation(property, value) : type;
+  if (encoding.isStringLiteral()) return encoding.value;
+}
+
+export function archivedMigrationProblems(root: string): string[] {
+  const numbers = new Map<string, string>();
+  const problems: string[] = [];
+  for (const file of listFiles(join(root, "removed/python/src/mao/migrations")).sort()) {
+    if (!file.endsWith(".sql")) continue;
+    const path = relative(root, file).replaceAll("\\", "/");
+    const number = /^(\d{3})_[a-z][a-z0-9_]*\.sql$/.exec(basename(file))?.[1];
+    if (!number) problems.push(`${path}: 历史 SQL 迁移文件名应使用 NNN_<名字>.sql`);
+    else if (numbers.has(number)) problems.push(`${path}: 历史 SQL 迁移编号 ${number} 与 ${numbers.get(number)} 重复`);
+    else numbers.set(number, path);
+  }
+  return problems;
+}
+
 export function modulePolicyProblems(root: string, files: string[]): string[] {
   if (!files.length) return [];
   const shim = join(root, "backend/bun-shim.d.ts");
@@ -128,8 +161,37 @@ export function modulePolicyProblems(root: string, files: string[]): string[] {
         report(node, "控制面 ID 来自 IdSource 或 foundation 中的 UUID 生成器");
       }
     };
+    const checkFileEncoding = (node: ts.CallExpression) => {
+      const target = unwrap(node.expression);
+      const method = nodeBuiltinMember(target, "fs", checker) ?? nodeBuiltinMember(target, "fs/promises", checker);
+      if (!method) return;
+      if (fileReads.has(method)) {
+        const encoding = fileEncoding(node.arguments[1], checker);
+        const expected = checker.getContextualType(node);
+        const expectsText = ((expected?.flags ?? 0) & ts.TypeFlags.StringLike) !== 0;
+        if ((expectsText || encoding !== undefined) && !/^utf-?8$/i.test(encoding ?? "")) report(node, "控制面文件文本须使用 UTF-8 编码");
+      } else if (fileWrites.has(method) && node.arguments[1]) {
+        const data = checker.getTypeAtLocation(unwrap(node.arguments[1]));
+        const encoding = fileEncoding(node.arguments[2], checker);
+        const knownText = (data.flags & ts.TypeFlags.StringLike) !== 0;
+        if ((knownText || encoding !== undefined) && !/^utf-?8$/i.test(encoding ?? "")) report(node, "控制面文件文本须显式使用 UTF-8 编码");
+      }
+    };
     const inspect = (node: ts.Node): void => {
       if (ts.isCallExpression(node) || ts.isNewExpression(node)) checkDeterminism(node);
+      if (ts.isCallExpression(node)) {
+        checkFileEncoding(node);
+        const method = member(unwrap(node.expression))?.name;
+        const statement = node.arguments[0];
+        if (method && sqliteMethods.has(method) && statement && ts.isStringLiteralLike(statement) &&
+          /\bPRAGMA\s+(?:[\w]+\.)?user_version\s*(?:=|\()/i.test(statement.text)) {
+          report(node, "Bun 数据表初始化保留历史 SQLite user_version");
+        }
+      }
+      if (ts.isCatchClause(node) && node.block.statements.every(ts.isEmptyStatement) &&
+        !/\/\/[ \t]*[^\s/]|\/\*\s*[^\s*/]/.test(source.text.slice(node.block.getStart(source) + 1, node.block.end - 1))) {
+        report(node, "空 catch 必须说明可忽略该错误的原因");
+      }
       const access = member(node);
       if (access?.name) {
         const { receiver, name } = access;

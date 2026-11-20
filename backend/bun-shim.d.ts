@@ -35,7 +35,7 @@ declare module "node:fs" {
   export const openSync: (path: string, flags: string) => number;
   export const closeSync: (fd: number) => void;
   export const rmdirSync: (path: string) => void;
-  export const appendFileSync: (path: string, data: string) => void;
+  export const appendFileSync: (path: string, data: string, options?: string) => void;
   export const constants: { readonly COPYFILE_EXCL: number };
   export const symlinkSync: (target: string, path: string, type?: "file" | "dir" | "junction") => void;
   export const mkdirSync: (...args: any[]) => void;

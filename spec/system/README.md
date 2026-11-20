@@ -103,7 +103,7 @@
 - 所有运行 agent 操作工、需要收货的机器镜像，都必须带 `python3`（≥ 3.8）和 `/bin/sh`。
 
 **D8 持久化。** 状态库是 `$FACTORY_ROOT/factory.db`（SQLite，WAL 模式），Blob 存在 `$FACTORY_ROOT/cas/`。
-- 表结构用编号 SQL 迁移文件管理（第 3.6 节）。
+- Bun 检查已存在的 SQLite 表结构并增补组件所需的列。编号 SQL 迁移随历史实现归档（第 3.6 节）。
 - 生产后端（S3/MinIO、Postgres）是 M4 的事，M1–M3 的接口不得假设它们存在。
 
 **D9 确定性。** Bun 控制面从注入的 `Clock` 读取业务时间与单调时间，从注入的 `IdSource` 生成带前缀的记录 ID。业务存储从可注入的 UUID 生成函数分配无前缀的 UUIDv4。生产实现集中在 `backend/src/legacy/foundation.ts`，独立的 `factoryctl` 进程有自己的时钟与请求 ID。
@@ -200,7 +200,7 @@ $FACTORY_ROOT/
   - `detail` 是可以序列化为 JSON 的上下文。
 - 每份组件规范的“错误”一章都列出本组件会抛的全部错误码。有一条测试保证：源码里出现的每个错误码都已登记，每个登记的错误码都在某份规范里出现。
 - 编程错误（断言失败、意料之外的异常）不要包装成 `FactoryError`，让它冒泡。CLI 把它报告为内部错误，退出码 5。
-- **禁止**用裸 `except:` 或 `except Exception: pass` 吞掉错误。需要兜底的地方，必须把异常转换成带错误码的 job 失败，并记录事件。
+- Bun 的 `catch` 应当向上抛出错误或明确给出恢复路径。空 `catch` 块必须说明忽略错误的原因，例如进程结束后释放资源时遇到的重复关闭。
 
 ### 3.4 时钟与 ID 注入
 
@@ -234,7 +234,7 @@ class IdSource(Protocol):
   - `PRAGMA foreign_keys=ON`
   - `PRAGMA busy_timeout=5000`
 - 历史 Python 迁移文件位于 `removed/python/src/mao/migrations/NNN_<名字>.sql`。活动 Bun 数据表由 `backend/src/db.ts` 初始化并与现有 SQLite 共存。
-- **已发布的迁移文件禁止修改**，要改表结构就新增一个迁移。
+- Bun 的组件初始化使用 `CREATE TABLE IF NOT EXISTS` 并通过实际列定义判断是否需要兼容性增补。历史 SQLite 的 `user_version` 留给其编号迁移使用。归档 SQL 保留编号和文件名，校验发现编号碰撞或格式错误时报告。
 - 编号分配：
 
   | 编号 | 归属 |
@@ -261,7 +261,7 @@ class IdSource(Protocol):
 ### 3.8 编码、换行与 Windows
 
 - 开发机是 Windows 11 + Git Bash，CI 和生产是 Linux。路径一律用 `pathlib.Path`，**禁止**手工拼接 `/` 或 `\`。
-- 文本文件按 UTF-8 读写，必须显式写 `encoding="utf-8"`。
+- Node 文件接口读写文本时显式使用 `utf8` 或 `utf-8`。Bun 的文本接口按其 UTF-8 契约使用。摘要、归档、密钥和其他二进制数据按字节处理。
 - 会被复制进 Linux 容器的文件（`factoryctl`、测试镜像里的脚本、Dockerfile）必须是 LF 换行，由 `.gitattributes` 保证。安装 `factoryctl` 时还要再把 `\r\n` 规范成 `\n`。
 - 宿主路径传给 docker 时，用 `--mount type=bind,source=<绝对路径>,target=<虚拟路径>`。`-v` 写法在 Windows 盘符路径上有歧义，**禁止**使用。
 

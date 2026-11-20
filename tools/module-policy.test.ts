@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { modulePolicyProblems } from "./module-policy";
+import { archivedMigrationProblems, modulePolicyProblems } from "./module-policy";
 
 function scan(files: Record<string, string>): string[] {
   const root = mkdtempSync(join(tmpdir(), "mao-module-policy-"));
@@ -99,4 +99,47 @@ test("reserves wall time, elapsed time, ID randomness and cwd for their boundari
     ...[6, 7].map((line) => `backend/src/library.ts:${line}:1 控制面 ID 来自 IdSource 或 foundation 中的 UUID 生成器`),
     ...[8, 9].map((line) => `backend/src/library.ts:${line}:1 控制面工作目录来自配置或调用方参数`),
   ]);
+});
+
+test("checks explicit UTF-8, explained catch blocks, and the archived SQLite version boundary", () => {
+  const problems = scan({
+    "backend/src/library.ts": [
+      'import { readFileSync, writeFileSync as save } from "node:fs";',
+      'const bytes = readFileSync("bytes");',
+      'const text: string = readFileSync("data");',
+      'const bad = readFileSync("data", { encoding: "latin1" });',
+      'save("bytes", new Uint8Array([1, 2]));',
+      'save("text", "未指定编码");',
+      'save("text", "正常", { encoding: "utf-8" });',
+      'try { recover(); } catch {}',
+      'try { recover(); } catch { ; }',
+      'try { cleanup(); } catch { /* The child may have exited. */ }',
+      'db.exec("PRAGMA user_version=12");',
+      'db.query("PRAGMA user_version").get();',
+    ].join("\n"),
+  });
+  expect(problems).toEqual([
+    "backend/src/library.ts:3:22 控制面文件文本须使用 UTF-8 编码",
+    "backend/src/library.ts:4:13 控制面文件文本须使用 UTF-8 编码",
+    "backend/src/library.ts:6:1 控制面文件文本须显式使用 UTF-8 编码",
+    "backend/src/library.ts:8:20 空 catch 必须说明可忽略该错误的原因",
+    "backend/src/library.ts:9:20 空 catch 必须说明可忽略该错误的原因",
+    "backend/src/library.ts:11:1 Bun 数据表初始化保留历史 SQLite user_version",
+  ]);
+});
+
+test("checks numbering and uniqueness of archived SQL migration filenames", () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-migration-policy-"));
+  try {
+    const archive = "removed/python/src/mao/migrations";
+    const directory = join(root, archive);
+    mkdirSync(directory, { recursive: true });
+    for (const file of ["002_jobs.sql", "002_runs.sql", "unversioned.sql", "README.md"]) {
+      writeFileSync(join(directory, file), "", "utf8");
+    }
+    expect(archivedMigrationProblems(root)).toEqual([
+      `${archive}/002_runs.sql: 历史 SQL 迁移编号 002 与 ${archive}/002_jobs.sql 重复`,
+      `${archive}/unversioned.sql: 历史 SQL 迁移文件名应使用 NNN_<名字>.sql`,
+    ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
