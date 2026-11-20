@@ -13,7 +13,7 @@ export type AcpInput = {
   end?(): Promise<void> | void;
 };
 
-export type AcpSpawn = (argv: string[], options: Pick<HarnessSessionRequest, "cwd" | "containerImage" | "network" | "egressBaseUrl" | "foremanMailbox" | "projectSources" | "materialFiles">
+export type AcpSpawn = (argv: string[], options: Pick<HarnessSessionRequest, "cwd" | "containerImage" | "network" | "egressBaseUrl" | "foremanMailbox" | "trustedForeman" | "foremanWorkspace" | "projectSources" | "materialFiles">
   & { env: Record<string, string>; stdout: "pipe"; stdin: "pipe" }) => AcpProcess | Promise<AcpProcess>;
 
 const PROMPT_ID = 3;
@@ -288,7 +288,7 @@ export class AcpTransport implements HarnessTransport {
     const process = await this.spawn([this.definition.executable, ...args], {
       cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network,
       egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox, projectSources: request.projectSources,
-      materialFiles: request.materialFiles,
+      materialFiles: request.materialFiles, trustedForeman: request.trustedForeman, foremanWorkspace: request.foremanWorkspace,
     });
     const session = new AcpSession(process);
     let timeout: ReturnType<typeof setTimeout> | undefined;

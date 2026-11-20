@@ -129,7 +129,7 @@ Machine 是否承担 sink 或交付语义由 Foreman 和项目配置根据现有
 
 ### 5.2 厂区层
 
-厂区层只展示 Operator 和 Machine。节点卡片只显示对应项目或职责、Harness 摘要和简短状态。复杂执行细节由 Operator 控制，进入节点详情、Foreman 对话和日志上下文，不把不属于项目能力的控制项塞入画布。
+厂区层只展示 Operator 和 Machine。节点卡片只显示对应项目或职责、Harness 摘要和简短状态。复杂执行细节由 Operator 控制，进入节点详情、Foreman 对话和日志上下文，不把不属于项目能力的控制项塞入画布。Foreman 只维护最简的业务架构边界，一个需要多个工具协作的完整职责应归并为一个 Machine，由 Operator 负责其内部工具选择、顺序和恢复。
 
 Operator 详情可以展示负责的项目或目标、Harness、输入输出契约、最近验证和最近资源请求。Machine 详情可以展示开源项目、Git 地址、上传文件或工作流文件、输入类型、输出类型和当前验证摘要。Machine 详情不允许人设置 sink。
 
@@ -324,12 +324,14 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
 - 保存厂长 Harness 配置后，控制面立即重新扫描此前已入队的厂长消息并派发，不要求重启服务或用户再次点击 dispatch。服务启动和恢复周期会按 `claimed_at` 回收超过 `MAO_FOREMAN_CLAIM_TIMEOUT_S` 的失联轮次，默认超时为 900 秒，并记录 `foreman.message.requeued` 事件。
 - 容器厂长轮次按隔离邮箱并发派发。使用本机可恢复会话的厂长轮次只在同一 Harness profile 内保持顺序，避免共享官方 session，同时不让一个 profile 的轮次阻塞其他 profile 或容器轮次。
+- 项目来源准备由平台拥有的 SourceFetcher 负责，不要求 Foreman 镜像预装 Git。SourceFetcher 使用持久化 `FACTORY_ROOT/source-cache`，优先使用无交互 Git 浅克隆，宿主缺少 Git 时对 GitHub HTTP(S) 来源使用官方仓库元数据和 codeload 归档，并校验归档路径、大小和摘要。来源 facts 记录工具、来源摘要和 revision，缓存目录不随 Harness 轮次清理。非 GitHub 来源缺少 Git 时产生 `SOURCE_TOOL_UNAVAILABLE`，后续由资源等待与恢复流程接管。
+- 可信容器 Foreman 的仓库链接继续作为来源数据交给官方 Harness。Foreman 启动后可以在 `/workspace` 私有工作区内自行安装 Git、Scion 或项目需要的其他工具并下载、检验和切换源码。平台只准备已登记的上传文件和本地目录挂载，不在 Foreman 启动前替它决定项目内部工具和执行时序。
 - Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，每个新领用的 Operator 单元在 SQLite 保存执行进程归属。Linux 服务启动时在同一内核启动和 PID 命名空间内检查归属，只有系统确认原 PID 已退出才将其置为 `failed` 并记录 `CONTROL_PLANE_RESTART`，保留已登记产物与会话编号。外部执行结果由用户核对后决定后续动作。活跃、无法核实以及历史没有归属记录的 `running` 单元保留原状态。等待资源的单元继续通过现有资源请求流程恢复。容器化 Operator 在领取单元前检查运行时。检查失败、超时或服务停止时，单元保留 `queued` 状态。成功执行 `POST /api/v1/runtime/ensure-ready` 后，通过正常 DAG 就绪规则恢复已授权的排队工作。服务在五秒内复用确认在线的运行时状态。
 - kernel 绑定的 Machine 运行在 `unit_run.session_id=legacy:<unit-run-id>` 下，并在 BusinessRun metadata 保存 legacy Run ID。控制面重启后按该 Run ID 调用既有 `LineRunner` 恢复，避免重新提交 Job；若崩溃发生在 Run ID 持久化之前，则启动一个新的 legacy Run 并把旧的 Machine 运行标为失败或由用户重试。
 - Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
 - ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环。Pi 的官方 CLI 使用 `--print --mode json`，Qwen Code 的官方 CLI 使用 `-p PROMPT --output-format stream-json`，两者均由控制面解析 stdout JSONL。DeepSeek Harness、Kimi Code 和 ZCode 没有可用 ACP 时必须直接报告 Harness 不可用，不能回退到未确认的通用 CLI 参数。没有容器镜像时，Operator 和 Foreman 都可以发现宿主 PATH 中与声明 Harness 相匹配的官方 ACP 可执行文件。Operator 和 Foreman profile 提供 digest 固定的容器镜像时，镜像内的官方 ACP 入口属于该轮的 ACP 能力，不要求宿主 PATH 另有 ACP 可执行文件
 - ACP 使用官方 `sessionId`。只有 Harness 在初始化中声明 `loadSession` 时才请求恢复会话，恢复时收到的历史通知不进入当前回复。`session/prompt` 响应中的 `end_turn` 结束当前轮，无须等待 stdout 关闭。其他停止原因、JSON-RPC 错误和提前 EOF 终止当前轮并保留原因。握手限时 30 秒，单条消息最大 1 MiB，启动前暂存最多 128 条通知和 4 MiB。
-- Harness profile 提供 digest 固定的 `image` 时，官方 CLI 和 ACP 使用活动容器运行时。启动前控制面检查本地镜像，缺失时按 GeoIP 选择 Docker Hub 镜像源拉取并再次校验原始 digest。拉取失败或摘要不一致时，运行保持未启动并返回明确的镜像诊断。Linux Kiri 默认以 `docker --host unix:///run/kiri/docker.sock run` 启动。沙箱使用非 root、只读根文件系统、`--init`、`--pids-limit 256`、`--tmpfs /tmp` 和 `cap-drop ALL`，默认网络为 `none`。官方 Harness 子进程的 stderr 只保留有界诊断，并在进入事件、日志和错误状态前替换部署凭据及常见密钥字段
+- Harness profile 提供 digest 固定的 `image` 时，官方 Operator CLI 和 ACP 使用活动容器运行时。启动前控制面检查本地镜像，缺失时按 GeoIP 选择 Docker Hub 镜像源拉取并再次校验原始 digest。拉取失败或摘要不一致时，运行保持未启动并返回明确的镜像诊断。Linux Kiri 默认以 `docker --host unix:///run/kiri/docker.sock run` 启动。Operator 沙箱使用非 root、只读根文件系统、`--init`、`--pids-limit 256`、`--tmpfs /tmp` 和 `cap-drop ALL`，默认网络为 `none`。可信容器 Foreman 使用同一宿主路径命名空间下的独立工作区，以 root 身份运行并允许在容器私有根文件系统内安装和执行项目工具。Foreman 容器不挂载宿主引擎套接字、宿主网络或工作区之外的宿主路径。官方 Harness 子进程的 stderr 只保留有界诊断，并在进入事件、日志和错误状态前替换部署凭据及常见密钥字段
 - 容器内的 `HOME`、XDG 配置和缓存使用本轮的 `/tmp`。控制面给每个容器分配名称，会话停止时清理该名称对应的容器。
 - 容器 Harness 选择 `egress` 时，启动器先确认隔离代理就绪，再把官方 CLI 的 JSONL 或 ACP 的双向标准流接入会话。出网目标取已保存的 Base URL 主机和部署方配置的 `MAO_HARNESS_EGRESS_HOSTS`。该路径使用本地固定的 `MAO_EGRESS_RELAY_IMAGE`。会话结束或取消时清理隔离代理及容器。 [出网规范](egress.md)
 - Windows 原生 Claude Code 直接通过 PATH 找到的 `claude.exe` 启动。PATH 命中 npm 的 `claude.cmd` 时，优先启动同一安装目录下官方包附带的 `node_modules/@anthropic-ai/claude-code/bin/claude.exe`，使包含换行的提示词原样进入 CLI。找不到原生文件时沿用 PATH 启动。

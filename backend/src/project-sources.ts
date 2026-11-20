@@ -27,6 +27,9 @@ export function projectSourceFacts(project: Project, localAccess: boolean): Arra
   name: string | undefined;
   download: string | undefined;
   commit?: string;
+  source_revision?: string;
+  source_digest?: string;
+  source_tool?: "git" | "github-archive";
   checkout?: string;
 }> {
   return project.sources.map((source) => {

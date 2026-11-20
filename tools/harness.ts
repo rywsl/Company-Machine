@@ -44,7 +44,7 @@ function verifyMrl(spec: ReturnType<typeof inspectSpecifications>) {
 }
 
 function checkBackendTypes(json: boolean): void {
-  run("后端 TypeScript", ["pnpm", "--filter", "@mao/web", "exec", "tsc", "--noEmit", "-p", "../backend/tsconfig.json", "--pretty", "false"], json);
+  run("后端 TypeScript", ["bun", "run", "--cwd", "frontend", "tsc", "--noEmit", "-p", "../backend/tsconfig.json", "--pretty", "false"], json);
 }
 
 function verifyParity(spec: ReturnType<typeof inspectSpecifications>, caseCount: number, json: boolean): number {
@@ -101,7 +101,7 @@ function main(): number {
     const count = Object.values(mrl.passed).reduce((sum, value) => sum + value, 0);
     console.error(`✔ MRL 一致性（${count} 项，${spec.diagnosticRules.length} 条内核诊断规则有触发证据）`);
     checkBackendTypes(json);
-    run("Web TypeScript", ["pnpm", "check:web"]);
+    run("Web TypeScript", ["bun", "run", "--cwd", "frontend", "check"]);
     console.error("✔ 后端与 Web TypeScript");
     console.error(`历史验收已有 ${spec.evidence.size}/${spec.obligations.size} 项 Bun 等价映射。运行 parity 检查完整迁移`);
   }

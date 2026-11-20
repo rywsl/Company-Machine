@@ -33,14 +33,18 @@ async function askMailbox(root: string, index: number, op: string, args: Record<
 
 test("applies a container Foreman mailbox request within its intake scope", async () => {
   let root: string | undefined;
+  let sourceOptions: { cloneRepositories?: boolean } | undefined;
   let sourcePrompt = "";
   const replies: MailboxReply[] = [];
   const app = createApp({
     dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
     runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
-    foreman: { prepareSources: async () => undefined, spawn: async (argv, options) => {
+    foreman: { prepareSources: async (_project, options) => { sourceOptions = options; return undefined; }, spawn: async (argv, options) => {
       root = options.foremanMailbox;
       if (!root) throw new Error("Expected scoped mailbox");
+      expect(options.trustedForeman).toBe(true);
+      expect(options.foremanWorkspace).toBeTruthy();
+      expect(options.foremanWorkspace && existsSync(options.foremanWorkspace)).toBe(true);
       sourcePrompt = argv.join(" ");
       expect(options.env).not.toHaveProperty("FACTORY_DB_PATH");
       const ask = async (index: number, op: string, args: Record<string, unknown>) => {
@@ -84,6 +88,7 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
     expect(app.store.getBusinessSystem(project.businessSystemId!)?.metadata.graph).toEqual(graph);
     expect(app.store.getBusinessSystem(other.id)?.metadata.graph).toBeUndefined();
     expect(sourcePrompt).toContain("/mao/foreman/requests");
+    expect(sourceOptions?.cloneRepositories).toBe(false);
     expect(sourcePrompt).not.toContain("其他业务");
     expect(app.store.getForemanMessage(body.foreman_inbox_id)?.status).toBe("done");
     expect(root && existsSync(root)).toBe(false);

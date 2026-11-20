@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import type { ForemanTurnState } from "./models";
@@ -22,6 +24,8 @@ export interface ForemanCoordinatorOptions {
   fetchBusiness?: (request: Request) => Promise<Response>;
   registerRepository?: RegisterRepository;
   prepareSources?: PrepareProjectSources;
+  /** Persistent writable workspaces for trusted container Foreman sessions. */
+  foremanWorkspaceRoot?: string;
 }
 
 const nativeBusinessContract = [
@@ -191,7 +195,10 @@ export class ForemanCoordinator {
         : [];
       const project = intake && typeof message.project_id === "string" ? this.options.store.getProject(message.project_id) : undefined;
       if (project && profile.image && this.options.prepareSources) {
-        const prepared = this.options.prepareSources(project).then((result) => {
+        // A trusted Foreman can install and invoke whatever project tools it
+        // discovers. Repository checkout stays inside its private workspace.
+        // The platform only mounts already local/uploaded sources here.
+        const prepared = this.options.prepareSources(project, { cloneRepositories: false }).then((result) => {
           if (finishing) result?.close();
           else sourceMounts = result;
           return result;
@@ -199,6 +206,11 @@ export class ForemanCoordinator {
         await turn.wait(prepared);
       }
       const sources = sourceMounts?.facts ?? (project ? projectSourceFacts(project, !profile.image) : undefined);
+      const workspaceKey = (value: string) => value.replace(/[^A-Za-z0-9_.-]/g, "_");
+      const workspace = profile.image && this.options.foremanWorkspaceRoot
+        ? join(this.options.foremanWorkspaceRoot, workspaceKey(profile.id), workspaceKey(project?.id ?? "general"))
+        : undefined;
+      if (workspace) mkdirSync(workspace, { recursive: true });
       const intakeSystem = intake && project?.businessSystemId ? this.options.store.getBusinessSystem(project.businessSystemId) : undefined;
       const systems = intake ? (intakeSystem ? [intakeSystem] : []) : this.options.store.listBusinessSystemSummaries();
       if (profile.image && this.options.fetchBusiness) {
@@ -216,6 +228,7 @@ export class ForemanCoordinator {
       const session = await turn.start(transport, {
         task: `${history.length ? `历史对话（上下文数据，请以当前来信为准）\n${JSON.stringify(history)}\n\n当前来信\n` : ""}${claimed.text}${projectContext}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${systems.map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
         contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。"
+          + (profile.image ? " 当前是受控的可信 Foreman 容器。你可以在容器内以 root 安装 Git、Scion、ffmpeg、音频工具和项目自定义依赖，执行任意项目脚本。所有修改限制在容器和挂载的项目工作区内，不得访问宿主引擎套接字、宿主网络或工作区之外的宿主路径。先搭建最简业务 DAG，把工具组合和内部时序交给 Operator。" : "")
           + (mailbox ? foremanMailboxContract : nativeBusinessContract + " "
             + (intake ? "使用本次项目和业务系统 ID 处理已经登记的项目。" : nativeRegistrationContract)),
         model: profile.model,
@@ -229,6 +242,8 @@ export class ForemanCoordinator {
         network: profile.network === "egress" ? "egress" : "none",
         egressBaseUrl: credential?.baseUrl ?? profile.baseUrl,
         foremanMailbox: mailbox?.root,
+        trustedForeman: Boolean(profile.image),
+        foremanWorkspace: workspace,
         projectSources: sourceMounts?.mounts,
       });
       if (stopped()) return;

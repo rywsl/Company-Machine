@@ -6,6 +6,7 @@ import type { Project } from "./models";
 import { projectSourceFacts, repositoryReference } from "./project-sources";
 import { runCommand } from "../runtime/podman";
 import { resolveGitExecutable } from "../runtime/git";
+import { SourceFetcher } from "./source-fetcher";
 
 export type ProjectSourceMount = { source: string; index: number };
 export const projectSourceRoot = "/mao/sources";
@@ -42,6 +43,10 @@ export interface PrepareProjectSourcesOptions {
   cloneRepositories?: boolean;
   /** Fail when a registered source cannot be resolved on this host. */
   strict?: boolean;
+  /** Persistent source cache used by the platform-owned source fetcher. */
+  sourceCacheRoot?: string;
+  /** Injected source provider for tests or a deployment-specific fetcher. */
+  sourceFetcher?: SourceFetcher;
 }
 
 export async function prepareProjectSources(
@@ -52,6 +57,7 @@ export async function prepareProjectSources(
 ) {
   const cloneRepositories = options.cloneRepositories ?? true;
   const strict = options.strict ?? false;
+  const sourceFetcher = options.sourceFetcher ?? (options.sourceCacheRoot ? new SourceFetcher({ cacheRoot: options.sourceCacheRoot }) : undefined);
   const protectedRoots = [...protectedPaths.filter((path) => path !== ":memory:").map((path) => {
     try { return realpathSync(path); } catch { return resolve(path); }
   }), ...(process.platform === "linux" ? ["/dev", "/proc", "/sys"] : [])];
@@ -88,22 +94,34 @@ export async function prepareProjectSources(
           }
         }
       } else if (source.kind === "repo_url" && source.repoUrl && cloneRepositories) {
-        staging ??= mkdtempSync(join(tmpdir(), "mao-source-"));
-        const checkout = join(staging, String(index));
-        const cloned = await runCommand([git, "clone", "--depth", "1", "--no-tags", "--", source.repoUrl, checkout], {
-          timeoutMs: 180_000,
-          env: { GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
-        });
-        if (cloned.exitCode !== 0) throw new Error("project repository clone failed");
-        const revision = await runCommand([git, "-C", checkout, "rev-parse", "HEAD"], {
-          timeoutMs: 30_000,
-          env: { GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
-        });
-        if (revision.exitCode !== 0) throw new Error("project repository revision lookup failed");
-        const commit = new TextDecoder().decode(revision.stdout).trim();
-        if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("project repository revision is invalid");
-        facts[offset] = { ...facts[offset], commit, checkout: `intake://${project.id}/${source.id}` };
-        hostPath = checkout;
+        if (sourceFetcher) {
+          const fetched = await sourceFetcher.fetch(source.repoUrl);
+          facts[offset] = {
+            ...facts[offset],
+            ...(fetched.tool === "git" ? { commit: fetched.revision } : { source_revision: fetched.revision }),
+            source_digest: fetched.digest,
+            source_tool: fetched.tool,
+            checkout: `intake://${project.id}/${source.id}`,
+          };
+          hostPath = fetched.checkout;
+        } else {
+          staging ??= mkdtempSync(join(tmpdir(), "mao-source-"));
+          const checkout = join(staging, String(index));
+          const cloned = await runCommand([git, "clone", "--depth", "1", "--no-tags", "--", source.repoUrl, checkout], {
+            timeoutMs: 180_000,
+            env: { GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
+          });
+          if (cloned.exitCode !== 0) throw new Error("project repository clone failed");
+          const revision = await runCommand([git, "-C", checkout, "rev-parse", "HEAD"], {
+            timeoutMs: 30_000,
+            env: { GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
+          });
+          if (revision.exitCode !== 0) throw new Error("project repository revision lookup failed");
+          const commit = new TextDecoder().decode(revision.stdout).trim();
+          if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("project repository revision is invalid");
+          facts[offset] = { ...facts[offset], commit, checkout: `intake://${project.id}/${source.id}` };
+          hostPath = checkout;
+        }
       } else if (source.kind === "repo_url" && source.repoUrl && !cloneRepositories) {
         if (!repositoryReference(source.repoUrl, "intake") && strict) throw new Error("project-repository-invalid");
       } else if (strict) {
@@ -126,4 +144,4 @@ export async function prepareProjectSources(
 }
 
 export type PreparedProjectSources = Awaited<ReturnType<typeof prepareProjectSources>>;
-export type PrepareProjectSources = (project: Project) => Promise<PreparedProjectSources | undefined>;
+export type PrepareProjectSources = (project: Project, options?: PrepareProjectSourcesOptions) => Promise<PreparedProjectSources | undefined>;

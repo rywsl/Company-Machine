@@ -3,8 +3,8 @@
   "private": true,
   "packageManager": "pnpm@11.16.0",
   "scripts": {
-    "build:web": "pnpm --filter @mao/web build",
-    "check:web": "pnpm --filter @mao/web check",
+    "build:web": "bun run --cwd frontend build",
+    "check:web": "bun run --cwd frontend check",
     "backend:dev": "bun run backend/src/index.ts",
     "factory": "bun run backend/src/cli.ts",
     "factory:bun": "bun run backend/src/cli.ts",

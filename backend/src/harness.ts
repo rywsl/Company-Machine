@@ -41,6 +41,10 @@ export interface HarnessSessionRequest {
   network?: "none" | "egress";
   egressBaseUrl?: string;
   foremanMailbox?: string;
+  /** A trusted Foreman container gets a writable private root and root UID. */
+  trustedForeman?: boolean;
+  /** Host directory isolated for a trusted Foreman container's workspace. */
+  foremanWorkspace?: string;
   projectSources?: ProjectSourceMount[];
   materialFiles?: { outputDirectory: string; inputs: MaterialInputMount[] };
 }
@@ -74,7 +78,7 @@ export type OfficialProcess = {
   kill(): void | Promise<void>;
 };
 
-type SpawnOptions = Pick<HarnessSessionRequest, "cwd" | "containerImage" | "network" | "egressBaseUrl" | "foremanMailbox" | "projectSources" | "materialFiles">
+type SpawnOptions = Pick<HarnessSessionRequest, "cwd" | "containerImage" | "network" | "egressBaseUrl" | "foremanMailbox" | "trustedForeman" | "foremanWorkspace" | "projectSources" | "materialFiles">
   & { env: Record<string, string>; stdout: "pipe"; stdin?: "pipe" };
 type HarnessRelay = Awaited<ReturnType<typeof prepareHarnessEgress>>;
 export type OfficialSpawn = (argv: string[], options: SpawnOptions) => OfficialProcess | Promise<OfficialProcess>;
@@ -295,14 +299,14 @@ export class OfficialCliTransport implements HarnessTransport {
     const process = await this.spawn(officialCliInvocation(this.definition, request), {
       cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage,
       network: request.network, egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox, projectSources: request.projectSources,
-      materialFiles: request.materialFiles,
+      materialFiles: request.materialFiles, trustedForeman: request.trustedForeman, foremanWorkspace: request.foremanWorkspace,
     });
     return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${this.clock.now().getTime()}`);
   }
 }
 
 export function harnessProcessCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "projectSources" | "materialFiles">,
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "trustedForeman" | "foremanWorkspace" | "projectSources" | "materialFiles">,
 ): { command: string[]; env: Record<string, string> } {
   const { command, env } = processCommand(argv, options);
   return { command, env };
@@ -327,7 +331,7 @@ function materialMountPath(path: string) {
 }
 
 function processCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "projectSources" | "materialFiles">,
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "trustedForeman" | "foremanWorkspace" | "projectSources" | "materialFiles">,
   relay?: HarnessRelay, containerName?: string,
 ) {
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
@@ -339,10 +343,13 @@ function processCommand(
   const configured = relay?.env(options.env) ?? options.env;
   const image = options.containerImage;
   validateImage(image);
+  if (options.trustedForeman && !image) throw new Error("Trusted Foreman requires a pinned container image");
   const network = options.network ?? "none";
   if (network !== "none" && network !== "egress") throw new Error("Harness network must be none or egress");
   if (image && network === "egress" && !relay) throw new Error("Harness egress requires a verified isolated relay");
-  const scratch = { HOME: "/tmp", XDG_CONFIG_HOME: "/tmp/.config", XDG_CACHE_HOME: "/tmp/.cache" };
+  const scratch = options.trustedForeman
+    ? { HOME: "/root", XDG_CONFIG_HOME: "/root/.config", XDG_CACHE_HOME: "/root/.cache" }
+    : { HOME: "/tmp", XDG_CONFIG_HOME: "/tmp/.config", XDG_CACHE_HOME: "/tmp/.cache" };
   const envNames = Object.keys(configured).filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !Object.hasOwn(scratch, name));
   if (image) for (const name of envNames) env[name] = configured[name];
   else Object.assign(env, configured);
@@ -376,6 +383,12 @@ function processCommand(
       "--mount", "type=bind,source=" + join(root, "responses") + ",target=" + foremanMailboxTarget + "/responses,readonly",
     );
   }
+  if (options.foremanWorkspace !== undefined) {
+    if (!options.trustedForeman || !materialMountPath(options.foremanWorkspace)?.isDirectory()) {
+      throw new Error("Trusted Foreman workspace requires a canonical directory");
+    }
+    mounts.push("--mount", "type=bind,source=" + options.foremanWorkspace + ",target=/workspace");
+  }
   const indexes = new Set<number>();
   if (options.projectSources?.length && (!image || !supportsLocalProjectMounts())) {
     throw new Error("Project source mounts require a local Linux container runtime");
@@ -395,9 +408,10 @@ function processCommand(
   const command = image
     ? [
       ...engine, "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m",
-      "--network", relay?.network ?? "none", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-      "--read-only", ...(containerName ? ["--name", containerName] : []), ...(relay ? ["--pull=never"] : []),
-      ...mounts, ...envFlags, ...scratchFlags, relay?.image ?? image, ...argv,
+      "--network", relay?.network ?? "none",
+      ...(options.trustedForeman ? ["--user", "0:0"] : ["--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only"]),
+      ...(containerName ? ["--name", containerName] : []), ...(relay ? ["--pull=never"] : []),
+      ...mounts, ...envFlags, ...scratchFlags, "--workdir", "/workspace", relay?.image ?? image, ...argv,
     ]
     : argv;
   if (kiri) Object.assign(env, kiri.env);

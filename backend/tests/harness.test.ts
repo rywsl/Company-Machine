@@ -124,6 +124,28 @@ test("gives container Harness configuration a writable temporary home", () => {
   expect(result.env.HOME).not.toBe("/configured");
 });
 
+test("gives a trusted Foreman a root-only private workspace without host engine access", () => {
+  const workspace = mkdtempSync(join(realpathSync(tmpdir()), "mao-foreman-workspace-"));
+  const image = "registry.example/foreman@sha256:" + "a".repeat(64);
+  try {
+    const result = harnessProcessCommand(["claude"], {
+      containerImage: image, network: "none", env: {}, trustedForeman: true, foremanWorkspace: workspace,
+    });
+    expect(result.command).toContain("--user");
+    expect(result.command).toContain("0:0");
+    expect(result.command).toContain("--workdir");
+    expect(result.command).toContain("/workspace");
+    expect(result.command).toContain(`type=bind,source=${workspace},target=/workspace`);
+    expect(result.command).not.toContain("--read-only");
+    expect(result.command).not.toContain("--cap-drop");
+    expect(result.command).not.toContain("--privileged");
+    expect(result.command).toContain("--network");
+    expect(result.command).not.toContain("host");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("mounts only validated Operator material files on a local Linux container engine", () => {
   const root = mkdtempSync(join(realpathSync(tmpdir()), "mao-harness-material-"));
   const outputDirectory = join(root, "outputs");

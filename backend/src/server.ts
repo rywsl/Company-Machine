@@ -340,20 +340,21 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     events.publish("project.intake.created", publicProject(project));
     return { projectId: project.id, systemId: system.id };
   };
-  const prepareSources: PrepareProjectSources = (project) => prepareProjectSources(project, (digest) => {
+  const prepareSources: PrepareProjectSources = (project, sourceOptions) => prepareProjectSources(project, (digest) => {
     const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
     if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
-  }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)]);
-  const prepareMachineSources: PrepareProjectSources = (project) => prepareProjectSources(project, (digest) => {
+  }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)], { sourceCacheRoot: join(storageRoot, "source-cache"), ...sourceOptions });
+  const prepareMachineSources: PrepareProjectSources = (project, sourceOptions) => prepareProjectSources(project, (digest) => {
     const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
     if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
-  }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)], { cloneRepositories: false, strict: true });
+  }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)], { cloneRepositories: false, strict: true, ...sourceOptions });
   const foreman = new ForemanCoordinator({
     store, events, ...options.foreman, ensureRuntime,
     readSecret: (ref) => vault.get(ref),
     factoryEnv: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: databasePath(store.legacyPath), BUSINESS_DB_PATH: databasePath(store.dbPath) },
     fetchBusiness: (request) => fetch(request),
     prepareSources: options.foreman?.prepareSources ?? prepareSources,
+    foremanWorkspaceRoot: join(storageRoot, "foreman", "workspaces"),
     registerRepository,
   });
   let stopped = false;
