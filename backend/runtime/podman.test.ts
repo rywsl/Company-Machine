@@ -65,6 +65,20 @@ describe("PodmanProvider", () => {
     await expect(provider.health()).resolves.toMatchObject({ available: false, reason: "missing" });
   });
 
+  test("requires a rootless Podman service on Linux", async () => {
+    const rootful = new PodmanProvider({
+      platform: "linux",
+      runner: async () => ok(JSON.stringify({ host: { security: { rootless: false } } })),
+    });
+    await expect(rootful.health()).resolves.toMatchObject({ available: false, rootless: false, reason: "podman-rootless-required" });
+
+    const unknown = new PodmanProvider({
+      platform: "linux",
+      runner: async () => ok(JSON.stringify({ host: {} })),
+    });
+    await expect(unknown.health()).resolves.toMatchObject({ available: false, rootless: null, reason: "podman-rootless-unknown" });
+  });
+
   test("exec writes stdout and stderr through the provider", async () => {
     const calls: string[][] = [];
     const provider = new PodmanProvider({

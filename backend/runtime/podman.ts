@@ -236,6 +236,7 @@ export class PodmanProvider implements ContainerProvider {
   private readonly egressEnv: Record<string, string>;
   private readonly executable: string;
   private readonly machine: string | null;
+  private readonly platformOverride: string | undefined;
 
   constructor(options: {
     executable?: string;
@@ -245,6 +246,7 @@ export class PodmanProvider implements ContainerProvider {
     /** Proxy variables supplied by the managed egress service. */
     egressEnv?: Record<string, string>;
     machine?: string;
+    platform?: string;
     runner?: CommandRunner;
   } = {}) {
     this.executable = resolvePodmanExecutable(options.executable);
@@ -260,6 +262,7 @@ export class PodmanProvider implements ContainerProvider {
       throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid managed egress network", { field: "egressNetwork" });
     }
     this.machine = options.machine ?? null;
+    this.platformOverride = options.platform;
     this.run = options.runner ?? runCommand;
   }
 
@@ -304,17 +307,21 @@ export class PodmanProvider implements ContainerProvider {
   }
 
   async health(): Promise<RuntimeHealth> {
+    const platform = this.platformOverride ?? platformName();
     try {
       const result = await this.run([this.executable, "info", "--format", "json"], { timeoutMs: 10_000 });
-      if (result.exitCode !== 0) return { available: false, platform: platformName(), executable: this.executable, machine: this.machine, rootless: null, reason: text(result.stderr) || "podman-info-failed" };
+      if (result.exitCode !== 0) return { available: false, platform, executable: this.executable, machine: this.machine, rootless: null, reason: text(result.stderr) || "podman-info-failed" };
       let rootless: boolean | null = null;
       try {
         const info = JSON.parse(text(result.stdout)) as { host?: { security?: { rootless?: boolean } } };
         rootless = typeof info.host?.security?.rootless === "boolean" ? info.host.security.rootless : null;
       } catch { /* older Podman can return a non-JSON info response */ }
-      return { available: true, platform: platformName(), executable: this.executable, machine: this.machine, rootless };
+      if (platform === "linux" && rootless !== true) {
+        return { available: false, platform, executable: this.executable, machine: this.machine, rootless, reason: rootless === false ? "podman-rootless-required" : "podman-rootless-unknown" };
+      }
+      return { available: true, platform, executable: this.executable, machine: this.machine, rootless };
     } catch (error) {
-      return { available: false, platform: platformName(), executable: this.executable, machine: this.machine, rootless: null, reason: error instanceof Error ? error.message : "podman-unavailable" };
+      return { available: false, platform, executable: this.executable, machine: this.machine, rootless: null, reason: error instanceof Error ? error.message : "podman-unavailable" };
     }
   }
 

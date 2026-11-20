@@ -400,6 +400,8 @@ Linux 使用 Kiri 的原生 headless 方案，官方 `kiri` 包直接在宿主 L
 | `test_local_provider_rewrites_virtual_paths` | 5.6：`FACTORY_IN` 被换成 mount 的 source；`python3` 走当前解释器 |
 | `test_docker_exec_is_non_root_without_sock` | `@pytest.mark.docker`。真的 `open`/`exec`：`id -u` 是 `10001`，容器里没有 `/var/run/docker.sock` |
 
+活动 Bun runtime 还覆盖 `test_requires_a_rootless_podman_service_on_linux`，锁定 Linux Podman 健康检查拒绝 rootful 或无法确认 rootless 的服务。
+
 活动 Bun runtime 测试位于 `backend/runtime/kiri.test.ts`。`routes hardened container argv through the embedded Kiri CLI` 锁定直接 `kiri run` 的安全参数，`supports Kiri installations exposed as a Docker context` 锁定 `docker --context` 兼容路径，`probes the embedded Kiri CLI directly` 锁定 headless 健康探测，`reports the Kiri context while using the Docker Engine API` 锁定 context 的健康结果，`rejects malformed context names` 锁定输入校验。Linux daemon 的实际启动由运行环境的 `POST /api/v1/runtime/ensure-ready` 探针验证，测试替身通过注入 `CommandRunner` 保持离线。
 
 Docker 测试在没有守护进程时由 `tests/conftest.py` 跳过；`MAO_REQUIRE_DOCKER=1` 时改为失败（R13）。镜像未构建时测试失败并指向 `tools/build_test_images.py`，不跳过。
