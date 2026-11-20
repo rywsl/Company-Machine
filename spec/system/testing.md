@@ -144,6 +144,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/legacy-snapshot.test.ts` | 目录树 epoch、类型索引、编译表达式查找、冻结快照重启读取、旧记录补齐和跨 epoch 执行保护 |
 | `backend/tests/registry-epochs.test.ts` | Git 提交冻结、解析表保留、active 指针与引用、回滚、保留判定及签名边界 |
 | `backend/tests/legacy-gate.test.ts` | 来料检查、空产物工位、列表产物、元数据、validator 结果及封存边界 |
+| `backend/tests/admit-runtime.test.ts` | 通过 CLI、Runner 与产线验证实测 facts、参数、列表输入和 Source 汇合 |
 | `backend/tests/legacy-harvest.test.ts` | 工位产物采集、路径边界、匹配顺序和异常结果 |
 | `backend/tests/legacy-connectors.test.ts` | Source 摄入与检验、Sink 幂等发布与核验、超时及拒绝的回执状态、回执血缘和沙箱命令 |
 | `backend/tests/legacy-egress.test.ts` | Registry 出网策略编译、授权等级、域名与方法匹配、CONNECT 和非法配置 |
@@ -241,6 +242,13 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `removed/python/tests/acceptance/m1/test_m1_06_gate.py::test_report_json_and_digest` | `backend/tests/legacy-gate.test.ts` | `checks output structure, measured facts, guarantees, acceptance and metadata` | 报告字段、检查阶段和确定的规范摘要 |
 | `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_all_admit_failures_reported` | `backend/tests/legacy-gate.test.ts` | `reports all admission failures and MRL error codes before creating a job` | 按声明顺序报告所有为假的准入规则 |
 | `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_admit_eval_error_fails_closed` | `backend/tests/legacy-gate.test.ts` | `reports all admission failures and MRL error codes before creating a job` | 准入拒绝区分规则为假和 `MRL-DIV-ZERO`，拒绝时不写入作业或 `job.created` |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_job_run_admits_matching_pair` | `backend/tests/admit-runtime.test.ts` | `job run accepts matching measured facts and seals the output` | 两份来料的实测 facts 匹配后经 CLI 执行，验收产物封存及其 facts |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_job_run_rejects_mismatch_without_job` | `backend/tests/admit-runtime.test.ts` | `job run reports the precise JSON admission error without creating a job` | CLI 退出 1 并输出唯一 `admit[0]` 问题，数据库无作业或 `job.created` |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_port_problems_skip_admit` | `backend/tests/admit-runtime.test.ts` | `Runner reports port problems before evaluating admission rules` | 属性或类型有误时仅报告对应端口问题，未写入作业 |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_admit_reads_params` | `backend/tests/admit-runtime.test.ts` | `Runner evaluates admission with default and explicit parameters` | 准入读取规范化后的缺省和显式参数，错误参数值触发两条规则失败且不创建作业 |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_admit_over_list_port` | `backend/tests/admit-runtime.test.ts` | `Runner evaluates admission across a list port and preserves input order` | 逐项比较实测 facts 并检查列表长度，保留作业引用顺序 |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_line_node_fails_on_admit` | `backend/tests/admit-runtime.test.ts` | `line run records the failed admission on the node before creating a job` | 准入拒绝使产线和节点失败，保留结构化详情，节点未建作业。匹配来料可成功执行 |
+| `removed/python/tests/acceptance/m14/test_m14_02_admit_runtime.py::test_source_material_joins_existing_bean` | `backend/tests/admit-runtime.test.ts` | `Source material joins an existing Bean and stays sealed after downstream admission fails` | 封存 Source 产物与已有来料汇合，校验成功产物。下游拒绝时 Source 保持完成且产物已封存 |
 | `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_result_and_unknown` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 统计陌生合法事件并提取费用、轮数和结果 |
 | `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_malformed_and_last_result_wins` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 异常行计数、最后结果及非法字段类型 |
 | `removed/python/tests/acceptance/m1/test_m1_07_operator.py::test_parse_transcript_errors` | `backend/tests/legacy-operator.test.ts` | `counts unknown or malformed Claude events and uses the last typed result` | 拒绝非法格式和缺失文件，区分空转录和未完成转录 |

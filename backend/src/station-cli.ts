@@ -270,6 +270,12 @@ export async function runStationCli(argv: string[]): Promise<number> {
       }
     } else console.error(`${job.error?.code ?? job.state}: ${job.error?.message ?? job.feedback ?? "工位执行失败"}`);
     return job.state === "SEALED" || job.state === "AWAITING_APPROVAL" ? 0 : 1;
+  } catch (error) {
+    if (scope === "job" && operation === "run" && options.json && error instanceof FactoryError && error.code === "INTAKE_REJECTED") {
+      console.log(canonicalJson({ error: { code: error.code, message: error.message, detail: error.detail } }));
+      return 1;
+    }
+    throw error;
   } finally {
     context.close();
   }

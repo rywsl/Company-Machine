@@ -155,6 +155,8 @@ diag("E-PORT", S + "/admit", "没有输入端口的工位不能写 admit") :- st
 
 按 3.3 把 `params` 传给 `check_inputs`。被拒时不插入 job 行，不写 `job.created`，不启动沙箱。`factory job run` 因此以退出码 1 结束，`--json` 时 stdout 是 `{"error": {"code": "INTAKE_REJECTED", "message": ..., "detail": {"problems": [...]}}}`（`commands.md`）。
 
+活动 Bun 验收通过 `backend/tests/admit-runtime.test.ts` 运行 CLI、Runner 和产线入口，包括默认参数、列表端口及 Source 汇合。准入规则求值错误另在 `backend/tests/legacy-gate.test.ts` 验证。
+
 ### 5.5 产线
 
 `LineRunner` 不需要改动：
