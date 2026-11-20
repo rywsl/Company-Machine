@@ -140,6 +140,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/dynamic-subline.test.ts` | Subline 冻结计划、父子运行关联、产物和费用结算 |
 | `backend/tests/dynamic-map.test.ts` | Map 列表展开、保序聚合、溢出与单轮提交数量限制 |
 | `backend/tests/dynamic-map-literal.test.ts` | 字面 Map 编译、实例转换、预算预留、持久化执行、分支跳过与存量计划恢复 |
+| `backend/tests/dynamic-plan.test.ts` | Plan schema、展开限额和当前 Run 预算，Planner 退回重试、封存、附加子节点和重启恢复 |
 | `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
 | `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
@@ -233,6 +234,17 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_dynamic_overflow_reject` | `backend/tests/dynamic-map-literal.test.ts` | `rejects a literal Map overflow before creating instances` | 计划只保留控制节点，运行时保存 `DYNAMIC_OVERFLOW` |
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_truncate_keeps_prefix` | `backend/tests/dynamic-map-literal.test.ts` | `compiles and executes only the original literal Map prefix when truncating` | 使用相同合规脚本夹具验证仅编译和运行原列表前两个元素 |
 | `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_switch_first_match` | `backend/tests/dynamic-switch.test.ts` | `commits the first true choice, skip and submission in one tick across restart` | 两个真条件按声明顺序选择第一个，并持久化控制节点 |
+| `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_plan_feedback_on_bounds` | `backend/tests/dynamic-plan.test.ts` | `reports rejected bounds in both attempts without a sealed Plan or attached nodes` | 两次运行生成超限计划，保留 `PLAN_BOUNDS` 反馈且无子节点或封存 Plan |
+| `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_plan_cannot_define_specs` | `backend/tests/dynamic-plan.test.ts` | `rejects non-Plan records, nonexistent references, invalid ports, and provenance mismatches` | 拒绝非 Plan 记录和冻结 Registry 中不存在的工位 |
+| `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_budget_number_not_template` | `backend/tests/dynamic-plan.test.ts` | `rejects a planner budget template at Registry validation` | 工位的预算模板在加载 Registry 时产生 `E-SCHEMA` |
+| `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_budget_remaining` | `backend/tests/dynamic-plan.test.ts` | `enforces Plan allowlists, nesting, expanded converter steps, and remaining Run budget` | 计划预算等于 Run 剩余预算时接受，超限返回 `PLAN_BUDGET` |
+| `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_missing_converter_rejects_plan` | `backend/tests/dynamic-plan.test.ts` | `merges missing conversion requests without blocking planner retries` | 两次退回合并为一个转换需求，`blocked_runs` 为空 |
+| `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_sealed_plan_same_epoch` | `backend/tests/dynamic-plan.test.ts` | `retries rejected Plan output then seals and executes its child after restart` | Plan Bean 封存，附加作业重启后在父 epoch 完成 |
+| `removed/python/tests/acceptance/m4/test_m4_02_plan.py::test_runtime_resolution_append_only` | `backend/tests/dynamic-plan.test.ts` | `appends new runtime resolutions once and preserves a conflicting sidecar` | 仅追加未知键，拒绝覆盖内核预计算结果或侧车已有转换链 |
+| `removed/python/tests/acceptance/m9/test_m9_02_plan_runtime.py::test_plan_child_steps_run` | `backend/tests/dynamic-plan.test.ts` | `retries rejected Plan output then seals and executes its child after restart` | 验证子工位产物、同 epoch 和唯一的 `run.plan` 事件 |
+| `removed/python/tests/acceptance/m9/test_m9_02_plan_runtime.py::test_rejected_plan_retried` | `backend/tests/dynamic-plan.test.ts` | `retries rejected Plan output then seals and executes its child after restart` | 第一次退回，第二次封存有效计划并执行 |
+| `removed/python/tests/acceptance/m9/test_m9_02_plan_runtime.py::test_child_failure_fails_parent` | `backend/tests/dynamic-plan.test.ts` | `propagates child failure and rejects Planner jobs submitted without a parent Run` | 子节点失败进入父 Run 的 `NODE_FAILED` |
+| `removed/python/tests/acceptance/m9/test_m9_02_plan_runtime.py::test_planner_outside_run_dead` | `backend/tests/dynamic-plan.test.ts` | `propagates child failure and rejects Planner jobs submitted without a parent Run` | 独立提交的 Planner 作业以 `planner-outside-run` 结束 |
 | `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_switch_selects_one_branch` | `backend/tests/dynamic-switch.test.ts` | `runs one selected branch and skips the alternative with no job` | 两种物料分别选择对应分支，控制节点无 Job，另一个分支跳过 |
 | `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_until_stops_when_condition_holds` | `backend/tests/dynamic-until.test.ts` | `stops on the first true until result after restoring a persisted iteration` | 各轮为独立 Job，第二轮为真时只输出第二轮结果且无第三轮 |
 | `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_until_exhausted_fails_run` | `backend/tests/dynamic-until.test.ts` | `fails when until is exhausted without passing the final iteration to dependants` | 两轮完成后聚合失败并保存 `UNTIL_EXHAUSTED`，Run 无产物 |

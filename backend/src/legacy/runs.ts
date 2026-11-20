@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { FactoryError } from "./errors";
 import { canonicalJson, digestBytes, utcIso, type Clock, type IdSource } from "./foundation";
 import type { Job } from "./jobs";
+import { attachedPlanNodes } from "./dynamic-plan";
 import { RunPlan } from "./runplan";
 
 type JsonObject = Record<string, unknown>;
@@ -105,13 +106,15 @@ function decodeNode(row: NodeRow): RunNode {
   };
 }
 
-function budgetCap(plan: RunPlan, given: number | undefined): number {
+function budgetCap(plan: RunPlan, given: number | undefined, inherited?: number): number {
   if (given !== undefined && (!Number.isFinite(given) || given <= 0 || (plan.budgetCapUsd !== null && given > plan.budgetCapUsd))) {
     throw new FactoryError("RUN_BUDGET_INVALID", "run 预算必须大于 0 且在产线上限内", { budgetUsd: given, capUsd: plan.budgetCapUsd });
   }
-  const cap = given ?? plan.budgetCapUsd;
+  const cap = given ?? inherited ?? plan.budgetCapUsd;
   if (cap === null) throw new FactoryError("RUN_BUDGET_REQUIRED", "产线需要预算上限", { line: plan.line });
-  if (!Number.isFinite(cap) || cap < 0) throw new FactoryError("RUN_BUDGET_INVALID", "产线预算不合法", { capUsd: cap });
+  if (!Number.isFinite(cap) || cap < 0 || (plan.budgetCapUsd !== null && cap > plan.budgetCapUsd)) {
+    throw new FactoryError("RUN_BUDGET_INVALID", "产线预算不合法", { capUsd: cap, lineCapUsd: plan.budgetCapUsd });
+  }
   return cap;
 }
 
@@ -155,6 +158,11 @@ export class RunStore {
           run_id TEXT NOT NULL, node_id TEXT NOT NULL, job_id TEXT NOT NULL, created_at TEXT NOT NULL,
           PRIMARY KEY (run_id, node_id, job_id)
         );
+        CREATE TABLE IF NOT EXISTS run_plan_attachments (
+          run_id TEXT NOT NULL REFERENCES runs(id), node_id TEXT NOT NULL,
+          plan TEXT NOT NULL, digest TEXT NOT NULL,
+          PRIMARY KEY (run_id, node_id)
+        );
         CREATE TABLE IF NOT EXISTS events (
           seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, at TEXT NOT NULL,
           kind TEXT NOT NULL, job_id TEXT, data TEXT NOT NULL, run_id TEXT
@@ -169,7 +177,6 @@ export class RunStore {
   }
 
   create(plan: RunPlan, options: RunOptions): Run {
-    const cap = budgetCap(plan, options.budgetCapUsd);
     const inputs = normalizeInputs(plan, options.inputs);
     const variants = options.variants ?? {};
     const steps = new Set(plan.nodes.filter((node) => !node.implicit).map((node) => node.step));
@@ -184,9 +191,11 @@ export class RunStore {
     const wire = canonicalJson(plan.toJSON());
     const digest = digestBytes(new TextEncoder().encode(wire));
     return this.db.transaction(() => {
+      const previous = options.rebuiltFrom ? this.get(options.rebuiltFrom) : undefined;
+      if (previous && (previous.line !== plan.line || !runTerminalStates.has(previous.state))) this.invalidState(previous, "rebuild");
+      const cap = budgetCap(plan, options.budgetCapUsd, previous?.budgetCapUsd);
       const id = this.ids.new("r");
       const now = this.now();
-      if (options.rebuiltFrom) this.get(options.rebuiltFrom);
       this.db.query(`
         INSERT INTO runs (id, line, epoch, state, plan, plan_digest, inputs, variants,
                           budget_cap_usd, trigger, rebuilt_from, use_cache, created_at, updated_at, sink_mode)
@@ -231,6 +240,59 @@ export class RunStore {
     } catch (error) {
       throw new FactoryError("RUN_PLAN_INVALID", "无法恢复 run 的持久化计划", { runId: id, reason: String(error) });
     }
+  }
+
+  executionPlan(run: Run): RunPlan {
+    const original = this.plan(run.id);
+    if (!original.nodes.some((node) => node.role === "planner")) return original;
+    const attachments = this.db.query<{ node_id: string; plan: string; digest: string }>(`
+      SELECT node_id, plan, digest FROM run_plan_attachments WHERE run_id = ? ORDER BY rowid
+    `).all(run.id);
+    if (!attachments.length) return original;
+    const appended = attachments.flatMap((row) => {
+      try {
+        const plan = RunPlan.fromJSON(JSON.parse(row.plan));
+        const digest = digestBytes(new TextEncoder().encode(row.plan));
+        if (plan.line === run.line && plan.epoch === run.epoch && digest === row.digest) return attachedPlanNodes(row.node_id, plan);
+      } catch {
+        // The persisted attachment is reported using its owning Run and node.
+      }
+      throw new FactoryError("RUN_PLAN_INVALID", "无法恢复 planner 附加计划", { run: run.id, node: row.node_id });
+    });
+    return new RunPlan({ ...original, nodes: [...original.nodes, ...appended] });
+  }
+
+  plannerNode(runId: string, jobId: string): RunNode | null {
+    const row = this.db.query<NodeRow>("SELECT * FROM run_nodes WHERE run_id = ? AND job_id = ? AND state = 'SUBMITTED'").get(runId, jobId);
+    return row ? decodeNode(row) : null;
+  }
+
+  attachPlannerOutput(run: Run, node: RunNode, job: Job, beanId: string, plan: RunPlan): void {
+    this.db.transaction(() => {
+      if (job.state !== "SEALED" || job.epoch !== run.epoch || plan.epoch !== run.epoch || plan.line !== run.line || run.state !== "RUNNING") {
+        this.invalidState(run, "attach_plan", node);
+      }
+      const now = this.now();
+      const wire = canonicalJson(plan.toJSON());
+      const digest = digestBytes(new TextEncoder().encode(wire));
+      this.db.query("INSERT INTO run_plan_attachments (run_id, node_id, plan, digest) VALUES (?, ?, ?, ?)")
+        .run(run.id, node.nodeId, wire, digest);
+      const first = this.db.query<{ ord: number }>("SELECT COALESCE(MAX(ord), -1) + 1 AS ord FROM run_nodes WHERE run_id = ?").get(run.id)!.ord;
+      const reserves = new Map<string, number>();
+      const owners = new Map(plan.nodes.flatMap((member) => member.map?.family.map(({ id }) => [id, member.id] as const) ?? []));
+      for (const [id, usd] of plan.budgetItems) {
+        const owner = owners.get(id) ?? id;
+        reserves.set(`${node.nodeId}/${owner}`, (reserves.get(`${node.nodeId}/${owner}`) ?? 0) + usd);
+      }
+      const insert = this.db.query("INSERT INTO run_nodes (run_id, node_id, ord, state, reserved_usd, updated_at) VALUES (?, ?, ?, 'WAITING', ?, ?)");
+      attachedPlanNodes(node.nodeId, plan).forEach(({ id }, index) => {
+        const reserve = reserves.get(id) ?? 0;
+        insert.run(run.id, id, first + index, reserve, now);
+        if (reserve) this.budgetEvent(run, id, reserve, 0, now);
+      });
+      this.settleNode(run.id, node.nodeId, job);
+      this.event(run.id, "run.plan", { node: node.nodeId, plan: beanId, digest }, now);
+    }).immediate();
   }
 
   nodes(id: string): RunNode[] {
@@ -279,10 +341,11 @@ export class RunStore {
       if (run.state !== "RUNNING" || node.state !== "WAITING") this.invalidState(run, "submit", node);
       if (!Number.isFinite(need) || need < 0) throw new FactoryError("RUN_BUDGET_INVALID", "节点预算不合法", { runId, nodeId, need });
       const owner = options.reserveFrom ? this.node(runId, options.reserveFrom) : undefined;
-      if (owner && (owner.state !== "WAITING" || owner.reservedUsd + Number.EPSILON * Math.max(need, owner.reservedUsd) * 8 < need)) {
+      const additional = need - node.reservedUsd;
+      if (owner && (owner.state !== "WAITING" || owner.reservedUsd + Number.EPSILON * Math.max(need, owner.reservedUsd) * 8 < additional)) {
         this.invalidState(run, "transfer_reservation", owner);
       }
-      if (!owner) this.checkBudget(run, nodeId, need);
+      if (!owner) this.checkBudget(run, nodeId, additional);
       const params = canonicalJson(options.params);
       const { id: jobId } = createJob();
       const now = this.now();
@@ -292,11 +355,12 @@ export class RunStore {
       `).run(jobId, params, need, now, runId, nodeId);
       this.db.query("INSERT INTO run_node_jobs (run_id, node_id, job_id, created_at) VALUES (?, ?, ?, ?)").run(runId, nodeId, jobId, now);
       if (owner) {
-        const remaining = Math.max(0, owner.reservedUsd - need);
+        const remaining = Math.max(0, owner.reservedUsd - Math.max(0, additional));
         this.db.query("UPDATE run_nodes SET reserved_usd = ?, updated_at = ? WHERE run_id = ? AND node_id = ?").run(remaining, now, runId, owner.nodeId);
         this.budgetEvent(run, owner.nodeId, remaining, 0, now);
       }
-      this.db.query("UPDATE runs SET reserved_usd = reserved_usd + ?, updated_at = ? WHERE id = ?").run(owner ? 0 : need, now, runId);
+      this.db.query("UPDATE runs SET reserved_usd = MAX(0, reserved_usd + ?), updated_at = ? WHERE id = ?")
+        .run(owner ? Math.min(0, additional) : additional, now, runId);
       this.nodeEvent(node, "SUBMITTED", jobId, now);
       this.budgetEvent(run, nodeId, need, 0, now);
       return this.node(runId, nodeId);
@@ -390,8 +454,10 @@ export class RunStore {
         INSERT INTO run_node_jobs (run_id, node_id, job_id, created_at) VALUES (?, ?, ?, ?)
         ON CONFLICT (run_id, node_id, job_id) DO NOTHING
       `).run(runId, nodeId, job.id, now);
-      this.db.query("UPDATE runs SET updated_at = ? WHERE id = ?").run(now, runId);
+      this.db.query("UPDATE runs SET reserved_usd = MAX(0, reserved_usd - ?), updated_at = ? WHERE id = ?")
+        .run(node.reservedUsd, now, runId);
       this.nodeEvent(node, "DONE", job.id, now, true);
+      if (node.reservedUsd) this.budgetEvent(run, nodeId, 0, 0, now);
       return this.node(runId, nodeId);
     }).immediate();
   }

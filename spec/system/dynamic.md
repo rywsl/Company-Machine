@@ -200,9 +200,13 @@ Bun 在父 RunPlan 中保存子计划及其摘要，编译时拒绝递归引用�
 - `ok` 为真：封存 plan Bean（类型以工位输出端口为准），把子计划的节点插入父 run，依赖接在 planner 节点之后。子节点的 epoch 与父 run 相同。写事件 `run.plan`，`data` 含 plan Bean id 与子计划摘要。
 - 子节点失败：父 run `FAILING`，与普通节点相同（`NODE_FAILED`）。
 
+Bun 从 planner 的 `plan` 输出读取 `plan.json`，使用父产线接口和冻结的 Registry 编译临时产线。编译诊断进入 Job 的退回反馈，供下一次 attempt 使用。通过后，在同一次 SQLite 事务中校验当前 Run 剩余预算、封存 Bean、记录 Job 和 planner 节点完成、写入 `run_plan_attachments`、创建并预留 `{planner}/{step}` 子节点的预算并发出 `run.plan`。提交子节点时沿用预留。原 RunPlan 摘要继续标识父产线。重启后按附加计划摘要校验并恢复子节点执行。
+
 ### 5.6 追加解析表
 
 追加必须在一个事务里完成：读侧车文件，若键已存在且链不同 → `RUN_PLAN_INVALID`，不覆盖。键不存在则追加并写回。同一 epoch 的两次追加，输入相同则链相同，因为 `resolve` 是纯函数。
+
+Bun 用 SQLite 写锁串行处理同一工厂的追加，并通过临时文件替换 `epochs/<epoch>/resolution-runtime.json`。缓存只登记自动转换决议。自动解析缺少转换时按类型及属性合并到 `conversion_requests`，保留发现位置，`blocked_runs` 为空。
 
 ---
 

@@ -7,12 +7,16 @@ import { PodmanError, type ContainerProvider, type Sandbox } from "../../runtime
 import { Approvals, readProposal, type Approval } from "./approvals";
 import { readReceiptPayload, ReceiptStore, recordSourceProvenance, renderReceiptPayload, sinkKey, verifyReceipt } from "./connectors";
 import { installFactoryctl, type Context } from "./context";
+import { compilePlan, exceedsPlanBudget, planCost } from "./dynamic-plan";
 import { FactoryError } from "./errors";
 import { CtlServer, harvest, type CtlRequest, type CtlResponse, type HarvestRequest } from "./factoryctl";
 import { parseDuration } from "./foundation";
 import { Gate } from "./gate";
 import { JobStore, terminalStates, type Job, type JobPhase } from "./jobs";
 import { buildInvocation, expandControlVars, parseTranscript, renderBrief } from "./operator";
+import { recordPlanResolutions } from "./plan-resolutions";
+import { RunStore } from "./runs";
+import type { RunPlan } from "./runplan";
 import { sandboxResources } from "./sandbox";
 import { stationNetwork } from "./sandbox-egress";
 import { nominalTypeId, type Snapshot } from "./snapshot";
@@ -139,7 +143,16 @@ export class Runner {
     const role = station.role;
     const initialPhase: JobPhase = station.phases?.includes("propose") ? "propose" : "execute";
     if (terminalStates.has(job.state)) return job;
-    if (job.state === "PENDING" && !["transform", "converter", "source", "sink"].includes(role)) {
+    if (role === "planner" && job.state === "PENDING") {
+      const runId = job.runValue?.id;
+      const runs = new RunStore(this.context.db, this.context.clock, this.context.ids);
+      if (typeof runId !== "string" || !runs.plannerNode(runId, job.id)) {
+        return this.jobs.transition(job.id, "DEAD", {
+          error: { code: "RUN_PLAN_INVALID", message: "Planner 工位需要归属到一条产线运行", detail: { reason: "planner-outside-run" } },
+        });
+      }
+    }
+    if (job.state === "PENDING" && !["transform", "converter", "source", "sink", "planner"].includes(role)) {
       return this.jobs.transition(job.id, "DEAD", {
         error: { code: "ROLE_UNSUPPORTED", message: "工位角色需要专用执行路径", detail: { role, station: job.station } },
       });
@@ -503,12 +516,59 @@ export class Runner {
     }
     const seals = Object.values(report.data.outputs).flat()
       .map((id): [string, Record<string, unknown>] => [id, report.data.facts[id] ?? {}]);
+    let proposal: { bean: string; plan: RunPlan; runs: RunStore; runId: string } | undefined;
+    if (station.role === "planner") {
+      const [bean, ...other] = report.data.outputs.plan ?? [];
+      const payload = bean && this.context.warehouse.get(bean).payload.find(({ path }) => path === "plan.json");
+      const runId = job.runValue?.id;
+      if (!payload || other.length || typeof runId !== "string") {
+        return this.jobs.transition(job.id, "REJECTED", {
+          feedback: "- PLAN_INVALID: planner 必须产出一个包含 plan.json 的 Plan Bean",
+          error: { code: "PLAN_INVALID" },
+        });
+      }
+      const file = Bun.file(this.context.warehouse.blobPath(payload.digest));
+      let document: unknown;
+      try { document = JSON.parse(await file.text()); } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        return this.jobs.transition(job.id, "REJECTED", { feedback: "- E-SCHEMA: plan.json 不是有效的 JSON", error: { code: "PLAN_INVALID" } });
+      }
+      const runs = new RunStore(this.context.db, this.context.clock, this.context.ids);
+      const checked = compilePlan(this.snapshot, document, { plannerKey: job.station, run: runs.get(runId), deferRunBudget: true });
+      recordPlanResolutions(this.context, this.snapshot, checked.resolutions);
+      if (!checked.plan) {
+        return this.jobs.transition(job.id, "REJECTED", { feedback: checked.feedback, error: { code: "PLAN_INVALID", detail: { diagnostics: checked.diagnostics } } });
+      }
+      proposal = { bean, plan: checked.plan, runs, runId };
+    }
     return this.context.db.transaction(() => {
+      let attach: ((sealed: Job) => void) | undefined;
+      if (proposal) {
+        const { bean, plan, runs, runId } = proposal;
+        const run = runs.get(runId);
+        const owner = runs.plannerNode(runId, job.id);
+        if (run.state !== "RUNNING" || !owner) {
+          return this.jobs.transition(job.id, "DEAD", {
+            error: { code: "RUN_PLAN_INVALID", message: "Planner 的父 Run 已停止推进", detail: { run: runId } },
+          });
+        }
+        const remainingUsd = run.budgetCapUsd - run.spentUsd - run.reservedUsd + owner.reservedUsd - job.costUsd;
+        const need = planCost(plan);
+        if (exceedsPlanBudget(need, remainingUsd)) {
+          return this.jobs.transition(job.id, "REJECTED", {
+            feedback: `- PLAN_BUDGET: 计划需要 ${need} USD，超过 Run 剩余预算 ${remainingUsd} USD`,
+            error: { code: "PLAN_BUDGET", detail: { need, remaining: remainingUsd } },
+          });
+        }
+        attach = (sealed) => runs.attachPlannerOutput(run, owner, sealed, bean, plan);
+      }
       this.context.warehouse.sealMany(seals, job.id, report.digest());
       this.context.warehouse.recordLineage(job.id, job.inputs, report.data.outputs);
       const external = station.role === "source";
       if (external) recordSourceProvenance(this.context, job, report.data.outputs);
-      return this.jobs.transition(job.id, "SEALED", { outputs: report.data.outputs, external });
+      const sealed = this.jobs.transition(job.id, "SEALED", { outputs: report.data.outputs, external });
+      attach?.(sealed);
+      return sealed;
     }).immediate();
   }
 

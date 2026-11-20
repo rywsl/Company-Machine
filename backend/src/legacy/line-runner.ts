@@ -3,7 +3,7 @@ import { compileTemplate } from "../../mrl/template";
 import { BOOL, DYN } from "../../mrl/types";
 import { JobCache, cacheableRoles } from "./cache";
 import { mapCount, mapFamily } from "./dynamic-map";
-import { compileDynamicRunPlan, selectSwitchTarget, switchTargets } from "./dynamic-switch";
+import { compileDynamicRunPlan, selectSwitchTarget, switchTargets, type SwitchDefinition } from "./dynamic-switch";
 import { restoreSubline } from "./dynamic-subline";
 import { untilHolds, untilIteration } from "./dynamic-until";
 import { FactoryError } from "./errors";
@@ -25,6 +25,17 @@ export class LineRunner {
 
   start(line: string, options: Parameters<RunStore["create"]>[1]): Run {
     return this.startPlan(compileDynamicRunPlan(this.runner.snapshot, line), options);
+  }
+
+  rebuild(id: string, by: string): Run {
+    const previous = this.runs.get(id);
+    if (!runTerminalStates.has(previous.state)) {
+      throw new FactoryError("RUN_STATE_INVALID", "只可重建已结束的运行", { run: id, state: previous.state });
+    }
+    return this.start(previous.line, {
+      inputs: previous.inputs, variants: previous.variants, sinkMode: previous.sinkMode,
+      rebuiltFrom: id, trigger: { on: "manual", by },
+    });
   }
 
   private startPlan(plan: RunPlan, options: Parameters<RunStore["create"]>[1]): Run {
@@ -68,7 +79,7 @@ export class LineRunner {
       if (run.epoch !== this.runner.snapshot.epoch) {
         throw new FactoryError("EPOCH_MISMATCH", "运行计划与当前快照不符", { run: id, run_epoch: run.epoch, snapshot_epoch: this.runner.snapshot.epoch });
       }
-      const plan = this.runs.plan(id);
+      const plan = this.runs.executionPlan(run);
       if (run.state === "PENDING") run = this.runs.transition(id, "RUNNING");
       const nodes = new Map(this.runs.nodes(id).map((node) => [node.nodeId, node]));
       for (const node of nodes.values()) {
@@ -92,15 +103,15 @@ export class LineRunner {
       }
 
       if (run.state === "RUNNING") {
-        const dynamic = plan.nodes.some((node) => node.kind === "switch");
+        const switches = new Map(plan.nodes.flatMap((node) => node.switch ? [[node.id, node.switch] as const] : []));
         for (const planned of plan.nodes) {
           if (planned.mapInstance || nodes.get(planned.id)?.state !== "WAITING") continue;
           if (planned.kind === "subline" && nodes.get(planned.id)?.params?.child_run) continue;
           const instances = plan.mapInstances(planned.id);
           const deps = instances ? planned.deps.filter((id) => plan.node(id).mapInstance?.owner !== planned.id) : planned.deps;
           try {
-            if (dynamic) {
-              const readiness = this.dynamicReadiness(plan, planned, nodes, deps);
+            if (switches.size) {
+              const readiness = this.dynamicReadiness(switches, planned, nodes, deps);
               if (readiness === "waiting") continue;
               if (readiness === "skipped") {
                 nodes.set(planned.id, this.runs.skipNode(id, planned.id));
@@ -248,27 +259,20 @@ export class LineRunner {
       throw new FactoryError("DYNAMIC_OVERFLOW", "map 列表长度超过展开上限", { line: run.line, step: node.step, length: items.length, max_items: definition.maxItems });
     }
     const families = compiled ?? Array.from({ length: count }, (_, index) => mapFamily(definition.family, index));
+    let unusedExpansionBudget = 0;
     if (!compiled) {
       const ids = families.flatMap((family) => family.map(({ id }) => id));
       if (ids.some((id) => !nodes.has(id))) {
         const bound = "items" in over ? count : definition.maxItems ?? count;
-        this.runs.prepareInstances(run.id, node.id, ids, bound * node.budgetUsd);
-        this.runs.releaseUnusedReservation(run.id, node.id, count * node.budgetUsd);
+        unusedExpansionBudget = (bound - count) * node.budgetUsd;
+        this.runs.prepareInstances(run.id, node.id, ids, 0);
         for (const stored of this.runs.nodes(run.id)) if (!nodes.has(stored.nodeId)) nodes.set(stored.nodeId, stored);
       }
     }
-    const waitingBudget = families.reduce((total, family) => total + family.reduce((sum, member) =>
+    let waitingBudget = families.reduce((total, family) => total + family.reduce((sum, member) =>
       sum + (nodes.get(member.id)?.state === "WAITING" ? member.budgetUsd : 0), 0), 0);
-    const heldBudget = this.runs.node(run.id, node.id).reservedUsd;
-    if (waitingBudget - heldBudget > Number.EPSILON * waitingBudget * 8) this.runs.prepareInstances(run.id, node.id, [], waitingBudget);
-    const stationIds = families.map((family) => family.find((member) => member.kind === "station")!.id);
-    if (stationIds.every((id) => nodes.get(id)?.state === "DONE")) {
-      const ports = Object.keys(this.runner.snapshot.spec(node.station).outputs ?? {});
-      const outputs = Object.fromEntries(ports.map((port) => [port, stationIds.flatMap((id) => nodes.get(id)!.outputs[port] ?? [])]));
-      nodes.set(node.id, this.runs.completeAggregate(run.id, node.id, outputs));
-      return;
-    }
     let opened = 0;
+    let reserved = false;
     for (const [index, family] of families.entries()) {
       for (const member of family) {
         if (nodes.get(member.id)?.state !== "WAITING" || !member.deps.every((dependency) => ["DONE", "SKIPPED"].includes(nodes.get(dependency)?.state ?? ""))) continue;
@@ -279,18 +283,43 @@ export class LineRunner {
           [definition.as]: itemId ? beanValue(this.runner.context.warehouse.get(itemId)) : items[index],
         } : {};
         const params = this.nodeParams(run, member, plan.inputs, alias);
-        const row = this.runs.submitNode(run.id, member.id, { params, reservedUsd: member.budgetUsd, reserveFrom: node.id }, () =>
-          this.runner.submit(member.station, inputs, params, runValue(run), { proposalOnly: member.role === "sink" && run.sinkMode === "dry-run" }));
+        const material = cacheableRoles.has(member.role)
+          ? this.cache.material(this.runner.snapshot, member.station, inputs, params, { variant: run.variants[member.step] })
+          : undefined;
+        const cached = material && run.useCache ? this.cache.lookup(material.key()) : undefined;
+        if (cached) {
+          nodes.set(member.id, this.runs.completeCachedNode(run.id, member.id, { params }, cached));
+          waitingBudget = Math.max(0, waitingBudget - member.budgetUsd);
+          continue;
+        }
+        if (!reserved) {
+          const needed = waitingBudget + unusedExpansionBudget;
+          if (needed > (nodes.get(node.id)?.reservedUsd ?? 0)) this.runs.prepareInstances(run.id, node.id, [], needed);
+          if (unusedExpansionBudget > 0) this.runs.releaseUnusedReservation(run.id, node.id, waitingBudget);
+          reserved = true;
+        }
+        const row = this.runs.submitNode(run.id, member.id, { params, reservedUsd: member.budgetUsd, reserveFrom: node.id }, () => {
+          const job = this.runner.submit(member.station, inputs, params, runValue(run), { proposalOnly: member.role === "sink" && run.sinkMode === "dry-run" });
+          if (material) this.cache.bind(job.id, material);
+          return job;
+        });
         nodes.set(member.id, row);
+        waitingBudget = Math.max(0, waitingBudget - member.budgetUsd);
         if (row.jobId) submitted.push(row.jobId);
         if (member.kind === "station") opened++;
       }
     }
+    const stationIds = families.map((family) => family.find((member) => member.kind === "station")!.id);
+    if (stationIds.every((id) => nodes.get(id)?.state === "DONE")) {
+      const ports = Object.keys(this.runner.snapshot.spec(node.station).outputs ?? {});
+      const outputs = Object.fromEntries(ports.map((port) => [port, stationIds.flatMap((id) => nodes.get(id)!.outputs[port] ?? [])]));
+      nodes.set(node.id, this.runs.completeAggregate(run.id, node.id, outputs));
+    } else this.runs.releaseUnusedReservation(run.id, node.id, waitingBudget);
   }
 
-  private dynamicReadiness(plan: RunPlan, node: PlanNode, nodes: Map<string, RunNode>, deps: readonly string[]): "ready" | "waiting" | "skipped" {
+  private dynamicReadiness(switches: ReadonlyMap<string, SwitchDefinition>, node: PlanNode, nodes: Map<string, RunNode>, deps: readonly string[]): "ready" | "waiting" | "skipped" {
     const controls = deps.filter((dependency) => {
-      const definition = plan.node(dependency).switch;
+      const definition = switches.get(dependency);
       return definition && switchTargets(definition).includes(node.step);
     });
     if (controls.some((id) => !["DONE", "SKIPPED"].includes(nodes.get(id)?.state ?? ""))) return "waiting";

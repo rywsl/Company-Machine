@@ -556,6 +556,9 @@ function resolveWiring(
         input = { port, source: "item", node: "", outPort: "" };
       } else {
         const pair = outputRef(line, ref);
+        if (pair[1] === "plan" && steps.get(pair[0])?.station.role === "planner") {
+          throw new FactoryError("PLAN_SHAPE", "Planner 的 Plan 端口用于附加子步骤", { line, step, port, source: ref });
+        }
         source = outputPort(line, steps, pair, maps);
         input = { port, source: "node", node: pair[0], outPort: pair[1] };
       }
