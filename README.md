@@ -27,7 +27,7 @@
 
 ---
 
-> **What is this?** A factory control plane. It does not contain an agent and never calls a model API. Every bit of intelligence comes from official Harness CLIs you already use (Claude Code headless, Codex, …) running through the managed Podman boundary. The Bun/TypeScript business control plane keeps systems, DAGs, materials, Foreman conversations and secrets independent from a host or personal workflow. The legacy Python execution plane remains available while its runtime modules migrate.
+> **What is this?** A factory control plane. It does not contain an agent and never calls a model API. Every bit of intelligence comes from official Harness CLIs you already use (Claude Code headless, Codex, …) running through the managed Podman or Kiri boundary. The Bun/TypeScript control plane keeps systems, DAGs, materials, Foreman conversations and secrets independent from a host or personal workflow. The former Python implementation is preserved under `removed/python/` as historical evidence.
 
 Agent-native products such as [OpenMontage](https://github.com/OpenMontageInc/OpenMontage) put the agent in charge of the whole pipeline. Machine Agent Org works one level up: it treats such products as **machines** on a production line. Each machine is operated by an agent **operator** at a **station**. What one station produces is checked, sealed and handed to the next station as its input, until a **sink** publishes the result to S3, GitHub, YouTube or anywhere else.
 
@@ -61,8 +61,7 @@ The walkthrough in [docs/en/getting-started.md](docs/en/getting-started.md) show
 
 ### Prerequisites
 
-- **Bun** for the business control plane and **Podman** for managed sandboxes
-- **Python 3.12+** and **[uv](https://docs.astral.sh/uv/)** for the migration-compatible execution plane and repository verification
+- **Bun** for the business control plane and **Podman** or **Kiri** for managed sandboxes
 - **An agent CLI** (optional): Claude Code or Codex for real stations. The tests use a scripted fake agent instead.
 
 ### Install and verify
@@ -70,11 +69,9 @@ The walkthrough in [docs/en/getting-started.md](docs/en/getting-started.md) show
 ```bash
 git clone https://github.com/rywsl/Company-Machine.git
 cd Company-Machine
-uv sync
+bun install
 
-uv run factory --version
-uv run mrl --version
-uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
+bun run verify:bun                       # check the active Bun implementation
 
 # Start the Bun business control plane and Web App
 bun run backend/src/index.ts
@@ -84,27 +81,18 @@ bun run factory status
 ### Your first line
 
 ```bash
-# 1. Compile a registry (exit 0 = no errors, 3 = invalid)
-uv run factory check tests/fixtures/registry-m2
+# 1. Check the active Bun control plane
+bun run factory status
 
-# 2. Import material, plan and run a line
-uv run factory --root .factory --registry <registry> --provider local --local-commands commands.json \
-    bean import --type agent.task@1 --file task.json=./task.json
-uv run factory ... line plan note-pipeline@1
-uv run factory ... line run  note-pipeline@1 --in task=sha256:...
+# 2. Hand a project to Foreman
+bun run factory project intake --name "视频生产系统" --repo https://example.test/repo.git
 
-# 3. Inspect
-uv run factory ... line nodes <run-id>
-uv run factory ... bean lineage --direction up <bean-id>
-uv run factory ... status
+# 3. Inspect a business system
+bun run factory business units <business-system-id>
+bun run factory business runs <business-system-id>
 ```
 
-`commands.json` maps the command names in machine recipes to host commands for the local provider. The getting-started guide generates one from the test fixtures. For unattended operation, run the daemon and the read-only console:
-
-```bash
-uv run factory serve                 # triggers, runs, jobs, governance, audit, canaries, wake tickets
-uv run factory console               # http://127.0.0.1:8090, token in $FACTORY_ROOT/console.token
-```
+The former registry and line CLI is preserved under `removed/python/` for historical reference. The active entry point is the Bun Web App and business CLI.
 
 ---
 
@@ -146,7 +134,7 @@ Expensive stations and every sink work in two phases: *propose*, with a cost est
 
 | Layer | Responsibility | Main code |
 |---|---|---|
-| **Kernel** | Meta-model, structure compiler, constitution invariants, event log. Changes rarely. | `src/mrl/` (MRL language + factory profile) |
+| **Kernel** | Meta-model, structure compiler, constitution invariants, event log. Changes rarely. | `backend/mrl/` (Bun MRL runtime) |
 | **Structure** | Registry in Git. Types, machines, operators, stations, lines and policies are all Specs, versioned by **epoch**. | `mao.snapshot`, `mao.governance.epochs` |
 | **Runtime** | Scheduler, line runner, job state machine, sandboxes, gates, warehouse, cache, leases. | `mao.runner`, `mao.runs`, `mao.dynamic`, `mao.scheduler`, `mao.gate`, `mao.warehouse` |
 | **Adapters** | Machine packages, official Harness runtimes, managed Podman sandboxes, connectors, service gateway, egress and model proxies, storage backends. | `backend/runtime`, `backend/src/harness.ts`, `mao.sandbox`, `mao.gateway`, `mao.egress`, `mao.backends` |
@@ -166,7 +154,7 @@ Expensive stations and every sink work in two phases: *propose*, with a cost est
 **Dynamic structure stays bounded.** A line can contain `map` (over `list<T>`, with `max_items` and `max_parallel`), `switch` (exhaustive, with a default), `until` (with a maximum number of iterations) and `subline`. A **planner** station may emit a `Plan`. The plan is compiled with V1/V2 and checked against the station's `plan_bounds` (allowed stations and sinks, steps, fan-out, depth, budget) before any of it runs.
 
 <details>
-<summary><b>Module map of <code>src/mao</code></b></summary>
+<summary><b>Module map of <code>backend/</code></b></summary>
 
 | Area | Modules |
 |---|---|
@@ -243,7 +231,7 @@ Exit codes: `0` success · `1` business failure · `2` usage · `3` invalid regi
 
 ## Project Status
 
-The current source/spec consistency check is `uv run python tools/harness.py verify`. Historical milestone descriptions remain below for project context.
+The active source and runtime check is `bun run verify:bun`. Historical milestone descriptions and the archived Python verifier remain under `removed/python/` for project context.
 
 | Milestone | Delivered |
 |---|---|
@@ -263,8 +251,9 @@ The current source/spec consistency check is `uv run python tools/harness.py ver
 ## Repository Layout
 
 ```
-src/mrl/          MRL: lexer, parser, checker, evaluator, rules, factory profile
-src/mao/          the factory control plane (package `mao`, CLI `factory`)
+backend/mrl/      MRL: lexer, parser, checker, evaluator, rules
+backend/src/      Bun business control plane and CLI
+removed/python/   historical Python implementation and legacy fixtures
 spec/             normative specs: MRL 1.0, factory profile, schemas, system specs, example registry
 plan/             historical design, task and review material
 tests/            spec-linked acceptance tests, system tests and fixtures
@@ -293,7 +282,7 @@ The full architecture design (in Chinese) is [docs/architecture.md](docs/archite
 
 ## Contributing
 
-The current development workflow allows code, specs and acceptance tests to evolve together. Before committing or pushing, run `uv run python tools/harness.py verify`. See [AGENTS.md](AGENTS.md) and [docs/en/development.md](docs/en/development.md) for the consistency checks.
+The current development workflow allows code, specs and Bun acceptance tests to evolve together. Before committing or pushing, run `bun run verify:bun`. See [AGENTS.md](AGENTS.md) for the active consistency check.
 
 ## License
 

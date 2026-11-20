@@ -53,18 +53,20 @@
 
 每份组件规范都必须按第 7 节的模板组织。
 
+表中的 Python 模块名是历史实现定位，实际文件位于 `removed/python/src/`。活动实现与验收只使用 `backend/`、`frontend/` 和 Bun 测试目录。
+
 ---
 
 ## 1. 已定决定（D1–D14）
 
 这些决定已经做出。任务执行者**禁止**在实现中改变它们；发现它们行不通时，停下来写 `plan/journal/` 记录并阻塞任务（见 `plan/README.md`）。
 
-**D1 语言与包。** 业务控制面使用 TypeScript，运行时为 Bun，源码入口在 `backend/src/`，命令行入口为 `factory:bun`。现有 `src/mao/` Python 执行面保留为迁移期兼容实现，负责尚未迁移的 Runner、治理、完整 MRL 工具链和旧 `factory` 命令。新的 BusinessSystem、Foreman Web API、物料投影和官方 Harness 信息分配不得依赖 Python 进程才能提供基本业务闭环。
+**D1 语言与包。** 业务控制面使用 TypeScript，运行时为 Bun，源码入口在 `backend/src/`，命令行入口为 `factory:bun`。历史 Python 实现、旧验收、旧夹具和 Python 工具统一保存在 `removed/python/`，不再作为活动控制面入口。新的 BusinessSystem、Foreman Web API、物料投影、官方 Harness 信息分配和活动验收不得依赖 Python 进程。Bun 验收入口为 `bun run acceptance:bun`，完整活动校验入口为 `bun run verify:bun`。
 
 **D2 依赖。** Bun 业务控制面只使用 Bun 内置 SQLite、Web API、文件系统和进程接口，不调用模型厂商 API，不新增运行时依赖。前端只使用仓库已登记的 React 与 React Flow。Python 迁移兼容层继续遵守标准库、`pyyaml`、`jsonschema` 和本仓库 `mrl` 的约束。
 - 不使用 Docker SDK 或 Podman SDK。容器能力经受控的 Podman CLI 边界调用，禁止 shell 拼接。
 - 不使用 ORM。业务表直接通过 SQLite 查询访问。
-- 兼容层不得新增 `psutil`、`requests` 或 `pydantic`。
+- 历史目录不参与活动依赖解析，新的 Bun 实现不得新增 Python 依赖。
 
 **D3 MRL 是唯一的表达式与规则语言。** Spec 里出现的表达式和模板（属性、accept、审批条件、任务模板、argv 模板、收货规则模板……）一律用 `mrl.expr.compile_expr` / `compile_template` 编译。类型环境由 `mrl.factory.sites` 定义（factory-profile 第 4 章）。
 - **禁止**使用 Python `eval`/`exec`、Jinja、`str.format` 来渲染 Spec 中的模板。
@@ -74,7 +76,7 @@
 - 一次运行固定在一个快照（epoch）上，运行期间快照不可变。
 - M1 的 epoch 是 Registry 目录树的内容哈希；M3 起换成 Git commit。
 
-**D5 沙箱接口。** 所有“在隔离环境里执行”的操作都经过 `SandboxProvider`（第 4.5 节）。生产业务入口使用 Podman，Bun 通过 `backend/runtime/podman.ts` 维护健康检查、machine 就绪、镜像解析和受限容器参数。Python 兼容层保留 `DockerProvider` 以运行旧验收和明确选择的迁移任务。`LocalProvider` 仅供测试，在宿主上直接运行进程，**没有任何隔离**。新的业务系统不得把 Docker 状态当成 Podman 状态，也不得因 Podman 不可用静默回退。
+**D5 沙箱接口。** 所有“在隔离环境里执行”的操作都经过活动 Bun `ContainerProvider` 接口。生产业务入口使用 Podman 或 Kiri，Bun 通过 `backend/runtime` 维护健康检查、machine 就绪、镜像解析和受限容器参数。历史 Python `DockerProvider` 位于 `removed/python/`，只供历史复核。`LocalProvider` 仅供测试，在宿主上直接运行进程，**没有任何隔离**。新的业务系统不得把 Docker 状态当成 Podman 或 Kiri 状态，也不得因运行时不可用静默回退。
 
 **D6 沙箱内文件系统契约。** 沙箱内的路径是固定的虚拟路径（第 5 节）。Spec 中的配方（`run`、`harvest`、`place`）只能使用这些路径。宿主侧的真实路径永远不出现在 Spec 中。
 
