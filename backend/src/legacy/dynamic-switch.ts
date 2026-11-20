@@ -2,6 +2,7 @@ import { MrlStaticError } from "../../mrl/checker";
 import { compileExpr, MrlEvalError, type EvalEnvironment } from "../../mrl/evaluator";
 import { MrlSyntaxError } from "../../mrl/lexer";
 import { BOOL, DYN } from "../../mrl/types";
+import { readUntil } from "./dynamic-until";
 import { FactoryError } from "./errors";
 import { compileRunPlan, RunPlan, topologicalOrder, type PlanNode } from "./runplan";
 import { Snapshot } from "./snapshot";
@@ -40,9 +41,12 @@ export function compileDynamicRunPlan(snapshot: Snapshot, lineRef: string): RunP
   const document = snapshot.doc(line);
   const declarations = Object.entries(document.spec.steps as Record<string, Record<string, unknown>>);
   const switches = declarations.filter(([, declaration]) => Object.hasOwn(declaration, "switch"));
-  if (!switches.length) return compileRunPlan(snapshot, line);
+  const loops = new Map(declarations.filter(([, declaration]) => Object.hasOwn(declaration, "until"))
+    .map(([step, declaration]) => [step, readUntil(line, step, declaration.until)]));
+  if (!switches.length && !loops.size) return compileRunPlan(snapshot, line);
   const stepNames = new Set(declarations.map(([name]) => name));
-  const stations = declarations.filter(([, declaration]) => !Object.hasOwn(declaration, "switch"));
+  const stations = declarations.filter(([, declaration]) => !Object.hasOwn(declaration, "switch"))
+    .map(([step, { until: _until, ...station }]) => [step, station]);
   const stationOnly = new Snapshot(snapshot.root, snapshot.epoch, {
     ...snapshot.docs, [line]: { ...document, spec: { ...document.spec, steps: Object.fromEntries(stations) } },
   }, snapshot.result);
@@ -57,7 +61,7 @@ export function compileDynamicRunPlan(snapshot: Snapshot, lineRef: string): RunP
       if (!Object.hasOwn(base.inputs, on.port)) return invalid(line, step, "switch-source");
     } else {
       const producer = nodes.get(on.node);
-      if (!producer || producer.kind !== "station" || !Object.hasOwn(snapshot.spec(producer.station).outputs ?? {}, on.port)) {
+      if (!producer || !Object.hasOwn(snapshot.spec(producer.station).outputs ?? {}, on.port)) {
         return invalid(line, step, "switch-source");
       }
     }
@@ -72,9 +76,12 @@ export function compileDynamicRunPlan(snapshot: Snapshot, lineRef: string): RunP
   }
   for (const [id, node] of nodes) {
     const incoming = controllers.get(node.step);
-    if (incoming) nodes.set(id, { ...node, deps: [...new Set([...node.deps, ...incoming])].sort() });
+    const until = loops.get(id);
+    if (until) nodes.set(id, { ...node, kind: "until", until, deps: [...new Set([...node.deps, ...(incoming ?? [])])].sort() });
+    else if (incoming) nodes.set(id, { ...node, deps: [...new Set([...node.deps, ...incoming])].sort() });
   }
-  return new RunPlan({ ...base, nodes: topologicalOrder(line, nodes) });
+  const budgetItems = base.budgetItems.map(([id, amount]) => [id, amount * (loops.get(id)?.maxIter ?? 1)] as const);
+  return new RunPlan({ ...base, nodes: topologicalOrder(line, nodes), budgetItems });
 }
 
 export function selectSwitchTarget(node: PlanNode, materials: readonly Bean[]): string {

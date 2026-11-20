@@ -3,6 +3,7 @@ import { FactoryError } from "./errors";
 import { canonicalBytes, digestBytes } from "./foundation";
 import type { Snapshot } from "./snapshot";
 import type { SwitchDefinition } from "./dynamic-switch";
+import type { UntilDefinition } from "./dynamic-until";
 
 export interface Binding {
   readonly port: string;
@@ -13,7 +14,7 @@ export interface Binding {
 
 export interface PlanNode {
   readonly id: string;
-  readonly kind: "station" | "converter" | "switch";
+  readonly kind: "station" | "converter" | "switch" | "until";
   readonly step: string;
   readonly station: string;
   readonly role: string;
@@ -25,6 +26,7 @@ export interface PlanNode {
   readonly implicit: boolean;
   readonly resolution: LineResolution | null;
   readonly switch?: SwitchDefinition;
+  readonly until?: UntilDefinition;
 }
 
 type Parameter = string | boolean | number;
@@ -117,6 +119,7 @@ export class RunPlan implements Plan {
         implicit: node.implicit,
         resolution: node.resolution,
         ...(node.switch ? { switch: node.switch } : {}),
+        ...(node.until ? { until: node.until } : {}),
       })),
       outputs: this.outputs,
       keep: this.keep,

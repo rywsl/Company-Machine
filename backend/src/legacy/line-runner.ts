@@ -3,6 +3,7 @@ import { compileTemplate } from "../../mrl/template";
 import { BOOL, DYN } from "../../mrl/types";
 import { JobCache, cacheableRoles } from "./cache";
 import { compileDynamicRunPlan, selectSwitchTarget, switchTargets } from "./dynamic-switch";
+import { untilHolds, untilIteration } from "./dynamic-until";
 import { FactoryError } from "./errors";
 import { terminalStates } from "./jobs";
 import type { PlanNode, RunPlan } from "./runplan";
@@ -47,7 +48,7 @@ export class LineRunner {
       }
     }
     for (const [step, variant] of Object.entries(options.variants ?? {})) {
-      if (!variant || !plan.nodes.some((node) => node.kind === "station" && node.step === step)) {
+      if (!variant || !plan.nodes.some((node) => (node.kind === "station" || node.kind === "until") && node.step === step)) {
         problems.push({ port: step, bean: "", reason: "variant" });
       }
     }
@@ -78,31 +79,33 @@ export class LineRunner {
       const submitted: string[] = [];
       if (run.state === "RUNNING") {
         const dynamic = plan.nodes.some((node) => node.kind === "switch");
-        for (const node of plan.nodes) {
-          if (nodes.get(node.id)?.state !== "WAITING") continue;
+        for (const planned of plan.nodes) {
+          if (nodes.get(planned.id)?.state !== "WAITING") continue;
           try {
             if (dynamic) {
-              const readiness = this.dynamicReadiness(plan, node, nodes);
+              const readiness = this.dynamicReadiness(plan, planned, nodes);
               if (readiness === "waiting") continue;
               if (readiness === "skipped") {
-                nodes.set(node.id, this.runs.skipNode(id, node.id));
+                nodes.set(planned.id, this.runs.skipNode(id, planned.id));
                 continue;
               }
-            } else if (!node.deps.every((dep) => nodes.get(dep)?.state === "DONE")) continue;
-            if (node.kind === "switch") {
-              if (!node.switch) throw new FactoryError("RUN_PLAN_INVALID", "运行计划缺少 switch 定义", { step: node.step });
-              const on = node.switch.on;
+            } else if (!planned.deps.every((dep) => nodes.get(dep)?.state === "DONE")) continue;
+            if (planned.kind === "switch") {
+              if (!planned.switch) throw new FactoryError("RUN_PLAN_INVALID", "运行计划缺少 switch 定义", { step: planned.step });
+              const on = planned.switch.on;
               const ids = on.source === "input" ? run.inputs[on.port] : nodes.get(on.node)?.outputs[on.port];
-              const selected = selectSwitchTarget(node, (ids ?? []).map((bean) => this.runner.context.warehouse.get(bean)));
+              const selected = selectSwitchTarget(planned, (ids ?? []).map((bean) => this.runner.context.warehouse.get(bean)));
               if (!plan.nodes.some((target) => target.id === selected)) {
-                throw new FactoryError("RUN_PLAN_INVALID", "switch 选中的步骤不在计划里", { step: node.step, selected });
+                throw new FactoryError("RUN_PLAN_INVALID", "switch 选中的步骤不在计划里", { step: planned.step, selected });
               }
-              nodes.set(node.id, this.runs.completeSwitch(id, node.id, selected));
+              nodes.set(planned.id, this.runs.completeSwitch(id, planned.id, selected));
               continue;
             }
+            const node = planned.kind === "until" ? this.nextIteration(id, planned, nodes) : planned;
+            if (!node) continue;
             const inputs = this.nodeInputs(run, node, nodes);
             const params = this.nodeParams(run, node, plan.inputs);
-            const material = cacheableRoles.has(node.role)
+            const material = planned.kind !== "until" && cacheableRoles.has(node.role)
               ? this.cache.material(this.runner.snapshot, node.station, inputs, params, { variant: run.variants[node.step] })
               : undefined;
             if (material && run.useCache) {
@@ -112,7 +115,7 @@ export class LineRunner {
                 continue;
               }
             }
-            const row = this.runs.submitNode(id, node.id, { params, reservedUsd: node.budgetUsd }, () => {
+            const row = this.runs.submitNode(id, node.id, { params, reservedUsd: node.budgetUsd, reserveFrom: planned.until ? planned.id : undefined }, () => {
               const job = this.runner.submit(node.station, inputs, params, runValue(run), {
                 proposalOnly: node.role === "sink" && run.sinkMode === "dry-run",
               });
@@ -124,9 +127,9 @@ export class LineRunner {
           } catch (error) {
             if (!(error instanceof FactoryError)) throw error;
             const problem = { code: error.code, message: error.message, detail: error.detail };
-            if (error.code !== "RUN_BUDGET_EXHAUSTED") nodes.set(node.id, this.runs.failNode(id, node.id, problem));
+            if (error.code !== "RUN_BUDGET_EXHAUSTED") nodes.set(planned.id, this.runs.failNode(id, planned.id, problem));
             run = this.runs.transition(id, "FAILING", {
-              error: error.code === "RUN_BUDGET_EXHAUSTED" ? problem : { code: "NODE_FAILED", node: node.id, cause: problem },
+              error: error.code === "RUN_BUDGET_EXHAUSTED" ? problem : { code: "NODE_FAILED", node: planned.id, cause: problem },
             });
             break;
           }
@@ -148,6 +151,30 @@ export class LineRunner {
     }).immediate();
   }
 
+  private nextIteration(id: string, node: PlanNode, nodes: Map<string, RunNode>): PlanNode | undefined {
+    const definition = node.until;
+    if (!definition) throw new FactoryError("RUN_PLAN_INVALID", "运行计划缺少 until 定义", { step: node.step });
+    let attempt = 1;
+    while (attempt < definition.maxIter && nodes.has(untilIteration(node, attempt + 1).id)) attempt++;
+    let iteration = untilIteration(node, attempt);
+    const stored = nodes.get(iteration.id);
+    if (stored?.state === "DONE") {
+      const { context, snapshot } = this.runner;
+      if (untilHolds(snapshot, context.warehouse, node.station, node.step, definition, stored, attempt)) {
+        nodes.set(node.id, this.runs.completeUntil(id, node.id, stored.outputs));
+        return;
+      }
+      if (attempt === definition.maxIter) {
+        throw new FactoryError("UNTIL_EXHAUSTED", "达到最大次数时条件仍不成立", { step: node.step, max_iter: definition.maxIter });
+      }
+      attempt++;
+      iteration = untilIteration(node, attempt);
+    } else if (stored && stored.state !== "WAITING") return;
+    this.runs.prepareIteration(id, node.id, iteration.id, (definition.maxIter - attempt + 1) * node.budgetUsd);
+    nodes.set(iteration.id, this.runs.node(id, iteration.id));
+    return iteration;
+  }
+
   private dynamicReadiness(plan: RunPlan, node: PlanNode, nodes: Map<string, RunNode>): "ready" | "waiting" | "skipped" {
     const controls = node.deps.filter((dependency) => {
       const definition = plan.node(dependency).switch;
@@ -162,7 +189,7 @@ export class LineRunner {
   }
 
   async run(id: string): Promise<Run> {
-    const maxTicks = this.runs.plan(id).nodes.length * 2 + 2;
+    const maxTicks = this.runs.plan(id).nodes.reduce((total, node) => total + 2 * (node.until?.maxIter ?? 1), 2);
     for (let tick = 0; tick < maxTicks; tick += 1) {
       this.tick(id);
       const run = this.runs.get(id);

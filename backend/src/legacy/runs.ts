@@ -270,7 +270,7 @@ export class RunStore {
   }
 
   submitNode(
-    runId: string, nodeId: string, options: { params: JsonObject; reservedUsd: number }, createJob: () => { id: string },
+    runId: string, nodeId: string, options: { params: JsonObject; reservedUsd: number; reserveFrom?: string }, createJob: () => { id: string },
   ): RunNode {
     return this.db.transaction(() => {
       const run = this.get(runId);
@@ -278,13 +278,11 @@ export class RunStore {
       const need = options.reservedUsd;
       if (run.state !== "RUNNING" || node.state !== "WAITING") this.invalidState(run, "submit", node);
       if (!Number.isFinite(need) || need < 0) throw new FactoryError("RUN_BUDGET_INVALID", "节点预算不合法", { runId, nodeId, need });
-      const projected = run.spentUsd + run.reservedUsd + need;
-      const rounding = Number.EPSILON * Math.max(Math.abs(projected), Math.abs(run.budgetCapUsd)) * 4;
-      if (!Number.isFinite(projected) || projected - run.budgetCapUsd > rounding) {
-        throw new FactoryError("RUN_BUDGET_EXHAUSTED", "预留会超出 run 预算", {
-          runId, node: nodeId, spent: run.spentUsd, reserved: run.reservedUsd, need, cap: run.budgetCapUsd,
-        });
+      const owner = options.reserveFrom ? this.node(runId, options.reserveFrom) : undefined;
+      if (owner && (owner.state !== "WAITING" || owner.reservedUsd + Number.EPSILON * Math.max(need, owner.reservedUsd) * 8 < need)) {
+        this.invalidState(run, "transfer_reservation", owner);
       }
+      if (!owner) this.checkBudget(run, nodeId, need);
       const params = canonicalJson(options.params);
       const { id: jobId } = createJob();
       const now = this.now();
@@ -293,10 +291,35 @@ export class RunStore {
         WHERE run_id = ? AND node_id = ?
       `).run(jobId, params, need, now, runId, nodeId);
       this.db.query("INSERT INTO run_node_jobs (run_id, node_id, job_id, created_at) VALUES (?, ?, ?, ?)").run(runId, nodeId, jobId, now);
-      this.db.query("UPDATE runs SET reserved_usd = reserved_usd + ?, updated_at = ? WHERE id = ?").run(need, now, runId);
+      if (owner) {
+        const remaining = Math.max(0, owner.reservedUsd - need);
+        this.db.query("UPDATE run_nodes SET reserved_usd = ?, updated_at = ? WHERE run_id = ? AND node_id = ?").run(remaining, now, runId, owner.nodeId);
+        this.budgetEvent(run, owner.nodeId, remaining, 0, now);
+      }
+      this.db.query("UPDATE runs SET reserved_usd = reserved_usd + ?, updated_at = ? WHERE id = ?").run(owner ? 0 : need, now, runId);
       this.nodeEvent(node, "SUBMITTED", jobId, now);
       this.budgetEvent(run, nodeId, need, 0, now);
       return this.node(runId, nodeId);
+    }).immediate();
+  }
+
+  prepareIteration(runId: string, controllerId: string, iterationId: string, remainingBudget: number): void {
+    this.db.transaction(() => {
+      const run = this.get(runId);
+      const controller = this.node(runId, controllerId);
+      if (run.state !== "RUNNING" || controller.state !== "WAITING") this.invalidState(run, "prepare_iteration", controller);
+      if (!Number.isFinite(remainingBudget) || remainingBudget < 0) throw new FactoryError("RUN_BUDGET_INVALID", "迭代预算不合法", { runId, controllerId, remainingBudget });
+      const now = this.now();
+      const need = remainingBudget - controller.reservedUsd;
+      if (need > Number.EPSILON * remainingBudget * 8) {
+        this.checkBudget(run, controllerId, need);
+        this.db.query("UPDATE run_nodes SET reserved_usd = ?, updated_at = ? WHERE run_id = ? AND node_id = ?").run(remainingBudget, now, runId, controllerId);
+        this.db.query("UPDATE runs SET reserved_usd = reserved_usd + ?, updated_at = ? WHERE id = ?").run(need, now, runId);
+        this.budgetEvent(run, controllerId, remainingBudget, 0, now);
+      }
+      this.db.query(`INSERT INTO run_nodes (run_id, node_id, ord, state, updated_at)
+        VALUES (?, ?, (SELECT COALESCE(MAX(ord), -1) + 1 FROM run_nodes WHERE run_id = ?), 'WAITING', ?)
+        ON CONFLICT (run_id, node_id) DO NOTHING`).run(runId, iterationId, runId, now);
     }).immediate();
   }
 
@@ -341,7 +364,7 @@ export class RunStore {
       const error = target === "FAILED" ? job.error ?? { code: "JOB_FAILED" } : null;
       this.setNode(node, target, outputs, error, now);
       this.db.query(`
-        UPDATE runs SET reserved_usd = (SELECT COALESCE(SUM(reserved_usd), 0) FROM run_nodes WHERE run_id = ? AND state = 'SUBMITTED'),
+        UPDATE runs SET reserved_usd = (SELECT COALESCE(SUM(reserved_usd), 0) FROM run_nodes WHERE run_id = ?),
                         spent_usd = spent_usd + ?, updated_at = ? WHERE id = ?
       `).run(runId, job.costUsd, now, runId);
       this.budgetEvent(run, nodeId, 0, job.costUsd, now);
@@ -359,6 +382,10 @@ export class RunStore {
 
   completeSwitch(runId: string, nodeId: string, selected: string): RunNode {
     return this.changeWaitingNode(runId, nodeId, "DONE", null, { selected });
+  }
+
+  completeUntil(runId: string, nodeId: string, outputs: PortIds): RunNode {
+    return this.changeWaitingNode(runId, nodeId, "DONE", null, undefined, outputs);
   }
 
   cancel(id: string, by: string): Run {
@@ -394,7 +421,9 @@ export class RunStore {
       }
       for (const node of active.filter((node) => node.state === "WAITING").map(decodeNode)) {
         this.setNode(node, "SKIPPED", {}, null, now);
+        if (node.reservedUsd) this.budgetEvent(run, node.nodeId, 0, 0, now);
       }
+      this.db.query("UPDATE runs SET reserved_usd = 0 WHERE id = ?").run(run.id);
     }
     const error = patch.error === undefined ? run.error : patch.error;
     const outputs = patch.outputs ?? run.outputs;
@@ -405,17 +434,28 @@ export class RunStore {
     return this.get(run.id);
   }
 
-  private changeWaitingNode(runId: string, nodeId: string, state: "FAILED" | "SKIPPED" | "DONE", error: JsonObject | null, params?: JsonObject): RunNode {
+  private changeWaitingNode(runId: string, nodeId: string, state: "FAILED" | "SKIPPED" | "DONE", error: JsonObject | null, params?: JsonObject, outputs: PortIds = {}): RunNode {
     return this.db.transaction(() => {
       const run = this.get(runId);
       const node = this.node(runId, nodeId);
       if (node.state !== "WAITING" || run.state !== "RUNNING") this.invalidState(run, "change_node", node);
       const now = this.now();
-      this.setNode(node, state, {}, error, now);
+      this.setNode(node, state, outputs, error, now);
       if (params) this.db.query("UPDATE run_nodes SET params = ? WHERE run_id = ? AND node_id = ?").run(canonicalJson(params), runId, nodeId);
-      this.db.query("UPDATE runs SET updated_at = ? WHERE id = ?").run(now, runId);
+      this.db.query("UPDATE runs SET reserved_usd = MAX(0, reserved_usd - ?), updated_at = ? WHERE id = ?").run(node.reservedUsd, now, runId);
+      if (node.reservedUsd) this.budgetEvent(run, nodeId, 0, 0, now);
       return this.node(runId, nodeId);
     }).immediate();
+  }
+
+  private checkBudget(run: Run, nodeId: string, need: number): void {
+    const projected = run.spentUsd + run.reservedUsd + need;
+    const rounding = Number.EPSILON * Math.max(Math.abs(projected), Math.abs(run.budgetCapUsd)) * 4;
+    if (!Number.isFinite(projected) || projected - run.budgetCapUsd > rounding) {
+      throw new FactoryError("RUN_BUDGET_EXHAUSTED", "预留会超出 run 预算", {
+        runId: run.id, node: nodeId, spent: run.spentUsd, reserved: run.reservedUsd, need, cap: run.budgetCapUsd,
+      });
+    }
   }
 
   private setNode(node: RunNode, state: NodeState, outputs: PortIds, error: JsonObject | null, now: string): void {

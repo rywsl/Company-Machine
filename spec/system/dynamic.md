@@ -164,6 +164,8 @@ Bun 的 `compileDynamicRunPlan` 为 switch 生成控制节点和分支依赖，�
 5. 结果为假且 n `== max_iter`：节点 `FAILED`，错误码 `UNTIL_EXHAUSTED`。不把最后一次输出交给下游。
 6. 预算预留按内核倍数：`max_iter` 次的工位预算之和在第一次提交前就检查是否会超过 run 上限。会超过 → 与 `lines.md` 相同，`RUN_BUDGET_EXHAUSTED`，一次都不提交。
 
+Bun 的 RunPlan 保存 `until` 条件、迭代上限及聚合节点。每次 tick 只在上一轮完成后创建下一轮 Job。Run 在聚合节点上预留全部迭代预算，并将每轮金额转到对应 Job。聚合完成、失败或取消时释放剩余预留。重启后使用已有的轮次节点继续执行。
+
 **subline**。目标必须是声明了 `interface` 的产线（内核已查引用）。
 
 1. 控制节点就绪后，`lines.start_run(目标, 绑定好的输入, budget_usd=子产线 cap, trigger={"on": "subline", "parent": run_id, "step": step})`。子 run 的 epoch 等于父 run 的 epoch。用父 run 的快照，禁止换 commit。
