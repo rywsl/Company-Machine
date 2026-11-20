@@ -2,6 +2,7 @@ import { compileExpr, type EvalEnvironment } from "../../mrl/evaluator";
 import { compileTemplate } from "../../mrl/template";
 import { BOOL, DYN } from "../../mrl/types";
 import { JobCache, cacheableRoles } from "./cache";
+import { mapCount, mapFamily } from "./dynamic-map";
 import { compileDynamicRunPlan, selectSwitchTarget, switchTargets } from "./dynamic-switch";
 import { restoreSubline } from "./dynamic-subline";
 import { untilHolds, untilIteration } from "./dynamic-until";
@@ -9,7 +10,7 @@ import { FactoryError } from "./errors";
 import { terminalStates } from "./jobs";
 import type { PlanNode, RunPlan } from "./runplan";
 import { RunStore, runTerminalStates, type Run, type RunNode } from "./runs";
-import { inputsValue, propertyEnv } from "./values";
+import { beanValue, inputsValue, propertyEnv } from "./values";
 import type { Runner } from "./runner";
 
 export class LineRunner {
@@ -52,7 +53,7 @@ export class LineRunner {
       }
     }
     for (const [step, variant] of Object.entries(options.variants ?? {})) {
-      if (!variant || !plan.nodes.some((node) => (node.kind === "station" || node.kind === "until") && node.step === step)) {
+      if (!variant || !plan.nodes.some((node) => (node.kind === "station" || node.kind === "until" || node.kind === "map") && node.step === step)) {
         problems.push({ port: step, bean: "", reason: "variant" });
       }
     }
@@ -131,6 +132,10 @@ export class LineRunner {
               }
               continue;
             }
+            if (planned.kind === "map") {
+              this.advanceMap(run, planned, plan, nodes, submitted);
+              continue;
+            }
             const node = planned.kind === "until" ? this.nextIteration(id, planned, nodes) : planned;
             if (!node) continue;
             const inputs = this.nodeInputs(run, node, nodes);
@@ -207,7 +212,7 @@ export class LineRunner {
     if (stored?.state === "DONE") {
       const { context, snapshot } = this.runner;
       if (untilHolds(snapshot, context.warehouse, node.station, node.step, definition, stored, attempt)) {
-        nodes.set(node.id, this.runs.completeUntil(id, node.id, stored.outputs));
+        nodes.set(node.id, this.runs.completeAggregate(id, node.id, stored.outputs));
         return;
       }
       if (attempt === definition.maxIter) {
@@ -219,6 +224,53 @@ export class LineRunner {
     this.runs.prepareIteration(id, node.id, iteration.id, (definition.maxIter - attempt + 1) * node.budgetUsd);
     nodes.set(iteration.id, this.runs.node(id, iteration.id));
     return iteration;
+  }
+
+  private advanceMap(run: Run, node: PlanNode, plan: RunPlan, nodes: Map<string, RunNode>, submitted: string[]): void {
+    const definition = node.map;
+    if (!definition) throw new FactoryError("RUN_PLAN_INVALID", "运行计划缺少 map 定义", { step: node.step });
+    const { over } = definition;
+    const items = "items" in over ? over.items
+      : over.source === "input" ? run.inputs[over.port] : nodes.get(over.node)?.outputs[over.port];
+    if (!items) throw new FactoryError("INPUT_MISSING", "map 来源没有列表物料", { step: node.step });
+    const count = mapCount(definition, items.length, run.line, node.step);
+    const families = Array.from({ length: count }, (_, index) => mapFamily(definition.family, index));
+    const ids = families.flatMap((family) => family.map(({ id }) => id));
+    if (ids.length && ids.some((id) => !nodes.has(id))) {
+      const bound = "items" in over ? count : definition.maxItems ?? count;
+      this.runs.prepareInstances(run.id, node.id, ids, bound * node.budgetUsd);
+      this.runs.releaseUnusedReservation(run.id, node.id, count * node.budgetUsd);
+      for (const stored of this.runs.nodes(run.id)) if (!nodes.has(stored.nodeId)) nodes.set(stored.nodeId, stored);
+    }
+    const waitingBudget = families.reduce((total, family) => total + family.reduce((sum, member) =>
+      sum + (nodes.get(member.id)?.state === "WAITING" ? member.budgetUsd : 0), 0), 0);
+    const heldBudget = this.runs.node(run.id, node.id).reservedUsd;
+    if (waitingBudget - heldBudget > Number.EPSILON * waitingBudget * 8) this.runs.prepareInstances(run.id, node.id, [], waitingBudget);
+    const stationIds = families.map((family) => family.find((member) => member.kind === "station")!.id);
+    if (stationIds.every((id) => nodes.get(id)?.state === "DONE")) {
+      const ports = Object.keys(this.runner.snapshot.spec(node.station).outputs ?? {});
+      const outputs = Object.fromEntries(ports.map((port) => [port, stationIds.flatMap((id) => nodes.get(id)!.outputs[port] ?? [])]));
+      nodes.set(node.id, this.runs.completeAggregate(run.id, node.id, outputs));
+      return;
+    }
+    let opened = 0;
+    for (const [index, family] of families.entries()) {
+      for (const member of family) {
+        if (nodes.get(member.id)?.state !== "WAITING" || !member.deps.every((dependency) => ["DONE", "SKIPPED"].includes(nodes.get(dependency)?.state ?? ""))) continue;
+        if (member.kind === "station" && opened >= definition.maxParallel) continue;
+        const itemId = "items" in over ? undefined : String(items[index]);
+        const inputs = this.nodeInputs(run, member, nodes, undefined, itemId);
+        const alias: Record<string, unknown> = definition.as && member.templated.length ? {
+          [definition.as]: itemId ? beanValue(this.runner.context.warehouse.get(itemId)) : items[index],
+        } : {};
+        const params = this.nodeParams(run, member, plan.inputs, alias);
+        const row = this.runs.submitNode(run.id, member.id, { params, reservedUsd: member.budgetUsd, reserveFrom: node.id }, () =>
+          this.runner.submit(member.station, inputs, params, runValue(run), { proposalOnly: member.role === "sink" && run.sinkMode === "dry-run" }));
+        nodes.set(member.id, row);
+        if (row.jobId) submitted.push(row.jobId);
+        if (member.kind === "station") opened++;
+      }
+    }
   }
 
   private dynamicReadiness(plan: RunPlan, node: PlanNode, nodes: Map<string, RunNode>): "ready" | "waiting" | "skipped" {
@@ -235,28 +287,23 @@ export class LineRunner {
   }
 
   async run(id: string): Promise<Run> {
-    const maxTicks = this.tickLimit(this.runs.plan(id));
-    for (let tick = 0; tick < maxTicks; tick += 1) {
+    for (;;) {
       const jobs: string[] = [];
       this.tick(id, (pending) => jobs.push(...pending));
       const run = this.runs.get(id);
       if (runTerminalStates.has(run.state)) return run;
+      if (!jobs.length) throw new FactoryError("RUN_STUCK", "产线没有可继续推进的任务", { run: id, state: run.state });
       let waiting = 0;
       for (const job of jobs) if ((await this.runner.run(job)).state === "AWAITING_APPROVAL") waiting += 1;
       if (waiting > 0 && waiting === jobs.length) return this.runs.get(id);
     }
-    throw new FactoryError("RUN_STUCK", "产线未能在计划步数内完成", { run: id, state: this.runs.get(id).state });
   }
 
-  private tickLimit(plan: RunPlan): number {
-    return plan.nodes.reduce((total, node) => total + 2 * (node.until?.maxIter ?? 1)
-      + (node.subline ? this.tickLimit(restoreSubline(node.subline, plan.epoch, node.step)) : 0), 2);
-  }
-
-  private nodeInputs(run: Run, node: PlanNode, nodes: Map<string, RunNode>, declarations = this.runner.snapshot.spec(node.station).inputs): Record<string, string | string[]> {
+  private nodeInputs(run: Run, node: PlanNode, nodes: Map<string, RunNode>, declarations = this.runner.snapshot.spec(node.station).inputs, item?: string): Record<string, string | string[]> {
     const inputs: Record<string, string | string[]> = Object.create(null);
     for (const binding of node.inputs) {
-      const values = binding.source === "input" ? run.inputs[binding.outPort] : nodes.get(binding.node)?.outputs[binding.outPort];
+      const values = binding.source === "item" ? (item ? [item] : undefined)
+        : binding.source === "input" ? run.inputs[binding.outPort] : nodes.get(binding.node)?.outputs[binding.outPort];
       const declaration = declarations[binding.port];
       const list = declaration.type.startsWith("list<");
       if (!values?.length && declaration.optional) continue;
@@ -268,7 +315,7 @@ export class LineRunner {
     return inputs;
   }
 
-  private nodeParams(run: Run, node: PlanNode, ports: Readonly<Record<string, string>>): Record<string, unknown> {
+  private nodeParams(run: Run, node: PlanNode, ports: Readonly<Record<string, string>>, extra: Record<string, unknown> = {}): Record<string, unknown> {
     if (!node.templated.length) return { ...node.params };
     const materials = Object.fromEntries(Object.entries(run.inputs).map(([name, ids]) => {
       const beans = ids.map((id) => this.runner.context.warehouse.get(id));
@@ -277,11 +324,13 @@ export class LineRunner {
     const values = {
       run: runValue(run),
       inputs: inputsValue(materials),
+      ...extra,
     };
     const params = { ...node.params };
+    const environment = { run: DYN, inputs: DYN, ...Object.fromEntries(Object.keys(extra).map((key) => [key, DYN])) };
     for (const name of node.templated) {
       try {
-        params[name] = compileTemplate(String(params[name]), { environment: { run: DYN, inputs: DYN } }).render(values as EvalEnvironment);
+        params[name] = compileTemplate(String(params[name]), { environment }).render(values as EvalEnvironment);
       } catch (error) {
         throw new FactoryError("PARAM_INVALID", "产线节点模板渲染失败", { node: node.id, param: name, reason: String(error) });
       }

@@ -44,7 +44,7 @@ function sublineOutput(snapshot: Snapshot, plan: RunPlan, port: string): Subline
     ? sublineOutput(snapshot, followed, outPort)
     : snapshot.spec(node.station).outputs?.[outPort] as SublinePort | undefined;
   if (!source) throw new FactoryError("RUN_PLAN_INVALID", "子产线输出缺少来源端口", { line: plan.line, node: nodeId, outPort });
-  const type = snapshot.spec(plan.line).interface?.outputs?.[port]?.type ?? source.type;
+  const type = snapshot.spec(plan.line).interface?.outputs?.[port]?.type ?? (node.kind === "map" ? `list<${source.type}>` : source.type);
   return { ...source, type };
 }
 

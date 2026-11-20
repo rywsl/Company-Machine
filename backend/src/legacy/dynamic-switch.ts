@@ -2,6 +2,7 @@ import { MrlStaticError } from "../../mrl/checker";
 import { compileExpr, MrlEvalError, type EvalEnvironment } from "../../mrl/evaluator";
 import { MrlSyntaxError } from "../../mrl/lexer";
 import { BOOL, DYN } from "../../mrl/types";
+import { readMap } from "./dynamic-map";
 import { readUntil } from "./dynamic-until";
 import { freezeSubline, sublineShape } from "./dynamic-subline";
 import { FactoryError } from "./errors";
@@ -51,26 +52,55 @@ function compileDynamicLine(snapshot: Snapshot, lineRef: string, ancestry: Reado
   const switches = declarations.filter(([, declaration]) => Object.hasOwn(declaration, "switch"));
   const loops = new Map(declarations.filter(([, declaration]) => Object.hasOwn(declaration, "until"))
     .map(([step, declaration]) => [step, readUntil(line, step, declaration.until)]));
+  const maps = new Map(declarations.filter(([, declaration]) => Object.hasOwn(declaration, "map"))
+    .map(([step, declaration]) => {
+      if (loops.has(step)) return invalid(line, step, "map-until");
+      return [step, readMap(line, step, declaration.map)] as const;
+    }));
   const path = new Set([...ancestry, line]);
   const sublines = new Map(declarations.flatMap(([step, declaration]) => {
     if (typeof declaration.subline !== "string") return [];
     const plan = compileDynamicLine(snapshot, declaration.subline, path, compiled);
     return [[step, { line: plan.line, shape: sublineShape(snapshot, plan), definition: freezeSubline(plan) }]] as const;
   }));
-  if (!switches.length && !loops.size && !sublines.size) {
+  if (!switches.length && !loops.size && !sublines.size && !maps.size) {
     const staticPlan = compileRunPlan(snapshot, line);
     compiled.set(line, staticPlan);
     return staticPlan;
   }
   const stepNames = new Set(declarations.map(([name]) => name));
   const stations = declarations.filter(([, declaration]) => !Object.hasOwn(declaration, "switch"))
-    .map(([step, { until: _until, ...station }]) => [step, station]);
+    .map(([step, { until: _until, map: _map, ...station }]) => [step, station]);
   const stationOnly = new Snapshot(snapshot.root, snapshot.epoch, {
     ...snapshot.docs, [line]: { ...document, spec: { ...document.spec, steps: Object.fromEntries(stations) } },
   }, snapshot.result);
-  const base = compileWiredRunPlan(stationOnly, line, sublines);
+  const base = compileWiredRunPlan(stationOnly, line, sublines, maps);
   const nodes = new Map(base.nodes.map((node) => [node.id, node]));
   const controllers = new Map<string, string[]>();
+  const multiplicities = new Map<string, number>();
+  for (const [step, definition] of maps) {
+    const family = base.nodes.filter((node) => node.step === step);
+    const station = nodes.get(step);
+    if (!station || station.kind !== "station") return invalid(line, step, "map-station");
+    const ids = new Set(family.map((node) => node.id));
+    const budget = family.reduce((sum, node) => sum + node.budgetUsd, 0);
+    const { over } = definition;
+    const limit = "items" in over ? over.items.length : definition.maxItems;
+    if (limit === undefined && budget > 0) return invalid(line, step, "max-items");
+    for (const node of family) {
+      multiplicities.set(node.id, limit ?? 0);
+      nodes.delete(node.id);
+    }
+    const deps = new Set(family.flatMap((node) => node.deps.filter((dependency) => !ids.has(dependency))));
+    if (!("items" in over)) {
+      const origin = base.nodes.find((node) => node.id === over.node);
+      const declaration = over.source === "input" ? base.inputs[over.port]
+        : origin && (sublines.get(over.node)?.shape.outputs[over.port]?.type ?? snapshot.spec(origin.station).outputs?.[over.port]?.type);
+      if (typeof declaration !== "string" || (!maps.has(over.node) && !declaration.startsWith("list<"))) return invalid(line, step, "map-source");
+      if (over.source === "node") deps.add(over.node);
+    }
+    nodes.set(step, { ...station, kind: "map", deps: [...deps].sort(), budgetUsd: budget, map: { ...definition, family } });
+  }
 
   for (const [step, declaration] of switches) {
     const definition = choice(line, step, declaration.switch);
@@ -101,7 +131,7 @@ function compileDynamicLine(snapshot: Snapshot, lineRef: string, ancestry: Reado
     else if (child) nodes.set(id, { ...node, kind: "subline", subline: child.definition, deps: [...new Set([...node.deps, ...(incoming ?? [])])].sort() });
     else if (incoming) nodes.set(id, { ...node, deps: [...new Set([...node.deps, ...incoming])].sort() });
   }
-  const budgetItems = base.budgetItems.map(([id, amount]) => [id, amount * (loops.get(id)?.maxIter ?? 1)] as const);
+  const budgetItems = base.budgetItems.map(([id, amount]) => [id, amount * (loops.get(id)?.maxIter ?? multiplicities.get(id) ?? 1)] as const);
   const plan = new RunPlan({ ...base, nodes: topologicalOrder(line, nodes), budgetItems });
   compiled.set(line, plan);
   return plan;

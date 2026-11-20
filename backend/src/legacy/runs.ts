@@ -304,15 +304,34 @@ export class RunStore {
   }
 
   prepareIteration(runId: string, controllerId: string, iterationId: string, remainingBudget: number): void {
+    this.prepareInstances(runId, controllerId, [iterationId], remainingBudget);
+  }
+
+  prepareInstances(runId: string, controllerId: string, instanceIds: readonly string[], remainingBudget: number): void {
     this.db.transaction(() => {
       const run = this.get(runId);
       const controller = this.node(runId, controllerId);
       if (run.state !== "RUNNING" || controller.state !== "WAITING") this.invalidState(run, "prepare_iteration", controller);
       const now = this.now();
       this.reserveWaiting(run, controller, remainingBudget, now);
-      this.db.query(`INSERT INTO run_nodes (run_id, node_id, ord, state, updated_at)
-        VALUES (?, ?, (SELECT COALESCE(MAX(ord), -1) + 1 FROM run_nodes WHERE run_id = ?), 'WAITING', ?)
-        ON CONFLICT (run_id, node_id) DO NOTHING`).run(runId, iterationId, runId, now);
+      const next = this.db.query<{ ord: number }>("SELECT COALESCE(MAX(ord), -1) + 1 AS ord FROM run_nodes WHERE run_id = ?").get(runId)!.ord;
+      const insert = this.db.query(`INSERT INTO run_nodes (run_id, node_id, ord, state, updated_at)
+        VALUES (?, ?, ?, 'WAITING', ?) ON CONFLICT (run_id, node_id) DO NOTHING`);
+      instanceIds.forEach((id, index) => insert.run(runId, id, next + index, now));
+    }).immediate();
+  }
+
+  releaseUnusedReservation(runId: string, controllerId: string, budget: number): void {
+    this.db.transaction(() => {
+      const run = this.get(runId);
+      const controller = this.node(runId, controllerId);
+      if (run.state !== "RUNNING" || controller.state !== "WAITING") this.invalidState(run, "release_reservation", controller);
+      const unused = controller.reservedUsd - budget;
+      if (unused <= Number.EPSILON * controller.reservedUsd * 8) return;
+      const now = this.now();
+      this.db.query("UPDATE run_nodes SET reserved_usd = ?, updated_at = ? WHERE run_id = ? AND node_id = ?").run(budget, now, runId, controllerId);
+      this.db.query("UPDATE runs SET reserved_usd = MAX(0, reserved_usd - ?), updated_at = ? WHERE id = ?").run(unused, now, runId);
+      this.budgetEvent(run, controllerId, budget, 0, now);
     }).immediate();
   }
 
@@ -412,7 +431,7 @@ export class RunStore {
     return this.changeWaitingNode(runId, nodeId, "DONE", null, { selected });
   }
 
-  completeUntil(runId: string, nodeId: string, outputs: PortIds): RunNode {
+  completeAggregate(runId: string, nodeId: string, outputs: PortIds): RunNode {
     return this.changeWaitingNode(runId, nodeId, "DONE", null, undefined, outputs);
   }
 

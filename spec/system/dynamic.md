@@ -139,6 +139,8 @@ Plan 文档必须符合 `records.schema.json` 的 `plan`。`metadata.generated_b
 - `max_parallel`：一次 `tick` 最多新提交这么多个该 map 的 `WAITING` 实例，按序号升序。其余保持 `WAITING`。这不依赖调度器。
 - `$item` 绑定到当前元素的 Bean。`as` 若存在，模板环境里的值是该 Bean 的 `bean_value`（factory-profile：动态来源的 `as` 是元素 Bean）。
 
+Bun 的 RunPlan 冻结 Map 来源与实例工位和转换节点的定义。运行时按来源顺序生成 `{step}#{i}`，转换节点用同一个索引关联所属实例。每个 tick 按 `max_parallel` 限制新提交的实例工位，调度器继续按配置准入作业。展开时预留声明上限对应的预算并释放未用额度。聚合节点按实例索引拼接封存产物。
+
 ### 5.3 switch
 
 schema 要求 `on`、`cases`、`default`。控制节点不提交 job。

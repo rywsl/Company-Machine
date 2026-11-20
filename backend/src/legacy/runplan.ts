@@ -5,17 +5,18 @@ import type { Snapshot } from "./snapshot";
 import type { SwitchDefinition } from "./dynamic-switch";
 import type { UntilDefinition } from "./dynamic-until";
 import type { SublineDefinition, SublineShape } from "./dynamic-subline";
+import type { MapDefinition, MapPlan } from "./dynamic-map";
 
 export interface Binding {
   readonly port: string;
-  readonly source: "input" | "node";
+  readonly source: "input" | "node" | "item";
   readonly node: string;
   readonly outPort: string;
 }
 
 export interface PlanNode {
   readonly id: string;
-  readonly kind: "station" | "converter" | "switch" | "until" | "subline";
+  readonly kind: "station" | "converter" | "switch" | "until" | "subline" | "map";
   readonly step: string;
   readonly station: string;
   readonly role: string;
@@ -29,6 +30,7 @@ export interface PlanNode {
   readonly switch?: SwitchDefinition;
   readonly until?: UntilDefinition;
   readonly subline?: SublineDefinition;
+  readonly map?: MapPlan;
 }
 
 type Parameter = string | boolean | number;
@@ -123,6 +125,7 @@ export class RunPlan implements Plan {
         ...(node.switch ? { switch: node.switch } : {}),
         ...(node.until ? { until: node.until } : {}),
         ...(node.subline ? { subline: node.subline } : {}),
+        ...(node.map ? { map: node.map } : {}),
       })),
       outputs: this.outputs,
       keep: this.keep,
@@ -491,10 +494,11 @@ function outputRef(line: string, source: string): PortPair {
   return [match[1], match[2]];
 }
 
-function outputPort(line: string, steps: Map<string, Step>, [node, port]: PortPair): Port {
+function outputPort(line: string, steps: Map<string, Step>, [node, port]: PortPair, maps?: ReadonlyMap<string, MapDefinition>): Port {
   const output = steps.get(node)?.station.outputs;
   if (!output || !Object.hasOwn(output, port)) return invalid(line, "找不到来源节点的输出端口", { node, port });
-  return output[port];
+  const definition = output[port];
+  return maps?.has(node) ? { ...definition, type: `list<${definition.type}>` } : definition;
 }
 
 function resolveWiring(
@@ -503,6 +507,7 @@ function resolveWiring(
   inputs: Record<string, LineInput>,
   types: LineTypes,
   converters: Map<string, Converter>,
+  maps?: ReadonlyMap<string, MapDefinition>,
 ): Map<string, PlannedEdge[]> {
   const wiring = new Map<string, PlannedEdge[]>();
   for (const [step, { declaration, station }] of steps) {
@@ -524,9 +529,19 @@ function resolveWiring(
         const entry = inputs[lineInput];
         source = { type: entry.type, guarantees: entry.requires };
         input = { port, source: "input", node: "", outPort: lineInput };
+      } else if (ref === "$item") {
+        const over = maps?.get(step)?.over;
+        if (!over || "items" in over) return invalid(line, "map 元素输入需要列表来源", { step, port });
+        const declaration = over.source === "input"
+          ? (Object.hasOwn(inputs, over.port) ? { type: inputs[over.port].type, guarantees: inputs[over.port].requires } : undefined)
+          : outputPort(line, steps, [over.node, over.port], maps);
+        const type = declaration && /^list<(.+)>$/.exec(declaration.type)?.[1];
+        if (!type) return invalid(line, "map 元素输入需要列表来源", { step, port });
+        source = { type, guarantees: declaration.guarantees };
+        input = { port, source: "item", node: "", outPort: "" };
       } else {
         const pair = outputRef(line, ref);
-        source = outputPort(line, steps, pair);
+        source = outputPort(line, steps, pair, maps);
         input = { port, source: "node", node: pair[0], outPort: pair[1] };
       }
       const resolved = resolveEdge(types, converters, {
@@ -679,7 +694,7 @@ export function compileRunPlan(snapshot: Snapshot, lineRef: string): RunPlan {
   return compileWiredRunPlan(snapshot, lineRef);
 }
 
-export function compileWiredRunPlan(snapshot: Snapshot, lineRef: string, sublines?: ReadonlyMap<string, { line: string; shape: SublineShape }>): RunPlan {
+export function compileWiredRunPlan(snapshot: Snapshot, lineRef: string, sublines?: ReadonlyMap<string, { line: string; shape: SublineShape }>, maps?: ReadonlyMap<string, MapDefinition>): RunPlan {
   const line = snapshot.key("Line", lineRef);
   const document = snapshot.doc(line);
   if (document.metadata?.lifecycle === "retired") return invalid(line, "产线已退役");
@@ -689,12 +704,12 @@ export function compileWiredRunPlan(snapshot: Snapshot, lineRef: string, subline
   const converters = converterLibrary(snapshot, types, line);
   const inputs = spec.interface?.inputs ?? {};
   for (const input of Object.values(inputs)) types.normalize(input.type);
-  const wiring = resolveWiring(line, steps, inputs, types, converters);
+  const wiring = resolveWiring(line, steps, inputs, types, converters, maps);
   const nodes = topologicalOrder(line, expandNodes(line, steps, wiring, converters));
 
   const outputs = Object.fromEntries(Object.entries(spec.interface?.outputs ?? {}).map(([name, output]) => {
     const reference = outputRef(line, output.from);
-    const source = outputPort(line, steps, reference);
+    const source = outputPort(line, steps, reference, maps);
     if (output.type && !types.isSubtype(types.normalize(source.type), types.normalize(output.type))) {
       return invalid(line, "接口输出的声明类型无法接收来源类型", { output: name, type: output.type });
     }
@@ -702,7 +717,7 @@ export function compileWiredRunPlan(snapshot: Snapshot, lineRef: string, subline
   }));
   const keep = (spec.keep ?? []).map((source) => {
     const pair = outputRef(line, source);
-    outputPort(line, steps, pair);
+    outputPort(line, steps, pair, maps);
     return pair;
   }).sort(([aNode, aPort], [bNode, bPort]) => compare(aNode, bNode) || compare(aPort, bPort));
 

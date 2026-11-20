@@ -137,6 +137,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/dynamic-switch.test.ts` | switch 计划、条件顺序、默认分支、重启恢复和失败原子性 |
 | `backend/tests/dynamic-until.test.ts` | until 有界执行、结果聚合、重启恢复和预算预留 |
 | `backend/tests/dynamic-subline.test.ts` | Subline 冻结计划、父子运行关联、产物和费用结算 |
+| `backend/tests/dynamic-map.test.ts` | Map 列表展开、保序聚合、溢出与单轮提交数量限制 |
 | `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
 | `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
@@ -230,6 +231,10 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_until_stops_when_condition_holds` | `backend/tests/dynamic-until.test.ts` | `stops on the first true until result after restoring a persisted iteration` | 各轮为独立 Job，第二轮为真时只输出第二轮结果且无第三轮 |
 | `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_until_exhausted_fails_run` | `backend/tests/dynamic-until.test.ts` | `fails when until is exhausted without passing the final iteration to dependants` | 两轮完成后聚合失败并保存 `UNTIL_EXHAUSTED`，Run 无产物 |
 | `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_subline_runs_child_in_parent_epoch` | `backend/tests/dynamic-subline.test.ts` | `runs one frozen child in the parent epoch and propagates the same output after restart` | 唯一子 Run 继承父 epoch，父节点无 Job 且共享同一封存产物 |
+| `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_map_expands_runtime_list` | `backend/tests/dynamic-map.test.ts` | `expands every runtime list item and aggregates outputs in source order` | 运行期产生三个顺序实例，聚合节点和产线输出共享同一有序物料列表 |
+| `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_map_overflow_rejects` | `backend/tests/dynamic-map.test.ts` | `rejects runtime Map overflow before creating any instances` | 来源完成后拒绝超限列表且不创建实例 |
+| `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_map_truncate_keeps_upstream_order` | `backend/tests/dynamic-map.test.ts` | `truncates Map overflow to the upstream prefix` | 截取原列表前两个元素，保留物料顺序 |
+| `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_map_max_parallel_limits_submissions` | `backend/tests/dynamic-map.test.ts` | `limits new Map station jobs per tick and keeps other instances waiting` | 首轮仅提交索引零，其余等待并最终完成 |
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_init_sets_active_pointer_and_ref` | `backend/tests/registry-epochs.test.ts` | `initializes the active Git epoch in SQLite and refs/factory exactly once` | active 指针、Git 引用、SQLite 行和物化 epoch 一致 |
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_init_twice_rejected` | `backend/tests/registry-epochs.test.ts` | `initializes the active Git epoch in SQLite and refs/factory exactly once` | 重复初始化返回 `EPOCH_STATE_INVALID` |
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_build_writes_frozen_resolutions_once` | `backend/tests/registry-epochs.test.ts` | `freezes a committed Registry and its nonempty resolutions once` | 校验提交归档和预计算解析，重复构建保留写入过的解析文件 |
