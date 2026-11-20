@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { Context, CounterIds, FakeClock, Snapshot, canonicalJson, digestBytes, loadSnapshot } from "../src/legacy";
+import { Context, CounterIds, FakeClock, canonicalJson, digestBytes, loadSnapshot, paramsValue, runtimeEnv, type Bean } from "../src/legacy";
 
 function tempRoot(label: string): string {
   const root = join("tmp", `legacy-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -45,5 +45,14 @@ describe("Bun M1 core boundaries", () => {
     expect(snapshot.typeKey("note.text@1")).toBe("Type:note.text@1.0");
     expect(snapshot.factsDecl("note.text@1")).toMatchObject({ chars: "int", lines: "int" });
     expect(snapshot.always("note.text@1")).toEqual(new Set());
+  });
+
+  test("projects Bean values and validates station parameters", () => {
+    const bean: Bean = { id: "sha256:" + "a".repeat(64), type: "note.text@1.0", facts: {}, meta: {}, payload: [], sealed: true, createdAt: "2026-01-01T00:00:00.000Z" };
+    expect(runtimeEnv({ task: "task", factory_contract: "contract" }, { max_turns: 1, timeout_s: 2, budget_usd: 3 }, { model: "m", runtime: "r" })).toEqual({ brief: { task: "task", factory_contract: "contract" }, limits: { max_turns: 1, timeout_s: 2, budget_usd: 3 }, operator: { model: "m", runtime: "r" } });
+    const snapshot = { key: () => "Station:test@1", spec: () => ({ params: { count: { type: "int", default: 1 }, label: { type: "string" } } }) } as any;
+    expect(paramsValue(snapshot, "test@1", { label: "ok" })).toEqual({ count: 1, label: "ok" });
+    expect(() => paramsValue(snapshot, "test@1", { count: "bad" })).toThrow("工位参数不合法");
+    expect(bean.id).toContain("sha256:");
   });
 });
