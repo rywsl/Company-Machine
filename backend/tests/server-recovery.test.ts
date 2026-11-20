@@ -238,13 +238,129 @@ test("stopping during startup readiness leaves the pending work durable", async 
     const reopened = new SqliteStore(dbPath, dbPath);
     try {
       expect(reopened.getForemanMessage(envelope.id)?.status).toBe("queued");
-      expect(reopened.listUnitRuns(run.id)[0]?.status).toBe("running");
+      expect(reopened.listUnitRuns(run.id)[0]?.status).toBe("queued");
     } finally {
       reopened.close();
     }
   } finally {
     releaseRuntime();
     app.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps containerized Operators queued offline and resumes their DAG once after explicit readiness", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-runtime-recovery-"));
+  const dbPath = join(root, "factory.db");
+  const seed = new SqliteStore(dbPath, dbPath);
+  let app: ReturnType<typeof startServer> | undefined;
+  let settleNative = () => {};
+  const image = `registry.example/harness@sha256:${"a".repeat(64)}`;
+  try {
+    seed.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session", image });
+    seed.saveHarnessProfile({ runtime: "claude-code", role: "operator", baseUrl: "", model: "fixture", mode: "session" });
+    const system = seed.createBusinessSystem({ name: "Runtime recovery" });
+    const source = seed.createIntake({ business_system_id: system.id, name: "Container source" });
+    const target = seed.createIntake({ business_system_id: system.id, name: "Container downstream" });
+    const independent = seed.createIntake({ business_system_id: system.id, name: "Native branch" });
+    const sourceId = `${source.id}:operator`, targetId = `${target.id}:operator`, independentId = `${independent.id}:operator`;
+    seed.updateOperatorBinding(system.id, sourceId, { harnessRuntime: "codex" });
+    seed.updateOperatorBinding(system.id, targetId, { harnessRuntime: "codex" });
+    seed.updateOperatorBinding(system.id, independentId, { harnessRuntime: "claude-code" });
+    seed.updateBusinessSystemMetadata(system.id, { graph: { edges: [{ source: sourceId, target: targetId }] } });
+    const run = seed.createBusinessRun(system.id, "test", {}, [], true)!;
+    const deferred = seed.createBusinessRun(system.id, "manual", {}, [], false)!;
+    seed.close();
+
+    let online = false;
+    let readinessChecks = 0;
+    let containerLaunches = 0;
+    const health = () => ({ available: online, platform: "linux", executable: "kiri", machine: "linux-host", rootless: null, reason: online ? undefined : "offline" });
+    app = startServer({
+      port: 0, dbPath, legacyPath: dbPath,
+      runtime: { health: async () => health(), ensureReady: async () => { readinessChecks++; return health(); } },
+      operator: { spawn: (_argv, options) => {
+        if (options.containerImage) {
+          containerLaunches++;
+          return fixtureProcess("Container turn completed");
+        }
+        return {
+          stdout: new ReadableStream<Uint8Array>({ start(controller) {
+            settleNative = () => {
+              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "result", text: "Native turn completed" }) + "\n"));
+              controller.close();
+            };
+          } }),
+          kill() {},
+        };
+      } },
+    });
+    const { store } = app;
+    const statusOf = (unitId: string) => store.listUnitRuns(run.id).find(({ unitId: id }) => id === unitId)?.status;
+    await waitFor(() => readinessChecks === 1 && statusOf(independentId) === "running");
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    expect(readinessChecks).toBe(1);
+    expect(containerLaunches).toBe(0);
+    expect(statusOf(sourceId)).toBe("queued");
+    expect(statusOf(targetId)).toBe("queued");
+    expect(app.events.after().filter(({ type }) => type === "operator.run.failed")).toEqual([]);
+
+    online = true;
+    const readinessUrl = new URL("/api/v1/runtime/ensure-ready", app.server.url);
+    const checks = await Promise.all([fetch(readinessUrl, { method: "POST" }), fetch(readinessUrl, { method: "POST" })]);
+    expect(checks.map(({ status }) => status)).toEqual([200, 200]);
+    await waitFor(() => statusOf(sourceId) === "completed" && statusOf(targetId) === "completed");
+    expect(containerLaunches).toBe(2);
+    expect(statusOf(independentId)).toBe("running");
+    expect(store.listUnitRuns(deferred.id).every(({ status }) => status === "queued")).toBe(true);
+    settleNative();
+    settleNative = () => {};
+    await waitFor(() => store.getBusinessRun(run.id)?.status === "completed");
+  } finally {
+    settleNative();
+    if (app) { await app.operator.close(); app.stop(); }
+    seed.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("exhausting the startup deadline leaves an Operator queued and ignores late readiness", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-runtime-deadline-"));
+  const dbPath = join(root, "factory.db");
+  const seed = new SqliteStore(dbPath, dbPath);
+  let app: ReturnType<typeof startServer> | undefined;
+  let resolveReady = () => {};
+  try {
+    seed.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session",
+      image: `registry.example/harness@sha256:${"a".repeat(64)}`, sessionTimeoutSeconds: 1 });
+    const system = seed.createBusinessSystem({ name: "Startup deadline" });
+    seed.createIntake({ business_system_id: system.id, name: "Queued Operator" });
+    const run = seed.createBusinessRun(system.id, "test", {}, [], true)!;
+    seed.close();
+
+    const health = { available: true, platform: "linux", executable: "kiri", machine: "linux-host", rootless: null };
+    const ready = new Promise<void>((resolve) => { resolveReady = resolve; });
+    let checks = 0;
+    let launches = 0;
+    app = startServer({
+      port: 0, dbPath, legacyPath: dbPath,
+      runtime: { health: async () => health, ensureReady: async () => { checks++; await ready; return health; } },
+      operator: { spawn: () => { launches++; return fixtureProcess("Container turn completed"); } },
+    });
+    await waitFor(() => checks === 1);
+    await app.operator.dispatch(run.id);
+    expect(app.store.listUnitRuns(run.id)[0]?.status).toBe("queued");
+    resolveReady();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(launches).toBe(0);
+    expect((await fetch(new URL("/api/v1/runtime/ensure-ready", app.server.url), { method: "POST" })).status).toBe(200);
+    const store = app.store;
+    await waitFor(() => store.getBusinessRun(run.id)?.status === "completed");
+    expect(launches).toBe(1);
+  } finally {
+    resolveReady();
+    if (app) { await app.operator.close(); app.stop(); }
+    seed.close();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -44,6 +44,7 @@ function redactCredentialValues(value: unknown, secrets: string[]): unknown {
 export class OperatorCoordinator {
   private readonly active = new Map<string, Promise<void>>();
   private readonly turns = new Map<string, HarnessTurn>();
+  private readonly awaitingRuntime = new Map<string, string>();
   private closed = false;
   private readonly cwd: string;
 
@@ -58,9 +59,11 @@ export class OperatorCoordinator {
     if (!unitRun) return Promise.resolve();
     const existing = this.active.get(unitRun.id);
     if (existing) return existing;
-    const advance = (completedUnitRunId?: string) => {
+    const advance = (completedUnitRunId?: string | null) => {
       this.active.delete(unitRun.id);
-      if (!this.closed) this.options.onProgress?.(runId, unitRunId ? completedUnitRunId : undefined);
+      if (!this.closed && completedUnitRunId !== null) {
+        this.options.onProgress?.(runId, unitRunId ? completedUnitRunId : undefined);
+      }
     };
     const work = this.run(runId, unitRun.id).then(advance, (error) => {
       advance();
@@ -80,8 +83,16 @@ export class OperatorCoordinator {
     }
   }
 
+  async takeRuntimeDeferredRuns(): Promise<string[]> {
+    const deferred = [...this.awaitingRuntime];
+    this.awaitingRuntime.clear();
+    await Promise.allSettled(deferred.map(([id]) => this.active.get(id)));
+    return [...new Set(deferred.map(([, runId]) => runId))];
+  }
+
   stop(): void {
     this.closed = true;
+    this.awaitingRuntime.clear();
     for (const turn of this.turns.values()) void turn.close();
   }
 
@@ -91,8 +102,9 @@ export class OperatorCoordinator {
     await Promise.allSettled(this.active.values());
   }
 
-  private async run(runId: string, unitRunId: string): Promise<string | undefined> {
+  private async run(runId: string, unitRunId: string): Promise<string | null | undefined> {
     if (this.closed) return;
+    this.awaitingRuntime.delete(unitRunId);
     const unitRun = this.options.store.getUnitRun(runId, unitRunId);
     if (!unitRun || unitRun.status !== "queued") return;
     const unit = this.options.store.getBusinessUnit(unitRun.unitId);
@@ -116,9 +128,6 @@ export class OperatorCoordinator {
       return;
     }
     const owner = createUnitRunOwner();
-    const claimed = this.options.store.claimUnitRun(runId, unit.id, sessionId, owner);
-    if (!claimed || claimed.status !== "running") return;
-    this.options.events.publish("operator.run.claimed", { runId, unitRunId, unitId: unit.id, sessionId, harness: definition.id, model });
     const turn = new HarnessTurn(profile.sessionTimeoutSeconds);
     this.turns.set(unitRun.id, turn);
     const transport = useAcp
@@ -132,9 +141,20 @@ export class OperatorCoordinator {
     let materialStage: ReturnType<typeof createMaterialFileStage> | undefined;
     const pendingFiles: PendingFiles[] = [];
     let finishing = false;
+    let claimed: UnitRun | undefined;
     try {
-      if (profile.image && this.options.ensureRuntime) await turn.wait(this.options.ensureRuntime());
-      if (this.closed) return;
+      if (profile.image && this.options.ensureRuntime) {
+        try {
+          await turn.wait(this.options.ensureRuntime());
+        } catch {
+          if (!this.closed) this.awaitingRuntime.set(unitRunId, runId);
+          return null;
+        }
+      }
+      if (this.closed) return null;
+      claimed = this.options.store.claimUnitRun(runId, unit.id, sessionId, owner);
+      if (!claimed) return;
+      this.options.events.publish("operator.run.claimed", { runId, unitRunId, unitId: unit.id, sessionId, harness: definition.id, model });
       const project = this.options.store.getProject(unit.projectId);
       const ownProject = project?.businessSystemId === unit.businessSystemId ? project : undefined;
       if (ownProject && profile.image && this.options.prepareSources) {
@@ -255,6 +275,7 @@ export class OperatorCoordinator {
       if (completed?.status === "completed") return completed.id;
     } catch (error) {
       if (this.closed) return;
+      if (!claimed) throw error;
       const message = redactCredentialValues(error instanceof Error ? error.message : "official-harness-failed", Object.values(credentials)) as string;
       const completed = this.options.store.completeUnitRun(unitRun.id, "failed", [...outputIds], message, owner.token);
       if (completed) this.options.events.publish("operator.run.failed", completed);

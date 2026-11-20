@@ -309,7 +309,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
-- Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，每个新领用的 Operator 单元在 SQLite 保存执行进程归属。Linux 服务启动时在同一内核启动和 PID 命名空间内检查归属，只有系统确认原 PID 已退出才将其置为 `failed` 并记录 `CONTROL_PLANE_RESTART`，保留已登记产物与会话编号。外部执行结果由用户核对后决定后续动作。活跃、无法核实以及历史没有归属记录的 `running` 单元保留原状态。等待资源的单元继续通过现有资源请求流程恢复。
+- Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，每个新领用的 Operator 单元在 SQLite 保存执行进程归属。Linux 服务启动时在同一内核启动和 PID 命名空间内检查归属，只有系统确认原 PID 已退出才将其置为 `failed` 并记录 `CONTROL_PLANE_RESTART`，保留已登记产物与会话编号。外部执行结果由用户核对后决定后续动作。活跃、无法核实以及历史没有归属记录的 `running` 单元保留原状态。等待资源的单元继续通过现有资源请求流程恢复。容器化 Operator 在领取单元前检查运行时。检查失败、超时或服务停止时，单元保留 `queued` 状态。成功执行 `POST /api/v1/runtime/ensure-ready` 后，通过正常 DAG 就绪规则恢复已授权的排队工作。服务在五秒内复用确认在线的运行时状态。
 - Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
 - ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环
 - ACP 使用官方 `sessionId`。只有 Harness 在初始化中声明 `loadSession` 时才请求恢复会话，恢复时收到的历史通知不进入当前回复。`session/prompt` 响应中的 `end_turn` 结束当前轮，无须等待 stdout 关闭。其他停止原因、JSON-RPC 错误和提前 EOF 终止当前轮并保留原因。握手限时 30 秒，单条消息最大 1 MiB，启动前暂存最多 128 条通知和 4 MiB。

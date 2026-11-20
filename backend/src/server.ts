@@ -120,6 +120,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
   };
   const ensureRuntime = async () => {
+    if (runtimeCache?.health.available && store.clock.monotonic() - runtimeCache.at < 5) return;
     const health = await ensureRuntimeHealth();
     if (!health.available) throw new Error(`${provider} runtime unavailable: ${health.reason ?? "unknown"}`);
   };
@@ -167,14 +168,15 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (options.dispatchWork !== false && hasForeman()) runInBackground(foreman.dispatch(id));
   };
   function dispatchOperatorRun(runId: string, completedUnitRunId?: string) {
-    if (options.dispatchWork === false) return;
+    if (stopped || options.dispatchWork === false) return;
     for (const unitRun of store.listReadyUnitRuns(runId, completedUnitRunId)) runInBackground(operator.dispatch(runId, unitRun.id));
   }
   const recoverQueuedWork = () => {
+    if (stopped || options.dispatchWork === false) return;
     if (hasForeman()) {
       for (const id of store.listQueuedForemanMessageIds()) runInBackground(foreman.dispatch(id));
     }
-    if (options.dispatchWork !== false) store.resumeResourceRuns();
+    store.resumeResourceRuns();
     for (const id of store.listRecoverableBusinessRunIds()) dispatchOperatorRun(id);
   };
   const fetch = async (request: Request): Promise<Response> => {
@@ -191,14 +193,21 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       try {
         health = await ensureRuntimeHealth();
       } catch (error) {
+        if (stopped) return response({ error: "server stopping" }, 503);
         health = runtimeCache?.health ?? await runtime.health();
+        if (stopped) return response({ error: "server stopping" }, 503);
         runtimeCache = { at: store.clock.monotonic(), health };
         const dependency = runtimeDependency(health, provider);
         events.publish(`runtime.${provider}.checked`, dependency);
         return response({ provider, health, dependency, message: dependency.message, error: error instanceof Error ? error.message : "runtime unavailable" }, 503);
       }
+      if (stopped) return response({ error: "server stopping" }, 503);
       events.publish(`runtime.${provider}.checked`, runtimeDependency(health, provider));
-      return response({ provider, health, dependency: runtimeDependency(health, provider) }, health.available ? 200 : 503);
+      recoverQueuedWork();
+      runInBackground(operator.takeRuntimeDeferredRuns().then((runIds) => {
+        for (const id of runIds) dispatchOperatorRun(id);
+      }));
+      return response({ provider, health, dependency: runtimeDependency(health, provider) }, 200);
     }
     if (url.pathname === "/api/v1/business-systems/import" && request.method === "POST") {
       const document = await readJson(request);
