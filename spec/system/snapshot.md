@@ -84,7 +84,7 @@ def recipe_env(inputs, params) -> dict;  def runtime_env(brief, limits, operator
 
 快照是内存对象。Registry 目录只读。epoch 不写入 Registry。
 
-Bun 的 `RegistrySnapshotStore` 在 `factory.db` 的 `registry_snapshots` 表持久化运行使用的快照。`epoch` 为主键，`tree_digest` 保存完整的目录树摘要。`payload` 保存版本化的检查结果，包含已校验的文档、宪法模块和转换解析表。`payload_digest` 校验目录树摘要和内容的组合。快照只保存执行需要的 Registry 数据，不保存仓库的绝对路径、任意附件或保险箱内容。SQLite 检查点包含这些记录。
+Bun 的 `RegistrySnapshotStore` 在 `factory.db` 的 `registry_snapshots` 表持久化运行使用的快照。`epoch` 为主键，`tree_digest` 保存完整的目录树摘要。`payload` 保存版本化的检查结果，包含已校验的文档、宪法模块、转换解析表和内核类型关系。`payload_digest` 校验目录树摘要和内容的组合。已有快照缺少类型关系时，用冻结的文档与宪法补齐类型索引。快照只保存执行需要的 Registry 数据，不保存仓库的绝对路径、任意附件或保险箱内容。SQLite 检查点包含这些记录。
 
 提交新的 Run 或 Job 时先捕获快照。已保存的 epoch 复用原有检查结果，跨进程恢复时可按记录的 epoch 读取原始定义。读取时摘要或内容格式有误会返回 `EPOCH_CORRUPT`。没有快照的旧记录可以从当前 Registry 补齐，但目录树计算出的 epoch 必须与记录完全匹配。目录缺失时返回 `EPOCH_NOT_FOUND`，epoch 不一致时返回 `EPOCH_MISMATCH`。
 
@@ -202,6 +202,8 @@ epoch = "e-" + tree.split(":", 1)[1][:16]
 - `facts_decl(tid)`：先 `type_key(tid)`（未知则 `TYPE_NOT_FOUND`）。再收集 `type_fact` 行 `(t, f, ft)` 中 `t == tid` 的项，得到 `{f: ft}`。这已经含继承（`kernel/types.mrl` 的 `type_fact`）。同一 fact 不会有两种类型，否则检查阶段已是 error，`load` 到不了这里。
 - `always(tid)`：先 `type_key(tid)`。`frozenset(p for t, p in rows("type_always_p") if t == tid)`。含继承。父类型没有子类型声明的 `always`。
 
+Bun 在检查阶段取得上述关系和 `type_prop`，加载快照时按类型 ID 建立索引。运行时的 Gate、契约夹具和收货边界先将具体 Bean 类型归一为 `name@major`，再访问类型索引。
+
 笔记夹具（`note.text@1.1` 未退役）：
 
 | 调用 | 结果 |
@@ -236,6 +238,8 @@ epoch = "e-" + tree.split(":", 1)[1][:16]
    - 值是 `compiled(该主体)`，类型为 `mrl.expr.CompiledExpr`。
 3. 子类型不能重定义父类型的属性（否则检查阶段已是 `E-EXTENDS`）。每个名字至多一条。
 4. 返回的 dict 按属性名字母序插入。笔记夹具中 `properties("note.text@1")` 的键集合是 `{"non_empty", "short"}`。`non_empty` 的 `source_text` 是 `bean.facts.chars > 0`，主体是 `Type:note@1.0/properties.non_empty`（定义在父类型上）。`short` 的主体是最新 minor 的 `…/properties.short`。
+
+当前 Bun 的 `properties(typeId)` 返回内核指定的定义者所声明的属性源文本，供现有运行期表达式求值入口使用。
 
 ### 5.7 `compiled` 的查找
 
@@ -360,8 +364,10 @@ epoch = "e-" + tree.split(":", 1)[1][:16]
 文件：`tests/acceptance/m1/test_m1_02_snapshot.py`。
 
 ```bash
-uv run python tools/harness.py pytest tests/acceptance/m1/test_m1_02_snapshot.py
+bun test backend/tests/legacy-snapshot.test.ts
 ```
+
+活动 Bun 验收检查内核类型闭包、当前 minor 与退役回退、未知类型、继承属性来源及旧快照补齐。
 
 夹具 Registry 由 `tests/acceptance/m1/m1_data_helpers.py` 写出。该文件声明：Registry 必须零 error、零 warning，由 `test_notes_registry_is_clean` 守护。
 

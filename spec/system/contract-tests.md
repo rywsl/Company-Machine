@@ -159,7 +159,7 @@ Bun 先校验路径位于 Registry 根内，再解析已存在的路径并检查
 | `cost_usd` | 各 case 的 `job.cost_usd` 之和，`round(..., 6)` |
 | `gate_reject_rate` | 未封存的 case 数 / case 数 |
 
-Baseline 列出了别的名字（如 `judge_score`、`duration_error`）而本模块不会算：`CONTRACT_METRIC_MISSING`，verdict `fail`。不要当成通过，也不要现编公式。
+Baseline 列出了本模块不会计算的名字（如 `judge_score`、`duration_error`）时，在提交任何样例 Job 前返回 `CONTRACT_METRIC_MISSING`，verdict 为 `fail`。
 
 ---
 
@@ -192,9 +192,9 @@ argv 是 validator 的 `run`，超时是调用方的 `timeout_s`。退出码与 
 1. `golden_key = snapshot.key("GoldenSet", golden_key)`。`station = snapshot.key("Station", spec.station)`。
 2. 没有 `budget_usd`：`CONTRACT_BUDGET_REQUIRED`。
 3. 超时：参数优先，否则工位 `limits.timeout`。两者都没有：`CONTRACT_TIMEOUT_REQUIRED`。
-4. 按 `cases` 的书写顺序逐个 `Runner.submit` + `Runner.run`。不调用 `JobCache.lookup`。花费累计超过 `budget_usd`（`>`）时停止后续 case，`CONTRACT_BUDGET_EXCEEDED`，已跑完的 case 仍写入 detail。
-5. 给了 `baseline_key` 时，按第 4.4 节填 `gates`。任一门槛 `ok=false`：`fail`，`code=CONTRACT_BASELINE_EXCEEDED`。没给 baseline：只记录是否封存，不发明门槛；全部封存则 `pass`。
-6. 观测值算不出来的指标：`fail`，`CONTRACT_METRIC_MISSING`。
+4. 给了 `baseline_key` 时，先按第 4.4 节检查指标。遇到不支持的指标时返回 `CONTRACT_METRIC_MISSING`。
+5. 按 `cases` 的书写顺序逐个 `Runner.submit` + `Runner.run`。不调用 `JobCache.lookup`。花费累计超过 `budget_usd`（`>`）时停止后续 case，`CONTRACT_BUDGET_EXCEEDED`，已跑完的 case 仍写入 detail。
+6. 给了 `baseline_key` 时，按第 4.4 节填 `gates`。任一门槛 `ok=false` 时返回 `CONTRACT_BASELINE_EXCEEDED`。没给 Baseline 时只记录是否封存，全部封存则 `pass`。
 
 黄金样例使用夹具里的脚本工位。本模块不为了“跑通 explainer”去调用模型。
 
@@ -279,7 +279,7 @@ verdict 为 `fail` 时，上表的码写入 `detail.code`，同时抛 `FactoryEr
 
 ## 7. 验收测试
 
-活动 Bun 验收位于 `backend/tests/legacy-contract.test.ts`。测试覆盖正反样例、反例集合、Registry 边界、GoldenSet 原有门槛、转换等价与版本差分，以及自动批准和恢复后人工批准的 Sink 试运行。恢复用例再次执行任务并检查发布目标与回执表。
+活动 Bun 验收位于 `backend/tests/legacy-contract.test.ts`。测试覆盖正反样例、反例集合、Registry 边界、GoldenSet 原有门槛、转换等价与版本差分，以及自动批准和恢复后人工批准的 Sink 试运行。测试在自己的 Registry 副本中保留反样例路径并替换其文件字节。差分断言核对两版本封存状态和共有 fact 的精确比较。Sink 验收核对 Job、发布目标和回执表。
 
 夹具：`tests/fixtures/registry-m2/` 增加一个带 validator 的类型（正反样例各至少一）、一个脚本 converter（equivalence 比较一个整数 fact）、一个 `GoldenSet` 与一个只含 `cost_usd.max` 的 `Baseline`、一个两阶段本地 Sink。反样例文件是零字节或明显坏掉的文本。全部 `LocalProvider`，不调用模型。
 
@@ -302,13 +302,13 @@ verdict 为 `fail` 时，上表的码写入 `detail.code`，同时抛 `FactoryEr
 | | `test_sink_without_propose_refuses` | 单阶段 Sink → `CONTRACT_SINK_NO_PROPOSE`，不执行 `run` |
 | | `test_timeout_required` | 工位无 `limits.timeout` 且调用方不传 → `CONTRACT_TIMEOUT_REQUIRED` |
 
-验收命令：
+活动 Bun 验收命令
 
 ```
-uv run python tools/harness.py pytest tests/acceptance/m2/test_m2_08_contract.py
+bun test backend/tests/legacy-contract.test.ts
 ```
 
-断言：`out.failed == 0 && out.errors == 0 && out.skipped == 0 && out.passed >= 16`。
+表中的 16 项归档验收行为由活动 Bun 用例验证。
 
 ---
 

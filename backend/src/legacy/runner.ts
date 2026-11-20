@@ -14,7 +14,7 @@ import { Gate } from "./gate";
 import { JobStore, terminalStates, type Job, type JobPhase } from "./jobs";
 import { buildInvocation, expandControlVars, parseTranscript, renderBrief } from "./operator";
 import { sandboxResources } from "./sandbox";
-import type { Snapshot } from "./snapshot";
+import { nominalTypeId, type Snapshot } from "./snapshot";
 import { inputsValue, paramsValue, recipeEnv } from "./values";
 import type { Bean } from "./warehouse";
 
@@ -537,7 +537,7 @@ export class Runner {
         if (!declaration.harvest) return [];
         const list = declaration.type.startsWith("list<");
         const type = list ? declaration.type.slice(5, -1) : declaration.type;
-        const payload: Array<{ path: string; required?: boolean }> = this.snapshot.spec(this.snapshot.typeKey(type)).payload ?? [];
+        const payload: Array<{ path: string; required?: boolean }> = this.snapshot.spec(this.snapshot.typeKey(nominalTypeId(type))).payload ?? [];
         const required = payload.filter((rule) => rule.required !== false && !rule.path.includes("*"));
         const pattern = declaration.harvest.includes("{{")
           ? compileTemplate(declaration.harvest, { environment: { inputs: DYN, params: DYN } })

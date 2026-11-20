@@ -9,7 +9,7 @@ import { canonicalJson, digestFile, parseDuration, utcIso } from "./foundation";
 import { Gate } from "./gate";
 import type { Job } from "./jobs";
 import type { Runner } from "./runner";
-import type { Snapshot } from "./snapshot";
+import { nominalTypeId, type Snapshot } from "./snapshot";
 import { beanValue } from "./values";
 
 export type ContractKind = "validator" | "golden" | "equivalence" | "diff" | "sink_dry_run" | "fixture_set";
@@ -99,7 +99,7 @@ export class ContractRunner {
   async runValidator(typeId: string, name: string, timeout: Timeout = {}): Promise<ContractResult> {
     const timeoutMs = timeoutMilliseconds(timeout, undefined, typeId);
     const validator = this.validator(this.runner.snapshot, typeId, name);
-    const declared = this.runner.snapshot.factsDecl(typeId);
+    const declared = this.runner.snapshot.factsDecl(nominalTypeId(typeId));
     const accept: Array<{ path: string; ok: boolean }> = [];
     const reject: Array<{ path: string; ok: boolean }> = [];
     let code: string | undefined;
@@ -301,7 +301,7 @@ export class ContractRunner {
   }
 
   private validator(snapshot: Snapshot, typeId: string, name: string): Validator {
-    try { return snapshot.validators(typeId).find((item: Validator) => item.name === name) ?? notFound(name); }
+    try { return snapshot.validators(nominalTypeId(typeId)).find((item: Validator) => item.name === name) ?? notFound(name); }
     catch (error) {
       if (error instanceof FactoryError && error.code === "TYPE_NOT_FOUND") return notFound(typeId);
       throw error;
@@ -370,7 +370,7 @@ export class ContractRunner {
     const fixture = this.fixture(path);
     if (!fixture) return undefined;
     const { snapshot, context, provider } = this.runner;
-    const typeId = type.startsWith("list<") && type.endsWith(">") ? type.slice(5, -1) : type;
+    const typeId = nominalTypeId(type.startsWith("list<") && type.endsWith(">") ? type.slice(5, -1) : type);
     const schema = snapshot.spec(snapshot.typeKey(typeId));
     const declaration = (schema.payload ?? [])[0]?.path;
     const file = typeof declaration === "string" ? declaration.replaceAll("*", basename(fixture)) : basename(fixture);

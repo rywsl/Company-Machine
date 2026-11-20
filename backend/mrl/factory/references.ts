@@ -15,6 +15,13 @@ type ReferenceFacts = Record<string, MrlValue[][]>;
 type Location = { document: SpecDocument; path: string };
 type Diagnostic = HostDiagnostic & { severity: "error" | "warning" | "info" };
 export type FactoryResolution = Record<string, MrlValue> & { line: string; step: string; port: string };
+export interface FactoryTypeRelations {
+  type_key: Array<[type: string, key: string]>;
+  subtype: Array<[type: string, parent: string]>;
+  type_prop: Array<[type: string, property: string, owner: string]>;
+  type_fact: Array<[type: string, fact: string, declaration: string]>;
+  type_always_p: Array<[type: string, property: string]>;
+}
 
 const modules = [
   { name: "spec/mrl/kernel/schema.mrl", source: schemaRules },
@@ -394,7 +401,7 @@ export function checkFactoryKernel(
   constitution: Registry["constitution"],
   host: Diagnostic[],
   onDiagnosticRule?: (location: RuleLocation) => void,
-): { diagnostics: Diagnostic[]; resolutions: FactoryResolution[] } {
+): { diagnostics: Diagnostic[]; resolutions: FactoryResolution[]; typeRelations: FactoryTypeRelations } {
   const input = new ReferenceFactsBuilder(documents);
   program ??= buildRuleProgram(modules, resolutionFunctions);
   const errors = [...input.errors];
@@ -454,7 +461,14 @@ export function checkFactoryKernel(
     ...value as Record<string, MrlValue>,
     line: String(line), step: String(step), port: String(port),
   }));
-  return { diagnostics: [...errors.filter((item) => !input.errors.includes(item)), ...diagnostics], resolutions };
+  const typeRelations: FactoryTypeRelations = {
+    type_key: result.rowsOf("type_key").map(([type, key]) => [String(type), String(key)]),
+    subtype: result.rowsOf("subtype").map(([type, parent]) => [String(type), String(parent)]),
+    type_prop: result.rowsOf("type_prop").map(([type, property, owner]) => [String(type), String(property), String(owner)]),
+    type_fact: result.rowsOf("type_fact").map(([type, fact, declaration]) => [String(type), String(fact), String(declaration)]),
+    type_always_p: result.rowsOf("type_always_p").map(([type, property]) => [String(type), String(property)]),
+  };
+  return { diagnostics: [...errors.filter((item) => !input.errors.includes(item)), ...diagnostics], resolutions, typeRelations };
 }
 
 function constitutionError(error: unknown): Diagnostic {

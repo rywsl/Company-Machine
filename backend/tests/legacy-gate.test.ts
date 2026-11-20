@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { Context, CounterIds, FakeClock, Gate, LocalProvider, canonicalBytes, digestBytes, loadSnapshot } from "../src/legacy";
 import type { SandboxSpec } from "../runtime/podman";
 
-const { mkdirSync, rmSync } = fs;
+const { cpSync, mkdirSync, rmSync } = fs;
 const provider = new LocalProvider({
   "count-text": [Bun.argv[0], resolve("tests/fakes/tools/count_text.ts")],
   "check-task": [Bun.argv[0], resolve("tests/fakes/tools/check_task.ts")],
@@ -15,16 +15,23 @@ describe("Bun M1 Gate boundary", () => {
   test("admits an external card without validators and explains missing required metadata", async () => {
     const root = join("tmp", `legacy-gate-card-${randomUUID()}`);
     const context = Context.open(root);
-    const snapshot = await loadSnapshot("tests/fixtures/registry-m1");
-    snapshot.docs["Type:card@1.0"] = { metadata: { name: "card", version: "1.0" }, spec: {
-      payload: [{ path: "card.json", media_type: "application/json", required: true }],
-      meta_schema: { type: "object", required: ["title"], properties: { title: { type: "string" } } },
-    } };
     const opened: SandboxSpec[] = [];
     class RecordingProvider extends LocalProvider {
       async open(spec: SandboxSpec) { opened.push(spec); return super.open(spec); }
     }
     try {
+      const registry = join(root, "registry");
+      cpSync("tests/fixtures/registry-m1", registry, { recursive: true });
+      await Bun.write(join(registry, "types", "card.yaml"), JSON.stringify({
+        apiVersion: "mao/v1",
+        kind: "Type",
+        metadata: { name: "card", version: "1.0" },
+        spec: {
+          payload: [{ path: "card.json", media_type: "application/json", required: true }],
+          meta_schema: { type: "object", required: ["title"], properties: { title: { type: "string" } } },
+        },
+      }));
+      const snapshot = await loadSnapshot(registry);
       const gate = new Gate(snapshot, context.warehouse, join(root, "work"), new RecordingProvider());
       const input = join(root, "card.json");
       await Bun.write(input, "{}");
@@ -33,6 +40,7 @@ describe("Bun M1 Gate boundary", () => {
       expect(accepted.report.data.verdict).toBe("pass");
       expect(accepted.bean).toMatchObject({ sealed: false });
       expect(context.warehouse.get(accepted.bean!.id)).toMatchObject({ sealed: false, type: "card@1.0" });
+      expect((await gate.admitExternal("card@1.0", files, { title: "ok" })).bean?.id).toBe(accepted.bean!.id);
       expect(opened).toEqual([]);
       const rejected = await gate.admitExternal("card@1", files, {});
       expect(rejected.report.data.verdict).toBe("reject");

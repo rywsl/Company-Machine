@@ -8,7 +8,7 @@ import { BOOL, DYN, parseType as parseMrlType, type MrlType } from "../../mrl/ty
 import type { ContainerProvider } from "../../runtime/podman";
 import { FactoryError } from "./errors";
 import { canonicalBytes, canonicalJson, digestBytes } from "./foundation";
-import type { Snapshot } from "./snapshot";
+import { nominalTypeId, type Snapshot } from "./snapshot";
 import { acceptEnv, paramsValue, propertyEnv, recipeEnv } from "./values";
 import { mediaTypeOf, type Bean, type Warehouse } from "./warehouse";
 
@@ -54,7 +54,7 @@ function parseType(value: string, output: boolean): { list: boolean; type: strin
   if ((inner === "any" && output) || (inner !== "any" && !/^[\w.-]+@\d+(?:\.\d+)?$/.test(inner))) {
     throw new FactoryError("GATE_UNSUPPORTED", "M1 不检验这种类型表达式", { type: value });
   }
-  return { list: Boolean(match), type: inner.replace(/(@\d+)\.\d+$/, "$1") };
+  return { list: Boolean(match), type: nominalTypeId(inner) };
 }
 
 function directory(path: string) {
@@ -244,6 +244,7 @@ export class Gate {
   async admitExternal(
     type: string, files: Record<string, string>, meta: JsonObject, jobId = "external", attempt = 0,
   ): Promise<{ report: GateReport; bean: Bean | null }> {
+    type = nominalTypeId(type);
     const checks: GateCheck[] = [];
     const bean = await this.register("", 0, type, () => ({ files, meta }), checks);
     const observed = bean ? await this.validate("", 0, type, bean, [], checks) : null;

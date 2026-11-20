@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync, symlinkSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ContractRunner } from "../src/legacy/contract";
 import { Context, CounterIds, FakeClock, LocalProvider, Runner, Snapshot, loadSnapshot } from "../src/legacy";
@@ -29,17 +29,37 @@ test("runs validator accept/reject samples and audits removed negative fixtures"
   const snapshot = contract.runner.snapshot;
   const old = new Snapshot(snapshot.root, snapshot.epoch, structuredClone(snapshot.docs), snapshot.result);
   const fixtures = snapshot.docs["Type:note.text@1.0"].spec.validators[0].fixtures;
-  fixtures.reject = ["fixtures/note/ok.txt"];
+  fixtures.reject = ["fixtures/note/fail.txt"];
   expect(contract.checkFixtureSet(old, snapshot, "note.text@1", "count-text")).toMatchObject({ verdict: "fail", detail: {
     code: "CONTRACT_FIXTURE_REMOVED", removed: ["fixtures/note/empty.txt"],
   } });
-  const rejected = await contract.runValidator("note.text@1", "count-text", { timeoutS: 30 });
-  expect(rejected).toMatchObject({ kind: "validator", verdict: "fail", detail: { code: "CONTRACT_FIXTURE_ACCEPTED" } });
   fixtures.reject = ["fixtures/note/empty.txt"];
   fixtures.accept.push("fixtures/note/fail.txt");
   expect(contract.checkFixtureSet(old, snapshot, "note.text@1", "count-text")).toMatchObject({ verdict: "pass", detail: { removed: [] } });
   expect(contract.get(first.id)).toEqual(first);
-  expect(contract.list({ kind: "validator" }).map(({ id }) => id)).toEqual([first.id, rejected.id]);
+  expect(contract.list({ kind: "validator" }).map(({ id }) => id)).toEqual([first.id]);
+}));
+
+test("fails when declared negative fixture bytes are accepted", { timeout: 60_000 }, () => withContract(async (contract) => {
+  const { context, provider } = contract.runner;
+  const registry = join(context.root, "registry");
+  cpSync("tests/fixtures/registry-m2", registry, { recursive: true });
+  const positive = join(registry, "fixtures/note/ok.txt");
+  const negative = join(registry, "fixtures/note/empty.txt");
+  expect(await Bun.file(negative).text()).toBe("");
+  const accepted = await Bun.file(positive).text();
+  expect(accepted.length).toBeGreaterThan(0);
+  copyFileSync(positive, negative);
+  expect(await Bun.file(negative).text()).toBe(accepted);
+
+  const snapshot = await loadSnapshot(registry);
+  const candidate = new ContractRunner(new Runner(context, snapshot, provider));
+  expect(await candidate.runValidator("note.text@1", "count-text", { timeoutS: 30 })).toMatchObject({
+    kind: "validator", verdict: "fail", detail: {
+      code: "CONTRACT_FIXTURE_ACCEPTED",
+      reject: [{ path: "fixtures/note/empty.txt", ok: false }],
+    },
+  });
 }));
 
 test("rejects direct and linked fixture paths outside the Registry before launch", () => withContract(async (contract) => {
@@ -73,7 +93,7 @@ test("executes GoldenSet jobs with caller timeouts and applies only declared Bas
     const golden = "upper-golden@1";
     const baseline = "upper-baseline@1";
     const result = await contract.runGolden(golden, baseline, { timeoutS: 30 });
-    expect(result).toMatchObject({ verdict: "pass", detail: {
+    expect(result).toMatchObject({ kind: "golden", verdict: "pass", detail: {
       cases: [{ name: "ok", sealed: true }], observed: { cost_usd: 0, gate_reject_rate: 0 }, gates: [{ metric: "cost_usd", key: "max", ok: true }],
     } });
     const job = contract.runner.jobs.get((result.detail.cases as Array<{ job: string }>)[0].job);
@@ -82,15 +102,23 @@ test("executes GoldenSet jobs with caller timeouts and applies only declared Bas
     const body = contract.runner.snapshot.docs[`Baseline:${baseline}`].spec;
     body.metrics = { cost_usd: { max: -1 } };
     contract.runner.snapshot.docs[`GoldenSet:${golden}`].spec.cases[0].name = "token=example-credential";
-    const exceeded = await contract.canary("upper@1", { timeoutS: 30 });
-    expect(exceeded).toMatchObject({ verdict: "fail", detail: { code: "CONTRACT_BASELINE_EXCEEDED", cases: [{ name: "token=[REDACTED]" }] } });
+    const exceeded = await contract.runGolden(golden, baseline, { timeoutS: 30 });
+    expect(exceeded).toMatchObject({ kind: "golden", verdict: "fail", detail: { code: "CONTRACT_BASELINE_EXCEEDED", cases: [{ name: "token=[REDACTED]" }] } });
+    expect(await contract.canary("upper@1", { timeoutS: 30 })).toMatchObject({
+      kind: "golden", subject: exceeded.subject, verdict: "fail", detail: { code: "CONTRACT_BASELINE_EXCEEDED" },
+    });
     expect(JSON.stringify(contract.get(exceeded.id))).not.toContain("example-credential");
     body.metrics = { cost_usd: { p50: -1, mean: -1 } };
-    expect(await contract.runGolden(golden, baseline, { timeoutS: 30 })).toMatchObject({ verdict: "pass", detail: { gates: [] } });
-    body.metrics = { judge_score: { min: 1 } };
-    expect(await contract.runGolden(golden, baseline, { timeoutS: 30 })).toMatchObject({ verdict: "fail", detail: { code: "CONTRACT_METRIC_MISSING", cases: [] } });
+    expect(await contract.runGolden(golden, baseline, { timeoutS: 30 })).toMatchObject({ kind: "golden", verdict: "pass", detail: { gates: [] } });
+    const countJobs = () => contract.runner.context.db.query("SELECT COUNT(*) AS count FROM jobs").get();
+    const priorJobs = countJobs();
+    body.metrics = { judge_score: { max: 1 } };
+    expect(await contract.runGolden(golden, baseline, { timeoutS: 30 })).toMatchObject({
+      kind: "golden", verdict: "fail", detail: { code: "CONTRACT_METRIC_MISSING", metric: "judge_score", cases: [] },
+    });
+    expect(countJobs()).toEqual(priorJobs);
     delete contract.runner.snapshot.docs[`GoldenSet:${golden}`].spec.budget_usd;
-    await expect(contract.runGolden(golden)).rejects.toMatchObject({ code: "CONTRACT_BUDGET_REQUIRED" });
+    await expect(contract.runGolden(golden, undefined, { timeoutS: 30 })).rejects.toMatchObject({ code: "CONTRACT_BUDGET_REQUIRED" });
   }, new RecordingProvider(commands));
 });
 
@@ -111,10 +139,10 @@ test("stops scheduling GoldenSet jobs once their observed cost exceeds the writt
 test("checks converter equivalence and compares shared facts against the prior version", { timeout: 90_000 }, () => withContract(async (contract) => {
   const original = "note-to-text@1";
   await expect(contract.runEquivalence(original)).rejects.toMatchObject({ code: "CONTRACT_TIMEOUT_REQUIRED" });
-  expect(await contract.runDiff(original)).toMatchObject({ verdict: "pass", detail: { reason: "no_previous" } });
+  expect(await contract.runDiff(original, { timeoutS: 30 })).toMatchObject({ kind: "diff", verdict: "pass", detail: { reason: "no_previous", cases: [] } });
   const options = { timeoutS: 30 };
   const before = await contract.runEquivalence(original, options);
-  expect(before).toMatchObject({ verdict: "pass", detail: {
+  expect(before).toMatchObject({ kind: "equivalence", verdict: "pass", detail: {
     accept: [{ path: "fixtures/note/ok.txt", sealed: true, failed_expr: [] }], reject: [{ path: "fixtures/note/empty.txt", sealed: false }],
   } });
   const { docs } = contract.runner.snapshot;
@@ -126,9 +154,21 @@ test("checks converter equivalence and compares shared facts against the prior v
   docs["Station:note-to-text@2"] = updated;
   const recipes = docs["Machine:toolbox@1"].spec.recipes;
   recipes["note-to-text-v2"] = { ...recipes["note-to-text"], run: ["exit-three"] };
-  expect(await contract.runDiff("note-to-text@2", options)).toMatchObject({ verdict: "fail", detail: { code: "CONTRACT_DIFF_REGRESSION" } });
+  expect(await contract.runDiff("note-to-text@2", options)).toMatchObject({
+    kind: "diff", verdict: "fail", detail: {
+      code: "CONTRACT_DIFF_REGRESSION",
+      cases: [{ old_sealed: true, new_sealed: false, facts_equal: null }],
+    },
+  });
   recipes["note-to-text-v2"].run = ["pull-notes", "/factory/in/in", "/factory/out/out/note.txt"];
-  expect(await contract.runDiff("note-to-text@2", options)).toMatchObject({ verdict: "fail", detail: { code: "CONTRACT_DIFF_FACTS", fact: "has_lower" } });
+  const diff = await contract.runDiff("note-to-text@2", options);
+  expect(diff).toMatchObject({
+    kind: "diff", verdict: "fail", detail: {
+      code: "CONTRACT_DIFF_FACTS", fact: "has_lower",
+      cases: [{ old_sealed: true, new_sealed: true, facts_equal: false }],
+    },
+  });
+  expect(diff.detail).not.toHaveProperty("epsilon");
 }));
 
 test("runs an automatically approved Sink proposal without publishing or creating a receipt", { timeout: 60_000 }, () => withContract(async (contract) => {
@@ -140,6 +180,8 @@ test("runs an automatically approved Sink proposal without publishing or creatin
   const target = join(context.root, "published");
   const options = { inputs: { note: bean.id }, params: { dir: target }, timeoutS: 30 };
   await expect(contract.runSinkDryRun("publish-local@1", options)).rejects.toMatchObject({ code: "CONTRACT_SINK_NO_PROPOSE" });
+  expect(context.db.query("SELECT id FROM jobs").all()).toEqual([]);
+  expect(context.db.query("SELECT id FROM receipts").all()).toEqual([]);
   const result = await contract.runSinkDryRun("publish-staged@1", options);
   expect(result).toMatchObject({ kind: "sink_dry_run", verdict: "pass", detail: { approval: { status: "approved" }, receipt: null, executed_run: false } });
   expect(jobs.get(String(result.detail.job))).toMatchObject({ state: "SEALED", phase: "propose", proposalOnly: true });
