@@ -60,6 +60,8 @@
 | 能力 | 活动入口 | 运行时边界 |
 |---|---|---|
 | 业务系统、基础单元、DAG、物料、转换和事件 | `backend/src/models.ts`、`backend/src/db.ts`、`backend/src/server.ts` | Bun 内置 SQLite 和 Web API |
+| M1 基础值、Registry 快照、CAS、Bean、封存与血缘 | `backend/src/legacy/foundation.ts`、`backend/src/legacy/snapshot.ts`、`backend/src/legacy/warehouse.ts`、`backend/src/legacy/context.ts` | Bun 内置文件系统和 SQLite，结构检查复用 `backend/mrl/factory` |
+| M1 Gate、Operator、LocalProvider、factoryctl 和 Runner 最小闭环 | `backend/src/legacy/gate.ts`、`backend/src/legacy/operator.ts`、`backend/src/legacy/sandbox.ts`、`backend/src/legacy/factoryctl.ts`、`backend/src/legacy/runner.ts` | Bun 文件邮箱、脚本工位和本地测试运行时，Podman/Kiri 通过现有 ContainerProvider 接入 |
 | 厂长对话与官方 Harness 分配 | `backend/src/foreman.ts`、`backend/src/harness.ts`、`backend/src/acp.ts` | 只启动用户配置的官方 Harness CLI 或 ACP，不在控制面实现模型循环 |
 | 容器沙箱 | `backend/runtime/podman.ts`、`backend/runtime/kiri.ts` | 受控 argv 调用 Podman 或嵌入式 Kiri。Linux Kiri 使用 headless `kiri daemon`，禁止 shell 拼接和静默回退 |
 | MRL 表达式、模板、规则、Factory Registry 结构检查和 CLI | `backend/mrl/`、`backend/mrl/factory/`、`backend/mrl/cli.ts`、`backend/src/cli.ts` | Bun/TypeScript evaluator、Bun YAML/schema/Registry boundary、`bun run mrl` 与 `bun run factory registry check`，预算和稳定错误码由测试锁定 |
