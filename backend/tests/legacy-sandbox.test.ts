@@ -45,4 +45,24 @@ describe("Bun M1 local sandbox and control mailbox", () => {
       await sandbox.close();
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
+
+  test("leaves unrelated host environment out of local commands", { timeout: 30_000 }, async () => {
+    const directory = root("environment");
+    const key = "MAO_TEST_UNRELATED_SECRET";
+    const previous = process.env[key];
+    process.env[key] = "fixture-only";
+    try {
+      const provider = new LocalProvider({ probe: [Bun.argv[0], "-e", "console.log(process.env.MAO_TEST_UNRELATED_SECRET ?? 'omitted')"] });
+      const sandbox = await provider.open({ name: "local", image: "probe", mounts: [] });
+      const stdout = join(directory, "stdout");
+      try {
+        await sandbox.exec(["probe"], { timeoutMs: 10_000, stdout, stderr: join(directory, "stderr") });
+        expect((await Bun.file(stdout).text()).trim()).toBe("omitted");
+      } finally { await sandbox.close(); }
+    } finally {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });

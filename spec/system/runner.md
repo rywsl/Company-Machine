@@ -1,5 +1,7 @@
 # runner：Job 状态机与 Runner（mao.jobs / mao.runner）
 
+活动 Bun Runner 的单工位路径通过 `ContainerProvider.open` 准备沙箱，再用一次 `Sandbox.exec` 执行配方命令。固定的 `FACTORY_*` 路径由 provider 提供，列表输入按端口声明写入 `in/<端口>/<序号>/`。`backend/tests/legacy-runner.test.ts` 验证脚本产物封存和单元素列表物化。
+
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M1-08**。
 > 模块：`mao.jobs`、`mao.runner`。迁移：`src/mao/migrations/002_jobs.sql`。
 > 依据：README D4、D9、D10、D12、D14、第 4.7–4.9 节、第 5 节。架构文档 6.5 的状态名已经定了。
