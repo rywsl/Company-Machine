@@ -1,9 +1,10 @@
 /**
  * Kiri container runtime adapter.
  *
- * Kiri exposes the Docker Engine API through a named Docker context. The
- * sandbox contract stays identical to Podman, while every command is routed
- * through `docker --context <name>` and never through a host socket.
+ * Kiri's official CLI speaks to its Docker Engine API without opening the UI.
+ * On Linux it runs directly on the host kernel, while the optional
+ * docker-context mode targets a named context. The sandbox contract stays
+ * identical to Podman and never mounts a host socket.
  */
 
 import {
@@ -134,7 +135,10 @@ export class KiriProvider extends PodmanProvider {
   async health(): Promise<RuntimeHealth> {
     if (this.mode === "kiri") {
       try {
-        const result = await this.commandRunner([this.kiriExecutable, "ps", "--format", "json"], { timeoutMs: 10_000, env: this.kiriEnvironment });
+        const commandOptions = Object.keys(this.kiriEnvironment).length > 0
+          ? { timeoutMs: 10_000, env: this.kiriEnvironment }
+          : { timeoutMs: 10_000 };
+        const result = await this.commandRunner([this.kiriExecutable, "ps", "--format", "json"], commandOptions);
         const platform = ((globalThis as { process?: { platform?: string } }).process?.platform ?? "unknown");
         return {
           available: result.exitCode === 0,
