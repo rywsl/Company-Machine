@@ -831,10 +831,11 @@ export class SqliteStore {
     this.db.query("UPDATE foreman_outbox SET status='failed' WHERE id=? AND status='claimed'").run(id);
   }
 
-  listSecretRequests(): SecretRequest[] {
-    return this.db.query("SELECT * FROM secret_requests ORDER BY created_at").all().map((row: any) => ({
+  listSecretRequests(): Array<SecretRequest & { projectName?: string }> {
+    return this.db.query(`SELECT request.*, project.name AS project_name FROM secret_requests AS request
+      LEFT JOIN projects AS project ON project.id = request.project_id ORDER BY request.created_at, request.id`).all().map((row: any) => ({
       id: row.id, projectId: row.project_id, name: row.name, vaultRef: row.vault_ref, status: row.status,
-      metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at,
+      projectName: row.project_name ?? undefined, metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at,
     }));
   }
 

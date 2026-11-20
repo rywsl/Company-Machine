@@ -161,7 +161,9 @@ describe("Bun business backend", () => {
     const previousKey = process.env.MAO_VAULT_KEY_PATH;
     process.env.MAO_VAULT_PATH = vaultPath;
     process.env.MAO_VAULT_KEY_PATH = keyPath;
-    const app = createApp({ dbPath, legacyPath: dbPath });
+    const app = createApp({ dbPath, legacyPath: dbPath, runtime: {
+      health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }),
+    } });
     try {
       const projectResponse = await app.fetch(new Request("http://localhost/api/v1/projects/intake", {
         method: "POST",
@@ -175,6 +177,11 @@ describe("Bun business backend", () => {
         headers: { "content-type": "application/json" },
       }));
       const request = await jsonResponse(requestResponse);
+      const bootstrap = await jsonResponse(await app.fetch(new Request("http://localhost/api/web/bootstrap")));
+      expect(bootstrap.secrets.find((secret: { key: string }) => secret.key === "VIDEO_API_KEY")).toMatchObject({
+        key: "VIDEO_API_KEY", configured: false,
+        request: { project_id: project.id, project_name: "视频项目" },
+      });
       const valueResponse = await app.fetch(new Request(`http://localhost/api/v1/secrets/requests/${request.request_id}/value`, {
         method: "POST",
         body: JSON.stringify({ value: "secret-value" }),
