@@ -6,3 +6,4 @@ export * from "./context";
 export * from "./values";
 export * from "./sandbox";
 export * from "./gate";
+export * from "./operator";
