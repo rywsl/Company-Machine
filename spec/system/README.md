@@ -51,9 +51,24 @@
 | `talk.md` | 人与厂长的持久对话：线程、回复、卡片、运行确认 | `mao.talk` | M15 | M15-01 至 M15-03 |
 | `assets.md` | 工厂资产、正式知识、单岗位接管、完整检查点与移交包 | `mao.assets`、`mao.learning`、`mao.packages` | M16 | M16-01 至 M16-06 |
 
-每份组件规范都必须按第 7 节的模板组织。
-
 表中的 Python 模块名是历史实现定位，实际文件位于 `removed/python/src/`。活动实现与验收只使用 `backend/`、`frontend/` 和 Bun 测试目录。
+
+### 活动实现映射
+
+本目录的 M1–M16 行为契约仍用于产品设计、审查和迁移追踪。章节中的 Python 签名、`uv run` 命令、旧验收路径和 `DockerProvider` 示例属于历史参考，不能作为活动启动方式。活动代码按下面的边界装配：
+
+| 能力 | 活动入口 | 运行时边界 |
+|---|---|---|
+| 业务系统、基础单元、DAG、物料、转换和事件 | `backend/src/models.ts`、`backend/src/db.ts`、`backend/src/server.ts` | Bun 内置 SQLite 和 Web API |
+| 厂长对话与官方 Harness 分配 | `backend/src/foreman.ts`、`backend/src/harness.ts`、`backend/src/acp.ts` | 只启动用户配置的官方 Harness CLI 或 ACP，不在控制面实现模型循环 |
+| 容器沙箱 | `backend/runtime/podman.ts`、`backend/runtime/kiri.ts` | 受控 argv 调用 Podman 或嵌入式 Kiri，禁止 shell 拼接和静默回退 |
+| MRL 表达式、模板和规则 | `backend/mrl/` | Bun/TypeScript evaluator，预算和稳定错误码由测试锁定 |
+| Web App 与图形化物料视图 | `frontend/src/`、`frontend/dist/` | 通过 API 读取业务投影，用户界面不直接展示物料 JSON |
+| 活动验收与校验 | `tools/harness.ts`、`backend/**/*.test.ts` | `bun run acceptance:bun` 和 `bun run verify:bun` |
+
+迁移时如果章节中的历史示例与活动入口冲突，以本节、D1、D5 和对应 Bun 测试为准。需要恢复历史实现进行审计时，在 `removed/python/` 内单独运行其工具，不得让活动 Bun 校验依赖 Python 环境。
+
+每份组件规范都必须按第 7 节的模板组织。
 
 ---
 

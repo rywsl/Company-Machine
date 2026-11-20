@@ -6,9 +6,14 @@
  * or calling a model provider.
  */
 
+import { fileURLToPath } from "node:url";
+
 type Step = { label: string; argv: string[] };
 
-const root = new URL("..", import.meta.url).pathname.replace(/^\//, "").replaceAll("/", "\\");
+// URL.pathname leaves drive letters prefixed with `/` and keeps percent
+// escapes on Windows. `fileURLToPath` handles both Windows and POSIX paths,
+// including repositories whose directory names contain spaces.
+const root = fileURLToPath(new URL("..", import.meta.url));
 
 function run(step: Step): number {
   const result = Bun.spawnSync(step.argv, { cwd: root, stdout: "pipe", stderr: "pipe" });
