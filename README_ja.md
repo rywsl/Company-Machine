@@ -76,7 +76,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
+bun run verify:bun     # check specs, implementation and acceptance tests
 ```
 
 ### 最初のライン
@@ -262,7 +262,7 @@ flowchart LR
 
 ## プロジェクトの状況
 
-現在のコードと spec の整合性検査は `uv run python tools/harness.py verify` です。下のマイルストーン説明はプロジェクトの履歴として残しています。
+現在のコードと spec の整合性検査は `bun run verify:bun` です。下のマイルストーン説明はプロジェクトの履歴として残しています。
 
 | マイルストーン | 成果 |
 |---|---|
@@ -312,7 +312,7 @@ docs/             アーキテクチャ設計（中国語）、各言語のガ�
 
 ## コントリビュート
 
-現在の開発フローでは、コード、spec、受け入れテストを一緒に更新できます。commit または push の前に `uv run python tools/harness.py verify` を実行してください。[AGENTS.md](AGENTS.md) と [docs/ja/development.md](docs/ja/development.md) に整合性検査を記載しています。
+現在の開発フローでは、コード、spec、受け入れテストを一緒に更新できます。commit または push の前に `bun run verify:bun` を実行してください。[AGENTS.md](AGENTS.md) と [docs/ja/development.md](docs/ja/development.md) に整合性検査を記載しています。
 
 ## ライセンス
 

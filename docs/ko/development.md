@@ -9,7 +9,7 @@
 커밋 또는 푸시 전에 다음 명령을 실행합니다.
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 `verify`는 MRL 오류 코드와 표준 라이브러리 함수, factory profile, `spec/system` 장 구조, 7장과 `tests/acceptance/`의 양방향 매핑을 검사합니다. 이어서 연결된 인수 테스트, MRL conformance, MRL coverage, 코드 정책 테스트를 실행합니다. 연결된 인수 테스트에는 실패, 오류, skip이 없어야 합니다.

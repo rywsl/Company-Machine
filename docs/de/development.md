@@ -9,7 +9,7 @@ Code, `spec/` und Abnahmetests dürfen in der Reihenfolge geändert werden, die 
 Vor einem Commit oder Push ausführen:
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 `verify` prüft MRL-Fehlercodes und Standardbibliotheksfunktionen, das Factory-Profil, die Kapitelstruktur von `spec/system` sowie die gegenseitige Zuordnung von Kapitel 7 und `tests/acceptance/`. Danach laufen die zugeordneten Abnahmetests, MRL-Conformance, MRL-Coverage und die Code-Policy-Tests. Die zugeordneten Abnahmetests müssen ohne Fehler, Exceptions oder Überspringen durchlaufen.

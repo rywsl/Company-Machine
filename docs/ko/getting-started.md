@@ -28,13 +28,13 @@ uv sync
 
 uv run factory --version                   # 컨트롤 플레인 CLI
 uv run mrl --version                       # MRL 툴킷("mrl 1.0.0" 출력)
-uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
+bun run verify:bun     # check spec and implementation consistency before commit or push
 ```
 
 Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 ## 3. 작업 공간 준비
@@ -111,7 +111,7 @@ tools/factory/bin/  factoryctl, 샌드박스에 마운트됨
 
 ```bash
 uv run python tools/build_test_images.py   # mao-test/<name>:dev를 빌드하고 이미지 ID를 출력
-uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
+bun run verify:bun     # check spec and implementation consistency before commit or push
 ```
 
 Docker에서는 모든 스테이션이 비 root 컨테이너로 실행되며 `cap-drop ALL`, 읽기 전용 입력, 리소스 제한이 적용되고 `docker.sock`은 없습니다. 네트워크 접근은 공장의 이그레스 프록시를, 모델 트래픽은 모델 프록시를 거칩니다.

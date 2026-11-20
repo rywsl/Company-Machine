@@ -28,13 +28,13 @@ uv sync
 
 uv run factory --version                   # CLI плоскости управления
 uv run mrl --version                       # инструментарий MRL (выводит "mrl 1.0.0")
-uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
+bun run verify:bun     # check spec and implementation consistency before commit or push
 ```
 
 Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 ## 3. Подготовка рабочего каталога
@@ -111,7 +111,7 @@ tools/factory/bin/  factoryctl, монтируется в песочницы
 
 ```bash
 uv run python tools/build_test_images.py   # собирает mao-test/<name>:dev и выводит ID образов
-uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
+bun run verify:bun     # check spec and implementation consistency before commit or push
 ```
 
 В Docker каждая станция работает в контейнере без root с `cap-drop ALL`, входными данными только для чтения, ограничениями ресурсов и без `docker.sock`. Сетевой доступ идёт через прокси исходящего трафика фабрики, а трафик к моделям — через её прокси моделей.

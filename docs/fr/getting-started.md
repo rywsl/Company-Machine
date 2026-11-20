@@ -28,13 +28,13 @@ uv sync
 
 uv run factory --version                   # CLI du plan de contrôle
 uv run mrl --version                       # boîte à outils MRL (affiche "mrl 1.0.0")
-uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
+bun run verify:bun     # check spec and implementation consistency before commit or push
 ```
 
 Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 ## 3. Préparer un espace de travail
@@ -111,7 +111,7 @@ Le fournisseur par défaut est `docker`. Construisez une fois les images de test
 
 ```bash
 uv run python tools/build_test_images.py   # construit mao-test/<name>:dev et affiche les ID des images
-uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
+bun run verify:bun     # check spec and implementation consistency before commit or push
 ```
 
 Sous Docker, chaque station tourne dans un conteneur non root avec `cap-drop ALL`, des entrées en lecture seule, des limites de ressources et sans `docker.sock`. L'accès réseau passe par le proxy de sortie de l'usine, et le trafic vers les modèles passe par son proxy de modèle.

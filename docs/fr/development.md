@@ -9,7 +9,7 @@ Le code, `spec/` et les tests d’acceptation peuvent être modifiés dans l’o
 Exécuter cette commande avant un commit ou un push :
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 `verify` contrôle les codes d’erreur et les fonctions de bibliothèque standard de MRL, le profil factory, la structure des chapitres de `spec/system` et la correspondance bidirectionnelle entre le chapitre 7 et `tests/acceptance/`. Il exécute ensuite les tests d’acceptation associés, la conformité MRL, la couverture MRL et les tests de politique du code. Les tests d’acceptation associés doivent avoir zéro échec, erreur ou test ignoré.

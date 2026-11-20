@@ -76,7 +76,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
+bun run verify:bun     # check specs, implementation and acceptance tests
 ```
 
 ### Sua primeira linha
@@ -241,7 +241,7 @@ Códigos de saída: `0` sucesso · `1` falha de negócio · `2` uso · `3` regis
 
 ## Status do projeto
 
-A verificação atual de consistência entre código e specs é `uv run python tools/harness.py verify`. As descrições históricas dos marcos permanecem como contexto do projeto.
+A verificação atual de consistência entre código e specs é `bun run verify:bun`. As descrições históricas dos marcos permanecem como contexto do projeto.
 
 | Marco | Entregue |
 |---|---|
@@ -291,7 +291,7 @@ O design completo da arquitetura (em chinês) está em [docs/architecture.md](do
 
 ## Como contribuir
 
-O fluxo atual permite evoluir código, specs e testes de aceitação em conjunto. Antes de fazer commit ou push, execute `uv run python tools/harness.py verify`. Consulte [AGENTS.md](AGENTS.md) e [docs/pt-BR/development.md](docs/pt-BR/development.md) para as verificações de consistência.
+O fluxo atual permite evoluir código, specs e testes de aceitação em conjunto. Antes de fazer commit ou push, execute `bun run verify:bun`. Consulte [AGENTS.md](AGENTS.md) e [docs/pt-BR/development.md](docs/pt-BR/development.md) para as verificações de consistência.
 
 ## Licença
 

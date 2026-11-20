@@ -76,7 +76,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
+bun run verify:bun     # check specs, implementation and acceptance tests
 ```
 
 ### Первая линия
@@ -241,7 +241,7 @@ flowchart LR
 
 ## Состояние проекта
 
-Текущая проверка согласованности кода и спецификаций выполняется командой `uv run python tools/harness.py verify`. Исторические описания этапов сохранены как контекст проекта.
+Текущая проверка согласованности кода и спецификаций выполняется командой `bun run verify:bun`. Исторические описания этапов сохранены как контекст проекта.
 
 | Веха | Что сделано |
 |---|---|
@@ -291,7 +291,7 @@ docs/             архитектурный проект (zh-CN), руково�
 
 ## Участие в разработке
 
-Текущий процесс позволяет совместно изменять код, спецификации и приёмочные тесты. Перед commit или push выполните `uv run python tools/harness.py verify`. Проверки согласованности описаны в [AGENTS.md](AGENTS.md) и [docs/ru/development.md](docs/ru/development.md).
+Текущий процесс позволяет совместно изменять код, спецификации и приёмочные тесты. Перед commit или push выполните `bun run verify:bun`. Проверки согласованности описаны в [AGENTS.md](AGENTS.md) и [docs/ru/development.md](docs/ru/development.md).
 
 ## Лицензия
 

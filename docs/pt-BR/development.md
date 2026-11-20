@@ -9,7 +9,7 @@ Código, `spec/` e testes de aceitação podem ser alterados na ordem exigida pe
 Execute este comando antes de fazer commit ou push:
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 `verify` verifica os códigos de erro e as funções da biblioteca padrão do MRL, o factory profile, a estrutura de capítulos de `spec/system` e o mapeamento bidirecional entre o capítulo 7 e `tests/acceptance/`. Depois executa os testes de aceitação relacionados, MRL conformance, MRL coverage e os testes de política do código. Os testes de aceitação relacionados devem ter zero falhas, erros e skips.

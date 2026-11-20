@@ -9,7 +9,7 @@
 commit または push の前に次を実行します。
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 `verify` は MRL のエラーコードと標準ライブラリ関数、factory profile、`spec/system` の章構成、第 7 章と `tests/acceptance/` の双方向対応を検査します。その後、対応する受け入れテスト、MRL conformance、MRL coverage、コードポリシーテストを実行します。対応する受け入れテストには失敗、エラー、skip があってはいけません。

@@ -28,13 +28,13 @@ uv sync
 
 uv run factory --version                   # コントロールプレーン CLI
 uv run mrl --version                       # MRL ツールキット（"mrl 1.0.0" と表示）
-uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
+bun run verify:bun     # check spec and implementation consistency before commit or push
 ```
 
 Run the consistency check before committing or pushing:
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 ## 3. 作業場所の準備
@@ -111,7 +111,7 @@ tools/factory/bin/  factoryctl。サンドボックスにマウントされる
 
 ```bash
 uv run python tools/build_test_images.py   # mao-test/<名前>:dev をビルドし、image ID を表示
-uv run python tools/harness.py verify     # check spec and implementation consistency before commit or push
+bun run verify:bun     # check spec and implementation consistency before commit or push
 ```
 
 Docker では、各ステーションが 1 つのコンテナとして動きます。

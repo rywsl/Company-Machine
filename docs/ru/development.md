@@ -9,7 +9,7 @@
 Перед commit или push выполните:
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
 `verify` проверяет коды ошибок и функции стандартной библиотеки MRL, factory profile, структуру глав `spec/system` и двустороннее соответствие главы 7 каталогу `tests/acceptance/`. Затем запускаются связанные приёмочные тесты, MRL conformance, MRL coverage и тесты политики кода. В связанных приёмочных тестах не должно быть ошибок, падений или пропусков.

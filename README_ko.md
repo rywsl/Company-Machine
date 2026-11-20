@@ -76,7 +76,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
+bun run verify:bun     # check specs, implementation and acceptance tests
 ```
 
 ### 첫 번째 라인
@@ -241,7 +241,7 @@ flowchart LR
 
 ## 프로젝트 현황
 
-현재 코드와 spec의 일관성 검사는 `uv run python tools/harness.py verify`입니다. 아래의 마일스톤 설명은 프로젝트 맥락을 위한 기록으로 남아 있습니다.
+현재 코드와 spec의 일관성 검사는 `bun run verify:bun`입니다. 아래의 마일스톤 설명은 프로젝트 맥락을 위한 기록으로 남아 있습니다.
 
 | 마일스톤 | 결과물 |
 |---|---|
@@ -291,7 +291,7 @@ docs/             아키텍처 설계(zh-CN), 언어별 가이드, 다이어그�
 
 ## 기여하기
 
-현재 개발 흐름에서는 코드, spec, 인수 테스트를 함께 발전시킬 수 있습니다. 커밋 또는 푸시 전에 `uv run python tools/harness.py verify`를 실행합니다. 일관성 검사는 [AGENTS.md](AGENTS.md)와 [docs/ko/development.md](docs/ko/development.md)를 참고하세요.
+현재 개발 흐름에서는 코드, spec, 인수 테스트를 함께 발전시킬 수 있습니다. 커밋 또는 푸시 전에 `bun run verify:bun`를 실행합니다. 일관성 검사는 [AGENTS.md](AGENTS.md)와 [docs/ko/development.md](docs/ko/development.md)를 참고하세요.
 
 ## 라이선스
 
