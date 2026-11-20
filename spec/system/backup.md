@@ -11,9 +11,9 @@
 
 `backend/src/backup.ts` 的 `mao-backup/bun/1` 将运行中的 SQLite 数据库与工厂 CAS 一起保存。共享库打包为 `factory.db`。配置了独立业务库时，检查点同时保存 `business.db`，恢复报告给出两个路径。每个 SQLite 文件以 `VACUUM INTO` 取得独立快照，含 WAL 中已提交的事务。独立数据库各有自己的快照时间，需要跨库同一时间点时应先暂停写入。
 
-备份保留业务系统、项目、单元、运行、会话消息和工厂仓库的持久记录及 ID。`manifest.json` 列出文件相对路径、大小和 SHA-256、数据库角色、密钥申请名称以及是否包含日志。仓库保留现有 CAS 文件和过期 Bean 记录，校验时要求所有未过期 Bean 的 payload 存在且符合摘要。可选的运行日志保留原相对位置。归档的 Python `mao-backup/1` 和冻结 epoch 由下文的历史协议定义。
+备份保留业务系统、项目、单元、运行、会话消息和工厂仓库的持久记录及 ID。`manifest.json` 列出文件相对路径、大小和 SHA-256、数据库角色、密钥申请名称以及是否包含日志。仓库保留现有 CAS 文件和过期 Bean 记录。校验要求所有未过期 Bean 的 payload 和项目仍引用的已登记上传文件存在且符合摘要，包含使用独立业务数据库的项目。可选的运行日志保留原相对位置。归档的 Python `mao-backup/1` 和冻结 epoch 由下文的历史协议定义。
 
-显式指定 Registry Git 仓库根目录时，Bun 检查点保存 `registry.bundle`，覆盖可达的已提交 Git 对象、命名引用和 HEAD。清单的可选 `registry` 字段记录 bundle 路径、对象格式、命名引用、HEAD 对象 ID 和分支名。分离 HEAD 的分支名为 `null`。校验在空的临时仓库运行 `git bundle verify`，并核对 bundle 中的引用与清单。恢复从 bundle 重建 `NEW_ROOT/registry` 的 Git 工作树并核对 HEAD 和全部引用，包含 `refs/factory/*` 和 `refs/changesets/*`。Git 工作区未提交的改动、未跟踪文件和冻结 epoch 缓存须由各自的生命周期管理。没有可选字段的既有 Bun 检查点继续使用原恢复路径。
+显式指定 Registry Git 根目录或配置 `factory.json` 的 `governance.registry` 时，Bun 检查点保存 `registry.bundle`，覆盖可达的已提交 Git 对象、命名引用和 HEAD。清单的可选 `registry` 字段记录 bundle 路径、对象格式、命名引用、HEAD 对象 ID 和分支名。分离 HEAD 的分支名为 `null`。校验在空的临时仓库运行 `git bundle verify`，并核对 bundle 中的引用与清单。恢复从 bundle 重建 `NEW_ROOT/registry`，核对 HEAD 和全部引用，包含 `refs/factory/*` 和 `refs/changesets/*`。数据库有 active epoch 时，恢复生成指向该相对目录的治理配置。Git 工作区未提交的改动、未跟踪文件和冻结 epoch 缓存由各自的生命周期管理。没有可选字段的既有 Bun 检查点继续使用原恢复路径。
 
 恢复只写入新的或空的目录。系统先校验清单和 SQLite 完整性，拒绝无效路径、链接、缺失、多出或摘要不符的文件。恢复在目标同级的临时目录完成，复核文件后发布结果。Windows 上的临时文件占用会触发有上限的重试，每次发布前重新检查目标目录。清理还失败时，错误同时包含原操作和清理的诊断。恢复后清除源进程的工位锁、调度占用和租约，并把可用的项目密钥申请改回待配置。保险箱文件和密钥值保留在原部署。检查点中的应用记录、日志和路径引用保留本地运维信息。可分享的业务定义仍通过 `business export` 导出。
 

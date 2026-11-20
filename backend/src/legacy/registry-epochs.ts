@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Context } from "./context";
 import { FactoryError } from "./errors";
 import { canonicalJson, utcIso } from "./foundation";
+import { readGovernedRegistry } from "./registry-config";
 import { loadSnapshot, Snapshot } from "./snapshot";
 
 const pointerNames = ["active", "candidate", "previous"] as const;
@@ -59,17 +60,14 @@ export class EpochStore {
   }
 
   static async open(context: Context, options: EpochOptions = {}): Promise<EpochStore> {
-    let config: { registry?: unknown; git_timeout_s?: unknown } | undefined;
-    if (!options.registry) {
-      try { config = JSON.parse(readFileSync(join(context.root, "factory.json"), "utf8"))?.governance; } catch { /* Handled below. */ }
-    }
-    const registry = options.registry ?? (typeof config?.registry === "string" ? config.registry : undefined);
+    const config = options.registry ? undefined : readGovernedRegistry(context.root);
+    const registry = options.registry ?? config?.registry;
     if (!registry) throw new FactoryError("REGISTRY_NOT_CONFIGURED", "没有配置 Registry Git 仓库");
-    const absolute = options.registry ? resolve(registry) : resolve(context.root, registry);
+    const absolute = resolve(registry);
     if (!existsSync(join(absolute, ".git"))) {
       throw new FactoryError("REGISTRY_NOT_CONFIGURED", "Registry 必须是 Git 工作树", { path: absolute });
     }
-    const seconds = options.gitTimeoutSeconds ?? config?.git_timeout_s ?? 60;
+    const seconds = options.gitTimeoutSeconds ?? config?.gitTimeoutSeconds ?? 60;
     const timeout = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : 60_000;
     const store = new EpochStore(context, absolute, timeout);
     await store.git(["rev-parse", "--is-inside-work-tree"]);

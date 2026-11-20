@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Database } from "bun:sqlite";
 import { FactoryError } from "./legacy/errors";
 import { canonicalJson } from "./legacy/foundation";
+import { readGovernedRegistry } from "./legacy/registry-config";
 import { ManagedDatabase } from "./sqlite";
 
 const format = "mao-backup/bun/1";
@@ -166,6 +167,14 @@ function inspectDatabase(root: string, name: string): { liveBlobs: string[]; sec
     const liveBlobs = known.has("payload_files") && known.has("beans") ? db.query<{ digest: string }>(`
       SELECT DISTINCT p.digest FROM payload_files p JOIN beans b ON b.id=p.bean_id WHERE b.expired_at IS NULL
     `).all().map(({ digest }) => digest) : [];
+    if (known.has("intake_uploads") && known.has("project_sources")) {
+      const uploaded = db.query<{ digest: string }>(`
+        SELECT DISTINCT upload.digest FROM project_sources AS source
+        JOIN intake_uploads AS upload ON upload.digest = substr(source.file_ref, 7)
+        WHERE source.kind = 'uploaded_file' AND source.file_ref GLOB 'cas://sha256:*'
+      `).all();
+      for (const { digest } of uploaded) liveBlobs.push(digest);
+    }
     const secrets = known.has("secret_requests") ? db.query<{ name: string }>("SELECT DISTINCT name FROM secret_requests").all().map(({ name }) => name) : [];
     return { liveBlobs, secrets, hasBusiness: known.has("business_systems") };
   } finally { db.close(); }
@@ -404,7 +413,8 @@ export async function createBackup(options: BackupOptions, destination: string):
     if (options.withLogs) {
       for (const { source: log, path } of logFiles(root)) files.push(await copyBackupFile(log, stage, path));
     }
-    const registry = options.registry ? await createRegistryBundle(options.registry, stage) : undefined;
+    const registryRoot = options.registry ?? readGovernedRegistry(root)?.registry;
+    const registry = registryRoot ? await createRegistryBundle(registryRoot, stage) : undefined;
     if (registry) files.push(await describeFile(stage, bundleName));
     files.sort((a, b) => a.path.localeCompare(b.path, "en"));
     const manifest: BackupManifest = {
@@ -487,17 +497,18 @@ function restoredPath(path: string): string {
   return `${category}/${folder}/${id}/logs/${file.join("/")}`;
 }
 
-function clearHostState(stage: string, name: string): void {
+function clearHostState(stage: string, name: string): boolean {
   const db = new ManagedDatabase(join(stage, name));
   try {
     db.exec("PRAGMA trusted_schema=OFF");
     const known = tables(db);
     db.transaction(() => {
-      for (const table of ["job_execution_locks", "schedule_claims", "leases"]) {
+      for (const table of ["job_execution_locks", "schedule_claims", "changeset_stage_locks", "leases"]) {
         if (known.has(table)) db.exec(`DELETE FROM ${table}`);
       }
       if (known.has("secret_requests")) db.exec("UPDATE secret_requests SET status='requested' WHERE status='available'");
     }).immediate();
+    return known.has("epoch_pointers") && Boolean(db.query("SELECT 1 FROM epoch_pointers WHERE name = 'active'").get());
   } finally { db.close(); }
 }
 
@@ -519,10 +530,11 @@ export async function restoreBackup(destination: string, root: string) {
         throw new FactoryError("BACKUP_CORRUPT", "备份文件在恢复期间发生变化", { path: entry.path });
       }
     }
-    clearHostState(stage, factoryName);
+    const governed = clearHostState(stage, factoryName);
     if (manifest.databases.business === businessName) clearHostState(stage, businessName);
     if (manifest.registry) {
       await restoreRegistryBundle(stage, manifest.registry);
+      if (governed) await Bun.write(join(stage, "factory.json"), `${canonicalJson({ governance: { registry: "registry" } })}\n`);
       await retryWindowsFileOperation(() => rmSync(join(stage, bundleName)));
     }
     await publish(stage, target);

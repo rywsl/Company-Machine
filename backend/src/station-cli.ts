@@ -9,7 +9,8 @@ import { Scheduler } from "./legacy/scheduler";
 import { connectorCommands, runConnectorCli } from "./connector-cli";
 import { changesetCommands, runChangeSetCli } from "./changeset-cli";
 import { epochCommands, runEpochCli } from "./epoch-cli";
-import { hasGovernedRegistry, RegistrySelection } from "./registry-selection";
+import { readGovernedRegistry } from "./legacy/registry-config";
+import { RegistrySelection } from "./registry-selection";
 import { createBackup, restoreBackup, verifyBackup } from "./backup";
 
 export class CliUsageError extends Error {}
@@ -148,13 +149,15 @@ export async function runStationCli(argv: string[]): Promise<number> {
   if (scope === "backup") return await runBackupCli(operation, args, root, options);
   const isPlanning = scope === "line" && operation === "plan";
   if (isPlanning && (args.length !== 1 || args[0].startsWith("--"))) throw new CliUsageError("Line id is required");
-  if (isPlanning && !options.epoch && !(await hasGovernedRegistry(root))) return printPlan(await loadSnapshot(registry), args[0]);
+  if (isPlanning && !options.epoch && !readGovernedRegistry(root)) return printPlan(await loadSnapshot(registry), args[0]);
   const context = Context.open(root);
   const snapshots = new RegistrySelection(context, registry, options.epoch, options.registry ?? process.env.FACTORY_REGISTRY);
   try {
     if (isPlanning) return printPlan(await snapshots.current(), args[0]);
     if (scope === "epoch") return await runEpochCli(context, operation, args, { registry: options.registry ?? process.env.FACTORY_REGISTRY });
-    if (scope === "changeset") return await runChangeSetCli(context, operation, args, { registry: options.registry ?? process.env.FACTORY_REGISTRY });
+    if (scope === "changeset") return await runChangeSetCli(context, operation, args, {
+      registry: options.registry ?? process.env.FACTORY_REGISTRY, provider: () => provider(options),
+    });
     if (scope === "source" || scope === "receipt") return await runConnectorCli(context, {
       scope, operation, args, snapshots, json: options.json, provider: () => provider(options),
     });

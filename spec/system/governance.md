@@ -439,6 +439,8 @@ Bun 的 `diffChangeFacts` 按 Spec 身份和版本排序，返回风险事实及
 
 第 1–9 步的任何 `rejected` 都写报告和事件，然后返回 ChangeSet，**不抛错**（`advance` 只在设施故障时抛 `GIT_FAILED` 等）。
 
+Bun 的 `changeset advance ID` 持久化 `verifying`，通过候选 Git epoch、冻结解析表和 `ContractRunner` 核对结构、风险及合同结果，再提交 `verified` 或 `rejected` 与审计事件。中断的 `verifying` 可重新推进。合同设施异常写入 `V4_ERROR`，合同用例失败写入 `V4_FAILED` 和对应结果 ID。
+
 ### 5.8 复核（M3-02）
 
 `add_review(cs_id, *, runtime, verdict, note, by)`：
@@ -473,6 +475,8 @@ Bun 的 `diffChangeFacts` 按 Spec 身份和版本排序，返回风险事实及
 | 终态、`draft` 之外的其他组合 | — | `CHANGESET_STATE_INVALID` |
 
 **影子运行**：`shadow.run(cs, candidate=..., active=..., rollout=document.spec.rollout, golden_only=(tier == "T1" and rollout.shadow 没有 runs))`。`report.ok` 为假、`spent_usd > rollout.shadow.budget_usd`、或 `regressions` 非空 → 失败。缺省实现 `LineShadowRunner`：
+
+Bun 的 `advance` 在复核要求为零时推进影子阶段。在途或已通过的影子占用唯一候选位置。重放按变更和基线运行 ID 恢复，Sink 使用 `dry-run`。失败会清除该变更的候选指针并保存 `SHADOW_FAILED`，成功则保留 `shadow` 及报告，供后续发布流程读取。
 
 - 重放基线 epoch 最近 `rollout.shadow.runs` 个 `SUCCEEDED` run 的输入（`golden_only` 时改用相关 GoldenSet 的样例），在候选快照上新建 run，`trigger = "shadow:<cs_id>"`；
 - **Sink 换成空 Sink**：sink 步骤只走 `contract-tests.md` 的 `run_sink_dry_run`，绝不真实发布，也不写回执；

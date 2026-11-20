@@ -112,11 +112,11 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | 文件 | 验证 |
 |---|---|
 | `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱、SSE 回放 |
-| `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库字节、Git 引用、凭据边界和损坏情况 |
+| `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、Registry 检查、从冻结快照恢复审批和调度运行 |
-| `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选提交、拒绝路径和 MRL 风险事实 |
+| `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
 | `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |
@@ -227,6 +227,13 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_stale_base_rejected` | `backend/tests/changesets.test.ts` | `rejects constitution edits and a stale base before publishing a draft` | 基线与 active 不一致时拒绝写入草案 |
 | `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_freeze_and_rate_limit` | `backend/tests/changesets.test.ts` | `rejects frozen, rate-limited, empty and malformed proposals` | 固定时间下封版和 24 小时推广次数限制分别拒绝 |
 | `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_unscored_is_not_low` | `backend/tests/changesets.test.ts` | `classifies MRL risk without defaulting unscored facts to a low tier` | 未知字段和结构无法评级，Machine 镜像字段风险为 T2 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_limits_change_is_t1` | `backend/tests/changesets.test.ts` | `verifies a T1 Station with contract results and rejects a shadow regression` | 工位限额变更经差分合同验证进入 T1，报告记录变更工位 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_risk_ignores_proposer_claim` | `backend/tests/changesets.test.ts` | `rejects undeclared, immutable and backward-incompatible Registry changes` | 声称 T0 的机器镜像变更按规则归为 T2 并要求复核 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_declared_changes_must_match` | `backend/tests/changesets.test.ts` | `rejects undeclared, immutable and backward-incompatible Registry changes` | 报告未声明的 Machine 变更 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_in_place_edit_is_immutable` | `backend/tests/changesets.test.ts` | `rejects undeclared, immutable and backward-incompatible Registry changes` | 原地修改返回 `V3_IMMUTABLE` 及原键 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_minor_must_be_compatible` | `backend/tests/changesets.test.ts` | `rejects undeclared, immutable and backward-incompatible Registry changes` | Type minor 改变必需 payload 被拒绝 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_v4_failure_rejects` | `backend/tests/changesets.test.ts` | `verifies a T1 Station with contract results and rejects a shadow regression` | 合同失败后拒绝并保存失败结果 ID |
+| `removed/python/tests/acceptance/m3/test_m3_03_rollout.py::test_shadow_failure_rejects` | `backend/tests/changesets.test.ts` | `verifies a T1 Station with contract results and rejects a shadow regression` | 影子回归拒绝、清理候选指针，active 指向基线 |
 | `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_not_cacheable_roles` | `backend/tests/legacy-cache.test.ts` | `uses result-affecting inputs without depending on epoch or descriptive metadata` | Sink 的缓存键请求返回 `CACHE_NOT_CACHEABLE` |
 | `removed/python/tests/acceptance/m7/test_m7_04_backup.py::test_restore_refuses` | `backend/tests/backup.test.ts` | `reports corrupt and missing blobs, extra files, and unsafe paths before restore` | 拒绝损坏备份和非空恢复目录，原 CAS 保留 |
 

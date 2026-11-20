@@ -196,11 +196,11 @@ test("materializes the recorded Git epoch from a restored bundle and SQLite chec
     const newer = await commitChange(w.registry, "stations/upper.yaml", readFileSync(join(w.registry, "stations", "upper.yaml"), "utf8").replace("60s", "30s"));
     const destination = join(w.root, "backup");
     const restoredRoot = join(w.root, "restored");
-    await createBackup({ root: w.root, registry: w.registry }, destination);
+    await createBackup({ root: w.root }, destination);
     const restored = await restoreBackup(destination, restoredRoot);
     const context = Context.open(restoredRoot);
     try {
-      const epochs = await EpochStore.open(context, { registry: restored.registry });
+      const epochs = await EpochStore.open(context);
       const caches = join(restoredRoot, "epochs", w.base);
       expect(existsSync(caches)).toBe(false);
       expect(epochs.current()).toBe(w.base);

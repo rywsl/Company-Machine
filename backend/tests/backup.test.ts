@@ -190,6 +190,43 @@ test("keeps expired Bean history after blob collection and rejects a missing liv
   } finally { context.close(); }
 }));
 
+test("requires referenced project uploads in a split database checkpoint", async () => inTemporaryDirectory(async (root) => {
+  const source = join(root, "source");
+  const database = join(root, "business.db");
+  const destination = join(root, "backup");
+  const context = Context.open(source);
+  const store = new SqliteStore(database, join(source, "factory.db"));
+  try {
+    const material = join(root, "project.md");
+    const bytes = "project input kept independently of its host path";
+    await Bun.write(material, bytes);
+    const digest = await context.warehouse.putFile(material);
+    const ref = `cas://${digest}`;
+    store.db.query("INSERT INTO intake_uploads (digest,size) VALUES (?,?)").run(digest, bytes.length);
+    const project = store.createIntake({ name: "Portable project", files: [{ name: "project.md", digest, ref }] });
+    const manifest = await createBackup({ root: source, businessDatabase: database }, destination);
+    const payload = manifest.files.find((file) => file.sha256 === digest)!;
+    expect(payload.path).toMatch(/^cas\//);
+    expect(await verifyBackup(destination)).toEqual({ ok: true, problems: [] });
+    const restoredRoot = join(root, "restored");
+    const restored = await restoreBackup(destination, restoredRoot);
+    const restoredStore = new SqliteStore(restored.business_database!, restored.factory_database);
+    try {
+      expect(restoredStore.getProject(project.id)?.sources[0]).toMatchObject({ fileRef: ref });
+      expect(await Bun.file(join(restoredRoot, payload.path)).text()).toBe(bytes);
+    } finally { restoredStore.close(); }
+    unlinkSync(join(destination, payload.path));
+    await Bun.write(join(destination, "manifest.json"), JSON.stringify({ ...manifest, files: manifest.files.filter((file) => file.sha256 !== digest) }));
+    expect(await verifyBackup(destination)).toEqual({ ok: false, problems: [{ kind: "blob", path: digest }] });
+    unlinkSync(context.warehouse.blobPath(digest));
+    await expect(createBackup({ root: source, businessDatabase: database }, join(root, "incomplete")))
+      .rejects.toMatchObject({ code: "BACKUP_SOURCE_CORRUPT", detail: { path: digest } });
+  } finally {
+    store.close();
+    context.close();
+  }
+}));
+
 test("creates, verifies and restores a checkpoint through the factory CLI", { timeout: 120_000 }, async () => inTemporaryDirectory(async (root) => {
   const source = join(root, "source");
   const destination = join(root, "backup");
