@@ -213,7 +213,7 @@ class IdSource(Protocol):
   - `PRAGMA journal_mode=WAL`
   - `PRAGMA foreign_keys=ON`
   - `PRAGMA busy_timeout=5000`
-- 迁移文件放在 `src/mao/migrations/NNN_<名字>.sql`，按编号顺序执行，已执行到的版本号记在 `PRAGMA user_version`。
+- 历史 Python 迁移文件位于 `removed/python/src/mao/migrations/NNN_<名字>.sql`。活动 Bun 数据表由 `backend/src/db.ts` 初始化并与现有 SQLite 共存。
 - **已发布的迁移文件禁止修改**，要改表结构就新增一个迁移。
 - 编号分配：
 
@@ -418,7 +418,7 @@ class DockerProvider:
 
 ### 4.6 `mao.ctl`（factoryctl.md）
 
-- 沙箱内：`src/mao/ctl/factoryctl.py`。安装后成为 `/opt/factory/bin/factoryctl`。
+- 历史沙箱客户端位于 `removed/python/src/mao/ctl/factoryctl.py`。新的 Bun Harness 边界通过官方 CLI/ACP 协议工作，客户端安装逻辑保留在历史目录。
 - 宿主侧：
 
 ```python
@@ -588,7 +588,7 @@ class Runner:
 4. **数据格式**：文件、表结构（SQL）、JSON 字段表。
 5. **行为**：逐条写算法和状态转换，要具体到可以照着实现。
 6. **错误**：错误码表，列出错误码、触发条件和 `detail` 字段。
-7. **验收测试**：对应的 `tests/acceptance/...` 文件，以及其中每个测试验证什么。
+7. **验收测试**：历史 Python 验收位于 `removed/python/tests/acceptance/...`，活动 Bun 验收位于 `backend/tests`、`backend/runtime` 和 `backend/mrl`。
 8. **错误示范与正确示范**：至少 3 组 ✖/✔ 对照，取最容易犯的错。
 9. **风险与注意事项**：平台差异、并发、性能、安全。
 
@@ -600,7 +600,8 @@ class Runner:
 |---|---|---|---|
 | MRL 一致性 | `spec/mrl/conformance/` | M0 已完成 | 只增不改（`harness lock` 校验） |
 | 单元测试 | `tests/system/` | 任务执行者 | 自由增加；不得依赖网络 |
-| 验收测试 | `tests/acceptance/mN/test_mN_XX_*.py` | 预先写好 | **受保护**；任务完成的定义是对应文件全部通过、零跳过 |
+| 历史验收测试 | `removed/python/tests/acceptance/mN/test_mN_XX_*.py` | 已归档 | 仅作迁移证据 |
+| 活动验收测试 | `backend/tests/**/*.test.ts` | Bun | 任务完成的定义是全部通过 |
 | 场景 | `plan/scenarios/` | 预先写好 | 受保护 |
 
 pytest 标记：
