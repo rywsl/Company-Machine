@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createBackup, restoreBackup } from "../src/backup";
 import { main } from "../src/cli";
 import { runEpochCli } from "../src/epoch-cli";
+import { ChangeSetStages } from "../src/legacy/change-stages";
+import { ChangeSetStore } from "../src/legacy/changesets";
 import { Context } from "../src/legacy/context";
 import { FakeClock } from "../src/legacy/foundation";
 import { EpochStore } from "../src/legacy/registry-epochs";
@@ -61,6 +63,26 @@ test("initializes the active Git epoch in SQLite and refs/factory exactly once",
     expect((await w.epochs.materialize(w.base)).epoch).toBe(w.base);
     expect(w.context.db.query('SELECT "commit" FROM epoch_pointers WHERE name = ?').get("active")).toEqual({ commit: w.base });
     await expect(w.epochs.init(w.base, "human:acceptance")).rejects.toMatchObject({ code: "EPOCH_STATE_INVALID" });
+  } finally { w.close(); }
+});
+
+test("reconciles drifted Git epoch refs without changing their symbolic targets", gitTest, async () => {
+  const w = await world();
+  try {
+    await w.epochs.init(w.base, "human:acceptance");
+    const stage = new ChangeSetStages(new ChangeSetStore(w.context, w.epochs));
+    const other = await commitChange(w.registry, "README.txt", "Git drift fixture");
+    await git(w.registry, "update-ref", "refs/factory/active", other);
+    expect(await stage.tick()).toEqual([]);
+    expect(await git(w.registry, "rev-parse", "refs/factory/active")).toBe(w.base);
+
+    await git(w.registry, "branch", "retain-fixture", other);
+    await git(w.registry, "symbolic-ref", "refs/factory/active", "refs/heads/main");
+    await git(w.registry, "symbolic-ref", "refs/factory/candidate", "refs/heads/retain-fixture");
+    expect(await stage.tick()).toEqual([]);
+    expect(await git(w.registry, "for-each-ref", "--format=%(refname) %(objectname) %(symref)", "refs/factory")).toBe(`refs/factory/active ${w.base}`);
+    expect(await git(w.registry, "rev-parse", "refs/heads/main", "refs/heads/retain-fixture")).toBe(`${other}\n${other}`);
+    expect(w.epochs.pointers()).toEqual({ active: w.base, candidate: null, previous: null });
   } finally { w.close(); }
 });
 

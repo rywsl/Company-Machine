@@ -279,9 +279,10 @@ export class EpochStore {
       if (pointerNames.some((name) => pointers[name] !== null && !gitObjectId.test(pointers[name]!))) {
         throw new FactoryError("EPOCH_CORRUPT", "数据库的 epoch 指针格式异常");
       }
-      const commands = pointerNames.map((name) => pointers[name]
-        ? `update refs/factory/${name} ${pointers[name]}`
-        : `delete refs/factory/${name}`);
+      const commands = pointerNames.flatMap((name) => [
+        "option no-deref",
+        pointers[name] ? `update refs/factory/${name} ${pointers[name]}` : `delete refs/factory/${name}`,
+      ]);
       await this.git(["update-ref", "--stdin"], commands.join("\n") + "\n");
       const current = this.pointers();
       if (pointerNames.every((name) => current[name] === pointers[name])) return;

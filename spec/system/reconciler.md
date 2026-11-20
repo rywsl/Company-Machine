@@ -185,6 +185,8 @@ I14 的“再跑一次”必须用同一个 `check_registry`。禁止在调和�
 实际态与动作：
 
 1. **Git 引用**。`git show-ref` 与表不一致时，`git update-ref` 到表里的值。成功 → 发现状态 `restored`。失败 → `RESTORE_FAILED`，状态 `wake`。禁止 `git push`，禁止改数据库去迎合引用。
+
+   Bun 在 `ChangeSetStages.tick()` 开始时将 SQLite 中的 `active`、`candidate` 和 `previous` 同步到 `refs/factory/`。一次 Git 引用事务内，每条更新或删除都直接作用于对应镜像引用。指针存在时写入提交 ID，指针缺失时删除镜像引用。若镜像引用被改成符号引用，其指向的分支仍保留原有提交。
 2. **镜像**。`docker image inspect <digest>`。digest 已在本地但不被任何标签指向：只记录，不拉取。digest 不在本地：不执行 `docker pull`（那会引入未声明的网络与凭据）。发现状态 `wake`，`detail.kind = "image"`。容器若在跑且镜像 digest 与声明不同：停止该容器（`docker stop`），不自动用别的标签启动。下一轮由正常的 `SandboxProvider.open` 按声明的 digest 创建。调和器不调用 `docker run`。
 3. **凭据名字**。比较 job 记录里注入过的环境变量名字与策略允许的名字。多了或少了 → hold 工位，唤醒。不读取值，不把值写进 `detail`。
 4. **工作区脏**。`active` 对应的 Registry 工作区 `git status --porcelain` 非空 → I9 发现，不自动 `git checkout` 覆盖人的未提交文件。状态 `wake`。
