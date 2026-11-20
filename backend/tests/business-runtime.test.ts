@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createApp } from "../src/server";
@@ -462,6 +462,39 @@ describe("Bun business execution loop", () => {
     } finally {
       app.stop();
       await rm(dbPath, { force: true });
+    }
+  });
+
+  test("persists ordinary Machine attempts, resumes them, and retries failed source activation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-machine-lifecycle-"));
+    const dbPath = join(root, "business.db");
+    const sourceRoot = mkdtempSync(join(tmpdir(), "mao-machine-source-"));
+    const source = join(sourceRoot, "source");
+    mkdirSync(source);
+    const app = createApp({ dbPath, legacyPath: dbPath, storageRoot: root, operator: { spawn: () => processForRecord("machine retry") } });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Machine lifecycle" });
+      const project = app.store.createIntake({ business_system_id: system.id, name: "Local source", local_folder: source });
+      app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session" });
+      const run = app.store.createBusinessRun(system.id, "test", {}, [], false)!;
+      app.store.authorizeBusinessRunDispatch(run.id);
+      rmSync(source, { recursive: true, force: true });
+      app.recoverQueuedWork();
+      for (let attempt = 0; attempt < 40 && app.store.getBusinessRun(run.id)?.status !== "failed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      const machineRun = app.store.listUnitRuns(run.id).find(({ unitId }) => unitId === `${project.id}:machine`)!;
+      expect(machineRun.status).toBe("failed");
+      expect(app.store.getMachineAttempt(machineRun.id)).toMatchObject({ attempt: 1, status: "failed", sessionId: `machine:${machineRun.id}` });
+
+      mkdirSync(source);
+      expect(app.store.retryBusinessRun(run.id)?.status).toBe("queued");
+      app.recoverQueuedWork();
+      for (let attempt = 0; attempt < 40 && app.store.getBusinessRun(run.id)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(app.store.getBusinessRun(run.id)?.status).toBe("completed");
+      expect(app.store.getMachineAttempt(machineRun.id)).toMatchObject({ attempt: 2, status: "completed" });
+    } finally {
+      app.stop();
+      await rm(root, { recursive: true, force: true });
+      await rm(sourceRoot, { recursive: true, force: true });
     }
   });
 

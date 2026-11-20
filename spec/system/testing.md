@@ -140,6 +140,8 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列及密钥全部就绪的已授权工位，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/control-loop.test.ts` | 运行中取消停止官方 Harness、失败或取消后的单次重试，以及 JSON/SSE CORS 来源边界 |
 | `backend/tests/kernel-material-bridge.test.ts` | 业务 Material 文件转封存 legacy Bean、元数据回写、双向 Conversion 和重试幂等 |
+| `backend/tests/legacy-sse.test.ts` | legacy MAO 事件到业务 SSE 的实时桥接、持久去重和日志投影去重 |
+| `backend/tests/business-secret-governance.test.ts` | 业务 Material 与 Conversion 写入前的密钥字段和文本脱敏 |
 | `backend/tests/security-boundary.test.ts` | Bearer scope 的业务系统、项目、密钥和角色边界，以及写请求的 CSRF 约束 |
 | `backend/tests/web-contract.test.ts` | Web 图查询边界、增量日志游标、Foreman 事件游标和业务记录元数据脱敏 |
 | `backend/tests/operator-recovery.test.ts` | Operator 领取归属、会话更新和结果提交的归属校验、Linux 确认原进程退出后的恢复及其他环境保留未知状态 |

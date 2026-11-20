@@ -18,6 +18,7 @@ export class EventBus {
   }
 
   after(lastEventId?: string | number, limit?: number): Event[] {
+    for (const event of this.store.syncLegacyEvents()) this.notifyCommitted(event);
     const seq = typeof lastEventId === "number" ? lastEventId : Number(lastEventId ?? 0);
     return this.store.eventsAfter(Number.isFinite(seq) ? seq : 0, limit);
   }

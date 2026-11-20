@@ -23,10 +23,12 @@ import type { AcpSpawn } from "./acp";
 import { validSessionTimeout } from "./harness-turn";
 import { kernelRunMetadata, loadBusinessKernel } from "./business-kernel-bridge";
 import { createBusinessKernelExecution } from "./business-kernel-bridge";
+import { MachineExecutor } from "./machine-executor";
 import { Context } from "./legacy/context";
 import type { ContainerProvider } from "../runtime/podman";
 import { EpochStore } from "./legacy/registry-epochs";
 import { readGovernedRegistry } from "./legacy/registry-config";
+import { loadSnapshot, type Snapshot } from "./legacy/snapshot";
 
 function defaultHeaders(): Record<string, string> {
   return { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
@@ -245,6 +247,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
     if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
   }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)]);
+  const prepareMachineSources: PrepareProjectSources = (project) => prepareProjectSources(project, (digest) => {
+    const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
+    if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
+  }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)], { cloneRepositories: false, strict: true });
   const foreman = new ForemanCoordinator({
     store, events, ...options.foreman, ensureRuntime,
     readSecret: (ref) => vault.get(ref),
@@ -287,7 +293,6 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     return recovered.length;
   };
   const activeKernelMachines = new Map<string, Promise<void>>();
-  const activeSourceMachines = new Map<string, Promise<void>>();
   const activeKernelContexts = new Map<string, Context>();
   const ensureMaterialToBeanConversion = (businessSystemId: string, artifact: Artifact, beanId: string): void => {
     const input = `material://${artifact.id}`;
@@ -491,33 +496,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     activeKernelMachines.set(unitRunId, work);
     return work;
   };
-  const dispatchSourceMachine = (runId: string, unitRunId: string): Promise<void> => {
-    const existing = activeSourceMachines.get(unitRunId);
-    if (existing) return existing;
-    const work = (async () => {
-      const unitRun = store.getUnitRun(runId, unitRunId);
-      const run = store.getBusinessRun(runId);
-      const unit = unitRun ? store.getBusinessUnit(unitRun.unitId) : undefined;
-      if (!unitRun || !run || !unit || unit.kind !== "machine" || unitRun.status !== "running") return;
-      try {
-        // A source-backed Machine is the durable project preparation boundary.
-        // The actual project work remains in the official Operator Harness.
-        const completed = store.completeUnitRun(unitRun.id, "completed", [], undefined);
-        if (completed) {
-          events.publish("machine.run.completed", { runId, unitRunId, machineId: unit.id, state: "SUCCEEDED", outputs: [] });
-          dispatchOperatorRun(runId, completed.id);
-        }
-      } catch (error) {
-        const failed = store.completeUnitRun(unitRun.id, "failed", [], error instanceof Error ? error.message : String(error));
-        if (failed) {
-          events.publish("machine.run.failed", { runId, unitRunId, machineId: unit.id, error: failed.error });
-          dispatchOperatorRun(runId, failed.id);
-        }
-      }
-    })().finally(() => { activeSourceMachines.delete(unitRunId); });
-    activeSourceMachines.set(unitRunId, work);
-    return work;
-  };
+  const machineExecutor = new MachineExecutor({ store, events, prepareSources: prepareMachineSources, onProgress: dispatchOperatorRun });
+  const dispatchSourceMachine = (runId: string, unitRunId: string, recovering = false): Promise<void> => machineExecutor.dispatch(runId, unitRunId, recovering);
   function dispatchOperatorRun(runId: string, completedUnitRunId?: string) {
     if (stopped || options.dispatchWork === false) return;
     for (const unitRun of store.listReadyUnitRuns(runId, completedUnitRunId)) runInBackground(operator.dispatch(runId, unitRun.id));
@@ -532,7 +512,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     store.resumeResourceRuns();
     for (const id of store.listRecoverableBusinessRunIds()) dispatchOperatorRun(id);
-    for (const { runId, unitRunId } of store.listRunningSourceMachineRuns()) runInBackground(dispatchSourceMachine(runId, unitRunId));
+    for (const { runId, unitRunId } of store.listRunningSourceMachineRuns()) runInBackground(dispatchSourceMachine(runId, unitRunId, true));
     for (const { runId, unitRunId } of store.listRunningKernelMachineRuns()) runInBackground(dispatchKernelMachine(runId, unitRunId, true));
   };
   const handleRequest = async (request: Request): Promise<Response> => {
@@ -555,8 +535,15 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         const run = decodeSegment(runPath[1]) ? store.getBusinessRun(decodeSegment(runPath[1])!) : undefined;
         if (run && !canAccessSystem(principal, run.businessSystemId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该运行权限" }, 403);
       }
-      if ((url.pathname === "/api/v1/business-systems" || url.pathname === "/api/v1/projects" || url.pathname === "/api/web/bootstrap" || url.pathname === "/api/web/graph" || url.pathname === "/api/web/assets" || url.pathname === "/api/web/assets/page" || url.pathname === "/api/web/logs" || url.pathname === "/api/web/constitution") && principal.role !== "admin") {
+      if ((url.pathname === "/api/v1/business-systems" || url.pathname === "/api/v1/projects" || url.pathname === "/api/web/bootstrap" || url.pathname === "/api/web/assets" || url.pathname === "/api/web/assets/page" || url.pathname === "/api/web/logs" || url.pathname === "/api/web/constitution") && principal.role !== "admin") {
         return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据需要明确的业务系统范围" }, 403);
+      }
+      if (url.pathname === "/api/web/graph" && principal.role !== "admin") {
+        const requestedScope = url.searchParams.get("scope");
+        const requestedWorkarea = url.searchParams.get("workarea");
+        if (requestedScope !== "workarea" || !requestedWorkarea || !canAccessSystem(principal, requestedWorkarea)) {
+          return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据只能读取已授权厂区图" }, 403);
+        }
       }
       if ((url.pathname.startsWith("/api/v1/foreman/") || url.pathname.startsWith("/api/v1/talk") || url.pathname === "/api/web/talk") && !canMutate(principal, "foreman")) {
         return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有厂长控制权限" }, 403);
@@ -663,7 +650,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const refs = [...(Array.isArray(body.inputs) ? body.inputs : []), ...(Array.isArray(body.outputs) ? body.outputs : [])];
       const invalid = store.invalidBusinessInputRefs(conversionMatch[1], refs);
       if (invalid.length) return response({ error: "conversion references must belong to the current business system", detail: { refs: invalid } }, 400);
-      const conversion = store.createBusinessConversion({ businessSystemId: conversionMatch[1], kind: body.kind, summary: body.summary, status: body.status === "running" || body.status === "completed" || body.status === "failed" ? body.status : "planned", inputs: body.inputs ?? [], outputs: body.outputs ?? [], producer: body.producer && typeof body.producer === "object" ? body.producer : undefined, metadata: body.metadata && typeof body.metadata === "object" ? body.metadata : {} });
+      const conversion = store.createBusinessConversion({ businessSystemId: conversionMatch[1], kind: redactText(body.kind), summary: redactText(body.summary), status: body.status === "running" || body.status === "completed" || body.status === "failed" ? body.status : "planned", inputs: portableValue(body.inputs ?? []) as string[], outputs: portableValue(body.outputs ?? []) as string[], producer: body.producer && typeof body.producer === "object" ? portableValue(body.producer) : undefined, metadata: body.metadata && typeof body.metadata === "object" ? portableValue(body.metadata) : {} });
       events.publish("business-conversion.created", conversion);
       return response(conversion, 201);
     }
@@ -857,8 +844,18 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         const invalid = store.invalidBusinessInputRefs(project.businessSystemId, references);
         if (invalid.length) return response({ error: "record references must belong to the current business system", detail: { refs: invalid } }, 400);
       }
-      const metadata = { ...body.metadata, record_type: body.record_type, title: body.title, description: body.description, summary: body.summary, purpose: body.purpose, status: body.status, producer: body.producer, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage };
-      const artifact = store.addArtifact({ projectId: project.id, sourceId: typeof body.source_id === "string" ? body.source_id : undefined, recordType: body.record_type, kind: body.kind, ref: body.ref, title: typeof body.title === "string" ? body.title : undefined, description: typeof body.description === "string" ? body.description : undefined, status: typeof body.status === "string" ? body.status : undefined, producer: body.producer && typeof body.producer === "object" ? body.producer : undefined, summary: body.summary, purpose: typeof body.purpose === "string" ? body.purpose : undefined, files: body.files, inputs: body.inputs, outputs: body.outputs, lineage: body.lineage, metadata });
+      const safeMetadata = body.metadata && typeof body.metadata === "object" ? portableValue(body.metadata) : {};
+      const safeTitle = typeof body.title === "string" ? redactText(body.title) : undefined;
+      const safeDescription = typeof body.description === "string" ? redactText(body.description) : undefined;
+      const safeSummary = redactText(body.summary);
+      const safePurpose = typeof body.purpose === "string" ? redactText(body.purpose) : undefined;
+      const safeProducer = body.producer && typeof body.producer === "object" ? portableValue(body.producer) : undefined;
+      const safeFiles = body.files === undefined ? undefined : portableValue(body.files);
+      const safeInputs = body.inputs === undefined ? undefined : portableValue(body.inputs);
+      const safeOutputs = body.outputs === undefined ? undefined : portableValue(body.outputs);
+      const safeLineage = body.lineage === undefined ? undefined : portableValue(body.lineage);
+      const metadata = { ...safeMetadata, record_type: body.record_type, title: safeTitle, description: safeDescription, summary: safeSummary, purpose: safePurpose, status: body.status, producer: safeProducer, files: safeFiles, inputs: safeInputs, outputs: safeOutputs, lineage: safeLineage };
+      const artifact = store.addArtifact({ projectId: project.id, sourceId: typeof body.source_id === "string" ? body.source_id : undefined, recordType: body.record_type, kind: redactText(body.kind), ref: redactText(body.ref), title: safeTitle, description: safeDescription, status: typeof body.status === "string" ? body.status : undefined, producer: safeProducer, summary: safeSummary, purpose: safePurpose, files: safeFiles as Artifact["files"], inputs: safeInputs as string[], outputs: safeOutputs as string[], lineage: safeLineage as string[], metadata });
       events.publish("artifact.created", artifact);
       if (project.businessSystemId && (artifact.inputs?.length || artifact.lineage?.length)) {
         const conversion = store.createBusinessConversion({
@@ -926,7 +923,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (typeof body.project_id !== "string" || !projectCredentialName(body.name)) return response({ error: "project_id and a valid credential name are required" }, 400);
       if (!store.getProject(body.project_id)) return response({ error: "project was not found" }, 404);
       if (principal?.scoped && !canAccessProject(principal, store, body.project_id)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, 403);
-      const requestRecord = store.createSecretRequest({ projectId: body.project_id, name: body.name, vaultRef: `vault://secret/${store.uuid()}`, metadata: { purpose: body.purpose, scope: body.scope } });
+      const requestRecord = store.createSecretRequest({ projectId: body.project_id, name: body.name, vaultRef: `vault://secret/${store.uuid()}`, metadata: { purpose: typeof body.purpose === "string" ? redactText(body.purpose) : undefined, scope: typeof body.scope === "string" ? redactText(body.scope) : undefined } });
       const { vaultRef: _vaultRef, ...visible } = requestRecord;
       events.publish("secret.requested", visible);
       return response({ request_id: requestRecord.id, state: requestRecord.status, request: visible }, 201);
@@ -1002,15 +999,21 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (scope !== "factory" && scope !== "workarea") return response({ code: "INVALID_GRAPH_SCOPE", message: "scope 必须是 factory 或 workarea" }, 400);
       if (scope === "factory" && workarea) return response({ code: "INVALID_GRAPH_SCOPE", message: "factory 图不能指定 workarea" }, 400);
       if (scope === "workarea" && !workarea) return response({ code: "WORKAREA_REQUIRED", message: "workarea 图需要业务系统标识" }, 400);
-      if (scope === "workarea" && !store.getBusinessSystem(workarea!)) return response({ code: "WORKAREA_NOT_FOUND", message: "业务系统不存在" }, 404);
-      return response(graphProjection(store, scope, workarea));
+      if (scope === "workarea") {
+        const businessSystem = store.getBusinessSystem(workarea!);
+        if (businessSystem) return response(graphProjection(store, scope, workarea));
+        const registryGraph = await registryWorkareaProjection(store, storageRoot, workarea!);
+        return registryGraph ? response(registryGraph) : response({ code: "WORKAREA_NOT_FOUND", message: "厂区不存在" }, 404);
+      }
+      return response(await factoryGraphProjection(store, storageRoot));
     }
     if (url.pathname === "/api/web/constitution" && request.method === "GET") {
       return response(await constitutionProjection(storageRoot));
     }
     if (url.pathname === "/api/web/harnesses" && request.method === "GET") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以读取全局 Harness 配置" }, 403);
-      return response(officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })));
+      const profiles = store.listHarnessProfiles();
+      return response(officialHarnesses(profiles).map((item) => ({ ...item, configuration: publicProfile(profiles.find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })));
     }
     if (url.pathname === "/api/web/harnesses/configure" && request.method === "POST") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以配置 Harness" }, 403);
@@ -1098,7 +1101,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (assetLimit !== null && limit === undefined) return response({ error: "invalid asset page limit" }, 400);
       const health = await runtimeHealth();
       const eventCursor = store.latestEventSequence();
-      const factoryGraph = graphProjection(store, "factory", null);
+      const factoryGraph = await factoryGraphProjection(store, storageRoot);
       const foremanProfile = store.listHarnessProfiles().find((profile) => profile.role === "foreman");
       const talk = store.recentTalk(80);
       const foremanTurns = store.listForemanTurns(talk.map(({ id }) => id)).map((turn) => foreman.turnState(turn));
@@ -1108,8 +1111,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         graph: { factory: factoryGraph },
         assets: assetPage ? assetPage.items : webAssets(store), logs: webLogs(store, 100), talk,
         ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: assetPage.olderCursor }),
-        harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
-        dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
+        harnesses: officialHarnesses(store.listHarnessProfiles()).map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
+        dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses(store.listHarnessProfiles()).map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : item.container_configured ? "configured" : "unavailable" })) },
         foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) }, constitution: await constitutionProjection(storageRoot) });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") {
@@ -1138,6 +1141,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     verificationJobs.clear();
     foreman.stop();
     operator.stop();
+    machineExecutor.stop();
+    void machineExecutor.close();
     for (const context of activeKernelContexts.values()) context.close();
     activeKernelContexts.clear();
     store.close();
@@ -1156,10 +1161,12 @@ function staticResponse(pathname: string): Response {
   return new Response(Bun.file(file), { headers: { "content-type": contentTypes[extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" } });
 }
 
-function officialHarnesses() {
+function officialHarnesses(profiles: readonly HarnessProfile[] = []) {
   return harnessDefinitions().map((definition) => ({
     id: definition.id, name: definition.displayName, kind: "agent-cli", source: "official",
     roles: ["operator", "foreman"], available: Boolean(Bun.which(definition.executable)),
+    host_available: Boolean(Bun.which(definition.executable)),
+    container_configured: profiles.some((profile) => profile.runtime === definition.id && Boolean(profile.image)),
     capabilities: { acp: definition.transportPreference === "acp", resume: definition.supportsResume, stream: true },
   }));
 }
@@ -1296,9 +1303,246 @@ function projectWebAssets(store: SqliteStore, records: Artifact[], archived: Art
 
 function portableValue(value: unknown, key = ""): any {
   if (/(secret|token|password|api[_-]?key|authorization|cookie|local[_-]?folder|host[_-]?path)/i.test(key)) return "[REDACTED]";
+  if (typeof value === "string") return redactText(value);
   if (Array.isArray(value)) return value.map((item) => portableValue(item));
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, portableValue(item, name)]));
   return value;
+}
+
+/**
+ * Project the Registry's Lines into the factory-level graph. Business systems
+ * remain the compatibility projection when no Registry is configured. A Line
+ * is the workarea identity at this level, while Station and Machine facts are
+ * used to derive explicit material edges between Lines.
+ */
+async function factoryGraphProjection(store: SqliteStore, storageRoot: string) {
+  const snapshot = await factoryRegistrySnapshot(store, storageRoot);
+  if (!snapshot) return graphProjection(store, "factory", null);
+  const businessRuns = businessRunFactsByLine(store, snapshot.keys("Line"));
+
+  const lines = snapshot.keys("Line").map((lineKey, index) => {
+    const document = snapshot.doc(lineKey);
+    const spec = document?.spec && typeof document.spec === "object" ? document.spec as Record<string, unknown> : {};
+    const metadata = document?.metadata && typeof document.metadata === "object" ? document.metadata as Record<string, unknown> : {};
+    const runs = [...legacyRunsForLine(store, lineKey), ...(businessRuns.get(lineKey) ?? [])]
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+    const latest = runs.at(-1);
+    const status = lineStatus(latest?.state);
+    const steps = spec.steps && typeof spec.steps === "object" && !Array.isArray(spec.steps) ? Object.keys(spec.steps) : [];
+    const references = lineReferences(snapshot, spec);
+    return {
+      id: lineKey,
+      type: "workarea",
+      group: "factory",
+      label: typeof metadata.name === "string" && metadata.name.trim() ? metadata.name : lineName(lineKey),
+      position: { x: 180 + (index % 3) * 300, y: 160 + Math.floor(index / 3) * 200 },
+      status,
+      metadata: {
+        line: lineKey,
+        brief: `${steps.length} 个执行步骤`,
+        stations: references.stations,
+        machines: references.machines,
+        active: runs.filter((run) => ["PENDING", "RUNNING", "FAILING", "CANCELLING", "QUEUED"].includes(run.state.toUpperCase())).length,
+        runs: runs.length,
+        latest: latest?.id ?? null,
+        exception: runs.filter((run) => ["FAILED", "FAILING"].includes(run.state.toUpperCase())).length,
+      },
+    };
+  });
+  const edges = factoryLineEdges(snapshot, lines.map((node) => node.id));
+  return {
+    scope: "factory",
+    id: "factory",
+    title: "工厂",
+    nodes: lines,
+    edges,
+    metadata: {
+      projection: "web_read_model.registry",
+      static_source: "registry Line, Station and Machine",
+      runtime_source: "runs and run_nodes",
+    },
+  };
+}
+
+function lineReferences(snapshot: Snapshot, line: Record<string, unknown>): { stations: string[]; machines: string[] } {
+  const stations = new Set<string>();
+  const machines = new Set<string>();
+  const steps = line.steps && typeof line.steps === "object" && !Array.isArray(line.steps) ? Object.values(line.steps) : [];
+  for (const rawStep of steps) {
+    if (!rawStep || typeof rawStep !== "object" || typeof (rawStep as any).station !== "string") continue;
+    try {
+      const stationKey = snapshot.key("Station", (rawStep as any).station);
+      const station = snapshot.spec(stationKey) as Record<string, unknown>;
+      stations.add(stationKey);
+      if (typeof station.machine === "string") machines.add(snapshot.key("Machine", station.machine));
+    } catch {
+      // Registry validation reports unresolved references. Keep the projection
+      // available for the remaining valid steps.
+    }
+  }
+  return { stations: [...stations].sort(), machines: [...machines].sort() };
+}
+
+async function factoryRegistrySnapshot(store: SqliteStore, storageRoot: string): Promise<Snapshot | undefined> {
+  const configured = readGovernedRegistry(storageRoot)?.registry;
+  if (!configured) return undefined;
+  let context: Context | undefined;
+  try {
+    context = Context.open(storageRoot, { clock: store.clock });
+    const epochs = await EpochStore.open(context, { registry: configured });
+    const active = epochs.pointers().active;
+    if (active) return await epochs.materialize(active);
+  } catch {
+    // A non-Git example Registry or an uninitialized epoch falls through to
+    // the configured working tree for compatibility with local installations.
+  } finally {
+    context?.close();
+  }
+  const candidates: string[] = [configured];
+  // The governed Registry is the authoritative factory source. Avoid probing
+  // business-system rows when it is absent, preserving the compatibility
+  // projection's query shape for installations without a Registry.
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      if (existsSync(candidate)) return await loadSnapshot(candidate);
+    } catch {
+      // A malformed or unavailable Registry must not make the Web read model
+      // fail. The business-system compatibility projection is returned below.
+    }
+  }
+  return undefined;
+}
+
+type LegacyLineRun = { id: string; line: string; state: string; createdAt: string; updatedAt: string };
+
+function legacyRunsForLine(store: SqliteStore, line: string): LegacyLineRun[] {
+  const database = store.legacy ?? store.db;
+  const short = line.includes(":") ? line.slice(line.indexOf(":") + 1) : line;
+  try {
+    const available = database.query<{ name: string }>("SELECT name FROM sqlite_schema WHERE type='table' AND name='runs'").get();
+    if (!available) return [];
+    return database.query<any>("SELECT id,line,state,created_at,updated_at FROM runs WHERE line IN (?, ?) ORDER BY created_at, id").all(line, short).map((row: any) => ({
+      id: String(row.id), line: String(row.line), state: String(row.state), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function lineStatus(state: string | undefined): string {
+  if (!state) return "unknown";
+  // FAILING is an exception state even though the run may still be active.
+  const normalized = state.toUpperCase();
+  if (["FAILED", "FAILING"].includes(normalized)) return "exception";
+  if (["PENDING", "RUNNING", "CANCELLING", "QUEUED"].includes(normalized)) return normalized === "QUEUED" ? "waiting" : "running";
+  if (["SUCCEEDED", "COMPLETED"].includes(normalized)) return "ready";
+  return normalized.toLowerCase();
+}
+
+function businessRunFactsByLine(store: SqliteStore, lineKeys: string[]): Map<string, LegacyLineRun[]> {
+  const found = new Map<string, LegacyLineRun[]>();
+  const byRef = new Map(lineKeys.flatMap((key) => [[key, key], [key.slice(key.indexOf(":") + 1), key]]));
+  for (const system of store.listBusinessSystems()) {
+    const kernel = system.metadata.kernel;
+    if (!kernel || typeof kernel !== "object" || Array.isArray(kernel)) continue;
+    const line = (kernel as Record<string, unknown>).line;
+    if (typeof line !== "string") continue;
+    const lineKey = byRef.get(line);
+    if (!lineKey) continue;
+    const facts = store.listBusinessRuns(system.id).map((run) => ({ id: run.id, line: lineKey, state: run.status, createdAt: run.createdAt, updatedAt: run.updatedAt }));
+    if (facts.length) found.set(lineKey, [...(found.get(lineKey) ?? []), ...facts]);
+  }
+  return found;
+}
+
+function lineName(lineKey: string): string {
+  return lineKey.split(":", 2).at(-1)?.split("@", 1)[0] ?? lineKey;
+}
+
+function factoryLineEdges(snapshot: Snapshot, lineKeys: string[]) {
+  const inputs = new Map<string, Set<string>>();
+  const outputs = new Map<string, Set<string>>();
+  for (const lineKey of lineKeys) {
+    const line = snapshot.spec(lineKey) as Record<string, unknown>;
+    const interfaceSpec = line.interface && typeof line.interface === "object" ? line.interface as Record<string, unknown> : {};
+    inputs.set(lineKey, declaredPortTypes(interfaceSpec.inputs));
+    const lineOutputs = new Set<string>();
+    const steps = line.steps && typeof line.steps === "object" && !Array.isArray(line.steps) ? Object.values(line.steps) : [];
+    for (const rawStep of steps) {
+      if (!rawStep || typeof rawStep !== "object" || typeof (rawStep as any).station !== "string") continue;
+      try {
+        const station = snapshot.spec(snapshot.key("Station", (rawStep as any).station)) as Record<string, unknown>;
+        for (const type of declaredPortTypes(station.outputs)) lineOutputs.add(type);
+      } catch {
+        // Invalid references are handled by Registry validation. Ignore one
+        // unavailable station when producing a read-only projection.
+      }
+    }
+    outputs.set(lineKey, lineOutputs);
+  }
+  const edges: Array<Record<string, unknown>> = [];
+  for (const source of lineKeys) for (const target of lineKeys) {
+    if (source === target) continue;
+    const shared = [...(outputs.get(source) ?? [])].filter((type) => inputs.get(target)?.has(type)).sort();
+    if (!shared.length) continue;
+    edges.push({ id: `${source}:to:${target}`, source, target, kind: "material", condition: `类型为 ${shared[0]}`, status: "unknown", metadata: { types: shared } });
+  }
+  return edges;
+}
+
+function declaredPortTypes(value: unknown): Set<string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return new Set();
+  const found = new Set<string>();
+  for (const declaration of Object.values(value as Record<string, unknown>)) {
+    if (typeof declaration === "string" && declaration) found.add(declaration);
+    else if (declaration && typeof declaration === "object" && typeof (declaration as any).type === "string") found.add((declaration as any).type);
+  }
+  return found;
+}
+
+async function registryWorkareaProjection(store: SqliteStore, storageRoot: string, lineKey: string) {
+  const snapshot = await factoryRegistrySnapshot(store, storageRoot);
+  if (!snapshot || !snapshot.keys("Line").includes(lineKey)) return undefined;
+  const line = snapshot.spec(lineKey) as Record<string, unknown>;
+  const steps = line.steps && typeof line.steps === "object" && !Array.isArray(line.steps)
+    ? Object.entries(line.steps) : [];
+  const nodes = new Map<string, Record<string, unknown>>();
+  const edges: Array<Record<string, unknown>> = [];
+  const stepMachines = new Map<string, string>();
+  const addNode = (id: string, type: "operator" | "machine", label: string, index: number) => {
+    if (nodes.has(id)) return;
+    nodes.set(id, {
+      id, type, group: lineKey, label,
+      position: { x: type === "operator" ? 170 : 470, y: 120 + index * 160 },
+      status: "unknown", metadata: { line: lineKey },
+    });
+  };
+  for (const [index, [stepName, rawStep]] of steps.entries()) {
+    if (!rawStep || typeof rawStep !== "object" || typeof (rawStep as any).station !== "string") continue;
+    const station = snapshot.spec(snapshot.key("Station", (rawStep as any).station)) as Record<string, unknown>;
+    const operator = station.operator && typeof station.operator === "object" ? station.operator as Record<string, unknown> : {};
+    const runtime = typeof operator.runtime === "string" ? operator.runtime : typeof station.operator === "string" ? station.operator : "operator:" + stepName;
+    const machine = typeof station.machine === "string" ? snapshot.key("Machine", station.machine) : "Machine:" + stepName;
+    const operatorId = "OperatorRuntime:" + runtime;
+    const machineId = machine.includes(":") ? machine : "Machine:" + machine;
+    addNode(operatorId, "operator", runtime, index);
+    addNode(machineId, "machine", machineId.split(":", 2).at(-1) ?? machineId, index);
+    stepMachines.set(stepName, machineId);
+    edges.push({ id: operatorId + ":to:" + machineId + ":" + stepName, source: operatorId, target: machineId, kind: "material", condition: stepName, status: "unknown", metadata: { step: stepName, station } });
+    const inputs = (rawStep as Record<string, unknown>).in;
+    if (inputs && typeof inputs === "object" && !Array.isArray(inputs)) {
+      for (const value of Object.values(inputs as Record<string, unknown>)) {
+        if (typeof value !== "string") continue;
+        const sourceStep = value.split(".", 1)[0];
+        const sourceMachine = stepMachines.get(sourceStep);
+        if (sourceMachine) edges.push({ id: sourceMachine + ":to:" + operatorId + ":" + stepName + ":" + sourceStep, source: sourceMachine, target: operatorId, kind: "material", condition: sourceStep + " → " + stepName, status: "unknown" });
+      }
+    }
+  }
+  return {
+    scope: "workarea", id: lineKey, title: lineName(lineKey), nodes: [...nodes.values()], edges,
+    metadata: { projection: "web_read_model.registry_line", line: lineKey, source: "Line, Station, Machine" },
+  };
 }
 
 function graphProjection(store: SqliteStore, scope: string, workarea: string | null) {
@@ -1439,7 +1683,13 @@ async function saveProjectUploads(root: string, warehouse: Warehouse, store: Sql
 }
 
 function webLogs(store: SqliteStore, limit: number, since?: number) {
-  return [...store.legacyEvents(limit), ...store.recentEvents(limit)]
+  store.syncLegacyEvents();
+  const recent = store.recentEvents(limit);
+  const bridged = recent.filter((event) => event.type.startsWith("legacy.")
+    && event.data && typeof event.data === "object" && !Array.isArray(event.data)
+    && (event.data as Record<string, unknown>).source === "legacy");
+  const bridgedIds = new Set(bridged.map((event) => String((event.data as Record<string, unknown>).legacy_id ?? "")));
+  return [...store.legacyEvents(limit).filter((event) => !bridgedIds.has(event.id)), ...recent]
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .filter((event) => since === undefined || event.seq > since)
     .slice(-limit)

@@ -56,6 +56,19 @@ export interface UnitRun {
   updatedAt: string;
 }
 
+export type MachineAttemptStatus = "running" | "completed" | "failed";
+
+export interface MachineAttempt {
+  unitRunId: string;
+  attempt: number;
+  sessionId: string;
+  ownerToken?: string;
+  status: MachineAttemptStatus;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
 export type BusinessConversionStatus = "planned" | "running" | "completed" | "failed";
 
 export interface BusinessConversion {

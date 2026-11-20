@@ -291,7 +291,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - 项目公共投影只保留来源种类和可移植引用，`local_folder` 与保险箱引用不会返回给浏览器或业务系统导出
 - `GET /api/v1/business-systems/<id>` 返回业务系统、项目和 Artifact 摘要
 - `GET /api/v1/business-systems/<id>/artifacts` 与 `/materials` 返回该业务系统闭包内的语义化记录。`/materials` 只返回 `record_type=material` 的来料或中间物料
-- `GET/POST /api/v1/business-systems/<id>/conversions` 维护产物到物料的语义化转换记录。转换只引用记录或文件，不嵌入内容
+- `GET/POST /api/v1/business-systems/<id>/conversions` 维护产物到物料的语义化转换记录。转换只引用记录或文件，不嵌入内容。没有 `inputs` 或 `lineage` 的外部初始 Material/Artifact 不自动生成 Conversion，单独的 `producer` 也不构成输入来源
 - 厂区的物料转换面板打开时读取该业务系统的记录，以输入引用、转换说明和状态、输出引用构成流程图。当前厂区收到转换事件时重新读取该面板。资产列表首选记录标题，其次使用业务摘要，记录标识可在详情中查看。
 - `GET /api/v1/business-systems/<id>/export` 导出可迁移的业务系统文档。输出保留仓库、内容寻址文件及其他可移植引用。本机路径、仓库凭据、项目密钥值和 Harness 会话号在导出时剥离或脱敏。本地文件夹保留待接入引用
 - `POST /api/v1/business-systems/import` 在一个事务中重建项目、来源、运行单元、物料记录、转换和 DAG，并重写相关 ID 与来源引用。导入前后复用图写入的节点唯一、边引用和无环校验。密钥按项目所需资源重新创建为待配置请求。历史运行作为归档来源保留，导入后的新运行使用重建的 DAG
@@ -303,11 +303,11 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - kernel 输入可以引用当前业务系统的 `material://`、`artifact://` 或 `record://` 记录。记录带有 legacy Bean 时直接复用，其他记录必须通过已登记文件和 `legacy_type`、`legacy_meta`、`legacy_facts` 物化为封存 Bean，并登记 `material-to-legacy-bean` Conversion。缺少可验证 Bean 类型或文件授权时，运行在提交前失败。
 - Web 编排页读取业务运行列表并显示每个运行的状态和单元数量。`POST /api/v1/runs/<id>/cancel` 取消仍可控的业务运行，`POST /api/v1/runs/<id>/retry` 为失败运行创建可追踪的重试运行。取消请求会先停止本次运行仍在等待或读取输出的官方 Harness，并等待其控制面清理完成后返回，旧进程不能覆盖 `cancelled` 状态。取消后的重试清除本次取消标记，重新使用原始输入和 DAG，每个 Operator 最多启动一次新的 Harness 尝试，不重复登记已完成的 Machine 或 Conversion。后端未提供运行汇总时，看板显示“待观测”，不把缺失状态渲染为零。
 - 创建业务运行默认同时记录派发授权。请求使用 `dispatch: false` 时保留待派发状态，直到调用显式派发接口。历史运行缺少派发记录且没有已完成的 Operator 时，继续通过显式接口派发。
-- 业务运行按 DAG 前置边决定就绪状态。每个未归档的 Operator 和 Machine 都在运行快照中拥有一个 `unit_run`。普通 Machine 在满足前置条件后由控制面执行确定性的项目来源激活，状态从 `queued` 进入 `completed` 或 `blocked`。kernel `inputs` 绑定的 Machine 则进入 `running`，由 legacy `LineRunner` 驱动真实 Job、Gate 和 Bean 输出，完成或失败后再推进同一份业务 DAG。Operator 成功完成后，控制面通过该次运行的依赖边索引检查其直接后继。后继在全部前置基础单元完成后才能领用，输入先保留原有物料，再按依赖快照中的边顺序合并产物引用并去重。首次派发、启动恢复、资源恢复和失败会按完整运行重新核对就绪状态。
+- 业务运行按 DAG 前置边决定就绪状态。每个未归档的 Operator 和 Machine 都在运行快照中拥有一个 `unit_run`。普通 Machine 在满足前置条件后由控制面执行确定性的项目来源激活，状态从 `queued` 进入 `running`，并持久化 `machine_attempts` 的 attempt、session 和终态。来源激活会验证本地文件夹与上传文件的可用性，仓库 URL 只作为已登记来源事实保留，实际项目操作仍由官方 Operator Harness 负责。控制面重启后按 `machine:<unit-run-id>` session 恢复未完成的 Machine，失败会写入 `machine.run.failed` 并通过业务运行的 retry 重新建立下一次 attempt。kernel `inputs` 绑定的 Machine 则进入 `running`，由 legacy `LineRunner` 驱动真实 Job、Gate 和 Bean 输出，完成或失败后再推进同一份业务 DAG。Operator 成功完成后，控制面通过该次运行的依赖边索引检查其直接后继。后继在全部前置基础单元完成后才能领用，输入先保留原有物料，再按依赖快照中的边顺序合并产物引用并去重。首次派发、启动恢复、资源恢复和失败会按完整运行重新核对就绪状态。
 - 前置 Operator 失败或被阻塞时，所有受影响的后继 Operator 必须进入 `blocked`，业务运行进入 `failed`，不能因没有新的可调度单元而永久停留在 `running`
 - `GET/POST /api/v1/projects/<id>/artifacts` 读写带摘要、用途、文件引用、输入输出和 lineage 的物料 JSON
 - `GET /api/v1/projects/<project-id>/artifacts/<artifact-id>/files/<sha256>` 通过项目与记录的文件授权返回下载。资产界面展示文件名和已授权下载入口。
-- `GET/POST /api/v1/business-systems/<id>/graph` 读取或接收外部 Foreman 维护的 DAG 快照。写入时节点标识唯一。带有节点类型的活动图必须引用当前业务系统的 Operator 或 Machine，声明的节点类型必须与基础单元一致，边必须引用图中存在的节点且不能形成自环，图必须无环。未带节点类型的历史快照只执行结构和环检查，读取后保留以支持迁移。
+- `GET/POST /api/v1/business-systems/<id>/graph` 读取或接收外部 Foreman 维护的 DAG 快照。写入时节点标识唯一。带有节点类型的活动图必须引用当前业务系统的 Operator 或 Machine，声明的节点类型必须与基础单元一致，边必须引用图中存在的节点且不能形成自环，图必须无环。未带节点类型的历史快照可以继续使用 `operator` 和 `machine` 两个兼容别名，服务端会映射到当前基础单元，其他未知节点和边端点拒绝写入。
 
 Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现。运行在领用单元时解析绑定，并记录官方 Harness ID 和生效的模型 ID。官方 CLI 接收模型参数。ACP 使用 `session/new` 或 `session/load` 提供的 `model` 配置选项，并在 `session/prompt` 前确认选择。Kimi Code 通过 `--model MODEL acp` 接收模型，Pi 通过 `--model MODEL` 接收模型，Qwen Code 通过 `--model MODEL` 接收模型。无法使用明确绑定的模型时，执行会报告原因。
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复

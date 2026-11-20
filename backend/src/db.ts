@@ -16,6 +16,7 @@ import type {
   Event,
   ForemanEnvelope,
   HarnessProfile,
+  MachineAttempt,
   Project,
   ProjectSource,
   SecretRequest,
@@ -27,6 +28,15 @@ export const BUSINESS_RECORD_SCHEMA = "mao.business-record/1";
 
 const defaultFactoryDatabase = () => process.env.FACTORY_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db");
 const json = (value: unknown) => JSON.stringify(value ?? {});
+const secretField = /(secret|token|password|api[_-]?key|authorization|cookie|local[_-]?folder|host[_-]?path)/i;
+const secretText = /(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi;
+function redactStoredValue(value: unknown, key = ""): unknown {
+  if (secretField.test(key)) return "[REDACTED]";
+  if (typeof value === "string") return value.replace(secretText, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
+  if (Array.isArray(value)) return value.map((item) => redactStoredValue(item));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, redactStoredValue(item, name)]));
+  return value;
+}
 const parseJson = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "string" || value.length === 0) return {};
   try {
@@ -66,6 +76,7 @@ type BusinessAssetCursor = { source: "business"; createdAt: string; id: string }
 type LegacyAssetCursor = { source: "legacy"; createdAt: string; rowId: string };
 export type AssetCursor = BusinessAssetCursor | LegacyAssetCursor;
 type LegacyAssetRow = { id: string; document: string; created_at: string; by_actor: string; row_id: string };
+type LegacyBridgeRow = { seq: number; id: string; kind: string; at: string; data: string; job_id?: string | null; run_id?: string | null };
 
 export class SqliteStore {
   readonly db: Database;
@@ -143,6 +154,11 @@ export class SqliteStore {
         seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
         data TEXT NOT NULL, created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS legacy_event_bridge (
+        source_key TEXT NOT NULL, legacy_seq INTEGER NOT NULL, legacy_id TEXT NOT NULL,
+        business_seq INTEGER NOT NULL, bridged_at TEXT NOT NULL,
+        PRIMARY KEY (source_key, legacy_seq), UNIQUE (source_key, legacy_id)
+      );
       CREATE TABLE IF NOT EXISTS business_talk_messages (
         id TEXT PRIMARY KEY, role TEXT NOT NULL, body TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
       );
@@ -181,6 +197,11 @@ export class SqliteStore {
         outputs TEXT NOT NULL DEFAULT '[]', error TEXT, created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL, UNIQUE(run_id, unit_id)
       );
+      CREATE TABLE IF NOT EXISTS machine_attempts (
+        unit_run_id TEXT PRIMARY KEY REFERENCES unit_runs(id), attempt INTEGER NOT NULL,
+        session_id TEXT NOT NULL, owner_token TEXT, status TEXT NOT NULL, error TEXT,
+        started_at TEXT NOT NULL, finished_at TEXT
+      );
       CREATE TABLE IF NOT EXISTS unit_run_owners (
         unit_run_id TEXT PRIMARY KEY REFERENCES unit_runs(id), token TEXT NOT NULL, scope TEXT, pid INTEGER NOT NULL
       );
@@ -215,6 +236,7 @@ export class SqliteStore {
     `);
     this.addColumnIfMissing("harness_profiles", "session_timeout_s", `INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}`);
     this.addColumnIfMissing("business_run_graphs", "edges_indexed", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("machine_attempts", "owner_token", "TEXT");
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -463,6 +485,7 @@ export class SqliteStore {
       const timestamp = this.timestamp();
       this.db.query("UPDATE business_runs SET status='cancelled', updated_at=? WHERE id=?").run(timestamp, runId);
       this.db.query("UPDATE unit_runs SET status='cancelled', error='run-cancelled', updated_at=? WHERE run_id=? AND status IN ('queued','running','waiting_resources')").run(timestamp, runId);
+      this.db.query("UPDATE machine_attempts SET status='failed', error='run-cancelled', finished_at=? WHERE unit_run_id IN (SELECT id FROM unit_runs WHERE run_id=?) AND status='running'").run(timestamp, runId);
       this.db.query("DELETE FROM unit_run_owners WHERE unit_run_id IN (SELECT id FROM unit_runs WHERE run_id=?)").run(runId);
       this.db.query("DELETE FROM business_run_dispatch WHERE run_id=?").run(runId);
       return this.getBusinessRun(runId);
@@ -475,7 +498,8 @@ export class SqliteStore {
       if (!run || !["failed", "cancelled"].includes(run.status)) return run;
       const timestamp = this.timestamp();
       this.db.query("DELETE FROM unit_run_owners WHERE unit_run_id IN (SELECT id FROM unit_runs WHERE run_id=?)").run(runId);
-      this.db.query("UPDATE unit_runs SET status='queued', session_id=NULL, outputs='[]', error=NULL, updated_at=? WHERE run_id=?").run(timestamp, runId);
+      this.db.query("UPDATE machine_attempts SET status='failed', error=coalesce(error,'run-retried'), finished_at=? WHERE unit_run_id IN (SELECT id FROM unit_runs WHERE run_id=?) AND status='running'").run(timestamp, runId);
+      this.db.query("UPDATE unit_runs SET status='queued', session_id=NULL, outputs='[]', error=NULL, updated_at=? WHERE run_id=? AND status!='completed'").run(timestamp, runId);
       this.db.query("UPDATE business_runs SET status='queued', updated_at=? WHERE id=?").run(timestamp, runId);
       this.authorizeBusinessRunDispatch(runId);
       return this.getBusinessRun(runId);
@@ -642,6 +666,50 @@ export class SqliteStore {
         AND unit_run.session_id LIKE 'machine:%' AND unit.kind='machine'
       ORDER BY unit_run.created_at, unit_run.id
     `).all();
+  }
+
+  startMachineAttempt(unitRunId: string, sessionId: string, _recovering = false): MachineAttempt | undefined {
+    return this.db.transaction(() => {
+      const unit = this.db.query<{ status: string; session_id: string | null }>("SELECT status, session_id FROM unit_runs WHERE id=? AND status='running'").get(unitRunId);
+      if (!unit) return undefined;
+      const existing = this.db.query("SELECT * FROM machine_attempts WHERE unit_run_id=?").get(unitRunId) as any;
+      const timestamp = this.timestamp();
+      if (existing?.status === "running") {
+        const ownerToken = existing.owner_token ?? `machine:${unitRunId}:${existing.attempt}`;
+        const currentOwner = this.db.query<{ token: string }>("SELECT token FROM unit_run_owners WHERE unit_run_id=?").get(unitRunId);
+        if (currentOwner && currentOwner.token !== ownerToken) return undefined;
+        if (existing.session_id !== sessionId || !existing.owner_token) this.db.query("UPDATE machine_attempts SET session_id=?, owner_token=? WHERE unit_run_id=?").run(sessionId, ownerToken, unitRunId);
+        this.db.query("INSERT OR IGNORE INTO unit_run_owners (unit_run_id, token, scope, pid) VALUES (?,?,?,?)")
+          .run(unitRunId, ownerToken, "machine", typeof process.pid === "number" ? process.pid : 0);
+        return this.machineAttemptFromRow({ ...existing, session_id: sessionId, owner_token: ownerToken });
+      }
+      const attempt = Number(existing?.attempt ?? 0) + 1;
+      const ownerToken = `machine:${unitRunId}:${attempt}`;
+      const currentOwner = this.db.query<{ token: string }>("SELECT token FROM unit_run_owners WHERE unit_run_id=?").get(unitRunId);
+      if (currentOwner && currentOwner.token !== ownerToken) return undefined;
+      this.db.query(`
+        INSERT INTO machine_attempts (unit_run_id,attempt,session_id,owner_token,status,error,started_at,finished_at)
+        VALUES (?,?,?,?,'running',NULL,?,NULL)
+        ON CONFLICT(unit_run_id) DO UPDATE SET attempt=excluded.attempt, session_id=excluded.session_id,
+          owner_token=excluded.owner_token, status='running', error=NULL, started_at=excluded.started_at, finished_at=NULL
+      `).run(unitRunId, attempt, sessionId, ownerToken, timestamp);
+      this.db.query("INSERT OR IGNORE INTO unit_run_owners (unit_run_id, token, scope, pid) VALUES (?,?,?,?)")
+        .run(unitRunId, ownerToken, "machine", typeof process.pid === "number" ? process.pid : 0);
+      return this.machineAttemptFromRow({ unit_run_id: unitRunId, attempt, session_id: sessionId, owner_token: ownerToken, status: "running", error: null, started_at: timestamp, finished_at: null });
+    }).immediate();
+  }
+
+  finishMachineAttempt(unitRunId: string, attempt: number, status: "completed" | "failed", error?: string): MachineAttempt | undefined {
+    const row = this.db.query(`
+      UPDATE machine_attempts SET status=?, error=?, finished_at=?
+      WHERE unit_run_id=? AND attempt=? AND status='running' RETURNING *
+    `).get(status, error ?? null, this.timestamp(), unitRunId, attempt) as any;
+    return row ? this.machineAttemptFromRow(row) : undefined;
+  }
+
+  getMachineAttempt(unitRunId: string): MachineAttempt | undefined {
+    const row = this.db.query("SELECT * FROM machine_attempts WHERE unit_run_id=?").get(unitRunId) as any;
+    return row ? this.machineAttemptFromRow(row) : undefined;
   }
 
   /**
@@ -893,6 +961,19 @@ export class SqliteStore {
     return { id: row.id, runId: row.run_id, unitId: row.unit_id, status: row.status, sessionId: row.session_id ?? undefined, inputs: parseList(row.inputs), outputs: parseList(row.outputs), error: row.error ?? undefined, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
+  private machineAttemptFromRow(row: any): MachineAttempt {
+    return {
+      unitRunId: row.unit_run_id,
+      attempt: Number(row.attempt),
+      sessionId: row.session_id,
+      ownerToken: row.owner_token ?? undefined,
+      status: row.status,
+      error: row.error ?? undefined,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at ?? undefined,
+    };
+  }
+
   private projectFromRow(row: any, sourceRows?: any[], secretRows?: any[]): Project {
     const sources = (sourceRows ?? this.db.query("SELECT * FROM project_sources WHERE project_id = ? ORDER BY created_at, id").all(row.id)).map((item: any) => ({
       id: item.id,
@@ -927,7 +1008,7 @@ export class SqliteStore {
   }
 
   addArtifact(input: Omit<Artifact, "id" | "createdAt">, id = this.uuid()): Artifact {
-    const metadata: Record<string, unknown> = {
+    const metadata = redactStoredValue({
       ...(input.metadata ?? {}),
       schema: typeof input.metadata?.schema === "string" ? input.metadata.schema : BUSINESS_RECORD_SCHEMA,
       record_type: input.recordType ?? (input.metadata?.record_type === "material" ? "material" : "artifact"),
@@ -941,23 +1022,25 @@ export class SqliteStore {
       inputs: input.inputs ?? input.metadata?.inputs,
       outputs: input.outputs ?? input.metadata?.outputs,
       lineage: input.lineage ?? input.metadata?.lineage,
-    };
+    }) as Record<string, unknown>;
     const value: Artifact = {
       ...input,
       id,
+      kind: typeof input.kind === "string" ? input.kind.replace(secretText, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`) : input.kind,
+      ref: typeof input.ref === "string" ? input.ref.replace(secretText, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`) : input.ref,
       metadata,
       createdAt: this.timestamp(),
       recordType: metadata.record_type === "material" ? "material" : "artifact",
       title: typeof metadata.title === "string" ? metadata.title : undefined,
       description: typeof metadata.description === "string" ? metadata.description : undefined,
-      summary: input.summary ?? (typeof metadata.summary === "string" ? metadata.summary : undefined),
-      purpose: input.purpose ?? (typeof metadata.purpose === "string" ? metadata.purpose : undefined),
+      summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
+      purpose: typeof metadata.purpose === "string" ? metadata.purpose : undefined,
       status: typeof metadata.status === "string" ? metadata.status : undefined,
       producer: metadata.producer && typeof metadata.producer === "object" ? metadata.producer as Artifact["producer"] : undefined,
-      files: input.files ?? (Array.isArray(metadata.files) ? metadata.files as Artifact["files"] : undefined),
-      inputs: input.inputs ?? (Array.isArray(metadata.inputs) ? metadata.inputs as string[] : undefined),
-      outputs: input.outputs ?? (Array.isArray(metadata.outputs) ? metadata.outputs as string[] : undefined),
-      lineage: input.lineage ?? (Array.isArray(metadata.lineage) ? metadata.lineage as string[] : undefined),
+      files: Array.isArray(metadata.files) ? metadata.files as Artifact["files"] : undefined,
+      inputs: Array.isArray(metadata.inputs) ? metadata.inputs as string[] : undefined,
+      outputs: Array.isArray(metadata.outputs) ? metadata.outputs as string[] : undefined,
+      lineage: Array.isArray(metadata.lineage) ? metadata.lineage as string[] : undefined,
     };
     this.db.query("INSERT INTO artifacts (id,project_id,source_id,kind,ref,metadata,created_at) VALUES (?,?,?,?,?,?,?)")
       .run(value.id, value.projectId, value.sourceId ?? null, value.kind, value.ref, json(value.metadata), value.createdAt);
@@ -972,7 +1055,7 @@ export class SqliteStore {
     return this.db.transaction(() => {
       const row = this.db.query("SELECT * FROM artifacts WHERE id=?").get(id) as any;
       if (!row) return undefined;
-      const metadata = { ...parseJson(row.metadata), ...patch };
+      const metadata = redactStoredValue({ ...parseJson(row.metadata), ...patch }) as Record<string, unknown>;
       this.db.query("UPDATE artifacts SET metadata=? WHERE id=?").run(json(metadata), id);
       return this.artifactFromRow(this.db.query("SELECT * FROM artifacts WHERE id=?").get(id));
     }).immediate();
@@ -1060,11 +1143,12 @@ export class SqliteStore {
   }
 
   createBusinessConversion(input: Omit<BusinessConversion, "id" | "createdAt" | "updatedAt">): BusinessConversion {
-    const invalid = this.invalidBusinessInputRefs(input.businessSystemId, [...input.inputs, ...input.outputs]);
+    const safe = redactStoredValue(input) as Omit<BusinessConversion, "id" | "createdAt" | "updatedAt">;
+    const invalid = this.invalidBusinessInputRefs(safe.businessSystemId, [...safe.inputs, ...safe.outputs]);
     if (invalid.length) throw new Error("conversion input references are outside the business system");
     return this.db.transaction(() => {
-      const inputJson = json(input.inputs);
-      const outputJson = json(input.outputs);
+      const inputJson = json(safe.inputs);
+      const outputJson = json(safe.outputs);
       const existing = this.db.query<any>(`
         SELECT * FROM business_conversions
         WHERE business_system_id=? AND kind=? AND summary=? AND inputs=? AND outputs=?
@@ -1077,7 +1161,7 @@ export class SqliteStore {
         metadata: parseJson(existing.metadata), createdAt: existing.created_at, updatedAt: existing.updated_at,
       };
       const timestamp = this.timestamp();
-      const value: BusinessConversion = { ...input, id: this.uuid(), createdAt: timestamp, updatedAt: timestamp };
+      const value: BusinessConversion = { ...safe, id: this.uuid(), createdAt: timestamp, updatedAt: timestamp };
       this.db.query("INSERT INTO business_conversions (id,business_system_id,kind,summary,status,inputs,outputs,producer,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
         .run(value.id, value.businessSystemId, value.kind, value.summary, value.status, inputJson, outputJson, value.producer ? json(value.producer) : null, json(value.metadata), timestamp, timestamp);
       return value;
@@ -1426,6 +1510,41 @@ export class SqliteStore {
     return { ...value, seq: Number(result.lastInsertRowid) };
   }
 
+  /** Copies append-only legacy events into the business event log exactly once. */
+  syncLegacyEvents(limit = 128): Event[] {
+    if (!Number.isSafeInteger(limit) || limit < 1) return [];
+    const source = this.legacy ?? this.db;
+    const columns = source.query<{ name: string }>("PRAGMA table_info(events)").all().map(({ name }) => name);
+    if (!columns.includes("seq") || !columns.includes("id") || !columns.includes("kind") || !columns.includes("at") || !columns.includes("data")) return [];
+    const sourceKey = this.legacy ? `legacy:${this.legacyPath}` : "legacy:local";
+    const last = this.db.query<{ seq: number }>("SELECT COALESCE(MAX(legacy_seq), 0) AS seq FROM legacy_event_bridge WHERE source_key=?").get(sourceKey)?.seq ?? 0;
+    const selected = source.query<LegacyBridgeRow>(`
+      SELECT seq,id,kind,at,data${columns.includes("job_id") ? ",job_id" : ""}${columns.includes("run_id") ? ",run_id" : ""}
+      FROM events WHERE seq > ? ORDER BY seq LIMIT ?
+    `).all(last, limit);
+    if (!selected.length) return [];
+    return this.db.transaction(() => selected.flatMap((row) => {
+      const inserted = this.db.query(`
+        INSERT OR IGNORE INTO legacy_event_bridge (source_key,legacy_seq,legacy_id,business_seq,bridged_at)
+        VALUES (?,?,?,?,?)
+      `).run(sourceKey, row.seq, row.id, 0, this.timestamp()) as { changes?: number };
+      if ((inserted.changes ?? 0) === 0) return [];
+      const payload = parseJson(row.data);
+      const data: Record<string, unknown> = {
+        ...payload,
+        source: "legacy",
+        legacy_seq: row.seq,
+        legacy_id: row.id,
+        ...(row.job_id ? { job_id: row.job_id } : {}),
+        ...(row.run_id ? { run_id: row.run_id } : {}),
+      };
+      const event = this.appendEvent(`legacy.${row.kind}`, data);
+      this.db.query("UPDATE legacy_event_bridge SET business_seq=? WHERE source_key=? AND legacy_seq=?")
+        .run(event.seq, sourceKey, row.seq);
+      return [event];
+    })).immediate();
+  }
+
   eventsAfter(seq = 0, limit = -1): Event[] {
     return this.db.query("SELECT * FROM business_events WHERE seq > ? ORDER BY seq LIMIT ?").all(seq, limit).map((row: any) => ({
       id: row.id, seq: Number(row.seq), type: row.type, data: JSON.parse(row.data), createdAt: row.created_at,
@@ -1439,6 +1558,7 @@ export class SqliteStore {
   }
 
   latestEventSequence(): number {
+    this.syncLegacyEvents();
     return Number(this.db.query<{ seq: number }>("SELECT COALESCE(MAX(seq), 0) AS seq FROM business_events").get()?.seq ?? 0);
   }
 

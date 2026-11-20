@@ -119,6 +119,8 @@ export interface HarnessRecord {
   source?: string;
   roles?: string[];
   available?: boolean;
+  host_available?: boolean;
+  container_configured?: boolean;
   capabilities?: Record<string, boolean>;
   configuration?: HarnessProfile | null;
 }

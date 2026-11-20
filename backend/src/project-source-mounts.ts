@@ -3,7 +3,7 @@ import { copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Project } from "./models";
-import { projectSourceFacts } from "./project-sources";
+import { projectSourceFacts, repositoryReference } from "./project-sources";
 import { runCommand } from "../runtime/podman";
 import { resolveGitExecutable } from "../runtime/git";
 
@@ -34,7 +34,24 @@ function sourceFolder(folder: string, protectedPaths: readonly string[]): string
   catch { return; }
 }
 
-export async function prepareProjectSources(project: Project, uploadedBlob: LookupUpload, protectedPaths: readonly string[]) {
+export interface PrepareProjectSourcesOptions {
+  /**
+   * Machine activation only validates the registered source. The Operator
+   * preparation path keeps its historical checkout behavior by default.
+   */
+  cloneRepositories?: boolean;
+  /** Fail when a registered source cannot be resolved on this host. */
+  strict?: boolean;
+}
+
+export async function prepareProjectSources(
+  project: Project,
+  uploadedBlob: LookupUpload,
+  protectedPaths: readonly string[],
+  options: PrepareProjectSourcesOptions = {},
+) {
+  const cloneRepositories = options.cloneRepositories ?? true;
+  const strict = options.strict ?? false;
   const protectedRoots = [...protectedPaths.filter((path) => path !== ":memory:").map((path) => {
     try { return realpathSync(path); } catch { return resolve(path); }
   }), ...(process.platform === "linux" ? ["/dev", "/proc", "/sys"] : [])];
@@ -70,7 +87,7 @@ export async function prepareProjectSources(project: Project, uploadedBlob: Look
             }
           }
         }
-      } else if (source.kind === "repo_url" && source.repoUrl) {
+      } else if (source.kind === "repo_url" && source.repoUrl && cloneRepositories) {
         staging ??= mkdtempSync(join(tmpdir(), "mao-source-"));
         const checkout = join(staging, String(index));
         const cloned = await runCommand([git, "clone", "--depth", "1", "--no-tags", "--", source.repoUrl, checkout], {
@@ -87,7 +104,12 @@ export async function prepareProjectSources(project: Project, uploadedBlob: Look
         if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("project repository revision is invalid");
         facts[offset] = { ...facts[offset], commit, checkout: `intake://${project.id}/${source.id}` };
         hostPath = checkout;
+      } else if (source.kind === "repo_url" && source.repoUrl && !cloneRepositories) {
+        if (!repositoryReference(source.repoUrl, "intake") && strict) throw new Error("project-repository-invalid");
+      } else if (strict) {
+        throw new Error("project-source-unavailable");
       } else continue;
+      if (strict && source.kind !== "repo_url" && !hostPath) throw new Error("project-source-unavailable");
       if (hostPath) mounts.push({ source: hostPath, index });
     }
     const mounted = new Set(mounts.map(({ index }) => index));
