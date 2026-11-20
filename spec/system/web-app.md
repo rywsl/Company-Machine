@@ -328,4 +328,4 @@ Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。
 - 项目资源请求只显示项目用途、范围、检查项和状态，密钥值进入保险箱
 - 当前容器运行时缺失时显示实际依赖状态，不把另一运行时状态伪装成在线
 - `/api/v1/runtime` 与 bootstrap 的 Podman 或 Kiri 状态来自实际探测，不能用另一运行时在线状态替代
-- `POST /api/v1/runtime/ensure-ready` 在 Windows 尝试启动已配置的 Podman machine，在 Linux 只报告 rootless 服务状态
+- `POST /api/v1/runtime/ensure-ready` 在 Windows 尝试启动已配置的 Podman machine。选择 Kiri 时，Linux headless 路径会在探测失败后尝试启动官方 `kiri daemon`，已经由发行版 systemd 服务托管时则直接复用该服务。其他 Linux Podman 路径只报告 rootless 服务状态

@@ -42,7 +42,15 @@ $env:MAO_KIRI_EXECUTABLE = "kiri"
 bun run backend/src/index.ts
 ```
 
-Linux readiness can start `kiri daemon`. Use `MAO_KIRI_MODE=docker-context` when Kiri exposes the `kiri` Docker context instead of direct CLI commands.
+On Linux, use the native headless package and export the same settings before starting Bun.
+
+```bash
+export MAO_CONTAINER_RUNTIME=kiri
+export MAO_KIRI_EXECUTABLE=kiri
+bun run backend/src/index.ts
+```
+
+Readiness can start `kiri daemon` without opening a window. If the Linux package already runs the official systemd service, the health probe reuses it. Use `MAO_KIRI_MODE=docker-context` when Kiri exposes the `kiri` Docker context instead of direct CLI commands.
 
 ## Hand a project to Foreman
 

@@ -365,7 +365,9 @@ Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都�
 
 `KiriProvider` 是第二个业务运行时实现。默认通过官方 `kiri` CLI 执行受限容器命令，保持与 `PodmanProvider` 相同的 `SandboxSpec`、非 root、只读根文件系统、能力降级、网络和资源约束。需要兼容 Kiri 创建的 Docker context 时，可以使用 `mode="docker-context"`，命令形如 `[docker, "--context", "kiri", ...]`。
 
-Kiri 自己管理 Windows/Linux 容器后端。控制面只调用 Kiri CLI，不挂载 docker.sock，不使用 `--network host`，不把 Kiri 的虚拟机状态伪装成 Podman machine。`MAO_CONTAINER_RUNTIME=kiri` 选择 Kiri，`MAO_KIRI_EXECUTABLE`、`MAO_KIRI_CONTEXT` 和 `MAO_KIRI_MODE` 分别覆盖 CLI、context 和兼容模式。未配置时，业务默认仍使用 Podman。
+Linux 使用 Kiri 的原生 headless 方案，官方 `kiri` 包直接在宿主 Linux 内核上运行，`kiri daemon` 提供 Docker Engine API socket。控制面在直接 CLI 模式下探测 `kiri ps`，Linux 上不可用时由 `ensure-ready` 尝试启动 `kiri daemon`，发行版已通过 systemd 启动的 daemon 由探测直接复用。Kiri 自己管理 Windows/Linux 容器后端，控制面不打开 UI。
+
+控制面只调用 Kiri CLI，不挂载 docker.sock，不使用 `--network host`，不把 Kiri 的虚拟机状态伪装成 Podman machine。`MAO_CONTAINER_RUNTIME=kiri` 选择 Kiri，`MAO_KIRI_EXECUTABLE`、`MAO_KIRI_CONTEXT` 和 `MAO_KIRI_MODE` 分别覆盖 CLI、context 和兼容模式。直接 CLI 模式的 Linux host 不设置 Podman `machine` 字段。未配置时，业务默认仍使用 Podman。
 
 ## 6. 错误
 
@@ -397,6 +399,8 @@ Kiri 自己管理 Windows/Linux 容器后端。控制面只调用 Kiri CLI，不
 | `test_image_ref_invalid` | 5.3：`python:latest` → `IMAGE_REF_INVALID` |
 | `test_local_provider_rewrites_virtual_paths` | 5.6：`FACTORY_IN` 被换成 mount 的 source；`python3` 走当前解释器 |
 | `test_docker_exec_is_non_root_without_sock` | `@pytest.mark.docker`。真的 `open`/`exec`：`id -u` 是 `10001`，容器里没有 `/var/run/docker.sock` |
+
+活动 Bun runtime 测试位于 `backend/runtime/kiri.test.ts`。`routes hardened container argv through the embedded Kiri CLI` 锁定直接 `kiri run` 的安全参数，`supports Kiri installations exposed as a Docker context` 锁定 `docker --context` 兼容路径，`probes the embedded Kiri CLI directly` 锁定 headless 健康探测，`reports the Kiri context while using the Docker Engine API` 锁定 context 的健康结果，`rejects malformed context names` 锁定输入校验。Linux daemon 的实际启动由运行环境的 `POST /api/v1/runtime/ensure-ready` 探针验证，测试替身通过注入 `CommandRunner` 保持离线。
 
 Docker 测试在没有守护进程时由 `tests/conftest.py` 跳过；`MAO_REQUIRE_DOCKER=1` 时改为失败（R13）。镜像未构建时测试失败并指向 `tools/build_test_images.py`，不跳过。
 

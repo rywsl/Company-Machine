@@ -45,9 +45,14 @@ export type CommandResult = {
   stderr: Uint8Array;
 };
 
+export type CommandOptions = {
+  timeoutMs?: number;
+  env?: Record<string, string>;
+};
+
 export type CommandRunner = (
   argv: string[],
-  options?: { timeoutMs?: number },
+  options?: CommandOptions,
 ) => Promise<CommandResult>;
 
 export type Sandbox = {
@@ -138,10 +143,17 @@ export function resolvePodmanExecutable(configured?: string): string {
   return configured ?? "podman";
 }
 
-export async function runCommand(argv: string[], options: { timeoutMs?: number } = {}): Promise<CommandResult> {
+export async function runCommand(argv: string[], options: CommandOptions = {}): Promise<CommandResult> {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new PodmanError("RUNTIME_UNAVAILABLE", "Bun runtime is required");
-  const process = bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+  const inherited = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
+  const spawnOptions: Record<string, unknown> = { stdout: "pipe", stderr: "pipe" };
+  if (options.env) {
+    const childEnv = Object.fromEntries(Object.entries(inherited).filter(([, value]) => typeof value === "string")) as Record<string, string>;
+    Object.assign(childEnv, options.env);
+    spawnOptions.env = childEnv;
+  }
+  const process = bun.spawn(argv, spawnOptions);
   const timeoutMs = options.timeoutMs ?? 60_000;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
