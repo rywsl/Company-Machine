@@ -66,10 +66,16 @@ export const sendTalk = (text: string) => api<{ state: string; message: TalkMess
   body: JSON.stringify({ text }),
 });
 
-export function submitProjectIntake(payload: { name?: string; repo_url?: string; files?: Array<{ name: string; digest?: string; ref?: string }>; local_folder?: string }, uploads: File[] = []) {
+export function submitProjectIntake(payload: {
+  business_system_id?: string;
+  name?: string;
+  repo_url?: string;
+  files?: Array<{ name: string; digest?: string; ref?: string }>;
+  local_folder?: string;
+}, uploads: File[] = []) {
   if (uploads.length) {
     const form = new FormData();
-    for (const field of ["name", "repo_url", "local_folder"] as const) {
+    for (const field of ["business_system_id", "name", "repo_url", "local_folder"] as const) {
       const value = payload[field];
       if (value) form.set(field, value);
     }

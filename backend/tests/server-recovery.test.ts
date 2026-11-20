@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { SqliteStore } from "../src/db";
 import type { OfficialProcess } from "../src/harness";
 import { createApp, startServer } from "../src/server";
+import { VaultStore } from "../src/vault";
 
 function fixtureProcess(text: string): OfficialProcess {
   const bytes = new TextEncoder().encode(JSON.stringify({ type: "result", text }) + "\n");
@@ -130,6 +131,71 @@ test("serving resumes queued work from SQLite without replaying unresolved work"
       resumed.stop();
     }
     seed.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recovers only authorized resource waiters with fully available project requests", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-resource-recovery-"));
+  const dbPath = join(root, "factory.db");
+  const vaultPath = join(root, "vault.json");
+  const keyPath = join(root, "vault.key");
+  const vault = new VaultStore(vaultPath, keyPath);
+  const seed = new SqliteStore(dbPath, dbPath);
+  let resumed: ReturnType<typeof startServer> | undefined;
+  try {
+    seed.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session" });
+    const system = seed.createBusinessSystem({ name: "Resource recovery" });
+    const project = seed.createIntake({ business_system_id: system.id, name: "Waiting project" });
+    const other = seed.createIntake({ name: "Unrelated project" });
+    const available = seed.createSecretRequest({ projectId: project.id, name: "PROJECT_API_KEY", vaultRef: "vault://fixture/project" });
+    const unrelated = seed.createSecretRequest({ projectId: other.id, name: available.name, vaultRef: "vault://fixture/unrelated" });
+    for (const resource of [available, unrelated]) {
+      vault.put(resource.vaultRef, resource === available ? "only-this-project" : "unrelated-value");
+      seed.markSecretAvailable(resource.id);
+    }
+    const requested = seed.createSecretRequest({ projectId: project.id, name: "SECOND_API_KEY", vaultRef: "vault://fixture/pending" });
+    vault.put(requested.vaultRef, "submitted-without-sqlite-commit");
+    function waiter(requestIds: string[], authorized = true) {
+      const run = seed.createBusinessRun(system.id, "test", {}, [], authorized)!;
+      const unit = seed.claimUnitRun(run.id, `${project.id}:operator`, "previous-session")!;
+      for (const requestId of requestIds) seed.linkUnitSecret(unit.id, requestId);
+      seed.completeUnitRun(unit.id, "waiting_resources", ["material://previous-output"], "previous-error");
+      return { runId: run.id, unitId: unit.id };
+    }
+    const ready = waiter([available.id]);
+    const stillWaiting = [
+      waiter([]), waiter([available.id, requested.id]), waiter([available.id, "missing-request"]),
+      waiter([available.id, unrelated.id]), waiter([available.id], false),
+    ];
+    seed.close();
+
+    const launches: Record<string, string>[] = [];
+    resumed = startServer({
+      port: 0, dbPath, legacyPath: dbPath, storageRoot: root,
+      vault: new VaultStore(vaultPath, keyPath),
+      operator: { spawn: (_argv, { env }) => { launches.push(env); return fixtureProcess("Recovered resource waiter"); } },
+    });
+    const app = resumed;
+    await waitFor(() => app.store.getBusinessRun(ready.runId)?.status === "completed");
+    expect(launches).toEqual([{ PROJECT_API_KEY: "only-this-project" }]);
+    expect(app.store.getUnitRun(ready.runId, ready.unitId)).toMatchObject({ status: "completed", outputs: ["material://previous-output"] });
+    expect(app.store.getUnitRun(ready.runId, ready.unitId)?.error).toBeUndefined();
+    expect(app.store.getSecretRequest(requested.id)?.status).toBe("requested");
+    for (const { runId, unitId } of stillWaiting) {
+      expect(app.store.getUnitRun(runId, unitId)).toMatchObject({ status: "waiting_resources", sessionId: "previous-session" });
+    }
+    app.recoverQueuedWork();
+    await Promise.resolve();
+    expect(launches).toHaveLength(1);
+    expect(app.events.after().filter(({ type }) => type === "secret.available")).toEqual([]);
+  } finally {
+    if (resumed) {
+      await resumed.operator.close();
+      await resumed.foreman.close();
+      resumed.stop();
+    }
+    seed.close();
     await rm(root, { recursive: true, force: true });
   }
 });

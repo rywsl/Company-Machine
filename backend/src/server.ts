@@ -129,13 +129,18 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
       if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
     }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)]),
-    registerRepository: ({ name, repoUrl }) => {
-      const { system, project } = store.db.transaction(() => {
-        const system = store.createBusinessSystem({ name, metadata: { intake: true } });
+    registerRepository: ({ name, repoUrl, systemId }) => {
+      const recorded = store.db.transaction(() => {
+        const system = systemId === undefined
+          ? store.createBusinessSystem({ name, metadata: { intake: true } })
+          : store.getBusinessSystem(systemId);
+        if (!system) return undefined;
         const project = store.createIntake({ name, repo_url: repoUrl, business_system_id: system.id });
         return { system, project };
       }).immediate();
-      events.publish("business-system.created", system);
+      if (!recorded) return undefined;
+      const { system, project } = recorded;
+      if (systemId === undefined) events.publish("business-system.created", system);
       events.publish("project.intake.created", publicProject(project));
       return { projectId: project.id, systemId: system.id };
     },
@@ -159,6 +164,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (hasForeman()) {
       for (const id of store.listQueuedForemanMessageIds()) runInBackground(foreman.dispatch(id));
     }
+    if (options.dispatchWork !== false) store.resumeResourceRuns();
     for (const id of store.listRecoverableBusinessRunIds()) dispatchOperatorRun(id);
   };
   const fetch = async (request: Request): Promise<Response> => {
@@ -429,9 +435,16 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const body = await readJson(request);
       if (typeof body.value !== "string" || body.value.length === 0) return response({ error: "value is required" }, 400);
       vault.put(requestRecord.vaultRef, body.value);
-      const available = store.markSecretAvailable(requestRecord.id);
-      events.publish("secret.available", { id: requestRecord.id, projectId: requestRecord.projectId, name: requestRecord.name, status: available?.status ?? "available" });
-      for (const runId of store.resumeResourceRuns(requestRecord.id)) dispatchOperatorRun(runId);
+      const { runIds, event } = store.db.transaction(() => {
+        const available = store.markSecretAvailable(requestRecord.id);
+        const runIds = store.resumeResourceRuns(requestRecord.id);
+        const event = store.appendEvent("secret.available", {
+          id: requestRecord.id, projectId: requestRecord.projectId, name: requestRecord.name, status: available?.status ?? "available",
+        });
+        return { runIds, event };
+      }).immediate();
+      events.notifyCommitted(event);
+      for (const runId of runIds) dispatchOperatorRun(runId);
       return response({ request_id: requestRecord.id, state: "available" }, 200);
     }
     // The existing web client uses these read-only projections while it migrates to v1.

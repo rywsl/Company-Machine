@@ -51,7 +51,7 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
       await ask(7, "business.artifact", { projectId: project.id, kind: "note", summary: "fixture", ref: "material://note", files: [{ ref: "cas://blob" }] });
       await ask(8, "business.conversion", { systemId: project.businessSystemId, kind: "publish", summary: "fixture", inputs: ["material://note"] });
       await ask(9, "business.run", { systemId: project.businessSystemId, inputs: ["material://note"] });
-      await ask(10, "project.register", { repoUrl: "https://code.example/new-system.git" });
+      await ask(10, "project.register", { repoUrl: "https://code.example/new-system.git", systemId: project.businessSystemId });
       return fakeProcess([JSON.stringify({ type: "result", text: "已更新业务图" })]);
     } },
   });
@@ -142,6 +142,55 @@ test("registers a repository from a general Foreman turn and uses its new scope"
     });
     expect(app.store.listBusinessRuns(registration.systemId)).toHaveLength(1);
     expect(app.store.listForemanInbox()).toHaveLength(0);
+    expect(app.events.after().filter(({ type }) => type === "foreman.message.queued")).toHaveLength(1);
+  } finally { app.stop(); }
+});
+
+test("adds a repo to an existing system in scope without opening another Foreman turn", { timeout: 10_000 }, async () => {
+  let existingSystemId: string;
+  let registeredProjectId: string | undefined;
+  const app = createApp({
+    dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
+    runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
+    foreman: { spawn: async (_argv, options) => {
+      const root = options.foremanMailbox!;
+      const late = app.store.createBusinessSystem({ name: "Created after the turn scope" });
+      const repoUrl = "https://code.example/team/second.git";
+      expect(await askMailbox(root, 1, "project.register", { repoUrl, systemId: late.id })).toMatchObject({
+        ok: false, error: { code: "FOREMAN_OPERATION_INVALID" },
+      });
+      const input = { repoUrl, systemId: existingSystemId };
+      const response = await askMailbox(root, 2, "project.register", input);
+      expect(response).toMatchObject({ ok: true, result: { systemId: existingSystemId } });
+      expect(await askMailbox(root, 2, "project.register", input)).toEqual(response);
+      registeredProjectId = (response.result as { projectId: string }).projectId;
+      expect((await askMailbox(root, 3, "business.units", { systemId: existingSystemId })).result).toHaveLength(4);
+      return fakeProcess([JSON.stringify({ type: "result", text: "已添加项目" })]);
+    } },
+  });
+  try {
+    existingSystemId = app.store.createBusinessSystem({ name: "Existing system" }).id;
+    const original = app.store.createIntake({ name: "First", business_system_id: existingSystemId });
+    app.store.saveHarnessProfile({
+      runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session",
+      image: "registry.example/foreman@sha256:" + "a".repeat(64),
+    });
+    const response = await app.fetch(new Request("http://localhost/api/v1/talk", {
+      method: "POST", body: JSON.stringify({ text: "添加这个仓库到已有业务系统" }),
+    }));
+    expect(response.status).toBe(201);
+    const [envelope] = app.store.listForemanInbox();
+    await app.foreman.dispatch(envelope.id);
+
+    expect(app.store.getForemanMessage(envelope.id)?.status).toBe("done");
+    expect(app.store.listBusinessSystems()).toHaveLength(2);
+    const projects = app.store.listProjects(existingSystemId);
+    expect(projects.map(({ id }) => id).sort()).toEqual([original.id, registeredProjectId].sort());
+    expect(projects.find(({ id }) => id === registeredProjectId)).toMatchObject({
+      name: "second", sources: [{ kind: "repo_url", repoUrl: "https://code.example/team/second.git" }],
+    });
+    expect(app.events.after().filter(({ type }) => type === "business-system.created")).toHaveLength(0);
+    expect(app.events.after().filter(({ type }) => type === "project.intake.created")).toHaveLength(1);
     expect(app.events.after().filter(({ type }) => type === "foreman.message.queued")).toHaveLength(1);
   } finally { app.stop(); }
 });

@@ -282,6 +282,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 
 - `GET /api/v1/business-systems` 与 `POST /api/v1/business-systems` 管理业务系统聚合
 - `GET /api/v1/projects` 与 `POST /api/v1/projects/intake` 接收仓库链接、项目文件引用或本地文件夹来源。Intake 成功后自动写入一条 Foreman 输入队列，厂长可继续识别项目、创建基础单元和搭建 DAG，即使当前还没有配置 Harness 也不能丢失这条意图
+- 厂区内的「添加项目」把目标业务系统 ID 随项目来源提交。仓库和文件夹采用 JSON 请求，浏览器上传文件采用 multipart 请求，两种入口都在当前厂区新建项目基础单元。项目登记事件刷新当前厂区，产物登记事件更新资产页。
 - 项目公共投影只保留来源种类和可移植引用，`local_folder` 与保险箱引用不会返回给浏览器或业务系统导出
 - `GET /api/v1/business-systems/<id>` 返回业务系统、项目和 Artifact 摘要
 - `GET /api/v1/business-systems/<id>/artifacts` 与 `/materials` 返回该业务系统闭包内的语义化记录。`/materials` 只返回 `record_type=material` 的来料或中间物料
@@ -313,7 +314,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - 带 `image` 的 Foreman 和 Operator 会在启动官方 Harness 前调用当前 ContainerProvider 的 readiness。并发启动共享一次 readiness promise，失败时不会启动 Harness
 - Linux Kiri 与 Podman 中的容器厂长通过当前轮的文件邮箱管理业务。容器获得 `/mao/foreman/requests` 写入权限和 `/mao/foreman/responses` 读取权限。请求包含 `id`、`op` 和 `args`，写入临时文件后以 0644 权限原子重命名为 `<id>.json`。MAO 调用固定的业务 API 来查询工位、更新 DAG、绑定 Operator、登记产物与转换、派发运行，并在同名响应文件返回结果。项目接收轮的操作范围是该项目及其所属业务系统，普通厂长轮可操作当轮列出的业务系统。文件通过引用登记。正常结束后处理已提交请求，取消时停止接收新请求，然后清理本轮目录。
 - 厂长发现缺少必需配置时，使用邮箱操作 `project.secret.request` 为当前项目申请一个密钥，参数包括 `projectId`、`name` 和可选的 `purpose`、`scope`。响应只含请求 ID 和状态。项目接收轮只允许当前项目，普通对话轮可以操作该轮列出或新登记的业务系统中的项目。Web 收到 `secret.requested` 后更新厂长面板的项目资源入口，用户可查看请求项目和密钥名并在资源抽屉提交配置。
-- 在普通厂长对话中，`project.register` 使用 `repoUrl` 和可选 `name` 创建项目及业务系统，返回 `projectId` 和 `systemId`。可在同一轮使用这些 ID 配置 Operator、DAG 和运行。省略名称时使用仓库路径最后一段并去除 `.git`。链接须为 HTTP(S)、SSH 或 Git URL，且不携带用户信息、查询参数或片段。登记只保存来源引用并发布项目事件，当前厂长继续处理本轮。
+- 在普通厂长对话中，`project.register` 使用 `repoUrl` 和可选的 `name`、`systemId` 登记仓库，返回 `projectId` 和 `systemId`。提供 `systemId` 时，该系统必须在当前轮范围内，包含本轮新建的系统。省略 `systemId` 时创建业务系统。可在同一轮使用返回的 ID 配置 Operator、DAG 和运行。省略名称时使用仓库路径最后一段并去除 `.git`。链接须为 HTTP(S)、SSH 或 Git URL，且不携带用户信息、查询参数或片段。登记后发布项目事件，当前厂长继续处理本轮。
 - Harness 配置的 `session_timeout_s` 为单轮会话的超时秒数，适用于 Foreman 与 Operator 启动官方 CLI、建立 ACP 会话和读取回复。现有配置与新建时省略此值的配置默认 600 秒。接口接受 1 至 2147483 的整数，更新时省略该项保留已保存值。超时记录 `SESSION_TIMEOUT` 并取消本轮子进程，后续已排队的工作继续处理。配置页的连通性验证有独立超时。
 - 容器厂长的通用对话从 SQLite 读取当前来信之前已完成的最近四轮通用对话，按入队顺序作为上下文数据传入。每条消息最多读取一千个字符，并沿用厂长回复的脱敏规则。项目接入轮次只携带本次项目上下文，本机官方 Harness 继续使用原生会话 ID 恢复对话。
 - 启动官方 Harness 时只继承运行所需的基础环境和显式声明的变量。宿主环境中的其他密钥不会被批量转发
@@ -326,7 +327,8 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 
 并发的运行时状态查询共用一次在途探测，结果缓存 5 秒。主动就绪检查在并发的被动探测期间完成时，后返回的被动探测使用最新的就绪结果。
 - Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，运行时健康检查和带镜像的官方 Harness/ACP 启动必须复用同一解析结果，避免桌面进程继承旧 PATH 后误报运行时缺失
-- `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱
+- `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱。保险箱写入成功后，SQLite 在同一事务内更新请求状态、记录可用事件并重新排队所需请求均已可用的工位。事件推送与派发在提交后执行。若保险箱已写入而 SQLite 提交失败，用户可重新提交同一请求。
+- 服务启动恢复时，已授权运行中等待资源的工位在所有已绑定的本项目请求均为可用时重新排队，再按 DAG 派发。缺少资源关联、请求仍未完成或归属其他项目的工位继续等待。
 
 密钥值只在保险箱写入请求中出现。数据库、事件、Harness、Foreman 和普通 UI 只接触保险箱引用与状态。UI 展示语义化字段、图表、时间线和文件引用，底层 JSON 不作为用户详情内容渲染。
 

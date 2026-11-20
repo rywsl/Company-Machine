@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createApp } from "../src/server";
 import { SqliteStore } from "../src/db";
 import { FakeClock } from "../src/legacy/foundation";
+import { VaultStore } from "../src/vault";
 
 async function jsonResponse(response: Response) {
   return response.json() as Promise<Record<string, any>>;
@@ -264,6 +265,61 @@ describe("Bun business backend", () => {
       await rm(dbPath, { force: true });
       await rm(vaultPath, { force: true });
       await rm(keyPath, { force: true });
+    }
+  });
+
+  test("commits resource availability, event and work resumption together after the vault write", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-secret-resolution-"));
+    const dbPath = join(root, "factory.db");
+    const vault = new VaultStore(join(root, "vault.json"), join(root, "vault.key"));
+    const app = createApp({ dbPath, legacyPath: dbPath, storageRoot: root, dispatchWork: false, vault });
+    const reader = new SqliteStore(dbPath, dbPath);
+    try {
+      const system = app.store.createBusinessSystem({ name: "Secret transaction" });
+      const project = app.store.createIntake({ business_system_id: system.id, name: "Fixture project" });
+      const run = app.store.createBusinessRun(system.id, "test", {}, [], true)!;
+      const unit = app.store.claimUnitRun(run.id, `${project.id}:operator`, "waiting")!;
+      const resource = app.store.createSecretRequest({ projectId: project.id, name: "PROJECT_API_KEY", vaultRef: "vault://fixture/project" });
+      app.store.linkUnitSecret(unit.id, resource.id);
+      app.store.completeUnitRun(unit.id, "waiting_resources", ["material://retained"]);
+      const submit = (value: string) => app.fetch(new Request(`http://localhost/api/v1/secrets/requests/${resource.id}/value`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value }),
+      }));
+      const notifications: Array<{ status?: string; unitStatus?: string }> = [];
+      app.events.subscribe(({ type }) => {
+        if (type === "secret.available") notifications.push({
+          status: reader.getSecretRequest(resource.id)?.status,
+          unitStatus: reader.getUnitRun(run.id, unit.id)?.status,
+        });
+      });
+      app.store.db.exec(`
+        CREATE TRIGGER reject_available_event BEFORE INSERT ON business_events WHEN NEW.type='secret.available'
+        BEGIN SELECT RAISE(ABORT, 'cannot persist resource event'); END;
+      `);
+      await expect(submit("before-retry")).rejects.toThrow("cannot persist resource event");
+      expect(vault.get(resource.vaultRef)).toBe("before-retry");
+      expect(reader.getSecretRequest(resource.id)?.status).toBe("requested");
+      expect(reader.getUnitRun(run.id, unit.id)).toMatchObject({ status: "waiting_resources", sessionId: "waiting" });
+      expect(reader.eventsAfter()).toEqual([]);
+      expect(notifications).toEqual([]);
+
+      app.store.db.exec("DROP TRIGGER reject_available_event");
+      expect((await submit("after-retry")).status).toBe(200);
+      expect(reader.getUnitRun(run.id, unit.id)).toMatchObject({ status: "queued", outputs: ["material://retained"] });
+      expect(reader.getUnitRun(run.id, unit.id)?.sessionId).toBeUndefined();
+      expect(notifications).toEqual([{ status: "available", unitStatus: "queued" }]);
+      expect(reader.eventsAfter()[0]).toMatchObject({
+        type: "secret.available", data: { id: resource.id, projectId: project.id, name: resource.name, status: "available" },
+      });
+      expect(JSON.stringify(reader.eventsAfter())).not.toContain(resource.vaultRef);
+      expect(JSON.stringify(reader.eventsAfter())).not.toContain("after-retry");
+      expect((await submit("rotated-value")).status).toBe(200);
+      expect(vault.get(resource.vaultRef)).toBe("rotated-value");
+      expect(reader.eventsAfter()).toHaveLength(2);
+    } finally {
+      reader.close();
+      app.stop();
+      await rm(root, { recursive: true, force: true });
     }
   });
 

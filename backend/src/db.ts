@@ -183,6 +183,7 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS unit_runs_run ON unit_runs(run_id, status, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_history ON unit_runs(run_id, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_pending_dispatch ON unit_runs(run_id) WHERE status='queued';
+      CREATE INDEX IF NOT EXISTS unit_runs_waiting_resources ON unit_runs(run_id) WHERE status='waiting_resources';
       CREATE INDEX IF NOT EXISTS unit_runs_unfinished ON unit_runs(run_id) WHERE status!='completed';
       CREATE INDEX IF NOT EXISTS business_conversions_system ON business_conversions(business_system_id, created_at, id);
     `);
@@ -794,17 +795,31 @@ export class SqliteStore {
     return ids.flatMap(({ request_id }) => this.getSecretRequest(request_id) ?? []);
   }
 
-  resumeResourceRuns(requestId: string): string[] {
+  resumeResourceRuns(requestId?: string): string[] {
+    const candidates = requestId !== undefined
+      ? "id IN (SELECT unit_run_id FROM unit_secret_requests WHERE request_id=?)"
+      : `EXISTS (SELECT 1 FROM unit_secret_requests WHERE unit_run_id=unit_runs.id)
+         AND EXISTS (
+           SELECT 1 FROM business_runs AS run WHERE run.id=unit_runs.run_id
+             AND run.status IN ('queued','running','failed')
+             AND (
+               EXISTS (SELECT 1 FROM business_run_dispatch WHERE run_id=run.id)
+               OR EXISTS (SELECT 1 FROM unit_runs AS prior WHERE prior.run_id=run.id AND prior.status='completed')
+             )
+         )`;
     const rows = this.db.query<{ run_id: string }>(`
       UPDATE unit_runs SET status='queued', session_id=NULL, error=NULL, updated_at=?
       WHERE status='waiting_resources'
-        AND id IN (SELECT unit_run_id FROM unit_secret_requests WHERE request_id=?)
+        AND ${candidates}
         AND NOT EXISTS (
-          SELECT 1 FROM unit_secret_requests AS link JOIN secret_requests AS request ON request.id=link.request_id
-          WHERE link.unit_run_id=unit_runs.id AND request.status!='available'
+          SELECT 1 FROM unit_secret_requests AS link
+          LEFT JOIN secret_requests AS request
+            ON request.id=link.request_id
+            AND request.project_id=(SELECT project_id FROM business_units WHERE id=unit_runs.unit_id AND kind='operator')
+          WHERE link.unit_run_id=unit_runs.id AND (request.status IS NULL OR request.status!='available')
         )
       RETURNING run_id
-    `).all(this.timestamp(), requestId);
+    `).all(this.timestamp(), ...(requestId === undefined ? [] : [requestId]));
     return [...new Set(rows.map(({ run_id }) => run_id))];
   }
 

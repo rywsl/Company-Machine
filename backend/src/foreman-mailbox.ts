@@ -11,7 +11,7 @@ export const foremanMailboxContract = [
   "选择本轮唯一的 r- 加 32 个小写十六进制字符作为 id。先写临时文件，再以 0644 权限原子重命名为 <id>.json。",
   "请求 JSON 包含 id、op 和 args。等待并读取 responses/<id>.json 的 ok、result 和 error 后再继续。",
   "business.units 使用 systemId。business.graph 使用 systemId 和 graph。",
-  "普通对话可用 project.register 登记仓库，传入 repoUrl 和可选 name。响应提供 projectId 和 systemId，后续操作直接使用这些 ID。",
+  "普通对话可用 project.register 登记仓库，传入 repoUrl 和可选 name。提供当前轮可见的 systemId 把项目添加到该业务系统，省略时新建业务系统。响应提供 projectId 和 systemId，后续操作直接使用这些 ID。",
   "business.bind 使用 systemId、unitId、harness 和可选 model。",
   "business.artifact 使用 projectId、kind、ref、summary 和可选的 recordType、files。files 只含文件引用。",
   "business.conversion 使用 systemId、kind、summary 和可选 inputs、outputs。business.run 使用 systemId 和可选 inputs。",
@@ -20,7 +20,7 @@ export const foremanMailboxContract = [
 ].join(" ");
 
 type FetchBusiness = (request: Request) => Promise<Response>;
-export type RegisterForemanRepository = (input: { name: string; repoUrl: string }) => { projectId: string; systemId: string };
+export type RegisterForemanRepository = (input: { name: string; repoUrl: string; systemId?: string }) => { projectId: string; systemId: string } | undefined;
 type Scope = {
   systems: ReadonlySet<string>;
   projectSystem: (projectId: string) => string | undefined;
@@ -37,8 +37,10 @@ const reference = (value: unknown): value is string =>
   text(value) && !/^(?:[\\/]|[a-z]:[\\/]|(?:file|vault|secret):)/i.test(value.trim());
 const references = (value: unknown): boolean => value === undefined || Array.isArray(value) && value.every(reference);
 
-function repositoryInput(args: Record<string, unknown>): Parameters<RegisterForemanRepository>[0] | undefined {
+function repositoryInput(args: Record<string, unknown>, systems: ReadonlySet<string>): Parameters<RegisterForemanRepository>[0] | undefined {
   if (!text(args.repoUrl) || (args.name !== undefined && !text(args.name))) return;
+  const { systemId } = args;
+  if (systemId !== undefined && (!identifier(systemId) || !systems.has(systemId))) return;
   const source = args.repoUrl.trim();
   if (!/^(?:https?|ssh|git):\/\//i.test(source) || /[\s\\?#]/.test(source)) return;
   try {
@@ -47,7 +49,7 @@ function repositoryInput(args: Record<string, unknown>): Parameters<RegisterFore
     if (!url.hostname || url.username || url.password || !slug) return;
     const name = typeof args.name === "string" ? args.name.trim() : decodeURIComponent(slug);
     if (!name.trim() || name.length > 256 || /[\u0000-\u001f\u007f]/.test(name)) return;
-    return { name, repoUrl: url.href };
+    return { name, repoUrl: url.href, systemId };
   } catch { return; }
 }
 
@@ -136,14 +138,15 @@ export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, r
     chmodSync(responses, 0o755);
     const systems = new Set(scope.systems);
     const operations = { ...scope, systems };
-    const registrations = new Map<string, ReturnType<RegisterForemanRepository>>();
+    const registrations = new Map<string, NonNullable<ReturnType<RegisterForemanRepository>>>();
     const server = new CtlServer(root, {
       async handle({ id, op, args }) {
         if (!active) return denied(id, "FOREMAN_MAILBOX_CLOSED", "厂长邮箱已关闭");
         if (op === "project.register") {
-          const input = registerRepository && repositoryInput(args);
-          if (!registerRepository || !input) return denied(id, "FOREMAN_OPERATION_INVALID", "当前轮无法登记该仓库。请提供无凭据的仓库 URL");
+          const input = registerRepository && repositoryInput(args, systems);
+          if (!registerRepository || !input) return denied(id, "FOREMAN_OPERATION_INVALID", "登记需要无凭据的仓库 URL，指定业务系统时须在当前轮范围内");
           const result = registrations.get(id) ?? registerRepository(input);
+          if (!result) return denied(id, "FOREMAN_OPERATION_FAILED", "目标业务系统已不存在");
           registrations.set(id, result);
           systems.add(result.systemId);
           return { id, ok: true, result, error: null };
