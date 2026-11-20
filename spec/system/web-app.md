@@ -312,6 +312,8 @@ Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。
 
 ## 12. 真实 Web App 验收
 
+迁移后的 Bun 验收入口为 `bun run acceptance:bun`，执行 `backend/tests`、`backend/runtime` 和 `backend/mrl` 的 TypeScript 测试。`bun run verify:bun` 执行完整 Bun backend 集合。测试夹具通过注入的官方 Harness process、ACP JSON-RPC stream 和 Podman command runner 运行，不调用模型 API，不依赖 shell 拼接。Python 验收目录只作为迁移期历史证据保留。
+
 - `factory web` 只监听本机回环地址，打开 `/` 直接返回 M18 前端
 - `/api/web/bootstrap` 能从真实 Context 返回图、运行、资产、日志和宪法摘要
 - 前端首屏由 API 数据驱动，不依赖写死的工厂节点或运行记录

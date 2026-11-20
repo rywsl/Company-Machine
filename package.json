@@ -11,6 +11,8 @@
     "backend:check": "bun build backend/src/index.ts --target bun --outfile output/backend-check.js",
     "backend:build": "bun build backend/src/index.ts --outdir output/backend --target bun",
     "backend:bench": "bun run backend/bench.ts",
-    "backend:test": "bun test backend/tests"
+    "backend:test": "bun test backend/tests",
+    "acceptance:bun": "bun run tools/harness.ts acceptance",
+    "verify:bun": "bun run tools/harness.ts verify"
   }
 }
