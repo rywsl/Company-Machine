@@ -118,6 +118,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/cli.test.ts` | Bun 工厂命令、Registry 检查、从冻结快照恢复审批和调度运行 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选提交、拒绝路径和 MRL 风险事实 |
 | `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
+| `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
 | `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
 | `backend/tests/legacy-approvals.test.ts` | 工位审批的费用规则、尝试隔离、到期与拒绝 |

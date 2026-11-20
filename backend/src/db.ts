@@ -131,6 +131,7 @@ export class SqliteStore {
         trigger TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS business_run_dispatch (run_id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS business_run_graphs (run_id TEXT PRIMARY KEY, edges TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS unit_runs (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL, unit_id TEXT NOT NULL,
@@ -157,6 +158,7 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS business_runs_system ON business_runs(business_system_id, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_run ON unit_runs(run_id, status, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_history ON unit_runs(run_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS unit_runs_pending_dispatch ON unit_runs(run_id) WHERE status='queued';
       CREATE INDEX IF NOT EXISTS business_conversions_system ON business_conversions(business_system_id, created_at, id);
     `);
   }
@@ -327,7 +329,7 @@ export class SqliteStore {
     return row ? this.businessUnitFromRow(row) : undefined;
   }
 
-  createBusinessRun(businessSystemId: string, trigger = "manual", metadata: Record<string, unknown> = {}, inputs: string[] = []): BusinessRun | undefined {
+  createBusinessRun(businessSystemId: string, trigger = "manual", metadata: Record<string, unknown> = {}, inputs: string[] = [], dispatch = false): BusinessRun | undefined {
     return this.db.transaction(() => {
       if (!this.db.query("SELECT 1 FROM business_systems WHERE id = ?").get(businessSystemId)) return undefined;
       const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.kind === "operator");
@@ -335,12 +337,31 @@ export class SqliteStore {
       const run: BusinessRun = { id: randomUUID(), businessSystemId, status: units.length ? "queued" : "failed", trigger, metadata, createdAt: timestamp, updatedAt: timestamp };
       this.db.query("INSERT INTO business_runs (id,business_system_id,status,trigger,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
         .run(run.id, businessSystemId, run.status, trigger, json(metadata), timestamp, timestamp);
+      if (dispatch && run.status === "queued") this.authorizeBusinessRunDispatch(run.id);
       this.db.query("INSERT INTO business_run_graphs (run_id, edges) VALUES (?,?)").run(run.id, json(this.businessGraph(businessSystemId).edges));
       const insert = this.db.query("INSERT INTO unit_runs (id,run_id,unit_id,status,session_id,inputs,outputs,error,created_at,updated_at) VALUES (?,?,?,'queued',NULL,?,'[]',NULL,?,?)");
       const serializedInputs = json(inputs);
       for (const unit of units) insert.run(randomUUID(), run.id, unit.id, serializedInputs, timestamp, timestamp);
       return run;
     }).immediate();
+  }
+
+  authorizeBusinessRunDispatch(runId: string): void {
+    this.db.query("INSERT OR IGNORE INTO business_run_dispatch (run_id) SELECT id FROM business_runs WHERE id=? AND status IN ('queued','running','failed')").run(runId);
+  }
+
+  listRecoverableBusinessRunIds(): string[] {
+    return this.db.query<{ id: string }>(`
+      SELECT run.id FROM (SELECT DISTINCT run_id FROM unit_runs WHERE status='queued') AS pending
+      JOIN business_runs AS run ON run.id=pending.run_id
+      WHERE run.status IN ('queued','running','failed')
+        AND NOT EXISTS (SELECT 1 FROM unit_runs WHERE run_id=run.id AND status='running')
+        AND (
+          EXISTS (SELECT 1 FROM business_run_dispatch WHERE run_id=run.id)
+          OR EXISTS (SELECT 1 FROM unit_runs WHERE run_id=run.id AND status='completed')
+        )
+      ORDER BY run.created_at, run.id
+    `).all().map(({ id }) => id);
   }
 
   listBusinessRuns(businessSystemId: string): BusinessRun[] {
@@ -737,6 +758,12 @@ export class SqliteStore {
       createdAt: row.created_at,
       claimedAt: row.claimed_at ?? undefined,
     }));
+  }
+
+  listQueuedForemanMessageIds(): string[] {
+    return this.db.query<{ id: string }>(
+      "SELECT id FROM foreman_outbox WHERE status='queued' ORDER BY created_at, id",
+    ).all().map(({ id }) => id);
   }
 
   getForemanMessage(id: string): ForemanEnvelope | undefined {

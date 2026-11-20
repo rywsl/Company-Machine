@@ -287,6 +287,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `POST /api/v1/business-systems/import` 在一个事务中重建项目、来源、运行单元、物料记录、转换和 DAG，并重写相关 ID 与来源引用。导入前后复用图写入的节点唯一、边引用和无环校验。密钥按项目所需资源重新创建为待配置请求。历史运行作为归档来源保留，导入后的新运行使用重建的 DAG
 - `GET /api/v1/business-systems/<id>/units` 返回由 Operator 与 Machine 组成的业务基础单元。项目来源的宿主路径只用于内部执行，公共投影只返回来源种类
 - `GET/POST /api/v1/business-systems/<id>/runs` 创建和读取业务运行，`GET /api/v1/runs/<id>` 读取运行及 Operator 执行状态，`POST /api/v1/runs/<id>/dispatch` 通过官方 Operator Harness 推进待执行单元
+- 创建业务运行默认同时记录派发授权。请求使用 `dispatch: false` 时保留待派发状态，直到调用显式派发接口。历史运行缺少派发记录且没有已完成的 Operator 时，继续通过显式接口派发。
 - 业务运行按 DAG 前置边决定就绪状态。前置 Operator 完成后，其产物引用会合并到后继 Operator 的输入物料，控制面不会并发启动未满足依赖的单元
 - 前置 Operator 失败或被阻塞时，所有受影响的后继 Operator 必须进入 `blocked`，业务运行进入 `failed`，不能因没有新的可调度单元而永久停留在 `running`
 - `GET/POST /api/v1/projects/<id>/artifacts` 读写带摘要、用途、文件引用、输入输出和 lineage 的物料 JSON
@@ -294,6 +295,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
+- Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，存在 `running` 单元的运行留待核对外部执行结果。等待资源的单元继续通过现有资源请求流程恢复。
 - Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
 - ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环
 - ACP 使用官方 `sessionId`。只有 Harness 在初始化中声明 `loadSession` 时才请求恢复会话，恢复时收到的历史通知不进入当前回复。`session/prompt` 响应中的 `end_turn` 结束当前轮，无须等待 stdout 关闭。其他停止原因、JSON-RPC 错误和提前 EOF 终止当前轮并保留原因。握手限时 30 秒，单条消息最大 1 MiB，启动前暂存最多 128 条通知和 4 MiB。

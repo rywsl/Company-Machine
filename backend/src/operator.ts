@@ -56,7 +56,7 @@ export class OperatorCoordinator {
 
   stop(): void {
     this.closed = true;
-    for (const session of this.sessions.values()) void session.close();
+    for (const session of this.sessions.values()) void session.close().catch(() => {});
   }
 
   async close(): Promise<void> {
@@ -95,6 +95,7 @@ export class OperatorCoordinator {
     const requested = new Set<string>();
     try {
       if (profile.image) await this.options.ensureRuntime?.();
+      if (this.closed) return;
       for (const resource of this.options.store.unitSecretRequests(unitRun.id)) {
         if (resource.projectId !== unit.projectId || resource.status !== "available" || !projectCredentialName(resource.name)) continue;
         const value = this.options.readSecret?.(resource.vaultRef);
@@ -110,11 +111,13 @@ export class OperatorCoordinator {
         containerImage: profile.image,
         network: profile.network === "egress" ? "egress" : "none",
       });
+      if (this.closed) return;
       this.sessions.set(unitRun.id, session);
       if (useAcp) this.options.store.noteUnitSession(unitRun.id, session.id);
       const secretValues = Object.values(credentials);
       let failed = false;
       for await (const emitted of session.events()) {
+        if (this.closed) return;
         const event = redactCredentialValues(emitted, secretValues) as HarnessEvent;
         if (event.sessionId) this.options.store.noteUnitSession(unitRun.id, event.sessionId);
         if (event.type === "record") {

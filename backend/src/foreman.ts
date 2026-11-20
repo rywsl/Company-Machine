@@ -38,7 +38,7 @@ export class ForemanCoordinator {
 
   stop(): void {
     this.closed = true;
-    for (const session of this.sessions.values()) void session.close();
+    for (const session of this.sessions.values()) void session.close().catch(() => {});
   }
 
   async close(): Promise<void> {
@@ -61,10 +61,12 @@ export class ForemanCoordinator {
       try {
         await this.options.ensureRuntime();
       } catch (error) {
+        if (this.closed) return;
         this.options.events.publish("foreman.session.failed", { inboxId: id, reason: error instanceof Error ? error.message : "container-runtime-unavailable" });
         return;
       }
     }
+    if (this.closed) return;
     const claimed = this.options.store.claimForemanMessage(id);
     if (!claimed) return;
     this.options.events.publish("foreman.message.claim", claimed);
@@ -96,12 +98,14 @@ export class ForemanCoordinator {
         containerImage: profile.image,
         network: profile.network === "egress" ? "egress" : "none",
       });
+      if (this.closed) return;
       if (useAcp) officialId = session.id;
       this.sessions.set(id, session);
       this.replies.set(id, "");
       let reply = "";
       let failed = false;
       for await (const event of session.events()) {
+        if (this.closed) return;
         if (event.sessionId && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(event.sessionId)) officialId = event.sessionId;
         const text = event.text?.replace(/\b(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, "$1=[REDACTED]");
         const payload = { inboxId: id, sessionId: event.sessionId ?? session.id, harness: definition.id, text };

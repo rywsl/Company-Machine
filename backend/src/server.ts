@@ -27,6 +27,7 @@ export interface BackendApp {
   vault: VaultStore;
   foreman: ForemanCoordinator;
   operator: OperatorCoordinator;
+  recoverQueuedWork(): void;
   fetch(request: Request): Response | Promise<Response>;
   stop(): void;
 }
@@ -53,7 +54,18 @@ function runtimeDependency(health: RuntimeHealth, provider = "podman") {
   };
 }
 
-export function createApp(options: { dbPath?: string; legacyPath?: string; runtime?: RuntimeProbe; vault?: VaultStore; storageRoot?: string; foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn }; operator?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn }; harnessVerificationTimeoutMs?: number } = {}): BackendApp {
+interface BackendAppOptions {
+  dbPath?: string;
+  legacyPath?: string;
+  runtime?: RuntimeProbe;
+  vault?: VaultStore;
+  storageRoot?: string;
+  foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn };
+  operator?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn };
+  harnessVerificationTimeoutMs?: number;
+}
+
+export function createApp(options: BackendAppOptions = {}): BackendApp {
   const store = new SqliteStore(options.dbPath, options.legacyPath);
   const events = new EventBus(store);
   const vault = options.vault ?? new VaultStore();
@@ -92,13 +104,26 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
   };
   const verificationJobs = new Map<string, AbortController>();
   const foreman = new ForemanCoordinator({ store, events, cwd: options.foreman?.cwd, spawn: options.foreman?.spawn, acpSpawn: options.foreman?.acpSpawn, ensureRuntime });
+  let stopped = false;
+  const runInBackground = (work: Promise<void>) => {
+    void work.catch((error) => {
+      if (!stopped) console.error("Background dispatch failed", redactText(error instanceof Error ? error.message : String(error)));
+    });
+  };
   let dispatchOperatorRun = (_runId: string) => {};
   const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId), ensureRuntime, readSecret: (ref) => vault.get(ref) });
+  const hasForeman = () => store.listHarnessProfiles().some((profile) => profile.role === "foreman");
   const dispatchForemanIfConfigured = (id: string) => {
-    if (store.listHarnessProfiles().some((profile) => profile.role === "foreman")) void foreman.dispatch(id);
+    if (hasForeman()) runInBackground(foreman.dispatch(id));
   };
   dispatchOperatorRun = (runId: string) => {
-    for (const unitRun of store.listReadyUnitRuns(runId)) void operator.dispatch(runId, unitRun.id);
+    for (const unitRun of store.listReadyUnitRuns(runId)) runInBackground(operator.dispatch(runId, unitRun.id));
+  };
+  const recoverQueuedWork = () => {
+    if (hasForeman()) {
+      for (const id of store.listQueuedForemanMessageIds()) runInBackground(foreman.dispatch(id));
+    }
+    for (const id of store.listRecoverableBusinessRunIds()) dispatchOperatorRun(id);
   };
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -206,10 +231,11 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     if (runsMatch && request.method === "POST") {
       const body = await readJson(request);
       const inputs = Array.isArray(body.inputs) ? body.inputs.filter((item: unknown): item is string => typeof item === "string") : [];
-      const run = store.createBusinessRun(runsMatch[1], typeof body.trigger === "string" ? body.trigger : "manual", body.metadata && typeof body.metadata === "object" ? body.metadata : {}, inputs);
+      const dispatch = body.dispatch !== false;
+      const run = store.createBusinessRun(runsMatch[1], typeof body.trigger === "string" ? body.trigger : "manual", body.metadata && typeof body.metadata === "object" ? body.metadata : {}, inputs, dispatch);
       if (!run) return response({ error: "business system was not found" }, 404);
       events.publish("business-run.created", { ...run, units: store.listUnitRuns(run.id) });
-      if (run.status === "queued" && body.dispatch !== false) dispatchOperatorRun(run.id);
+      if (run.status === "queued" && dispatch) dispatchOperatorRun(run.id);
       return response({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) }, 201);
     }
     const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/);
@@ -222,6 +248,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     if (dispatchRunMatch && request.method === "POST") {
       const run = store.getBusinessRun(dispatchRunMatch[1]);
       if (!run) return response({ error: "business run was not found" }, 404);
+      store.authorizeBusinessRunDispatch(run.id);
       dispatchOperatorRun(run.id);
       return response({ state: "dispatching", run_id: run.id }, 202);
     }
@@ -326,7 +353,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     const foremanDispatch = url.pathname.match(/^\/api\/v1\/foreman\/inbox\/([^/]+)\/dispatch$/);
     if (foremanDispatch && request.method === "POST") {
-      void foreman.dispatch(foremanDispatch[1]);
+      runInBackground(foreman.dispatch(foremanDispatch[1]));
       return response({ state: "dispatching", inbox_id: foremanDispatch[1] }, 202);
     }
     if (url.pathname === "/api/v1/secrets/requests" && request.method === "POST") {
@@ -446,7 +473,8 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
     return response({ error: "not found" }, 404);
   };
-  return { store, events, vault, foreman, operator, fetch, stop: () => {
+  return { store, events, vault, foreman, operator, fetch, recoverQueuedWork, stop: () => {
+    stopped = true;
     for (const job of verificationJobs.values()) job.abort();
     verificationJobs.clear();
     foreman.stop();
@@ -701,16 +729,25 @@ function eventsResponse(request: Request, events: EventBus, cursor?: string): Re
   return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "connection": "keep-alive", "access-control-allow-origin": "*" } });
 }
 
-export function startServer(options: { port?: number; hostname?: string; dbPath?: string; legacyPath?: string } = {}) {
+export function startServer(options: BackendAppOptions & { port?: number; hostname?: string } = {}) {
   const app = createApp(options);
-  const server = Bun.serve({
-    port: options.port ?? Number(process.env.PORT ?? 3000),
-    hostname: options.hostname ?? "127.0.0.1",
-    fetch(request, server) {
-      if (request.method === "GET" && new URL(request.url).pathname === "/api/v1/events") server.timeout(request, 0);
-      return app.fetch(request);
-    },
-  });
-  return { ...app, server, stop: () => { server.stop(); app.stop(); } };
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    server = Bun.serve({
+      port: options.port ?? Number(process.env.PORT ?? 3000),
+      hostname: options.hostname ?? "127.0.0.1",
+      fetch(request, server) {
+        if (request.method === "GET" && new URL(request.url).pathname === "/api/v1/events") server.timeout(request, 0);
+        return app.fetch(request);
+      },
+    });
+    app.recoverQueuedWork();
+    const listening = server;
+    return { ...app, server: listening, stop: () => { listening.stop(); app.stop(); } };
+  } catch (error) {
+    server?.stop();
+    app.stop();
+    throw error;
+  }
 }
 
