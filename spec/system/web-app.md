@@ -296,7 +296,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - 启动官方 Harness 时只继承运行所需的基础环境和显式声明的变量。宿主环境中的其他密钥不会被批量转发
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
 - `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
-- `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Podman 在 Windows 尝试启动 machine，Kiri 使用自己的 CLI/daemon 状态。不可用时返回 503 和可读原因，不把另一运行时的状态伪装成在线
+- `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Podman 在 Windows 尝试启动 machine，Kiri 的 Linux headless 模式尝试启动 `kiri daemon`，Kiri Windows 模式使用自己的 CLI/daemon 状态。不可用时返回 503 和可读原因，不把另一运行时的状态伪装成在线
 - Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，避免桌面进程继承旧 PATH 后误报运行时缺失
 - `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱
 

@@ -10,6 +10,8 @@ When a Foreman profile is configured, queued talk messages can be dispatched thr
 
 Podman health and machine readiness are exposed at `/api/v1/runtime` and `/api/v1/runtime/ensure-ready`. A missing Podman dependency is reported to the Web App as an explicit runtime state. `MAO_PODMAN_EXECUTABLE` can point at a user-local Podman CLI when the parent desktop process has an older PATH snapshot.
 
+Set `MAO_CONTAINER_RUNTIME=kiri` to use Kiri's headless Linux-style CLI path. The default Kiri mode invokes `kiri ps`, `kiri run`, `kiri exec` and related commands directly. `MAO_KIRI_MODE=docker-context` is available for installations exposing only `docker --context kiri`. On Linux, readiness can start `kiri daemon` without opening the Kiri UI. `MAO_KIRI_EXECUTABLE` selects a user-local or packaged binary.
+
 Secret values enter through `/api/v1/secrets/requests/:id/value` and are encrypted in the local vault. The database and event stream contain only the vault reference and status.
 
 Run `bun run backend/bench.ts 100` to measure the factory graph, event replay and project list against a seeded SQLite database. Set `BENCH_DB_PATH` to keep the benchmark database in a chosen evidence directory.

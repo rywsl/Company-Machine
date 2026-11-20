@@ -16,7 +16,7 @@
 
 ## 分阶段迁移
 
-第一阶段接入 Bun 业务控制面和投影查询，旧 Python MRL 继续负责工厂 profile 检查和完整一致性套件。第二阶段已补齐表达式静态检查、模板 API 和 MRL-R 的模块、关系、事实、连接、守卫与否定原子求值，并以独立 Bun 测试锁定边界。完整 conformance 双实现回归和 Python 运行时移除仍属于后续阶段。
+活动产品入口使用 Bun MRL 运行时和独立 Bun 验收。旧 Python MRL、factory profile 检查和完整历史一致性套件已经归档到 `removed/python/`，不参与活动控制面启动。表达式静态检查、模板 API 和 MRL-R 的模块、关系、事实、连接、守卫与否定原子求值由 TypeScript 测试锁定边界。历史 Python conformance 仅用于迁移审计。
 
 ## 性能与安全约束
 
@@ -24,4 +24,4 @@
 
 ## 验证
 
-TypeScript 单元测试位于 `backend/mrl/mrl.test.ts`、`backend/mrl/checker.test.ts` 与 `backend/mrl/rules.test.ts`。每次变更应运行 `bun test backend/mrl`，并在提交前运行仓库根目录的 `uv run python tools/harness.py verify`，确保 Python 参考实现、规范和验收映射仍保持一致。
+TypeScript 单元测试位于 `backend/mrl/mrl.test.ts`、`backend/mrl/checker.test.ts` 与 `backend/mrl/rules.test.ts`。每次变更应运行 `bun test backend/mrl`，活动提交前运行 `bun run verify:bun`。历史 Python 参考实现和旧映射位于 `removed/python/`。

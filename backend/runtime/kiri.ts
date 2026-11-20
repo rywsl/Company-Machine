@@ -22,6 +22,7 @@ export type KiriProviderOptions = {
   kiriExecutable?: string;
   context?: string;
   mode?: "kiri" | "docker-context";
+  autoStart?: boolean;
   runner?: CommandRunner;
   egressNetwork?: string;
   egressEnv?: Record<string, string>;
@@ -70,6 +71,7 @@ export class KiriProvider extends PodmanProvider {
   private readonly dockerExecutable: string;
   private readonly commandRunner: CommandRunner;
   readonly mode: "kiri" | "docker-context";
+  readonly autoStart: boolean;
 
   constructor(options: KiriProviderOptions = {}) {
     const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
@@ -92,6 +94,7 @@ export class KiriProvider extends PodmanProvider {
     this.context = context;
     this.kiriExecutable = kiriExecutable;
     this.mode = mode;
+    this.autoStart = options.autoStart ?? true;
     this.commandRunner = runner;
   }
 
@@ -128,6 +131,23 @@ export class KiriProvider extends PodmanProvider {
   }
 
   async ensureReady(): Promise<RuntimeHealth> {
+    const current = await this.health();
+    if (current.available || !this.autoStart || this.mode !== "kiri") return current;
+    const processLike = (globalThis as { process?: { platform?: string } }).process;
+    if (processLike?.platform !== "linux") return current;
+    const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
+    if (!bun) return current;
+    try {
+      const daemon = bun.spawn([this.kiriExecutable, "daemon"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+      daemon.unref?.();
+    } catch {
+      return current;
+    }
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const ready = await this.health();
+      if (ready.available) return ready;
+    }
     return this.health();
   }
 }
