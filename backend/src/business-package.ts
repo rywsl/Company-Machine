@@ -98,10 +98,17 @@ export async function createBusinessPackage(destination: string, document: unkno
     const description = await inspect(doc, secrets);
     const digests = referencedDigests(document);
     const blobs: FileDescription[] = [];
-    if (digests.length) mkdirSync(join(stage, "blobs"));
+    const cas = join(warehouseRoot, "cas");
+    const sha256 = join(cas, "sha256");
+    if (digests.length) {
+      if (kind(cas) !== "directory" || kind(sha256) !== "directory") invalid("invalid CAS directory");
+      mkdirSync(join(stage, "blobs"));
+    }
     for (const digest of digests) {
       const hex = digest.slice(7);
-      const source = join(warehouseRoot, "cas", "sha256", hex.slice(0, 2), hex.slice(2));
+      const bucket = join(sha256, hex.slice(0, 2));
+      if (kind(bucket) !== "directory") invalid("invalid CAS bucket");
+      const source = join(bucket, hex.slice(2));
       if (kind(source) !== "file") invalid("missing CAS payload");
       const destination = businessPackageBlob(stage, digest);
       await copyFile(source, destination);

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
-import { businessPackageBlob, createBusinessPackage } from "../src/business-package";
+import { businessPackageBlob, createBusinessPackage, readBusinessPackage } from "../src/business-package";
 import { digestBytes } from "../src/legacy/foundation";
 import { Warehouse } from "../src/legacy/warehouse";
 import { createMaterialFileStage } from "../src/material-files";
@@ -135,6 +135,38 @@ test("rejects extra bytes, unsafe manifest paths and changed bytes before instal
     expect((await cli(root, "import", packageRoot, "--root", target)).code).toBe(1);
     expect(existsSync(target)).toBe(false);
     expect(existsSync(join(root, "outside"))).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test("rejects external CAS directories when exporting a closed business package", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-cas-"));
+  try {
+    const payload = new TextEncoder().encode("fixture bytes outside the selected warehouse");
+    const digest = digestBytes(payload);
+    const hex = digest.slice(7);
+    const outside = join(root, "external");
+    const parts = ["cas", "sha256", hex.slice(0, 2)];
+    const externalBucket = join(outside, ...parts);
+    mkdirSync(externalBucket, { recursive: true });
+    await Bun.write(join(externalBucket, hex.slice(2)), payload);
+    const document = { schema: "mao.business-system/1", system: { name: "Portable" }, ref: `cas://${digest}` };
+
+    for (const [index, directory] of parts.entries()) {
+      const warehouse = join(root, `warehouse-${index}`);
+      const parents = parts.slice(0, index);
+      mkdirSync(join(warehouse, ...parents), { recursive: true });
+      symlinkSync(join(outside, ...parents, directory), join(warehouse, ...parents, directory), "junction");
+      const destination = join(root, `package-${index}`);
+      await expect(createBusinessPackage(destination, document, warehouse, []))
+        .rejects.toMatchObject({ code: "PACKAGE_CORRUPT", detail: { reason: index === 2 ? "invalid CAS bucket" : "invalid CAS directory" } });
+      expect(existsSync(destination)).toBe(false);
+      expect(readdirSync(root).some((name) => name.startsWith(`.package-${index}-`))).toBe(false);
+    }
+
+    const valid = join(root, "valid");
+    await createBusinessPackage(valid, document, outside, []);
+    expect((await readBusinessPackage(valid)).blobs).toEqual([{ digest, size: payload.byteLength }]);
+    expect(new Uint8Array(await Bun.file(businessPackageBlob(valid, digest)).arrayBuffer())).toEqual(payload);
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
