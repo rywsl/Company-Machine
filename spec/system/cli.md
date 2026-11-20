@@ -1,11 +1,28 @@
 # factory 命令行（cli.md）
 
-> 规范性文档，M1。模块：`mao.cli`。任务：**M1-09**。
-> 入口：`factory = "mao.cli:main"`。退出码以 README 第 4.10 节为准。
+> 规范性文档。活动入口是 Bun `backend/src/cli.ts`，历史 M1 CLI 契约保留在本文末尾用于迁移审计。
+
+## 0. 活动 Bun CLI
+
+活动命令由 `bun run factory` 或 `bun run backend/src/cli.ts` 提供。控制面只保存和分发业务系统、项目、物料、厂长消息与运行时状态。
+
+| 命令 | 作用 |
+|---|---|
+| `factory serve` | 启动 Bun Web API 和 Web App。 |
+| `factory status` | 输出业务系统数量和厂长队列摘要。 |
+| `factory runtime status` | 读取当前 Podman 或 Kiri 健康状态。 |
+| `factory runtime ensure-ready` | 请求当前运行时就绪。不可用时退出码 4。 |
+| `factory project intake ...` | 通过仓库、文件夹或文件引用创建项目。 |
+| `factory business ...` | 读取或写入业务系统、DAG、运行、产物和转换。 |
+| `factory registry check PATH [--json]` | 通过 Bun MRL 检查 Registry 结构与 schema。 |
+| `factory foreman ...` | 查看、领取和完成厂长消息。 |
+| `factory talk ...` | 写入人的消息或厂长回复。 |
+
+活动 CLI 的稳定退出码为 `0` 成功、`1` 业务或运行时请求失败、`2` 用法错误、`4` 运行时设施不可用。活动测试位于 `backend/tests/cli.test.ts`，MRL CLI 测试位于 `backend/mrl/cli.test.ts`。历史章节中的 Python 签名、Docker provider、`factoryctl` 和旧验收路径不属于活动入口。
 
 ---
 
-## 1. 目的与范围
+## 1. 历史 Python M1 CLI 契约
 
 **做什么（M1）**
 
@@ -101,7 +118,7 @@ CLI 不发明新的业务错误码。它把下层的 `FactoryError.code` 放进 
 
 ## 7. 验收测试
 
-文件：`tests/acceptance/m1/test_m1_09_cli.py`。
+文件：`removed/python/tests/acceptance/m1/test_m1_09_cli.py`。
 
 | 测试 | 验证 |
 |---|---|
@@ -113,7 +130,7 @@ CLI 不发明新的业务错误码。它把下层的 `FactoryError.code` 放进 
 | `test_default_provider_is_docker` | 不传 `--provider` 时解析结果是 `docker` |
 | `test_version` | 输出 `mao.__version__`，退出码 0 |
 
-测试把 `--provider local --local-commands FILE` 显式传给会执行的子命令，FILE 由 `tests/fakes/fakelib.py` 的 `local_commands()` 写出。`test_default_provider_is_docker` 只检查解析结果，不要求本机有 Docker。
+测试把 `--provider local --local-commands FILE` 显式传给会执行的子命令，FILE 由 `tests/fakes/fakelib.ts` 的 `local_commands()` 写出。`test_default_provider_is_docker` 只检查解析结果，不要求本机有 Docker。
 
 ---
 
