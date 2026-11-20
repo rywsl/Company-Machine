@@ -357,6 +357,10 @@ export class RunStore {
     return this.changeWaitingNode(runId, nodeId, "SKIPPED", null);
   }
 
+  completeSwitch(runId: string, nodeId: string, selected: string): RunNode {
+    return this.changeWaitingNode(runId, nodeId, "DONE", null, { selected });
+  }
+
   cancel(id: string, by: string): Run {
     return this.transition(id, "CANCELLING", {
       reason: "cancel by=" + by, error: { code: "RUN_CANCELLED", message: "run 已取消", by },
@@ -401,13 +405,14 @@ export class RunStore {
     return this.get(run.id);
   }
 
-  private changeWaitingNode(runId: string, nodeId: string, state: "FAILED" | "SKIPPED", error: JsonObject | null): RunNode {
+  private changeWaitingNode(runId: string, nodeId: string, state: "FAILED" | "SKIPPED" | "DONE", error: JsonObject | null, params?: JsonObject): RunNode {
     return this.db.transaction(() => {
       const run = this.get(runId);
       const node = this.node(runId, nodeId);
       if (node.state !== "WAITING" || run.state !== "RUNNING") this.invalidState(run, "change_node", node);
       const now = this.now();
       this.setNode(node, state, {}, error, now);
+      if (params) this.db.query("UPDATE run_nodes SET params = ? WHERE run_id = ? AND node_id = ?").run(canonicalJson(params), runId, nodeId);
       this.db.query("UPDATE runs SET updated_at = ? WHERE id = ?").run(now, runId);
       return this.node(runId, nodeId);
     }).immediate();

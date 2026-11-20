@@ -2,6 +2,7 @@ import { buildRuleProgram } from "../../mrl/rules";
 import { FactoryError } from "./errors";
 import { canonicalBytes, digestBytes } from "./foundation";
 import type { Snapshot } from "./snapshot";
+import type { SwitchDefinition } from "./dynamic-switch";
 
 export interface Binding {
   readonly port: string;
@@ -12,7 +13,7 @@ export interface Binding {
 
 export interface PlanNode {
   readonly id: string;
-  readonly kind: "station" | "converter";
+  readonly kind: "station" | "converter" | "switch";
   readonly step: string;
   readonly station: string;
   readonly role: string;
@@ -23,6 +24,7 @@ export interface PlanNode {
   readonly budgetUsd: number;
   readonly implicit: boolean;
   readonly resolution: LineResolution | null;
+  readonly switch?: SwitchDefinition;
 }
 
 type Parameter = string | boolean | number;
@@ -114,6 +116,7 @@ export class RunPlan implements Plan {
         budget_usd: node.budgetUsd,
         implicit: node.implicit,
         resolution: node.resolution,
+        ...(node.switch ? { switch: node.switch } : {}),
       })),
       outputs: this.outputs,
       keep: this.keep,
@@ -581,7 +584,7 @@ function expandNodes(
   return nodes;
 }
 
-function topologicalOrder(line: string, nodes: Map<string, PlanNode>): PlanNode[] {
+export function topologicalOrder(line: string, nodes: Map<string, PlanNode>): PlanNode[] {
   const indegree = new Map<string, number>();
   const children = new Map([...nodes.keys()].map((id): [string, string[]] => [id, []]));
   for (const [id, node] of nodes) {

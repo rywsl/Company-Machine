@@ -149,6 +149,10 @@ schema 要求 `on`、`cases`、`default`。控制节点不提交 job。
 4. 没被选中的 `goto` 目标，以及只依赖这些目标的下游，标 `SKIPPED`。被选中的目标仍要等它自己的其他依赖 `DONE`。
 5. 目标步骤名必须已在计划里（内核 `E-PORT` 已保证）。运行期找不到 → `RUN_PLAN_INVALID`，不要临时造步骤。
 
+Bun 的 `compileDynamicRunPlan` 为 switch 生成控制节点和分支依赖，并在 RunPlan 中保存来源、顺序条件和默认目标。CLI `line plan`、`line run` 和自动触发共用此入口。静态产线沿用原计划格式和摘要算法。
+
+控制节点从已封存物料的 `bean` 投影求值 MRL 条件。选中目标写入控制节点的 `params.selected`。同一 tick 事务提交该决定、分支跳过、Job 提交和状态事件。恢复时从持久化计划和控制节点读取决定。未被选中的分支转换节点随分支跳过。所有上游数据来源都已跳过的后继节点也会跳过，有其他有效输入的后继仍按工位契约继续检查。
+
 ### 5.4 until 与 subline
 
 **until**。schema 要求 `cond` 与 `max_iter`（1 到 10，schema 已限制）。执行是串行的：

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { selectedContainerProvider } from "../runtime/selected";
-import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RunStore, Runner, canonicalJson, compileRunPlan, dumpJob, loadSnapshot, runTerminalStates, type RunState } from "./legacy";
+import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RunStore, Runner, canonicalJson, dumpJob, loadSnapshot, runTerminalStates, type RunState } from "./legacy";
+import { compileDynamicRunPlan } from "./legacy/dynamic-switch";
 import { PodmanError, type ContainerProvider } from "../runtime/podman";
 import { Approvals, type ApprovalStatus } from "./legacy/approvals";
 import { ContractRunner, type ContractKind, type ContractResult } from "./legacy/contract";
@@ -229,7 +230,7 @@ export async function runStationCli(argv: string[]): Promise<number> {
 }
 
 function printPlan(snapshot: Awaited<ReturnType<typeof loadSnapshot>>, line: string): number {
-  console.log(canonicalJson(compileRunPlan(snapshot, line).toJSON()));
+  console.log(canonicalJson(compileDynamicRunPlan(snapshot, line).toJSON()));
   return 0;
 }
 
@@ -412,7 +413,7 @@ async function runLineCli(context: Context, snapshots: RegistrySelection, operat
   }
   let id = target;
   if (operation === "run") {
-    const plan = compileRunPlan(snapshot, target);
+    const plan = compileDynamicRunPlan(snapshot, target);
     const inputs = materialInputs(fields.get("--in") ?? [], "--in", (port) => plan.inputs[port]?.startsWith("list<") ?? false);
     id = lines.start(target, {
       inputs, budgetCapUsd: fields.has("--budget") ? Number(required(fields, "--budget")) : undefined,

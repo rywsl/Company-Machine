@@ -134,6 +134,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/legacy-mailbox.test.ts` | 异步文件邮箱、并发请求、审批响应与异常路径 |
 | `backend/tests/legacy-operator.test.ts` | 工位任务渲染、调用参数和官方 CLI 转录 |
 | `backend/tests/legacy-runplan.test.ts` | 产线展开、绑定、执行顺序与计划持久化 |
+| `backend/tests/dynamic-switch.test.ts` | switch 计划、条件顺序、默认分支、重启恢复和失败原子性 |
 | `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
 | `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
@@ -218,6 +219,9 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m1/test_m1_09_cli.py::test_bean_lineage_json` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | CLI 封存后向上追溯，结果只包含原输入 Bean |
 | `removed/python/tests/acceptance/m2/test_m2_01_runplan.py::test_templated_params_recorded` | `backend/tests/legacy-runplan.test.ts` | `orders the example by dependency layer and records parameters and budgets` | 归档示例产线的 `to_s3.prefix` 保留模板原文和模板字段标记 |
 | `removed/python/tests/acceptance/m2/test_m2_03_line_runner.py::test_epoch_mismatch` | `backend/tests/legacy-snapshot.test.ts` | `rejects a Run tick from a LineRunner bound to a different epoch` | 不同 Registry 快照下拒绝推进同一个 Run |
+| `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_plain_line_digest_matches_m2` | `backend/tests/dynamic-switch.test.ts` | `compiles ordered switch cases and preserves the static plan document` | 示例静态 Line 的两个编译入口生成相同计划 |
+| `removed/python/tests/acceptance/m4/test_m4_01_dynamic.py::test_switch_first_match` | `backend/tests/dynamic-switch.test.ts` | `commits the first true choice, skip and submission in one tick across restart` | 两个真条件按声明顺序选择第一个，并持久化控制节点 |
+| `removed/python/tests/acceptance/m9/test_m9_01_dynamic_runtime.py::test_switch_selects_one_branch` | `backend/tests/dynamic-switch.test.ts` | `runs one selected branch and skips the alternative with no job` | 两种物料分别选择对应分支，控制节点无 Job，另一个分支跳过 |
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_init_sets_active_pointer_and_ref` | `backend/tests/registry-epochs.test.ts` | `initializes the active Git epoch in SQLite and refs/factory exactly once` | active 指针、Git 引用、SQLite 行和物化 epoch 一致 |
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_init_twice_rejected` | `backend/tests/registry-epochs.test.ts` | `initializes the active Git epoch in SQLite and refs/factory exactly once` | 重复初始化返回 `EPOCH_STATE_INVALID` |
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_build_writes_frozen_resolutions_once` | `backend/tests/registry-epochs.test.ts` | `freezes a committed Registry and its nonempty resolutions once` | 校验提交归档和预计算解析，重复构建保留写入过的解析文件 |

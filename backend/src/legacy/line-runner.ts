@@ -2,9 +2,10 @@ import { compileExpr, type EvalEnvironment } from "../../mrl/evaluator";
 import { compileTemplate } from "../../mrl/template";
 import { BOOL, DYN } from "../../mrl/types";
 import { JobCache, cacheableRoles } from "./cache";
+import { compileDynamicRunPlan, selectSwitchTarget, switchTargets } from "./dynamic-switch";
 import { FactoryError } from "./errors";
 import { terminalStates } from "./jobs";
-import { compileRunPlan, type PlanNode } from "./runplan";
+import type { PlanNode, RunPlan } from "./runplan";
 import { RunStore, runTerminalStates, type Run, type RunNode } from "./runs";
 import { inputsValue, propertyEnv } from "./values";
 import type { Runner } from "./runner";
@@ -20,7 +21,7 @@ export class LineRunner {
   }
 
   start(line: string, options: Parameters<RunStore["create"]>[1]): Run {
-    const plan = compileRunPlan(this.runner.snapshot, line);
+    const plan = compileDynamicRunPlan(this.runner.snapshot, line);
     const problems: Array<{ port: string; bean: string; reason: string }> = [];
     for (const [port, type] of Object.entries(plan.inputs)) {
       const ids = options.inputs[port];
@@ -46,7 +47,7 @@ export class LineRunner {
       }
     }
     for (const [step, variant] of Object.entries(options.variants ?? {})) {
-      if (!variant || !plan.nodes.some((node) => !node.implicit && node.step === step)) {
+      if (!variant || !plan.nodes.some((node) => node.kind === "station" && node.step === step)) {
         problems.push({ port: step, bean: "", reason: "variant" });
       }
     }
@@ -76,9 +77,29 @@ export class LineRunner {
 
       const submitted: string[] = [];
       if (run.state === "RUNNING") {
+        const dynamic = plan.nodes.some((node) => node.kind === "switch");
         for (const node of plan.nodes) {
-          if (nodes.get(node.id)?.state !== "WAITING" || !node.deps.every((dep) => nodes.get(dep)?.state === "DONE")) continue;
+          if (nodes.get(node.id)?.state !== "WAITING") continue;
           try {
+            if (dynamic) {
+              const readiness = this.dynamicReadiness(plan, node, nodes);
+              if (readiness === "waiting") continue;
+              if (readiness === "skipped") {
+                nodes.set(node.id, this.runs.skipNode(id, node.id));
+                continue;
+              }
+            } else if (!node.deps.every((dep) => nodes.get(dep)?.state === "DONE")) continue;
+            if (node.kind === "switch") {
+              if (!node.switch) throw new FactoryError("RUN_PLAN_INVALID", "运行计划缺少 switch 定义", { step: node.step });
+              const on = node.switch.on;
+              const ids = on.source === "input" ? run.inputs[on.port] : nodes.get(on.node)?.outputs[on.port];
+              const selected = selectSwitchTarget(node, (ids ?? []).map((bean) => this.runner.context.warehouse.get(bean)));
+              if (!plan.nodes.some((target) => target.id === selected)) {
+                throw new FactoryError("RUN_PLAN_INVALID", "switch 选中的步骤不在计划里", { step: node.step, selected });
+              }
+              nodes.set(node.id, this.runs.completeSwitch(id, node.id, selected));
+              continue;
+            }
             const inputs = this.nodeInputs(run, node, nodes);
             const params = this.nodeParams(run, node, plan.inputs);
             const material = cacheableRoles.has(node.role)
@@ -115,7 +136,7 @@ export class LineRunner {
       const active = [...nodes.values()].some((node) => node.state === "SUBMITTED");
       if (!active && (run.state === "FAILING" || run.state === "CANCELLING")) {
         this.runs.transition(id, run.state === "FAILING" ? "FAILED" : "CANCELLED");
-      } else if (run.state === "RUNNING" && [...nodes.values()].every((node) => node.state === "DONE")) {
+      } else if (run.state === "RUNNING" && [...nodes.values()].every((node) => node.state === "DONE" || node.state === "SKIPPED")) {
         const outputs = Object.fromEntries(Object.entries(plan.outputs).map(([name, [node, port]]) => [name, nodes.get(node)?.outputs[port] ?? []]));
         this.runs.transition(id, "SUCCEEDED", { outputs });
       }
@@ -125,6 +146,19 @@ export class LineRunner {
       }
       return submitted.sort();
     }).immediate();
+  }
+
+  private dynamicReadiness(plan: RunPlan, node: PlanNode, nodes: Map<string, RunNode>): "ready" | "waiting" | "skipped" {
+    const controls = node.deps.filter((dependency) => {
+      const definition = plan.node(dependency).switch;
+      return definition && switchTargets(definition).includes(node.step);
+    });
+    if (controls.some((id) => !["DONE", "SKIPPED"].includes(nodes.get(id)?.state ?? ""))) return "waiting";
+    if (controls.length && !controls.some((id) => nodes.get(id)?.params?.selected === node.step)) return "skipped";
+    const data = node.deps.filter((id) => !controls.includes(id));
+    if (data.some((id) => !["DONE", "SKIPPED"].includes(nodes.get(id)?.state ?? ""))) return "waiting";
+    if (data.length && data.every((id) => nodes.get(id)?.state === "SKIPPED") && !node.inputs.some(({ source }) => source === "input")) return "skipped";
+    return "ready";
   }
 
   async run(id: string): Promise<Run> {
