@@ -184,4 +184,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
   }
 }
 
-if (import.meta.main) process.exit(await main());
+if (import.meta.main) {
+  const code = await main();
+  if (Bun.argv[2] !== "serve" || code !== 0) process.exit(code);
+}
