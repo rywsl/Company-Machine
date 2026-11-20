@@ -213,6 +213,23 @@ describe("KiriProvider", () => {
     ]);
   });
 
+  test("starts the packaged service for the headless private socket", async () => {
+    const calls: string[][] = [];
+    let healthy = false;
+    const provider = new KiriProvider({
+      platform: "linux", mode: "linux-socket", socket: "/var/lib/kiri-daemon/.kiri/run/docker.sock", dockerExecutable: "docker-test",
+      runner: async (argv) => {
+        calls.push(argv);
+        if (argv[0] === "systemctl") { healthy = true; return result(); }
+        return healthy ? result("Kiri") : result("", "offline", 1);
+      },
+    });
+    await expect(provider.ensureReady()).resolves.toMatchObject({ available: true, machine: "linux-host" });
+    expect(calls.filter((argv) => argv[0] === "systemctl")).toEqual([
+      ["systemctl", "--no-ask-password", "start", "kiri.service"],
+    ]);
+  });
+
   test("reports systemd failures and leaves custom sockets to their supervisor", async () => {
     const calls: string[][] = [];
     const runner = async (argv: string[]) => {

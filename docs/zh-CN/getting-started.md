@@ -25,6 +25,8 @@ bun run backend/src/index.ts
 
 服务监听 `127.0.0.1:3000`，Web App 静态资源位于 `frontend/dist`。
 
+生产部署可以使用 `deploy/mao-control-plane.Containerfile` 构建 Podman 镜像，并用 `deploy/mao-control-plane.container` 作为 Quadlet 单元。`/healthz` 是进程存活检查，`/readyz` 会检查 SQLite 和当前 Podman/Kiri 运行时。
+
 ## 准备 Podman
 
 ```bash

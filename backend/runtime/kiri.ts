@@ -79,7 +79,7 @@ export function resolveKiriClient(options: KiriClientOptions = {}) {
     throw new Error("Invalid Kiri socket path");
   }
   const machine = platform === "linux" ? "linux-host" : null;
-  const managedService = platform === "linux" && socket === SERVICE_SOCKET;
+  const managedService = platform === "linux" && (socket === SERVICE_SOCKET || socket === HEADLESS_SERVICE_SOCKET);
   if (mode === "linux-socket") {
     if (platform !== "linux" || !socket) throw new Error("Kiri Linux socket mode requires a Linux host and an absolute socket path");
     env.DOCKER_CONTEXT = "";

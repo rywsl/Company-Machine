@@ -129,13 +129,13 @@ describe("PodmanProvider", () => {
       platform: "linux",
       runner: async () => ok(JSON.stringify({ host: { security: { rootless: false } } })),
     });
-    await expect(rootful.health()).resolves.toMatchObject({ available: false, rootless: false, reason: "podman-rootless-required" });
+    await expect(rootful.health()).resolves.toMatchObject({ available: false, rootless: false, reason: "podman-rootless-required; run as the MAO user and enable the rootless service with systemctl --user enable --now podman.socket" });
 
     const unknown = new PodmanProvider({
       platform: "linux",
       runner: async () => ok(JSON.stringify({ host: {} })),
     });
-    await expect(unknown.health()).resolves.toMatchObject({ available: false, rootless: null, reason: "podman-rootless-unknown" });
+    await expect(unknown.health()).resolves.toMatchObject({ available: false, rootless: null, reason: "podman-rootless-unknown; run podman info as the MAO user and enable the rootless service with systemctl --user enable --now podman.socket" });
   });
 
   test("reuses a locally available digest-pinned image without pulling", async () => {

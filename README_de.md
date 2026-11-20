@@ -76,7 +76,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
+bun run verify:bun                       # check specs, implementation and acceptance tests
 ```
 
 ### Ihre erste Linie
@@ -241,7 +241,7 @@ Exit-Codes: `0` Erfolg · `1` fachlicher Fehler · `2` Bedienfehler · `3` ungü
 
 ## Projektstatus
 
-Die aktuelle Konsistenzprüfung von Quellcode und Specs ist `uv run python tools/harness.py verify`. Die historischen Meilensteinbeschreibungen darunter dienen weiterhin als Projektkontext.
+Die aktuelle Konsistenzprüfung von Quellcode und Specs ist `bun run verify:bun`. Das alte `tools/harness.py` bleibt nur als Kompatibilitätsweiterleitung zu Bun erhalten. Die historischen Meilensteinbeschreibungen darunter dienen weiterhin als Projektkontext.
 
 | Meilenstein | Geliefert |
 |---|---|
@@ -291,7 +291,7 @@ Der vollständige Architekturentwurf (auf Chinesisch) ist [docs/architecture.md]
 
 ## Mitwirken
 
-Der aktuelle Entwicklungsablauf erlaubt gemeinsame Änderungen an Code, Specs und Abnahmetests. Vor Commit oder Push `uv run python tools/harness.py verify` ausführen. Siehe [AGENTS.md](AGENTS.md) und [docs/de/development.md](docs/de/development.md) für die Konsistenzprüfungen.
+Der aktuelle Entwicklungsablauf erlaubt gemeinsame Änderungen an Code, Specs und Abnahmetests. Vor Commit oder Push `bun run verify:bun` ausführen. Siehe [AGENTS.md](AGENTS.md) und [docs/de/development.md](docs/de/development.md) für die Konsistenzprüfungen.
 
 ## Lizenz
 

@@ -12,10 +12,22 @@ export class ApiError extends Error {
   }
 }
 
+function authHeaders(): Record<string, string> {
+  const runtime = globalThis as typeof globalThis & { __MAO_AUTH_TOKEN__?: string; __MAO_CSRF_TOKEN__?: string };
+  const token = runtime.__MAO_AUTH_TOKEN__ ?? import.meta.env.VITE_MAO_AUTH_TOKEN
+    ?? (typeof window !== "undefined" ? window.localStorage.getItem("mao-auth-token") ?? undefined : undefined);
+  const csrf = runtime.__MAO_CSRF_TOKEN__ ?? import.meta.env.VITE_MAO_CSRF_TOKEN
+    ?? (typeof window !== "undefined" ? window.localStorage.getItem("mao-csrf-token") ?? undefined : undefined);
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(csrf ? { "x-mao-csrf": csrf } : {}),
+  };
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...options,
-    headers: { Accept: "application/json", ...(options.headers ?? {}) },
+    headers: { Accept: "application/json", ...authHeaders(), ...(options.headers ?? {}) },
   });
   let payload: unknown = null;
   try {
@@ -129,25 +141,57 @@ export function subscribeToEvents(
   onError?: () => void,
   cursor?: string,
 ): () => void {
-  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-  const source = new EventSource(`/api/v1/events${query}`);
-  const handle = (message: MessageEvent<string>) => {
-    try {
-      const data = JSON.parse(message.data) as Record<string, unknown>;
-      onEvent({
-        id: message.lastEventId || undefined,
-        type: message.type || String(data.type ?? "message"),
-        data,
-        at: typeof data.at === "string" ? data.at : undefined,
-      });
-    } catch {
-      onError?.();
+  const controller = new AbortController();
+  let closed = false;
+  let nextCursor = cursor;
+  let retryTimer: number | undefined;
+  const parse = (frame: string) => {
+    let id = "";
+    let event = "message";
+    const data: string[] = [];
+    for (const line of frame.split(/\r?\n/)) {
+      if (line.startsWith("id:")) id = line.slice(3).trim();
+      else if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
     }
+    if (!data.length) return;
+    try {
+      const payload = JSON.parse(data.join("\n")) as Record<string, unknown>;
+      if (id) nextCursor = id;
+      onEvent({ id: id || undefined, type: event, data: payload, at: typeof payload.at === "string" ? payload.at : undefined });
+    } catch { onError?.(); }
   };
-  source.onmessage = handle;
-  for (const eventName of ["mao.event", "talk.message", "run.updated", "job.updated", "asset.sealed", "graph.updated", "bootstrap.updated"]) {
-    source.addEventListener(eventName, handle as EventListener);
-  }
-  source.onerror = () => onError?.();
-  return () => source.close();
+  const connect = () => {
+    if (closed) return;
+    const query = nextCursor ? `?cursor=${encodeURIComponent(nextCursor)}` : "";
+    void fetch(`/api/v1/events${query}`, { headers: authHeaders(), signal: controller.signal }).then(async (response) => {
+    if (!response.ok || !response.body) throw new Error(`event stream failed: ${response.status}`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    try {
+      while (!closed) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        pending += decoder.decode(chunk.value, { stream: true });
+        const frames = pending.split(/\r?\n\r?\n/);
+        pending = frames.pop() ?? "";
+        for (const frame of frames) parse(frame);
+      }
+      pending += decoder.decode();
+      if (pending.trim()) parse(pending);
+      if (!closed) {
+        onError?.();
+        retryTimer = window.setTimeout(connect, 1_000);
+      }
+    } finally { reader.releaseLock(); }
+    }).catch(() => {
+      if (!closed) {
+        onError?.();
+        retryTimer = window.setTimeout(connect, 1_000);
+      }
+    });
+  };
+  connect();
+  return () => { closed = true; if (retryTimer !== undefined) window.clearTimeout(retryTimer); controller.abort(); };
 }

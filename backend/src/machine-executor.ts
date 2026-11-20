@@ -1,6 +1,7 @@
 import type { EventBus } from "./event-bus";
 import type { SqliteStore } from "./db";
 import type { PrepareProjectSources } from "./project-source-mounts";
+import type { Project } from "./models";
 
 export interface MachineExecutorOptions {
   store: SqliteStore;
@@ -12,25 +13,39 @@ export interface MachineExecutorOptions {
    * preparation function.
    */
   prepareSources?: PrepareProjectSources;
+  /** Records a portable source activation that downstream Operators can consume. */
+  onActivated?: (project: Project, facts: readonly Record<string, unknown>[], machineId: string) => string[];
   onProgress?: (runId: string, completedUnitRunId: string) => void;
 }
 
 /** Executes the ordinary, source-backed Machine unit in a durable run. */
 export class MachineExecutor {
   private readonly active = new Map<string, Promise<void>>();
+  private readonly activeRuns = new Map<string, string>();
+  private readonly cancelledRuns = new Set<string>();
   private stopped = false;
 
   constructor(private readonly options: MachineExecutorOptions) {}
 
   dispatch(runId: string, unitRunId: string, recovering = false): Promise<void> {
     if (this.stopped) return Promise.resolve();
+    this.cancelledRuns.delete(runId);
     const existing = this.active.get(unitRunId);
     if (existing) return existing;
     const work = this.run(runId, unitRunId, recovering).finally(() => {
       this.active.delete(unitRunId);
+      this.activeRuns.delete(unitRunId);
     });
     this.active.set(unitRunId, work);
+    this.activeRuns.set(unitRunId, runId);
     return work;
+  }
+
+  async cancelRun(runId: string): Promise<void> {
+    this.cancelledRuns.add(runId);
+    await Promise.allSettled([...this.active.entries()]
+      .filter(([unitRunId]) => this.activeRuns.get(unitRunId) === runId)
+      .map(([, work]) => work));
   }
 
   async close(): Promise<void> {
@@ -43,6 +58,7 @@ export class MachineExecutor {
 
   private async run(runId: string, unitRunId: string, recovering: boolean): Promise<void> {
     const { store, events } = this.options;
+    if (this.cancelledRuns.has(runId)) return;
     const unitRun = store.getUnitRun(runId, unitRunId);
     const run = store.getBusinessRun(runId);
     const unit = unitRun ? store.getBusinessUnit(unitRun.unitId) : undefined;
@@ -63,16 +79,19 @@ export class MachineExecutor {
       if (!unit.projectId) throw new Error("machine-project-unavailable");
       const project = store.getProject(unit.projectId);
       if (!project || project.businessSystemId !== unit.businessSystemId) throw new Error("machine-project-unavailable");
+      let sourceFacts: readonly Record<string, unknown>[] = [];
       if (this.options.prepareSources) {
         const prepared = await this.options.prepareSources(project);
         try {
-          if (this.stopped) return;
+          sourceFacts = prepared?.facts ?? [];
+          if (this.stopped || this.cancelledRuns.has(runId)) return;
         } finally {
           prepared?.close();
         }
       }
-      if (this.stopped) return;
-      const completed = store.completeUnitRun(unitRun.id, "completed", [], undefined, attempt.ownerToken);
+      if (this.stopped || this.cancelledRuns.has(runId)) return;
+      const outputs = this.options.onActivated?.(project, sourceFacts, unit.id) ?? [];
+      const completed = store.completeUnitRun(unitRun.id, "completed", outputs, undefined, attempt.ownerToken);
       store.finishMachineAttempt(unitRun.id, attempt.attempt, completed ? "completed" : "failed", completed ? undefined : "machine-run-already-finished");
       if (!completed) return;
       events.publish("machine.run.completed", {
@@ -85,7 +104,7 @@ export class MachineExecutor {
       });
       this.options.onProgress?.(runId, completed.id);
     } catch (error) {
-      if (this.stopped) return;
+      if (this.stopped || this.cancelledRuns.has(runId)) return;
       const message = error instanceof Error ? error.message : String(error);
       const failed = store.completeUnitRun(unitRun.id, "failed", [], message, attempt.ownerToken);
       store.finishMachineAttempt(unitRun.id, attempt.attempt, failed ? "failed" : "completed", failed ? message : undefined);
@@ -101,5 +120,3 @@ export class MachineExecutor {
     }
   }
 }
-
-\n

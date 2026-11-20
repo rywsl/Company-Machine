@@ -130,7 +130,7 @@ export class OperatorCoordinator {
     }
     const { definition, profile, model, explicitModel } = binding;
     const sessionId = `${definition.id}:${unitRun.id}`;
-    const acpAvailable = Boolean(this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1");
+    const acpAvailable = Boolean(this.options.acpSpawn || process.env.MAO_ACP_AVAILABLE === "1" || profile.image);
     let useAcp: boolean;
     try {
       useAcp = requireDeclaredTransport(definition, acpAvailable) === "acp";

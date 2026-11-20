@@ -31,6 +31,10 @@ describe("Bun Podman runtime boundary", () => {
       expect((await second.json()).dependency.state).toBe("offline");
       expect(probes).toBe(1);
 
+      const readiness = await app.fetch(new Request("http://localhost/readyz"));
+      expect(readiness.status).toBe(503);
+      expect((await readiness.json()).ok).toBe(false);
+
       const response = await app.fetch(new Request("http://localhost/api/v1/runtime/ensure-ready", { method: "POST" }));
       expect(response.status).toBe(503);
       const failed = await response.json();

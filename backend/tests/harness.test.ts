@@ -27,6 +27,26 @@ test("cancels a pending official CLI event read when the owned stream stays open
   expect(terminations).toBe(1);
 });
 
+test("retains bounded redacted stderr on an official CLI failure", async () => {
+  const transport = new OfficialCliTransport(officialHarness("claude-code")!, () => ({
+    stdout: new ReadableStream({ start(controller) { controller.close(); } }),
+    stderr: new ReadableStream({ start(controller) {
+      controller.enqueue(encoder.encode("api_key=private-value\nprovider failed\n"));
+      controller.close();
+    } }),
+    stderrRedactions: ["private-value"],
+    exited: Promise.resolve(1),
+    kill() {},
+  }));
+  const session = await transport.start(acpRequest);
+  const events = [];
+  for await (const event of session.events()) events.push(event);
+  expect(events).toEqual([{
+    type: "session.failed",
+    metadata: { exitCode: 1, stderr: "api_key=[REDACTED]\nprovider failed" },
+  }]);
+});
+
 test("finds the Windows native Claude executable in PATH or next to the official npm shim", () => {
   const root = mkdtempSync(join(tmpdir(), "mao-claude-executable-"));
   try {

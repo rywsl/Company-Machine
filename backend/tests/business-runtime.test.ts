@@ -246,6 +246,45 @@ describe("Bun business execution loop", () => {
     } finally { app.stop(); }
   });
 
+  test("uses ACP from a configured Operator image without host ACP discovery", async () => {
+    const previous = process.env.MAO_ACP_AVAILABLE;
+    delete process.env.MAO_ACP_AVAILABLE;
+    let output!: ReadableStreamDefaultController<Uint8Array>;
+    const frame = (value: Record<string, unknown>) => new TextEncoder().encode(JSON.stringify(value) + "\n");
+    const app = createApp({
+      dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
+      runtime: { health: async () => ({ available: true, platform: "linux", executable: "kiri", machine: "linux-host", rootless: null }) },
+      operator: { spawn: (_argv, options) => ({
+        stdout: new ReadableStream({ start(controller) { output = controller; } }),
+        stdin: { write(data) {
+          const request = JSON.parse(new TextDecoder().decode(data));
+          if (request.method === "initialize") output.enqueue(frame({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1 } }));
+          if (request.method === "session/new") output.enqueue(frame({ jsonrpc: "2.0", id: request.id, result: { sessionId: "image-acp" } }));
+          if (request.method === "session/prompt") {
+            output.enqueue(frame({ jsonrpc: "2.0", method: "mao.record", params: { record_type: "material", kind: "fixture", ref: "material://image-acp", summary: "ACP image" } }));
+            output.enqueue(frame({ jsonrpc: "2.0", method: "session/complete", params: { sessionId: "image-acp" } }));
+            output.enqueue(frame({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } }));
+          }
+        } },
+        kill() { output?.close(); },
+      }) },
+    });
+    try {
+      const system = app.store.createBusinessSystem({ name: "ACP image" });
+      const project = app.store.createIntake({ business_system_id: system.id, name: "Project", repo_url: "https://example.test/project.git" });
+      app.store.saveHarnessProfile({ runtime: "kimi-code", role: "operator", baseUrl: "", model: "fixture", mode: "session", image: `registry.example/operator@sha256:${"a".repeat(64)}` });
+      app.store.updateOperatorBinding(system.id, `${project.id}:operator`, { harnessRuntime: "kimi-code" });
+      const run = app.store.createBusinessRun(system.id)!;
+      await app.operator.dispatch(run.id);
+      expect(app.store.listUnitRuns(run.id).find(({ unitId }) => unitId === `${project.id}:operator`)).toMatchObject({ status: "completed" });
+      expect(app.store.listArtifacts(project.id).some(({ ref }) => ref === "material://image-acp")).toBe(true);
+    } finally {
+      app.stop();
+      if (previous === undefined) delete process.env.MAO_ACP_AVAILABLE;
+      else process.env.MAO_ACP_AVAILABLE = previous;
+    }
+  });
+
   test("reserves engine connection and registry configuration for the deployment", () => {
     for (const name of ["CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_CONF", "REGISTRY_AUTH_FILE"]) {
       expect(projectCredentialName(name)).toBe(false);
@@ -333,8 +372,8 @@ describe("Bun business execution loop", () => {
       expect(invocations).toHaveLength(2);
       expect(invocations[1]).toMatchObject({ VIDEO_API_KEY: credential, PUBLISH_TOKEN: credential });
       expect(JSON.stringify(app.events.after())).not.toContain(credential);
-      expect(app.store.listArtifacts(project.id)).toHaveLength(1);
-      expect(app.store.listArtifacts(project.id)[0].summary).toBe("Produced with [REDACTED]");
+      expect(app.store.listArtifacts(project.id).filter((artifact) => artifact.kind === "build.report")).toHaveLength(1);
+      expect(app.store.listArtifacts(project.id).find((artifact) => artifact.kind === "build.report")?.summary).toBe("Produced with [REDACTED]");
     } finally {
       await app.operator.close();
       await app.foreman.close();
@@ -426,8 +465,8 @@ describe("Bun business execution loop", () => {
       const project = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "容器步骤", repo_url: "https://example.test/runtime.git" }) }))).json() as { id: string };
       app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "https://example.invalid", model: "codex-test", mode: "session", image: `registry.example/harness@sha256:${"a".repeat(64)}` });
       const run = await (await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/runs`, { method: "POST", headers, body: JSON.stringify({}) }))).json() as { id: string };
-      for (let attempt = 0; attempt < 30 && app.store.listArtifacts(project.id).length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
-      expect(app.store.listArtifacts(project.id)).toHaveLength(1);
+      for (let attempt = 0; attempt < 30 && !app.store.listArtifacts(project.id).some((artifact) => artifact.kind === "build.report"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(app.store.listArtifacts(project.id).filter((artifact) => artifact.kind === "build.report")).toHaveLength(1);
       expect(ensured).toBe(1);
       expect(spawned).toBe(1);
       expect(app.store.getBusinessRun(run.id)?.status).toBe("completed");
@@ -451,9 +490,9 @@ describe("Bun business execution loop", () => {
       const runResponse = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/runs`, { method: "POST", headers, body: JSON.stringify({ trigger: "test" }) }));
       expect(runResponse.status).toBe(201);
       const run = await runResponse.json() as { id: string };
-      for (let attempt = 0; attempt < 30 && app.store.listArtifacts(project.id).length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      for (let attempt = 0; attempt < 30 && app.store.getBusinessRun(run.id)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
       const artifacts = app.store.listArtifacts(project.id);
-      expect(artifacts).toHaveLength(1);
+      expect(artifacts.filter((artifact) => artifact.kind === "build.report")).toHaveLength(1);
       expect(artifacts[0].recordType).toBe("material");
       const details = await (await app.fetch(new Request(`http://localhost/api/v1/runs/${run.id}`))).json() as { status: string; units: Array<{ status: string }> };
       expect(details.status).toBe("completed");

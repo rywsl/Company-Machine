@@ -1,0 +1,22 @@
+[Unit]
+Description=MAO Bun control plane
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=localhost/mao-control-plane:latest
+ContainerName=mao-control-plane
+PublishPort=3000:3000
+Volume=%h/.local/share/mao:/var/lib/mao:Z
+Environment=FACTORY_ROOT=/var/lib/mao
+Environment=FACTORY_DB_PATH=/var/lib/mao/factory.db
+Environment=BUSINESS_DB_PATH=/var/lib/mao/factory.db
+Environment=MAO_CONTAINER_RUNTIME=podman
+Environment=MAO_WEB_DIST=/app/frontend/dist
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -37,7 +37,7 @@ test("web logs honor an incremental cursor and talk replies expose the event cur
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "hello" }),
     }));
     expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({ state: "accepted", eventCursor: app.store.latestEventSequence() });
+    expect(await response.json()).toMatchObject({ state: "waiting_foreman", setup_required: true, eventCursor: app.store.latestEventSequence() });
   } finally { app.stop(); }
 });
 
@@ -47,11 +47,18 @@ test("public artifact projection redacts metadata secrets", async () => {
     const project = app.store.createIntake({ name: "Secrets", skip_default_units: true });
     const response = await app.fetch(new Request(`http://localhost/api/v1/projects/${project.id}/artifacts`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "report", ref: "material://report", summary: "Report", metadata: { api_key: "TOPSECRET" } }),
+      body: JSON.stringify({ kind: "report", ref: "material://report", summary: "Report", metadata: { api_key: "TOPSECRET" }, files: [
+        { ref: "cas://relative", path: "reports/output.md" },
+        { ref: "file:///srv/private/output.md", path: "/srv/private/output.md" },
+      ] }),
     }));
     expect(response.status).toBe(201);
-    const value = await response.json() as { metadata: { api_key: string } };
+    const value = await response.json() as { metadata: { api_key: string }; files: Array<Record<string, unknown>> };
     expect(value.metadata.api_key).toBe("[REDACTED]");
+    expect(value.files).toEqual([
+      { ref: "cas://relative", path: "reports/output.md" },
+      { ref: "[REDACTED]" },
+    ]);
   } finally { app.stop(); }
 });
 
@@ -107,10 +114,34 @@ spec:
     expect(workareaResponse.status).toBe(200);
     const workarea = await workareaResponse.json() as { scope: string; id: string; nodes: Array<Record<string, any>>; edges: Array<Record<string, any>> };
     expect(workarea).toMatchObject({ scope: "workarea", id: "Line:consume@1" });
+    expect(workarea.nodes).toHaveLength(2);
     expect(workarea.nodes.every((node) => node.type === "operator" || node.type === "machine")).toBe(true);
     expect(workarea.edges.some((edge) => edge.kind === "material")).toBe(true);
   } finally {
     app.stop();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("public business projections redact metadata secrets and keep platform runtime admin-only", async () => {
+  const previousScopes = process.env.MAO_AUTH_SCOPES_JSON;
+  process.env.MAO_AUTH_SCOPES_JSON = JSON.stringify({ viewer: { role: "viewer", business_systems: ["system"] } });
+  const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
+  try {
+    const system = app.store.createBusinessSystem({ id: "system", name: "Scoped", metadata: { api_key: "raw-system-secret" } });
+    app.store.updateBusinessSystemMetadata(system.id, { graph: { nodes: [], edges: [], metadata: { api_key: "raw-graph-secret" } } });
+    const headers = { authorization: "Bearer viewer" };
+    const detail = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}`, { headers }));
+    expect(detail.status).toBe(200);
+    const body = await detail.json() as Record<string, any>;
+    expect(JSON.stringify(body)).not.toContain("raw-system-secret");
+    const graph = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, { headers }));
+    expect(graph.status).toBe(200);
+    expect(JSON.stringify(await graph.json())).not.toContain("raw-graph-secret");
+    expect((await app.fetch(new Request("http://localhost/api/v1/runtime", { headers }))).status).toBe(403);
+  } finally {
+    app.stop();
+    if (previousScopes === undefined) delete process.env.MAO_AUTH_SCOPES_JSON;
+    else process.env.MAO_AUTH_SCOPES_JSON = previousScopes;
   }
 });

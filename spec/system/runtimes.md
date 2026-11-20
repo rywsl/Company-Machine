@@ -181,6 +181,14 @@ spec:
 
 DeepSeek Harness 和 ZCode 的参考文件不猜测未公开的 CLI 子命令。部署时把官方发行物提供的可执行文件放在注入卷中，并让 ACP 进程自行完成供应商认证。Qwen 的 `qwen serve` HTTP/SSE 服务属于实验能力，不接入本项目的 stdio ACP 适配器。
 
+### 4.1.1 Bun 控制面运行时边界
+
+活动 Bun 控制面使用 `backend/src/harness.ts` 的同一份官方 Harness 目录。Operator 和 Foreman profile 提供 digest 固定的容器镜像时，镜像内 ACP 可执行文件满足 DeepSeek Harness、Kimi Code 和 ZCode 的 ACP 能力，不要求宿主 PATH 发现同名程序。没有镜像时，ACP 能力必须由注入的 ACP transport、`MAO_ACP_AVAILABLE=1` 或宿主 PATH 的官方程序明确提供，禁止把 ACP-only Harness 当作未知 CLI 启动。
+
+控制面启动官方 Harness 时保留最多 16 KiB 的 stderr 诊断。诊断进入会话失败元数据前替换 profile 环境值及常见 `api_key`、`token`、`secret`、`password` 和 `authorization` 字段，不能把原始凭据写入事件、日志或响应。
+
+Linux Kiri 的 `ensure-ready` 复用在线 Unix socket。标准 `/run/kiri/docker.sock` 与自动发现的 `/var/lib/kiri-daemon/.kiri/run/docker.sock` 都可以请求 systemd 启动 `kiri.service`。Linux Podman readiness 必须确认 rootless 能力，rootful 或未知状态返回 MAO 用户和 `systemctl --user enable --now podman.socket` 的恢复诊断。
+
 ### 4.2 `serve.json` 的增补（`daemon.md` 4.2）
 
 ```json

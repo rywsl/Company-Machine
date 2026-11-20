@@ -5,10 +5,10 @@
 提交或推送前，在仓库根目录运行校验：
 
 ```bash
-uv run python tools/harness.py verify
+bun run verify:bun
 ```
 
-上述兼容入口直接转发给 `tools/harness.ts`，也可通过 `bun run verify:bun` 调用。校验覆盖 Bun 后端、Podman/Kiri、活动规范双向映射、MRL 一致性与内核规则覆盖、代码策略和前后端类型检查。历史 Python 实现和旧验收保存在 `removed/python/`，完整迁移对照由 `bun run tools/harness.ts parity` 执行。
+当前校验入口直接运行 `tools/harness.ts`。`tools/harness.py` 仅保留为兼容转发，不再承载实现。校验覆盖 Bun 后端、Podman/Kiri、活动规范双向映射、MRL 一致性与内核规则覆盖、代码策略和前后端类型检查。历史 Python 实现和旧验收保存在 `removed/python/`，完整迁移对照由 `bun run tools/harness.ts parity` 执行。
 
 当前工作流不要求领取任务、启动任务、通过阶段门或维护 harness 状态。`plan/tasks/`、`plan/journal/` 和其他历史计划资料可以保留作背景资料，但不作为实现入口，`verify:bun` 也不读取或写入它们。
 

@@ -5,7 +5,7 @@ import type { Context } from "./legacy/context";
 import { LineRunner } from "./legacy/line-runner";
 import type { Run } from "./legacy/runs";
 import { Runner } from "./legacy/runner";
-import { loadSnapshot, type Snapshot } from "./legacy/snapshot";
+import { loadSnapshot, RegistrySnapshotStore, type Snapshot } from "./legacy/snapshot";
 
 export type BusinessKernelBinding = {
   registryRoot: string;
@@ -27,7 +27,7 @@ export type BusinessKernelSnapshot = BusinessKernelBinding & {
   machines: string[];
 };
 
-function binding(system: BusinessSystem): BusinessKernelBinding | undefined {
+export function businessKernelBinding(system: BusinessSystem): BusinessKernelBinding | undefined {
   const value = system.metadata.kernel;
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -60,11 +60,7 @@ function binding(system: BusinessSystem): BusinessKernelBinding | undefined {
   };
 }
 
-/** Load and validate the MAO Registry facts for a business system. */
-export async function loadBusinessKernel(system: BusinessSystem): Promise<BusinessKernelSnapshot | undefined> {
-  const configured = binding(system);
-  if (!configured) return undefined;
-  const snapshot = await loadSnapshot(configured.registryRoot);
+function kernelFromSnapshot(configured: BusinessKernelBinding, snapshot: Snapshot): BusinessKernelSnapshot {
   const lineKey = snapshot.key("Line", configured.line);
   const line = snapshot.spec(lineKey);
   const stations = new Set<string>();
@@ -84,6 +80,32 @@ export async function loadBusinessKernel(system: BusinessSystem): Promise<Busine
   return { ...configured, line: lineKey, epoch: snapshot.epoch, snapshot, stations: [...stations].sort(), machines: [...machines].sort() };
 }
 
+/** Load and validate the MAO Registry facts for a business system. */
+export async function loadBusinessKernel(system: BusinessSystem): Promise<BusinessKernelSnapshot | undefined> {
+  const configured = businessKernelBinding(system);
+  if (!configured) return undefined;
+  return kernelFromSnapshot(configured, await loadSnapshot(configured.registryRoot));
+}
+
+/** Persist and recover the exact Registry snapshot selected for a BusinessRun. */
+export async function captureBusinessKernel(kernel: BusinessKernelSnapshot, factoryRoot: string, clock?: import("./legacy/foundation").Clock): Promise<BusinessKernelSnapshot> {
+  const context = (await import("./legacy/context")).Context.open(factoryRoot, { clock });
+  try {
+    const snapshot = await new RegistrySnapshotStore(context.db).capture(kernel.registryRoot);
+    return kernelFromSnapshot(kernel, snapshot);
+  } finally { context.close(); }
+}
+
+export async function materializeBusinessKernel(system: BusinessSystem, factoryRoot: string, epoch: string, lineOverride?: string): Promise<BusinessKernelSnapshot | undefined> {
+  const configured = businessKernelBinding(system);
+  if (!configured) return undefined;
+  const context = (await import("./legacy/context")).Context.open(factoryRoot);
+  try {
+    const snapshot = await new RegistrySnapshotStore(context.db).materialize(epoch, configured.registryRoot);
+    return kernelFromSnapshot({ ...configured, ...(lineOverride ? { line: lineOverride } : {}) }, snapshot);
+  } finally { context.close(); }
+}
+
 export function kernelRunMetadata(kernel: BusinessKernelSnapshot): { kernel: Record<string, unknown> } {
   return {
     kernel: {
@@ -92,6 +114,11 @@ export function kernelRunMetadata(kernel: BusinessKernelSnapshot): { kernel: Rec
       epoch: kernel.epoch,
       stations: kernel.stations,
       machines: kernel.machines,
+      ...(kernel.inputs ? { inputs: kernel.inputs } : {}),
+      ...(kernel.variants ? { variants: kernel.variants } : {}),
+      ...(kernel.budgetCapUsd === undefined ? {} : { budget_cap_usd: kernel.budgetCapUsd }),
+      ...(kernel.useCache === undefined ? {} : { use_cache: kernel.useCache }),
+      ...(kernel.sinkMode ? { sink_mode: kernel.sinkMode } : {}),
       ...(kernel.factoryRoot ? { factory_root: "factory://configured" } : {}),
       ...(kernel.inputs ? { execution: "legacy" } : {}),
     },

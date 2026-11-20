@@ -234,6 +234,21 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS unit_runs_unfinished ON unit_runs(run_id) WHERE status!='completed';
       CREATE INDEX IF NOT EXISTS business_conversions_system ON business_conversions(business_system_id, created_at, id);
     `);
+    this.db.transaction(() => {
+      const duplicates = this.db.query<{ duplicate: string }>(`
+        SELECT duplicate.id AS duplicate
+        FROM business_conversions AS keep
+        JOIN business_conversions AS duplicate
+          ON duplicate.business_system_id=keep.business_system_id
+         AND duplicate.kind=keep.kind
+         AND duplicate.summary=keep.summary
+         AND duplicate.inputs=keep.inputs
+         AND duplicate.outputs=keep.outputs
+         AND duplicate.id > keep.id
+      `).all();
+      for (const { duplicate } of duplicates) this.db.query("DELETE FROM business_conversions WHERE id=?").run(duplicate);
+      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS business_conversions_identity ON business_conversions(business_system_id, kind, summary, inputs, outputs)");
+    }).immediate();
     this.addColumnIfMissing("harness_profiles", "session_timeout_s", `INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}`);
     this.addColumnIfMissing("business_run_graphs", "edges_indexed", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("machine_attempts", "owner_token", "TEXT");
@@ -314,8 +329,9 @@ export class SqliteStore {
 
   createBusinessSystem(input: Partial<BusinessSystem> & { name: string }): BusinessSystem {
     const timestamp = this.timestamp();
+    const metadata = redactStoredValue(input.metadata ?? {}) as Record<string, unknown>;
     const value: BusinessSystem = { id: input.id ?? this.uuid(), name: input.name, description: input.description,
-      status: input.status ?? "active", metadata: input.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
+      status: input.status ?? "active", metadata, createdAt: timestamp, updatedAt: timestamp };
     this.db.query("INSERT INTO business_systems (id,name,description,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
       .run(value.id, value.name, value.description ?? null, value.status, json(value.metadata), timestamp, timestamp);
     return value;
@@ -324,7 +340,7 @@ export class SqliteStore {
   updateBusinessSystemMetadata(id: string, metadata: Record<string, unknown>): BusinessSystem | undefined {
     const current = this.db.query("SELECT * FROM business_systems WHERE id = ?").get(id) as any;
     if (!current) return undefined;
-    const merged = { ...parseJson(current.metadata), ...metadata };
+    const merged = redactStoredValue({ ...parseJson(current.metadata), ...metadata }) as Record<string, unknown>;
     const updatedAt = this.timestamp();
     this.db.query("UPDATE business_systems SET metadata = ?, updated_at = ? WHERE id = ?").run(json(merged), updatedAt, id);
     return { id: current.id, name: current.name, description: current.description ?? undefined, status: current.status, metadata: merged, createdAt: current.created_at, updatedAt };
@@ -373,15 +389,17 @@ export class SqliteStore {
 
   createIntake(input: IntakeInput, identity?: { projectId: string; sourceIds: readonly string[] }): Project {
     const timestamp = this.timestamp();
+    const projectMetadata = redactStoredValue(input.metadata ?? {}) as Record<string, unknown>;
     const project: Project = { id: identity?.projectId ?? this.uuid(), businessSystemId: input.business_system_id,
-      name: input.name ?? input.project_name ?? "Untitled project", metadata: input.metadata ?? {},
+      name: input.name ?? input.project_name ?? "Untitled project", metadata: projectMetadata,
       createdAt: timestamp, updatedAt: timestamp, sources: [], secretRequests: [] };
     this.db.query("INSERT INTO projects (id,business_system_id,name,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?)")
       .run(project.id, project.businessSystemId ?? null, project.name, json(project.metadata), timestamp, timestamp);
     const addSource = (kind: ProjectSource["kind"], fields: { repoUrl?: string; fileRef?: string; localFolder?: string }, metadata: Record<string, unknown> = {}) => {
       const source: ProjectSource = { id: identity?.sourceIds[project.sources.length] ?? this.uuid(), projectId: project.id, kind, ...fields, metadata, createdAt: timestamp };
+      const safeMetadata = redactStoredValue(metadata) as Record<string, unknown>;
       this.db.query("INSERT INTO project_sources (id,project_id,kind,repo_url,file_ref,local_folder,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)")
-        .run(source.id, source.projectId, source.kind, source.repoUrl ?? null, source.fileRef ?? null, source.localFolder ?? null, json(metadata), timestamp);
+        .run(source.id, source.projectId, source.kind, source.repoUrl ?? null, source.fileRef ?? null, source.localFolder ?? null, json(safeMetadata), timestamp);
       project.sources.push(source);
     };
     if (input.repo_url) addSource("repo_url", { repoUrl: input.repo_url });
@@ -399,7 +417,7 @@ export class SqliteStore {
       else if (source.kind === "local_folder") addSource("local_folder", {}, source.metadata);
     }
     for (const request of input.secret_requests ?? []) {
-      const secret = this.createSecretRequest({ projectId: project.id, name: request.name, vaultRef: `vault://secret/${this.uuid()}`, metadata: request.metadata });
+      const secret = this.createSecretRequest({ projectId: project.id, name: request.name, vaultRef: `vault://secret/${this.uuid()}`, metadata: redactStoredValue(request.metadata ?? {}) as Record<string, unknown> });
       if (!project.secretRequests.some(({ id }) => id === secret.id)) project.secretRequests.push(secret);
     }
     if (project.businessSystemId && !input.skip_default_units) {
@@ -421,10 +439,11 @@ export class SqliteStore {
 
   createBusinessUnit(input: Omit<BusinessUnit, "createdAt" | "updatedAt">): BusinessUnit {
     const timestamp = this.timestamp();
+    const metadata = redactStoredValue(input.metadata ?? {}) as Record<string, unknown>;
     this.db.query("INSERT INTO business_units (id,business_system_id,project_id,kind,name,harness_runtime,model,machine_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(input.id, input.businessSystemId, input.projectId ?? null, input.kind, input.name, input.harnessRuntime ?? null,
-        input.model ?? null, input.machineRef ?? null, input.status, json(input.metadata), timestamp, timestamp);
-    return { ...input, createdAt: timestamp, updatedAt: timestamp };
+        input.model ?? null, input.machineRef ?? null, input.status, json(metadata), timestamp, timestamp);
+    return { ...input, metadata, createdAt: timestamp, updatedAt: timestamp };
   }
 
   getBusinessUnit(id: string): BusinessUnit | undefined {
@@ -445,9 +464,10 @@ export class SqliteStore {
       if (!this.db.query("SELECT 1 FROM business_systems WHERE id = ?").get(businessSystemId)) return undefined;
       const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.status !== "archived");
       const timestamp = this.timestamp();
-      const run: BusinessRun = { id: this.uuid(), businessSystemId, status: units.length ? "queued" : "failed", trigger, metadata, createdAt: timestamp, updatedAt: timestamp };
+      const safeMetadata = redactStoredValue(metadata) as Record<string, unknown>;
+      const run: BusinessRun = { id: this.uuid(), businessSystemId, status: units.length ? "queued" : "failed", trigger, metadata: safeMetadata, createdAt: timestamp, updatedAt: timestamp };
       this.db.query("INSERT INTO business_runs (id,business_system_id,status,trigger,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-        .run(run.id, businessSystemId, run.status, trigger, json(metadata), timestamp, timestamp);
+        .run(run.id, businessSystemId, run.status, trigger, json(safeMetadata), timestamp, timestamp);
       if (dispatch && run.status === "queued") this.authorizeBusinessRunDispatch(run.id);
       const edges = this.businessGraph(businessSystemId).edges;
       this.db.query("INSERT INTO business_run_graphs (run_id, edges) VALUES (?,?)").run(run.id, json(edges));
@@ -551,7 +571,7 @@ export class SqliteStore {
     return this.db.transaction(() => {
       const current = this.getBusinessRun(id);
       if (!current) return undefined;
-      const metadata = { ...current.metadata, ...patch };
+      const metadata = redactStoredValue({ ...current.metadata, ...patch }) as Record<string, unknown>;
       this.db.query("UPDATE business_runs SET metadata=?, updated_at=? WHERE id=?").run(json(metadata), this.timestamp(), id);
       return this.getBusinessRun(id);
     }).immediate();

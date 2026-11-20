@@ -238,14 +238,17 @@ M18 的正式用户入口由 `factory web` 启动。默认服务绑定 `127.0.0.
 真实前端通过以下同源 API 读取现有控制面事实。
 
 - `GET /api/web/bootstrap` 返回版本、运行连接状态、工厂图、厂区图、看板摘要、资产摘要、日志摘要、Harness 能力和当前宪法版本
+- `GET /healthz` 返回控制面进程存活状态。`GET /readyz` 同时检查 SQLite 和当前 Podman/Kiri 运行时，运行时未就绪时返回 `503` 和恢复诊断
 - `GET /api/web/graph?scope=factory` 返回工厂层聚合图
 - `GET /api/web/graph?scope=workarea&workarea=<line-key>` 返回指定厂区内部图
 - `GET /api/web/assets?limit=<n>` 返回脱敏后的资产摘要和来源引用，默认读取最近 100 条。SQLite 先按时间和标识倒序选择所需的业务资产，再用历史资产补足额度。响应沿用历史资产在前的展示顺序，附件授权只查询入选的资产。
+- 资产附件只公开业务相对路径和已授权的下载引用。绝对宿主路径、`file://` 引用以及其他本地存储定位不会进入 Web 投影。
 - 浏览器使用 `GET /api/web/bootstrap?assetLimit=100` 获取首屏资产。响应在 `assets` 中返回该窗口，同时提供总数 `assetTotal` 和 `assetOlderCursor`。省略 `assetLimit` 时，`assets` 返回完整列表。
 - `GET /api/web/assets/page?limit=100&older=<cursor>` 返回 `items`、`total` 与 `olderCursor`。页大小接受 1 至 100，游标为空时读取最新一页。资产按历史库和业务库的展示顺序分页。在浏览较早资产期间新增的较新记录可回到最新页查看，继续翻页仍从当前游标读取更早的记录。
 - `GET /api/web/logs?limit=<n>&since=<cursor>` 返回事件、运行、验证、修复、资源请求和异常摘要
 - `GET /api/web/talk` 返回最近的 Foreman 对话，默认 80 条，`limit` 接受 1 到 1000。查询先取活动消息，条数不足时从归档对话补齐。页面引导响应使用相同查询。
 - `POST /api/web/talk` 接受 `{ "text": "..." }`，使用本地用户身份调用现有 `talk.post_human`，把消息投递给常驻 Foreman。控制面不在此请求中调用模型 API
+- Foreman 尚未配置时，消息仍持久化进入队列，响应状态为 `waiting_foreman` 并带 `setup_required=true`。页面把它显示为配置前等待，不能显示为已完成
 - 页面引导响应附带 SSE 游标和进行中的厂长回复。浏览器按邮箱消息 ID 累积 `foreman.reply.delta`，完成后用持久化消息替换流式内容，重连从已接收的事件继续。
 - 从同一 Harness 更新提取的会话事件与可见回复增量按顺序写入同一个 SQLite 事务，提交后通知 SSE 连接。刷新页面或断线重连使用相同的增量记录。
 - SSE 按游标分批从 SQLite 读取，单批最多 128 条，并随客户端读取推进。当前进程的事件直接唤醒等待中的流。CLI 在另一进程写入同一数据库的业务事件在空闲等待时每 250 毫秒检查一次。当前厂区收到对应 DAG 事件时重新读取图。断开连接或停止服务时释放订阅和计时器。
@@ -304,6 +307,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - Web 编排页读取业务运行列表并显示每个运行的状态和单元数量。`POST /api/v1/runs/<id>/cancel` 取消仍可控的业务运行，`POST /api/v1/runs/<id>/retry` 为失败运行创建可追踪的重试运行。取消请求会先停止本次运行仍在等待或读取输出的官方 Harness，并等待其控制面清理完成后返回，旧进程不能覆盖 `cancelled` 状态。取消后的重试清除本次取消标记，重新使用原始输入和 DAG，每个 Operator 最多启动一次新的 Harness 尝试，不重复登记已完成的 Machine 或 Conversion。后端未提供运行汇总时，看板显示“待观测”，不把缺失状态渲染为零。
 - 创建业务运行默认同时记录派发授权。请求使用 `dispatch: false` 时保留待派发状态，直到调用显式派发接口。历史运行缺少派发记录且没有已完成的 Operator 时，继续通过显式接口派发。
 - 业务运行按 DAG 前置边决定就绪状态。每个未归档的 Operator 和 Machine 都在运行快照中拥有一个 `unit_run`。普通 Machine 在满足前置条件后由控制面执行确定性的项目来源激活，状态从 `queued` 进入 `running`，并持久化 `machine_attempts` 的 attempt、session 和终态。来源激活会验证本地文件夹与上传文件的可用性，仓库 URL 只作为已登记来源事实保留，实际项目操作仍由官方 Operator Harness 负责。控制面重启后按 `machine:<unit-run-id>` session 恢复未完成的 Machine，失败会写入 `machine.run.failed` 并通过业务运行的 retry 重新建立下一次 attempt。kernel `inputs` 绑定的 Machine 则进入 `running`，由 legacy `LineRunner` 驱动真实 Job、Gate 和 Bean 输出，完成或失败后再推进同一份业务 DAG。Operator 成功完成后，控制面通过该次运行的依赖边索引检查其直接后继。后继在全部前置基础单元完成后才能领用，输入先保留原有物料，再按依赖快照中的边顺序合并产物引用并去重。首次派发、启动恢复、资源恢复和失败会按完整运行重新核对就绪状态。
+- 普通 Machine 来源激活成功后登记一份 `project.source` Material，作为 Operator 的稳定输入引用。重复恢复和重试复用同一项目来源 Material。取消运行会等待 Machine 来源准备和 Operator Harness 清理完成后再写入终态。
 - 前置 Operator 失败或被阻塞时，所有受影响的后继 Operator 必须进入 `blocked`，业务运行进入 `failed`，不能因没有新的可调度单元而永久停留在 `running`
 - `GET/POST /api/v1/projects/<id>/artifacts` 读写带摘要、用途、文件引用、输入输出和 lineage 的物料 JSON
 - `GET /api/v1/projects/<project-id>/artifacts/<artifact-id>/files/<sha256>` 通过项目与记录的文件授权返回下载。资产界面展示文件名和已授权下载入口。
@@ -311,6 +315,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 
 Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现。运行在领用单元时解析绑定，并记录官方 Harness ID 和生效的模型 ID。官方 CLI 接收模型参数。ACP 使用 `session/new` 或 `session/load` 提供的 `model` 配置选项，并在 `session/prompt` 前确认选择。Kimi Code 通过 `--model MODEL acp` 接收模型，Pi 通过 `--model MODEL` 接收模型，Qwen Code 通过 `--model MODEL` 接收模型。无法使用明确绑定的模型时，执行会报告原因。
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
+- 业务系统、DAG、运行、基础单元和 Conversion 的公开响应统一经过字段级脱敏。平台 scoped viewer 不能读取平台机器、可执行文件和运行时连接细节，只有管理员可以读取或启动全局运行时。
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
 - 保存厂长 Harness 配置后，控制面立即重新扫描此前已入队的厂长消息并派发，不要求重启服务或用户再次点击 dispatch。服务启动和恢复周期会按 `claimed_at` 回收超过 `MAO_FOREMAN_CLAIM_TIMEOUT_S` 的失联轮次，默认超时为 900 秒，并记录 `foreman.message.requeued` 事件。
@@ -318,15 +323,15 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，每个新领用的 Operator 单元在 SQLite 保存执行进程归属。Linux 服务启动时在同一内核启动和 PID 命名空间内检查归属，只有系统确认原 PID 已退出才将其置为 `failed` 并记录 `CONTROL_PLANE_RESTART`，保留已登记产物与会话编号。外部执行结果由用户核对后决定后续动作。活跃、无法核实以及历史没有归属记录的 `running` 单元保留原状态。等待资源的单元继续通过现有资源请求流程恢复。容器化 Operator 在领取单元前检查运行时。检查失败、超时或服务停止时，单元保留 `queued` 状态。成功执行 `POST /api/v1/runtime/ensure-ready` 后，通过正常 DAG 就绪规则恢复已授权的排队工作。服务在五秒内复用确认在线的运行时状态。
 - kernel 绑定的 Machine 运行在 `unit_run.session_id=legacy:<unit-run-id>` 下，并在 BusinessRun metadata 保存 legacy Run ID。控制面重启后按该 Run ID 调用既有 `LineRunner` 恢复，避免重新提交 Job；若崩溃发生在 Run ID 持久化之前，则启动一个新的 legacy Run 并把旧的 Machine 运行标为失败或由用户重试。
 - Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
-- ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环。Pi 的官方 CLI 使用 `--print --mode json`，Qwen Code 的官方 CLI 使用 `-p PROMPT --output-format stream-json`，两者均由控制面解析 stdout JSONL。DeepSeek Harness、Kimi Code 和 ZCode 没有可用 ACP 时必须直接报告 Harness 不可用，不能回退到未确认的通用 CLI 参数
+- ACP 传输必须通过官方 JSON-RPC 会话边界完成 `initialize`、`session/new` 或 `session/load`、`session/prompt`。业务请求进入官方 Harness 的 stdin，`session/update` 通知进入 SSE。控制面只解析协议事件，不实现模型循环。Pi 的官方 CLI 使用 `--print --mode json`，Qwen Code 的官方 CLI 使用 `-p PROMPT --output-format stream-json`，两者均由控制面解析 stdout JSONL。DeepSeek Harness、Kimi Code 和 ZCode 没有可用 ACP 时必须直接报告 Harness 不可用，不能回退到未确认的通用 CLI 参数。Operator 和 Foreman profile 提供 digest 固定的容器镜像时，镜像内的官方 ACP 入口属于该轮的 ACP 能力，不要求宿主 PATH 另有 ACP 可执行文件
 - ACP 使用官方 `sessionId`。只有 Harness 在初始化中声明 `loadSession` 时才请求恢复会话，恢复时收到的历史通知不进入当前回复。`session/prompt` 响应中的 `end_turn` 结束当前轮，无须等待 stdout 关闭。其他停止原因、JSON-RPC 错误和提前 EOF 终止当前轮并保留原因。握手限时 30 秒，单条消息最大 1 MiB，启动前暂存最多 128 条通知和 4 MiB。
-- Harness profile 提供 digest 固定的 `image` 时，官方 CLI 和 ACP 使用活动容器运行时。启动前控制面检查本地镜像，缺失时按 GeoIP 选择 Docker Hub 镜像源拉取并再次校验原始 digest。拉取失败或摘要不一致时，运行保持未启动并返回明确的镜像诊断。Linux Kiri 默认以 `docker --host unix:///run/kiri/docker.sock run` 启动。沙箱使用非 root、只读根文件系统、`--init`、`--pids-limit 256`、`--tmpfs /tmp` 和 `cap-drop ALL`，默认网络为 `none`。
+- Harness profile 提供 digest 固定的 `image` 时，官方 CLI 和 ACP 使用活动容器运行时。启动前控制面检查本地镜像，缺失时按 GeoIP 选择 Docker Hub 镜像源拉取并再次校验原始 digest。拉取失败或摘要不一致时，运行保持未启动并返回明确的镜像诊断。Linux Kiri 默认以 `docker --host unix:///run/kiri/docker.sock run` 启动。沙箱使用非 root、只读根文件系统、`--init`、`--pids-limit 256`、`--tmpfs /tmp` 和 `cap-drop ALL`，默认网络为 `none`。官方 Harness 子进程的 stderr 只保留有界诊断，并在进入事件、日志和错误状态前替换部署凭据及常见密钥字段
 - 容器内的 `HOME`、XDG 配置和缓存使用本轮的 `/tmp`。控制面给每个容器分配名称，会话停止时清理该名称对应的容器。
 - 容器 Harness 选择 `egress` 时，启动器先确认隔离代理就绪，再把官方 CLI 的 JSONL 或 ACP 的双向标准流接入会话。出网目标取已保存的 Base URL 主机和部署方配置的 `MAO_HARNESS_EGRESS_HOSTS`。该路径使用本地固定的 `MAO_EGRESS_RELAY_IMAGE`。会话结束或取消时清理隔离代理及容器。 [出网规范](egress.md)
 - Windows 原生 Claude Code 直接通过 PATH 找到的 `claude.exe` 启动。PATH 命中 npm 的 `claude.cmd` 时，优先启动同一安装目录下官方包附带的 `node_modules/@anthropic-ai/claude-code/bin/claude.exe`，使包含换行的提示词原样进入 CLI。找不到原生文件时沿用 PATH 启动。
 - 取消 Windows 原生 Harness 会终止控制面本次启动且仍在运行的进程树。取消官方 CLI 会话也会取消正在等待的输出读取，避免 npm 命令包装器的子进程持有管道导致会话无法结束。
 - 带 `image` 的 Foreman 和 Operator 会在启动官方 Harness 前调用当前 ContainerProvider 的 readiness。并发启动共享一次 readiness promise，失败时不会启动 Harness
-- Linux Kiri 与 Podman 中的容器厂长通过当前轮的文件邮箱管理业务。容器获得 `/mao/foreman/requests` 写入权限和 `/mao/foreman/responses` 读取权限。请求包含 `id`、`op` 和 `args`，写入临时文件后以 0644 权限原子重命名为 `<id>.json`。MAO 调用固定的业务 API 来查询工位、更新 DAG、绑定 Operator、登记产物与转换、派发运行，并在同名响应文件返回结果。项目接收轮的操作范围是该项目及其所属业务系统，普通厂长轮可操作当轮列出的业务系统。文件通过引用登记。正常结束后处理已提交请求，取消时停止接收新请求，然后清理本轮目录。
+- Linux Kiri 与 Podman 中的容器厂长通过当前轮的文件邮箱管理业务。容器获得 `/mao/foreman/requests` 写入权限和 `/mao/foreman/responses` 读取权限。请求包含 `id`、`op` 和 `args`，写入临时文件后以 0644 权限原子重命名为 `<id>.json`。MAO 调用固定的业务 API 来查询工位、更新 DAG、绑定 Operator、登记产物与转换、派发运行，并在同名响应文件返回结果。项目接收轮的操作范围是该项目及其所属业务系统，普通厂长轮可操作当轮列出的业务系统。文件通过引用登记。正常结束后处理已提交请求，取消时停止接收新请求，然后清理本轮目录。官方 Harness 子进程的有界 stderr 诊断遵循与邮箱、事件相同的凭据脱敏边界。
 - 厂长邮箱除了写入业务图、绑定、记录、转换和运行，还可以读取 `business.runs`、`business.artifacts`、`business.materials` 和 `business.conversions`。返回值只保留状态、标识、引用和面向人的摘要，厂长据此继续执行失败恢复和转换维护。
 - 厂长发现缺少必需配置时，使用邮箱操作 `project.secret.request` 为当前项目申请一个密钥，参数包括 `projectId`、`name` 和可选的 `purpose`、`scope`。响应只含请求 ID 和状态。项目接收轮只允许当前项目，普通对话轮可以操作该轮列出或新登记的业务系统中的项目。Web 收到 `secret.requested` 后更新厂长面板的项目资源入口，用户可查看请求项目和密钥名并在资源抽屉提交配置。
 - 原生厂长通过 `factory project secret request <project-id> --name <KEY> --purpose <用途>` 提交同样的项目资源请求。每次指定一个实际缺少的配置，返回请求 ID 和状态。
@@ -342,7 +347,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
 - SSE 发生读取错误时，前端连接状态进入 `degraded`，恢复收到事件后回到 `connected`。发送 Foreman 消息失败时保留输入内容并显示错误，不能清空输入后伪装成已提交。
 - `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
-- `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Linux Kiri 先探测套接字并复用在线服务，需要时请求 systemd 启动官方 `kiri.service`。headless Kiri 发行版的 `/var/lib/kiri-daemon/.kiri/run/docker.sock` 会自动发现，自定义套接字使用部署方的服务管理。不可用时返回 503 和诊断。
+- `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Linux Kiri 先探测套接字并复用在线服务，需要时请求 systemd 启动官方 `kiri.service`，包括自动发现的 headless Kiri `/var/lib/kiri-daemon/.kiri/run/docker.sock`。自定义套接字使用部署方的服务管理。Linux Podman 不满足 rootless 条件时返回明确的 MAO 用户和 `systemctl --user enable --now podman.socket` 恢复诊断，不把 rootful 或未知状态报告为在线。不可用时返回 503 和诊断。
 
 并发的运行时状态查询共用一次在途探测，结果缓存 5 秒。主动就绪检查在并发的被动探测期间完成时，后返回的被动探测使用最新的就绪结果。
 - Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，运行时健康检查和带镜像的官方 Harness/ACP 启动必须复用同一解析结果，避免桌面进程继承旧 PATH 后误报运行时缺失
@@ -372,6 +377,8 @@ Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。
 
 容器运行时默认采用 Podman。设置 `MAO_CONTAINER_RUNTIME=kiri` 后，Linux 通过 `/run/kiri/docker.sock` 或自动发现的 headless Kiri 私有套接字与官方服务通信。Windows 上 Kiri 使用自己的 WSL 后端。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。
 
+前端 API 请求可从 `VITE_MAO_AUTH_TOKEN`、`VITE_MAO_CSRF_TOKEN` 或本地 `mao-auth-token`、`mao-csrf-token` 存储读取平台凭据。事件流使用带 Bearer header 的 fetch SSE，并从最后游标自动重连，不能依赖无法附加凭据的原生 EventSource。
+
 后端性能基线由 `backend/bench.ts` 生成。交互 API 的本地单用户 p95 目标为 200ms，Foreman 首个事件目标为 1s，事件增量延迟目标为 2s。读模型在一次请求内复用状态、Harness、运行和资产来源查询，业务系统级产物与物料使用一次 JOIN 读取，项目来源与资源请求使用批量投影和索引，事件流使用游标增量发送。
 
 厂区和业务导出查询按业务系统 ID 限定项目、来源与密钥请求。工厂图只读取业务系统标识、名称、说明和状态，并用 SQL 聚合项目数量。普通厂长轮次使用同一份业务系统摘要。全量业务系统接口仍返回已保存的 DAG。运行历史用两次查询读取运行和对应基础单元，结果维持原有顺序。DAG 校验按边累计入度并迭代移除就绪节点，时间复杂度随节点和边线性增长。
@@ -393,9 +400,9 @@ Operator 完成时，SQLite 在同一个事务里保存运行输出、用状态�
 - 本地浏览器可完成看板、编排、资产、日志和 Foreman 对话的真实读写闭环
 - Intake 创建的项目会进入 BusinessSystem 图并通过事件流刷新
 - Foreman 回复可以通过外部 Harness 回写同一 talk 线程
-- 带镜像的 Operator 启动前会等待运行时 readiness，运行时不可用时不启动 Harness
+- 带镜像的 Operator 启动前会等待运行时 readiness，运行时不可用时不启动 Harness。镜像内声明的官方 ACP 能力不依赖宿主 PATH
 - 并发的 runtime readiness 请求与带镜像的业务启动共享一次探测和启动操作
 - 项目资源请求只显示项目用途、范围、检查项和状态，密钥值进入保险箱
 - 当前容器运行时缺失时显示实际依赖状态，不把另一运行时状态伪装成在线
 - `/api/v1/runtime` 与 bootstrap 的 Podman 或 Kiri 状态来自实际探测，不能用另一运行时在线状态替代
-- `POST /api/v1/runtime/ensure-ready` 在 Windows 请求已配置的 Podman machine 就绪。Linux Kiri 验收覆盖官方服务的复用和启动失败诊断。Linux Podman 报告 rootless 服务状态。
+- `POST /api/v1/runtime/ensure-ready` 在 Windows 请求已配置的 Podman machine 就绪。Linux Kiri 验收覆盖标准和 headless 私有 socket 的官方服务复用与启动失败诊断。Linux Podman rootless 不满足时返回明确的 MAO 用户服务恢复命令，不把 rootful 或未知状态报告为在线。

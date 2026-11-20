@@ -206,6 +206,12 @@ function text(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes).trim();
 }
 
+function rootlessRecoveryReason(rootless: boolean | null): string {
+  return rootless === false
+    ? "podman-rootless-required; run as the MAO user and enable the rootless service with systemctl --user enable --now podman.socket"
+    : "podman-rootless-unknown; run podman info as the MAO user and enable the rootless service with systemctl --user enable --now podman.socket";
+}
+
 export function parseImageId(output: string): string | undefined {
   const matched = /^(?:sha256:)?([0-9a-f]{64})$/.exec(output.trim());
   return matched ? `sha256:${matched[1]}` : undefined;
@@ -367,7 +373,7 @@ export class PodmanProvider implements ContainerProvider {
         rootless = typeof info.host?.security?.rootless === "boolean" ? info.host.security.rootless : null;
       } catch { /* older Podman can return a non-JSON info response */ }
       if (platform === "linux" && rootless !== true) {
-        return { available: false, platform, executable: this.executable, machine: this.machine, rootless, reason: rootless === false ? "podman-rootless-required" : "podman-rootless-unknown" };
+        return { available: false, platform, executable: this.executable, machine: this.machine, rootless, reason: rootlessRecoveryReason(rootless) };
       }
       return { available: true, platform, executable: this.executable, machine: this.machine, rootless };
     } catch (error) {

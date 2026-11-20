@@ -64,6 +64,8 @@ export interface HarnessTransport {
 
 export type OfficialProcess = {
   stdout: ReadableStream<Uint8Array>;
+  stderr?: ReadableStream<Uint8Array>;
+  stderrRedactions?: readonly string[];
   exited?: Promise<number>;
   stdin?: {
     write(data: Uint8Array): Promise<void> | void;
@@ -76,6 +78,7 @@ type SpawnOptions = Pick<HarnessSessionRequest, "cwd" | "containerImage" | "netw
   & { env: Record<string, string>; stdout: "pipe"; stdin?: "pipe" };
 type HarnessRelay = Awaited<ReturnType<typeof prepareHarnessEgress>>;
 export type OfficialSpawn = (argv: string[], options: SpawnOptions) => OfficialProcess | Promise<OfficialProcess>;
+const MAX_STDERR_BYTES = 16 * 1024;
 
 const DEFINITIONS: Record<OfficialHarnessName, HarnessDefinition> = {
   "claude-code": { id: "claude-code", displayName: "Claude Code", executable: "claude", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: true },
@@ -170,6 +173,35 @@ export function decodeOfficialLine(line: string): HarnessEvent | null {
   return { type: eventType, sessionId, text, metadata: record };
 }
 
+async function readDiagnostic(stream: ReadableStream<Uint8Array> | undefined, redactions: readonly string[] = []): Promise<string | undefined> {
+  if (!stream) return undefined;
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  try {
+    while (bytes < MAX_STDERR_BYTES) {
+      const next = await reader.read();
+      if (next.done) break;
+      const remaining = MAX_STDERR_BYTES - bytes;
+      const chunk = next.value.subarray(0, remaining);
+      bytes += next.value.length;
+      text += decoder.decode(chunk, { stream: bytes < MAX_STDERR_BYTES });
+      if (next.value.length > remaining) {
+        await reader.cancel();
+        text += "\n[stderr truncated]";
+        break;
+      }
+    }
+    text += decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+  const scrubbed = redactions.filter(Boolean).reduce((value, secret) => value.replaceAll(secret, "[REDACTED]"), text)
+    .replace(/\b(api[_-]?key|token|secret|password|authorization)(\s*[:=]\s*)([^\s,;]+)/gi, "$1$2[REDACTED]");
+  return scrubbed.trim() || undefined;
+}
+
 class OfficialCliSession implements HarnessSession {
   readonly id: string;
   private closed = false;
@@ -182,6 +214,7 @@ class OfficialCliSession implements HarnessSession {
     if (this.closed) return;
     const reader = this.process.stdout.getReader();
     this.reader = reader;
+    const diagnostic = readDiagnostic(this.process.stderr, this.process.stderrRedactions);
     const decoder = new TextDecoder();
     let pending = "";
     let partial = false;
@@ -227,7 +260,11 @@ class OfficialCliSession implements HarnessSession {
       pending += decoder.decode();
       if (pending) yield* decode(pending);
       const exitCode = this.process.exited ? await this.process.exited : 0;
-      if (!this.closed && !failed && exitCode !== 0) yield { type: "session.failed", metadata: { exitCode } };
+      const stderr = await diagnostic;
+      if (!this.closed && !failed && exitCode !== 0) yield {
+        type: "session.failed",
+        metadata: { exitCode, ...(stderr ? { stderr } : {}) },
+      };
     } finally {
       this.reader = undefined;
       reader.releaseLock();
@@ -358,7 +395,7 @@ function processCommand(
     ]
     : argv;
   if (kiri) Object.assign(env, kiri.env);
-  return { command, env, engine, engineEnv: kiri?.env };
+  return { command, env, engine, engineEnv: kiri?.env, redactions: Object.values(configured).filter(Boolean) };
 }
 
 function defaultOfficialSpawn(argv: string[], options: SpawnOptions): Promise<OfficialProcess> {
@@ -387,13 +424,13 @@ export async function spawnOfficialProcess(
   const relay = needsRelay && resolvedImage ? await prepareEgress(resolvedImage, options.egressBaseUrl) : undefined;
   const containerName = relay?.name ?? (resolvedImage ? `mao-harness-${randomUuid()}` : undefined);
   try {
-    const { command, env, engine, engineEnv } = processCommand(argv, effectiveOptions, relay, containerName);
+    const { command, env, engine, engineEnv, redactions } = processCommand(argv, effectiveOptions, relay, containerName);
     // The npm batch wrapper can interfere with prompts containing newlines.
     const claude = !image && process.platform === "win32" && command[0] === "claude"
       ? windowsClaudeExecutable(Bun.which("claude"))
       : undefined;
     const launch = claude ? [claude, ...command.slice(1)] : command;
-    const child = bun.spawn(launch, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "ignore" });
+    const child = bun.spawn(launch, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin ?? "ignore", stderr: "pipe" });
     let cleanup: Promise<void> | undefined;
     const removeContainer = () => cleanup ??= (async () => {
       if (relay) await relay.close();
@@ -419,8 +456,8 @@ export async function spawnOfficialProcess(
       } finally { await removeContainer(); }
     }
     return {
-      stdin, stdout: child.stdout as ReadableStream<Uint8Array>, exited: child.exited,
-      kill: () => stopping ??= stop(),
+      stdin, stdout: child.stdout as ReadableStream<Uint8Array>, stderr: child.stderr as ReadableStream<Uint8Array>,
+      stderrRedactions: redactions, exited: child.exited, kill: () => stopping ??= stop(),
     };
   } catch (error) {
     await relay?.close().catch(() => {});
