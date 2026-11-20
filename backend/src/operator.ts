@@ -60,6 +60,8 @@ export class OperatorCoordinator {
     if (!unitRun) return Promise.resolve();
     const existing = this.active.get(unitRun.id);
     if (existing) return existing;
+    const runState = this.options.store.getBusinessRun(runId)?.status;
+    if (runState === "queued" || (runState === "running" && unitRun.status === "queued")) this.cancelledRuns.delete(runId);
     const advance = (completedUnitRunId?: string | null) => {
       this.active.delete(unitRun.id);
       if (!this.closed && completedUnitRunId !== null) {
@@ -97,11 +99,11 @@ export class OperatorCoordinator {
     for (const turn of this.turns.values()) void turn.close();
   }
 
-  cancelRun(runId: string): void {
+  async cancelRun(runId: string): Promise<void> {
     this.cancelledRuns.add(runId);
-    for (const unitRun of this.options.store.listUnitRuns(runId)) {
-      if (unitRun.status === "running") void this.turns.get(unitRun.id)?.close();
-    }
+    const unitRuns = this.options.store.listUnitRuns(runId);
+    await Promise.all(unitRuns.map((unitRun) => this.turns.get(unitRun.id)?.close()));
+    await Promise.allSettled(unitRuns.map((unitRun) => this.active.get(unitRun.id)).filter((work): work is Promise<void> => Boolean(work)));
   }
 
   async close(): Promise<void> {
@@ -359,6 +361,10 @@ export class OperatorCoordinator {
     });
     return [
       `执行业务运行 ${runId}。Operator ${unit.name} 负责项目 ${unit.projectId}。`,
+      (() => {
+        const kernel = this.options.store.getBusinessRun(runId)?.metadata.kernel;
+        return kernel && typeof kernel === "object" ? `本次运行已固定 MAO 内核快照：${JSON.stringify(kernel)}` : "本次运行未声明 legacy MAO Registry 绑定。";
+      })(),
       "以下 JSON 描述项目来源和输入物料。使用其中的信息完成本次任务。",
       JSON.stringify({ projectSources: sources, materials: inputs }),
       "完成后输出可交付物并说明结果。",
@@ -383,7 +389,7 @@ export class OperatorCoordinator {
       ref: value.ref,
       title: typeof value.title === "string" ? value.title : undefined,
       description: typeof value.description === "string" ? value.description : undefined,
-      summary: value.summary,
+      summary: typeof value.summary === "string" ? value.summary : undefined,
       purpose: typeof value.purpose === "string" ? value.purpose : undefined,
       status: typeof value.status === "string" ? value.status : "produced",
       producer: { operator: unit.id, machine: unit.machineRef, harness },

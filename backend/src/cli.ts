@@ -12,6 +12,7 @@ import { parseRepositoryRegistration } from "./project-registration";
 import { projectCredentialName } from "./operator";
 import { VaultStore } from "./vault";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
+import { selectedContainerProvider } from "../runtime/selected";
 export { CliUsageError } from "./station-cli";
 
 const redactText = (text: string) => text.replace(/(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
@@ -30,9 +31,9 @@ export function usage(scope?: string): string {
   if (scope === "project") return `factory project commands\n  register --repo URL [--name NAME] [--system ID]\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH\n  secret request PROJECT --name KEY --purpose PURPOSE`;
   if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID [--package DEST]\n  verify PACKAGE\n  import PACKAGE --root NEW_ROOT\n  graph ID [--file PATH]\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID\n  conversion ls [--status open|in_progress|resolved] [--root PATH]`;
-  if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
+  if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready\n  doctor [--image DIGEST]`;
   if (scope === "registry") return "factory registry check PATH [--json] [--strict]";
-  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project register --repo URL [--name NAME] [--system ID]\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  project secret request PROJECT --name KEY --purpose PURPOSE\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID [--file PATH]\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json] [--strict]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
+  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  runtime doctor [--image REPOSITORY@sha256:DIGEST]\n  project register --repo URL [--name NAME] [--system ID]\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  project secret request PROJECT --name KEY --purpose PURPOSE\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID [--file PATH]\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json] [--strict]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
 
 function requireValue(args: string[], name: string): string {
@@ -134,6 +135,25 @@ async function runCommand(argv: string[]): Promise<number> {
         const body = await result.json();
         console.log(JSON.stringify(body, null, 2));
         return result.ok ? 0 : 4;
+      }
+      if (args[0] === "doctor") {
+        const image = value(args, "--image");
+        if (image && (!/^\S+@sha256:[0-9a-f]{64}$/i.test(image) || args.filter((item) => item === "--image").length !== 1)) {
+          throw new CliUsageError("runtime doctor --image requires one digest-pinned image");
+        }
+        const provider = selectedContainerProvider();
+        const health = await provider.ensureReady();
+        const result: Record<string, unknown> = { provider: provider.name, health };
+        if (image) {
+          try {
+            const resolved = provider.ensureImage ? await provider.ensureImage(image) : await provider.resolveImage(image);
+            result.image = { requested: image, resolved, state: "ready" };
+          } catch (error) {
+            result.image = { requested: image, state: "failed", reason: error instanceof Error ? error.message : String(error) };
+          }
+        }
+        console.log(JSON.stringify(result, null, 2));
+        return health.available && (!image || (result.image as { state: string }).state === "ready") ? 0 : 4;
       }
       throw new CliUsageError(`unknown runtime command: ${args[0] ?? "(missing)"}`);
     }

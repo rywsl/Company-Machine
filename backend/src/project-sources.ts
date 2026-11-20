@@ -18,7 +18,17 @@ export function repositoryReference(value: unknown, mode: "public" | "intake" = 
   }
 }
 
-export function projectSourceFacts(project: Project, localAccess: boolean) {
+export function projectSourceFacts(project: Project, localAccess: boolean): Array<{
+  kind: Project["sources"][number]["kind"];
+  repository: string | undefined;
+  folder: string | undefined;
+  file: string | undefined;
+  reference: string | undefined;
+  name: string | undefined;
+  download: string | undefined;
+  commit?: string;
+  checkout?: string;
+}> {
   return project.sources.map((source) => {
     const digest = typeof source.metadata.digest === "string" && /^sha256:[0-9a-f]{64}$/.test(source.metadata.digest)
       ? source.metadata.digest : undefined;

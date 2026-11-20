@@ -138,6 +138,32 @@ describe("PodmanProvider", () => {
     await expect(unknown.health()).resolves.toMatchObject({ available: false, rootless: null, reason: "podman-rootless-unknown" });
   });
 
+  test("reuses a locally available digest-pinned image without pulling", async () => {
+    const calls: string[][] = [];
+    const image = `registry.example/worker@sha256:${"c".repeat(64)}`;
+    const provider = new PodmanProvider({ executable: "podman-test", runner: async (argv) => {
+      calls.push(argv);
+      return ok(`sha256:${"d".repeat(64)}`);
+    } });
+
+    await expect(provider.ensureImage(image)).resolves.toBe(image);
+    expect(calls).toEqual([["podman-test", "image", "inspect", "--format", "{{.Id}}", image]]);
+  });
+
+  test("pulls a missing digest-pinned image and verifies it is inspectable", async () => {
+    const calls: string[][] = [];
+    const image = `registry.example/worker@sha256:${"e".repeat(64)}`;
+    const provider = new PodmanProvider({ executable: "podman-test", runner: async (argv) => {
+      calls.push(argv);
+      if (argv[1] === "image" && calls.filter((entry) => entry[1] === "image").length <= 2) return { ...ok("", "missing"), exitCode: 1 };
+      if (argv[1] === "pull") return ok("pulled");
+      return ok(`sha256:${"e".repeat(64)}`);
+    } });
+
+    await expect(provider.ensureImage(image)).resolves.toBe(image);
+    expect(calls.map((argv) => argv.slice(1, 3))).toEqual([["image", "inspect"], ["image", "inspect"], ["pull", image], ["image", "inspect"]]);
+  });
+
   test("exec writes stdout and stderr through the provider", async () => {
     const calls: string[][] = [];
     const clock = new FakeClock();

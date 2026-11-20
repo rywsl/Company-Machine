@@ -13,6 +13,7 @@
 | `factory metrics [--root PATH]` | 以 Prometheus 文本输出当前工厂状态、告警和已记录的历史费用。 |
 | `factory runtime status` | 读取当前 Podman 或 Kiri 健康状态。 |
 | `factory runtime ensure-ready` | 请求当前运行时就绪。不可用时退出码 4。 |
+| `factory runtime doctor [--image REPOSITORY@sha256:DIGEST]` | 检查运行时、rootless 或 Kiri socket，并可预热一个固定摘要镜像。失败时退出码 4。Linux headless Kiri 默认发现 `/run/kiri/docker.sock` 或 `/var/lib/kiri-daemon/.kiri/run/docker.sock`，部署可用 `MAO_KIRI_SOCKET` 覆盖。 |
 | `factory project intake ...` | 通过仓库、文件夹或文件引用创建项目。 |
 | `factory project register --repo URL [--name NAME] [--system ID]` | 供当前厂长轮登记无凭据仓库，输出 `projectId` 和 `systemId`，并由当前轮继续搭建。指定 `--system` 时添加到该业务系统，省略时新建。 |
 | `factory project secret request PROJECT --name KEY --purpose PURPOSE` | 为指定项目申请一个实际所需的密钥。用途使用一行文字。重复申请复用该项目的现有请求，命令输出请求 ID 与状态。 |

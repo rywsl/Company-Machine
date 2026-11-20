@@ -613,6 +613,7 @@ describe("Foreman official Harness dispatch", () => {
     } } });
     try {
       app.store.saveHarnessProfile({ runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session", secretRef: "vault://historical-ref" });
+      app.vault.put("vault://historical-ref", secret);
       const envelope = app.store.queueForemanMessage("turn-redact", "处理项目");
       await app.foreman.dispatch(envelope.id);
       expect(received.ANTHROPIC_API_KEY === secret).toBe(true);

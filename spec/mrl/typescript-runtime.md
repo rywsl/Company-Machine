@@ -18,7 +18,9 @@
 
 Registry 的活动结构检查位于 `backend/mrl/factory/`。`paths.ts` 解析 `MRL_SPEC_DIR` 或仓库内的 `spec/`，`yamlio.ts` 使用 Bun 原生 YAML 解析器处理多文档输入，`registry.ts` 按工厂 profile 的目录布局读取普通文件，`schema.ts` 读取 `spec/schemas/` 并检查包括嵌套引用、动态属性和互斥分支在内的结构约束，`check.ts` 输出布局、YAML、schema、重复 Spec 键和宪法缺失诊断。YAML 映射中重复键和非字符串键的拒绝校验仍待与工厂 profile 对齐。
 
-M1 的基础值、快照和本地仓库边界位于 `backend/src/legacy/`。`foundation.ts` 提供规范 JSON、摘要、时钟和 ID，`snapshot.ts` 读取已检查 Registry 并提供 Spec/type/facts/always 查询，`warehouse.ts` 提供 CAS、Bean、封存、物化和血缘，`context.ts` 负责工厂目录与 Bun SQLite 装配。BusinessSystem 的业务运行快照现在通过 unit_run 保存基础单元生命周期，后续仍需把 Runner/Gate 的完整校验结果挂接到同一运行事实，不能再维护相互独立的执行状态。
+M1 的基础值、快照和本地仓库边界位于 `backend/src/legacy/`。`foundation.ts` 提供规范 JSON、摘要、时钟和 ID，`snapshot.ts` 读取已检查 Registry 并提供 Spec/type/facts/always 查询，`warehouse.ts` 提供 CAS、Bean、封存、物化和血缘，`context.ts` 负责工厂目录与 Bun SQLite 装配。`business-kernel-bridge.ts` 允许 BusinessSystem 通过 `metadata.kernel` 固定 Registry Snapshot 的 epoch、Line、Station 和 Machine 引用，运行前拒绝失效绑定。BusinessSystem 的业务运行快照通过 unit_run 保存基础单元生命周期，legacy Runner/Gate 的完整作业结果仍需沿同一运行事实接入，不能把桥接校验误报成 Runner/Gate 已执行。
+
+Linux headless Kiri 由 `backend/runtime/kiri.ts` 通过官方 Docker API 兼容 Unix 套接字调用。解析器优先使用 `/run/kiri/docker.sock`，在 Kiri 发行版中自动发现 `/var/lib/kiri-daemon/.kiri/run/docker.sock`，部署可通过 `MAO_KIRI_SOCKET` 覆盖。自定义套接字由其 supervisor 管理，控制面不会静默切回 Podman。
 
 命令行入口是 `bun run factory registry check <registry>`，加上 `--json` 输出稳定的机器可读诊断。`backend/mrl/factory.test.ts` 使用 `tests/fixtures/registry-m1` 和 `tests/fixtures/registry-m2` 锁定 YAML、布局和 schema 阶段。内核事实抽取、宪法求值、表达式位置类型环境、转换解析和完整诊断排序仍需在后续阶段接入同一个 Registry 结果，不得恢复 Python 入口。
 
@@ -31,3 +33,6 @@ M1 的基础值、快照和本地仓库边界位于 `backend/src/legacy/`。`fou
 ## 验证
 
 TypeScript 单元测试位于 `backend/mrl/mrl.test.ts`、`backend/mrl/checker.test.ts`、`backend/mrl/rules.test.ts` 和 `backend/mrl/factory.test.ts`。CLI 可用 `bun run mrl --help`、`bun run mrl eval`、`bun run mrl template`、`bun run mrl check`、`bun run mrl run` 和 `bun run factory registry check tests/fixtures/registry-m1` 验证。每次变更应运行 `bun test backend/mrl`，活动提交前运行 `bun run verify:bun`。历史 Python 参考实现和旧映射位于 `removed/python/`。
+
+
+`createBusinessKernelExecution` 将提供按 Line 端口分组的 `metadata.kernel.inputs` 直接交给既有 `Runner`、`Gate` 和 `LineRunner`。服务将 legacy Run 的终态与 BusinessRun 的 Machine `unit_run` 收口。缺少 `inputs` 时只做快照校验，不能把校验误报为 Runner/Gate 已执行。

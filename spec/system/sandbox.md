@@ -373,6 +373,10 @@ Bun 的 Podman 和 Kiri 适配在 `exec` 超时时强制移除工作容器并关
 
 Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都进入显式依赖或环境错误。运行时状态进入 Web App 设置和日志上下文，业务系统数据不写入宿主个人路径或 Docker 状态。
 
+`ensureImage(image)` 是带镜像的官方 Harness 或 Operator 启动前的预热入口。它只接受 digest 固定的引用，先复用本地镜像，缺失时才请求 Docker Hub 镜像源并在拉取后重新 inspect。大陆用户由 GeoIP 判断后并行探测已配置的 Docker Hub 镜像，按实测吞吐选择最快可用源。镜像源选择只用于预热，控制面仍保存并校验用户请求的原始 digest。预热失败或摘要校验失败时，调用方保留排队状态并返回镜像诊断。
+
+`factory runtime doctor [--image REPOSITORY@sha256:DIGEST]` 提供部署验收入口。它检查当前 Podman 或 Kiri 的可用性、Linux rootless 状态、Windows machine 或 Kiri Linux socket，并可额外预热一个固定摘要镜像。退出码 `0` 表示运行时和指定镜像均就绪，退出码 `4` 表示环境或镜像诊断失败。
+
 ### 5.11 Kiri 嵌入式运行时
 
 `KiriProvider` 沿用 `SandboxSpec` 的非 root、只读根文件系统、能力降级、网络和资源约束。业务容器、官方 Harness、ACP 和测试镜像工具读取同一份 Kiri 客户端配置。
@@ -419,6 +423,8 @@ Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都�
 | `test_docker_exec_is_non_root_without_sock` | `@pytest.mark.docker`。真的 `open`/`exec`：`id -u` 是 `10001`，容器里没有 `/var/run/docker.sock` |
 
 活动 Bun runtime 还覆盖 `test_requires_a_rootless_podman_service_on_linux`，锁定 Linux Podman 健康检查拒绝 rootful 或无法确认 rootless 的服务。
+
+`backend/runtime/podman.test.ts` 还覆盖本地 digest 镜像复用、缺失镜像拉取和 Kiri endpoint 继承的预热路径。测试使用注入的命令 runner，不访问公网镜像仓库。
 
 活动 Bun 验收 `backend/runtime/kiri.test.ts` 覆盖官方 Linux 套接字的健康检查、镜像解析和受限启动参数，并验证 systemd 启动合并、自定义套接字的服务归属、Kiri 身份检查和 CLI/context 兼容模式。真实 Linux 服务通过 `factory runtime status` 和 `factory runtime ensure-ready` 验收。
 

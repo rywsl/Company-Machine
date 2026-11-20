@@ -523,6 +523,16 @@ export class SqliteStore {
     return row ? this.businessRunFromRow(row) : undefined;
   }
 
+  updateBusinessRunMetadata(id: string, patch: Record<string, unknown>): BusinessRun | undefined {
+    return this.db.transaction(() => {
+      const current = this.getBusinessRun(id);
+      if (!current) return undefined;
+      const metadata = { ...current.metadata, ...patch };
+      this.db.query("UPDATE business_runs SET metadata=?, updated_at=? WHERE id=?").run(json(metadata), this.timestamp(), id);
+      return this.getBusinessRun(id);
+    }).immediate();
+  }
+
   listUnitRuns(runId: string): UnitRun[] {
     return this.db.query(`
       SELECT unit_run.* FROM unit_runs AS unit_run
@@ -586,16 +596,45 @@ export class SqliteStore {
     }).immediate();
   }
 
+  /** Returns legacy MAO machine executions that were activated for a run. */
+  listReadyKernelMachineRuns(runId: string): UnitRun[] {
+    const run = this.getBusinessRun(runId);
+    const kernel = run?.metadata.kernel;
+    if (!run || run.status === "cancelled" || !kernel || typeof kernel !== "object" || Array.isArray(kernel) || (kernel as Record<string, unknown>).execution !== "legacy") return [];
+    return this.db.query(`
+      SELECT unit_run.* FROM unit_runs AS unit_run
+      JOIN business_units AS unit ON unit.id=unit_run.unit_id
+      WHERE unit_run.run_id=? AND unit_run.status='running' AND unit.kind='machine'
+        AND unit_run.session_id LIKE 'legacy:%'
+      ORDER BY unit_run.created_at, unit_run.id
+    `).all(runId).map((row: any) => this.unitRunFromRow(row));
+  }
+
+  listRunningKernelMachineRuns(): Array<{ runId: string; unitRunId: string }> {
+    return this.db.query<{ runId: string; unitRunId: string }>(`
+      SELECT unit_run.run_id AS runId, unit_run.id AS unitRunId
+      FROM unit_runs AS unit_run
+      JOIN business_runs AS run ON run.id=unit_run.run_id
+      JOIN business_units AS unit ON unit.id=unit_run.unit_id
+      WHERE run.status IN ('queued','running') AND unit_run.status='running'
+        AND unit_run.session_id LIKE 'legacy:%' AND unit.kind='machine'
+      ORDER BY unit_run.created_at, unit_run.id
+    `).all();
+  }
+
   /**
-   * Machines are business units with a durable lifecycle. Their execution is
-   * deterministic source activation. The Operator Harness remains the place
-   * where project work and business records are produced, so this method never
-   * fabricates an artifact or material output.
+   * Machines are business units with a durable lifecycle. Kernel-bound
+   * machines are claimed as running and dispatched to the legacy LineRunner.
+   * Unbound machines retain the deterministic source activation used by the
+   * portable business path.
    */
   private activateReadyMachineRuns(run: BusinessRun, unitRuns: UnitRun[], predecessors: Map<string, UnitRun[]>): void {
     const timestamp = this.timestamp();
     const activate = this.db.query("UPDATE unit_runs SET status=?, error=?, updated_at=? WHERE id=? AND status='queued'");
+    const claimLegacy = this.db.query("UPDATE unit_runs SET status='running', session_id=?, error=NULL, updated_at=? WHERE id=? AND status='queued'");
     const updateUnit = this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?");
+    const kernel = run.metadata.kernel;
+    const legacy = Boolean(kernel && typeof kernel === "object" && !Array.isArray(kernel) && (kernel as Record<string, unknown>).execution === "legacy");
     for (const item of unitRuns) {
       if (item.status !== "queued") continue;
       const unit = this.getBusinessUnit(item.unitId);
@@ -603,11 +642,19 @@ export class SqliteStore {
       const required = predecessors.get(item.unitId) ?? [];
       if (required.some((predecessor) => predecessor.status !== "completed")) continue;
       const error = unit.projectId ? undefined : "machine-project-unavailable";
-      const status: UnitRun["status"] = error ? "blocked" : "completed";
-      activate.run(status, error ?? null, timestamp, item.id);
-      updateUnit.run(error ? "blocked" : "ready", timestamp, unit.id);
-      item.status = status;
-      item.error = error;
+      if (legacy && !error) {
+        claimLegacy.run(`legacy:${item.id}`, timestamp, item.id);
+        updateUnit.run("running", timestamp, unit.id);
+        item.status = "running";
+        item.sessionId = `legacy:${item.id}`;
+        item.error = undefined;
+      } else {
+        const status: UnitRun["status"] = error ? "blocked" : "completed";
+        activate.run(status, error ?? null, timestamp, item.id);
+        updateUnit.run(error ? "blocked" : "ready", timestamp, unit.id);
+        item.status = status;
+        item.error = error;
+      }
       item.updatedAt = timestamp;
     }
     if (unitRuns.some((item) => item.status === "completed" || item.status === "blocked")) {
@@ -1255,8 +1302,8 @@ export class SqliteStore {
 
   markSecretAvailable(id: string): SecretRequest | undefined {
     const timestamp = this.timestamp();
-    const changed = this.db.query("UPDATE secret_requests SET status = 'available', updated_at = ? WHERE id = ? AND status = 'requested'").run(timestamp, id);
-    if (changed.changes === 0) return undefined;
+    const changed = this.db.query("UPDATE secret_requests SET status = 'available', updated_at = ? WHERE id = ? AND status = 'requested'").run(timestamp, id) as { changes?: number };
+    if ((changed.changes ?? 0) === 0) return undefined;
     this.recordSecretAudit(id, "available", "user");
     return this.getSecretRequest(id);
   }
@@ -1265,8 +1312,8 @@ export class SqliteStore {
     const current = this.getSecretRequest(id);
     if (!current || current.status === status) return current;
     const timestamp = this.timestamp();
-    const changed = this.db.query("UPDATE secret_requests SET status=?, updated_at=? WHERE id=?").run(status, timestamp, id);
-    if (changed.changes === 0) return undefined;
+    const changed = this.db.query("UPDATE secret_requests SET status=?, updated_at=? WHERE id=?").run(status, timestamp, id) as { changes?: number };
+    if ((changed.changes ?? 0) === 0) return undefined;
     this.recordSecretAudit(id, status, actor, undefined, detail);
     return this.getSecretRequest(id);
   }

@@ -66,7 +66,7 @@ export interface BusinessConversion {
   status: BusinessConversionStatus;
   inputs: string[];
   outputs: string[];
-  producer?: { operator?: string; harness?: string };
+  producer?: { operator?: string; machine?: string; harness?: string };
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;

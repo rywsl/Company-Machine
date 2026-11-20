@@ -43,7 +43,8 @@ export async function prepareHarnessEgress(image: string, baseUrl = "", startFor
   const provider = selectedContainerProvider(kind);
   const ready = await provider.ensureReady();
   if (!ready.available) throw new Error(ready.reason ?? "Harness container runtime unavailable");
-  const [resolved, resolvedRelay] = await Promise.all([provider.resolveImage(image), provider.resolveImage(relayImage)]);
+  const ensureImage = (value: string) => provider.ensureImage ? provider.ensureImage(value) : provider.resolveImage(value);
+  const [resolved, resolvedRelay] = await Promise.all([ensureImage(image), ensureImage(relayImage)]);
   const prefix = kiri?.argv ?? [resolvePodmanExecutable()];
   const command = (...args: string[]) => [...prefix, ...args];
   const run = (argv: string[], options?: Parameters<typeof runCommand>[1]) =>

@@ -1,7 +1,7 @@
 /** Kiri's Linux engine runs as a headless service on the host kernel. */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Clock } from "../src/legacy/foundation";
 
 import { PodmanProvider, runCommand, type CommandRunner, type RuntimeHealth, type SandboxSpec } from "./podman";
@@ -27,7 +27,27 @@ export type KiriProviderOptions = KiriClientOptions & {
 };
 
 const SERVICE_SOCKET = "/run/kiri/docker.sock";
+// The Linux headless distribution stores the daemon socket below its private
+// state directory. Keep the packaged service socket as the first choice, then
+// discover the headless path when this process runs inside the Kiri distro.
+const HEADLESS_SERVICE_SOCKET = "/var/lib/kiri-daemon/.kiri/run/docker.sock";
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
+
+function resolveLinuxSocket(): string {
+  const candidates = [
+    SERVICE_SOCKET,
+    HEADLESS_SERVICE_SOCKET,
+    process.env.XDG_RUNTIME_DIR ? join(process.env.XDG_RUNTIME_DIR, "kiri", "docker.sock") : "",
+  ].filter(Boolean);
+  const existing = candidates.find((candidate) => existsSync(candidate));
+  if (existing) return existing;
+  // A stopped headless daemon has no socket yet, but its private run
+  // directory still identifies the Kiri installation. Return that endpoint
+  // so the distro supervisor can bring it up instead of invoking systemd for
+  // the packaged `/run/kiri` service.
+  if (existsSync(dirname(HEADLESS_SERVICE_SOCKET))) return HEADLESS_SERVICE_SOCKET;
+  return SERVICE_SOCKET;
+}
 
 export function resolveKiriExecutable(configured?: string): string {
   if (configured) return configured;
@@ -46,7 +66,7 @@ export function resolveKiriClient(options: KiriClientOptions = {}) {
   if (mode !== "linux-socket" && mode !== "kiri" && mode !== "docker-context") {
     throw new Error("Invalid Kiri client mode");
   }
-  const socket = options.socket ?? process.env.MAO_KIRI_SOCKET ?? process.env.KIRI_SOCKET ?? (platform === "linux" ? SERVICE_SOCKET : undefined);
+  const socket = options.socket ?? process.env.MAO_KIRI_SOCKET ?? process.env.KIRI_SOCKET ?? (platform === "linux" ? resolveLinuxSocket() : undefined);
   const docker = options.dockerExecutable ?? process.env.MAO_DOCKER_EXECUTABLE
     ?? (platform === "linux" && existsSync("/usr/libexec/kiri/docker") ? "/usr/libexec/kiri/docker" : "docker");
   const env: Record<string, string> = {};

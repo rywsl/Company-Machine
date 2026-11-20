@@ -8,8 +8,13 @@ import type { OfficialProcess } from "../src/harness";
 import { createApp, startServer } from "../src/server";
 import { VaultStore } from "../src/vault";
 
-function fixtureProcess(text: string): OfficialProcess {
-  const bytes = new TextEncoder().encode(JSON.stringify({ type: "result", text }) + "\n");
+function fixtureProcess(text: string, outputRef?: string): OfficialProcess {
+  const ref = outputRef ?? `material://recovery-${text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "result"}`;
+  const bytes = new TextEncoder().encode([
+    JSON.stringify({ type: "mao.record", record_type: "material", kind: "recovery.result", ref, summary: text }),
+    JSON.stringify({ type: "result", text }),
+    "",
+  ].join("\n"));
   return {
     stdout: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
     kill() {},
@@ -174,7 +179,7 @@ test("recovers only authorized resource waiters with fully available project req
     resumed = startServer({
       port: 0, dbPath, legacyPath: dbPath, storageRoot: root,
       vault: new VaultStore(vaultPath, keyPath),
-      operator: { spawn: (_argv, { env }) => { launches.push(env); return fixtureProcess("Recovered resource waiter"); } },
+      operator: { spawn: (_argv, { env }) => { launches.push(env); return fixtureProcess("Recovered resource waiter", "material://previous-output"); } },
     });
     const app = resumed;
     await waitFor(() => app.store.getBusinessRun(ready.runId)?.status === "completed");
@@ -287,7 +292,11 @@ test("keeps containerized Operators queued offline and resumes their DAG once af
         return {
           stdout: new ReadableStream<Uint8Array>({ start(controller) {
             settleNative = () => {
-              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "result", text: "Native turn completed" }) + "\n"));
+              controller.enqueue(new TextEncoder().encode([
+                JSON.stringify({ type: "mao.record", record_type: "material", kind: "recovery.result", ref: "material://native-complete", summary: "Native turn completed" }),
+                JSON.stringify({ type: "result", text: "Native turn completed" }),
+                "",
+              ].join("\n")));
               controller.close();
             };
           } }),

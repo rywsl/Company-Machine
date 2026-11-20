@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createApp } from "../src/server";
 import type { OfficialProcess } from "../src/harness";
 import { OperatorCoordinator, projectCredentialName } from "../src/operator";
@@ -550,5 +550,24 @@ describe("Bun business execution loop", () => {
       app.stop();
       await rm(dbPath, { force: true });
     }
+  });
+
+  test("pins a BusinessRun to the validated MAO kernel snapshot", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    try {
+      const system = app.store.createBusinessSystem({
+        name: "Kernel-bound business",
+        metadata: { kernel: { registry_root: resolve("spec/examples/registry"), line: "explainer-multilang@5" } },
+      });
+      const response = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/runs`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dispatch: false }),
+      }));
+      expect(response.status).toBe(201);
+      const run = await response.json() as { id: string; metadata: { kernel: { epoch: string; line: string; registry_root: string } } };
+      expect(run.metadata.kernel.line).toBe("Line:explainer-multilang@5");
+      expect(run.metadata.kernel.epoch).toMatch(/^e-[0-9a-f]{16}$/);
+      expect(run.metadata.kernel.registry_root).toBe("registry://configured");
+      expect(app.events.after().some(({ type, data }) => type === "business-run.kernel.bound" && (data as any).runId === run.id)).toBe(true);
+    } finally { app.stop(); }
   });
 });

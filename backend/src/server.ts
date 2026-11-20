@@ -21,10 +21,15 @@ import { operatorBindingView, parseOperatorBinding } from "./operator-binding";
 import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, supportsLocalProjectMounts, type OfficialSpawn } from "./harness";
 import type { AcpSpawn } from "./acp";
 import { validSessionTimeout } from "./harness-turn";
+import { kernelRunMetadata, loadBusinessKernel } from "./business-kernel-bridge";
+import { createBusinessKernelExecution } from "./business-kernel-bridge";
+import { Context } from "./legacy/context";
+import type { ContainerProvider } from "../runtime/podman";
 
-const configuredCorsOrigin = process.env.MAO_CORS_ORIGIN?.trim();
-const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...(configuredCorsOrigin ? { "access-control-allow-origin": configuredCorsOrigin, "vary": "Origin" } : {}) };
-const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
+function defaultHeaders(): Record<string, string> {
+  return { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+}
+const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: defaultHeaders() });
 const SECRET_TEXT = /(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi;
 const redactText = (value: string) => value.replace(SECRET_TEXT, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
 
@@ -93,7 +98,7 @@ interface BackendAppOptions {
   runtime?: RuntimeProbe;
   vault?: VaultStore;
   storageRoot?: string;
-  foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn };
+  foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn; prepareSources?: PrepareProjectSources };
   operator?: Pick<OperatorCoordinatorOptions, "cwd" | "spawn" | "acpSpawn" | "materialStage">;
   harnessVerificationTimeoutMs?: number;
   dispatchWork?: boolean;
@@ -212,9 +217,136 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     for (const event of recovered) events.notifyCommitted(event);
     return recovered.length;
   };
+  const activeKernelMachines = new Map<string, Promise<void>>();
+  const activeKernelContexts = new Map<string, Context>();
+  const resolveKernelInputs = (businessSystemId: string, inputs: Record<string, string | string[]> | undefined) => {
+    if (!inputs) return undefined;
+    const resolveOne = (value: string) => {
+      if (!/^(?:artifact|material|record):\/\//.test(value)) return value;
+      const record = store.resolveBusinessMaterialRefs(businessSystemId, [value])[0]?.record;
+      const legacyBean = record?.metadata.legacy_bean_id;
+      if (typeof legacyBean !== "string") throw new Error(`business material ${value} is not backed by a legacy Bean`);
+      return legacyBean;
+    };
+    return Object.fromEntries(Object.entries(inputs).map(([port, value]) => [port, Array.isArray(value) ? value.map(resolveOne) : resolveOne(value)]));
+  };
+  const materializeLegacyOutputs = async (runId: string, unitRunId: string, context: Context, beanIds: readonly string[]): Promise<string[]> => {
+    const run = store.getBusinessRun(runId);
+    const unitRun = run ? store.getUnitRun(runId, unitRunId) : undefined;
+    const unit = unitRun ? store.getBusinessUnit(unitRun.unitId) : undefined;
+    if (!run || !unitRun || !unit?.projectId) throw new Error("legacy machine output has no business project");
+    const outputs: string[] = [];
+    for (const beanId of [...new Set(beanIds)]) {
+      const bean = context.warehouse.get(beanId);
+      const existing = store.listArtifacts(unit.projectId).find((artifact) => artifact.metadata.legacy_bean_id === bean.id);
+      if (existing) {
+        outputs.push(`${existing.recordType ?? "material"}://${existing.id}`);
+        continue;
+      }
+      const files = bean.payload.map((file) => ({
+        ref: `cas://${file.digest}`,
+        path: file.path,
+        mediaType: file.mediaType,
+        digest: file.digest,
+      }));
+      for (const file of bean.payload) {
+        const source = context.warehouse.blobPath(file.digest);
+        const destination = uploads().blobPath(file.digest);
+        if (resolve(source) !== resolve(destination)) {
+          mkdirSync(dirname(destination), { recursive: true });
+          if (!existsSync(destination)) await Bun.write(destination, Bun.file(source));
+        }
+      }
+      const artifact = store.addArtifact({
+        projectId: unit.projectId,
+        recordType: "material",
+        kind: bean.type,
+        ref: `material://legacy/${bean.id}`,
+        title: `MAO Bean ${bean.type}`,
+        summary: `Legacy MAO Runner 产出 ${bean.type}`,
+        status: bean.sealed ? "sealed" : "produced",
+        files,
+        inputs: unitRun.inputs.length ? unitRun.inputs : undefined,
+        metadata: {
+          schema: "mao.business-record/1",
+          legacy_bean_id: bean.id,
+          legacy_type: bean.type,
+          legacy_meta: bean.meta,
+          legacy_facts: bean.facts,
+        },
+        producer: { machine: unit.id },
+      });
+      store.registerArtifactFiles(artifact.id, bean.payload.map((file, position) => ({ position, digest: file.digest, size: file.size })));
+      events.publish("artifact.created", artifact);
+      const conversion = store.createBusinessConversion({
+        businessSystemId: unit.businessSystemId,
+        kind: "legacy-run-output",
+        summary: `MAO Runner 将 ${bean.type} 产出为业务物料`,
+        status: "completed",
+        inputs: unitRun.inputs.length ? unitRun.inputs : beanIds.map((id) => `legacy://bean/${id}`),
+        outputs: [artifact.ref],
+        producer: { machine: unit.id },
+        metadata: { schema: "mao.business-record/1", artifact_id: artifact.id, legacy_run_id: run.metadata.legacy_run_id },
+      });
+      events.publish("business-conversion.created", conversion);
+      outputs.push(`material://${artifact.id}`);
+    }
+    return outputs;
+  };
+  const dispatchKernelMachine = (runId: string, unitRunId: string, recovering = false): Promise<void> => {
+    const existing = activeKernelMachines.get(unitRunId);
+    if (existing) return existing;
+    const work = (async () => {
+      const unitRun = store.getUnitRun(runId, unitRunId);
+      const run = store.getBusinessRun(runId);
+      const system = run ? store.getBusinessSystem(run.businessSystemId) : undefined;
+      if (!unitRun || !run || !system || unitRun.status !== "running") return;
+      let context: Context | undefined;
+      try {
+        const kernel = await loadBusinessKernel(system);
+        if (!kernel?.inputs) throw new Error("business kernel execution requires kernel.inputs grouped by Line port");
+        const provider = runtime as unknown as ContainerProvider;
+        if (typeof provider.open !== "function") throw new Error(`${runtimeProvider(runtime)} does not expose a ContainerProvider for MAO Runner`);
+        const legacyRunId = typeof run.metadata.legacy_run_id === "string" ? run.metadata.legacy_run_id : undefined;
+        if (recovering && !legacyRunId) throw new Error("CONTROL_PLANE_RESTART: legacy Run ID was not persisted");
+        const root = kernel.factoryRoot ?? storageRoot;
+        context = Context.open(root, { clock: store.clock });
+        activeKernelContexts.set(unitRunId, context);
+        const executableKernel = { ...kernel, inputs: resolveKernelInputs(system.id, kernel.inputs) };
+        const execution = createBusinessKernelExecution(context, provider);
+        const result = legacyRunId
+          ? await execution.resume(executableKernel, legacyRunId)
+          : await execution.start(executableKernel, (started) => {
+            const updated = store.updateBusinessRunMetadata(run.id, { legacy_run_id: started.id, legacy_state: started.state });
+            if (updated) events.publish("business-run.legacy.bound", { runId, unitRunId, legacyRunId: started.id, state: started.state });
+          });
+        const beanIds = Object.values(result.outputs).flatMap((value) => Array.isArray(value) ? value : [value]).filter((value): value is string => typeof value === "string");
+        const outputs = await materializeLegacyOutputs(runId, unitRunId, context, beanIds);
+        store.updateBusinessRunMetadata(run.id, { legacy_run_id: result.id, legacy_state: result.state });
+        const failure = result.state === "SUCCEEDED" ? undefined : (typeof result.error?.message === "string" ? result.error.message : `legacy-run-${result.state.toLowerCase()}`);
+        const completed = store.completeUnitRun(unitRun.id, result.state === "SUCCEEDED" ? "completed" : "failed", outputs, failure);
+        if (completed) {
+          events.publish(result.state === "SUCCEEDED" ? "machine.run.completed" : "machine.run.failed", { runId, unitRunId, legacyRunId: result.id, state: result.state, outputs, error: result.error });
+          dispatchOperatorRun(runId, completed.id);
+        }
+      } catch (error) {
+        const failed = store.completeUnitRun(unitRun.id, "failed", [], error instanceof Error ? error.message : String(error));
+        if (failed) {
+          events.publish("machine.run.failed", { runId, unitRunId, error: failed.error });
+          dispatchOperatorRun(runId, failed.id);
+        }
+      } finally {
+        activeKernelContexts.delete(unitRunId);
+        context?.close();
+      }
+    })().finally(() => { activeKernelMachines.delete(unitRunId); });
+    activeKernelMachines.set(unitRunId, work);
+    return work;
+  };
   function dispatchOperatorRun(runId: string, completedUnitRunId?: string) {
     if (stopped || options.dispatchWork === false) return;
     for (const unitRun of store.listReadyUnitRuns(runId, completedUnitRunId)) runInBackground(operator.dispatch(runId, unitRun.id));
+    for (const unitRun of store.listReadyKernelMachineRuns(runId)) runInBackground(dispatchKernelMachine(runId, unitRun.id));
   }
   const recoverQueuedWork = () => {
     if (stopped || options.dispatchWork === false) return;
@@ -224,10 +356,11 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     store.resumeResourceRuns();
     for (const id of store.listRecoverableBusinessRunIds()) dispatchOperatorRun(id);
+    for (const { runId, unitRunId } of store.listRunningKernelMachineRuns()) runInBackground(dispatchKernelMachine(runId, unitRunId, true));
   };
-  const fetch = async (request: Request): Promise<Response> => {
+  const handleRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...headers, ...corsHeaders(request), "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "authorization,content-type,last-event-id,x-mao-csrf" } });
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...defaultHeaders(), "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "authorization,content-type,last-event-id,x-mao-csrf" } });
     if (url.pathname.startsWith("/api/") && !authorizedRequest(request)) return response({ code: "AUTH_REQUIRED", message: "需要本地身份或 Bearer token" }, 401);
     if (url.pathname === "/healthz" && request.method === "GET") return response({ ok: true });
     if (url.pathname === "/api/v1/runtime" && request.method === "GET") {
@@ -270,6 +403,12 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (url.pathname === "/api/v1/business-systems" && request.method === "POST") {
       const body = await readJson(request);
       if (!body.name || typeof body.name !== "string") return response({ error: "name is required" }, 400);
+      try {
+        const candidate = { id: "kernel-check", name: body.name, status: "active", metadata: body.metadata ?? {}, createdAt: "", updatedAt: "" } as BusinessSystem;
+        await loadBusinessKernel(candidate);
+      } catch (error) {
+        return response({ code: "BUSINESS_KERNEL_INVALID", message: error instanceof Error ? error.message : "business kernel is invalid" }, 400);
+      }
       const system = store.createBusinessSystem(body as Partial<BusinessSystem> & { name: string });
       events.publish("business-system.created", system);
       return response(system, 201);
@@ -360,10 +499,17 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const inputs = Array.isArray(body.inputs) ? body.inputs.filter((item: unknown): item is string => typeof item === "string") : [];
       const invalidInputs = store.invalidBusinessInputRefs(runsMatch[1], inputs);
       if (invalidInputs.length) return response({ error: "business run inputs must belong to the current business system", detail: { refs: invalidInputs } }, 400);
+      const system = store.getBusinessSystem(runsMatch[1]);
+      if (!system) return response({ error: "business system was not found" }, 404);
+      let kernel;
+      try { kernel = await loadBusinessKernel(system); }
+      catch (error) { return response({ code: "BUSINESS_KERNEL_INVALID", message: error instanceof Error ? error.message : "business kernel is invalid" }, 400); }
       const dispatch = body.dispatch !== false;
-      const run = store.createBusinessRun(runsMatch[1], typeof body.trigger === "string" ? body.trigger : "manual", body.metadata && typeof body.metadata === "object" ? body.metadata : {}, inputs, dispatch);
+      const metadata = { ...(body.metadata && typeof body.metadata === "object" ? body.metadata : {}), ...(kernel ? kernelRunMetadata(kernel) : {}) };
+      const run = store.createBusinessRun(runsMatch[1], typeof body.trigger === "string" ? body.trigger : "manual", metadata, inputs, dispatch);
       if (!run) return response({ error: "business system was not found" }, 404);
       events.publish("business-run.created", { ...run, units: store.listUnitRuns(run.id) });
+      if (kernel) events.publish("business-run.kernel.bound", { runId: run.id, ...kernelRunMetadata(kernel).kernel });
       if (run.status === "queued" && dispatch) dispatchOperatorRun(run.id);
       return response({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) }, 201);
     }
@@ -387,7 +533,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         ? store.cancelBusinessRun(cancelRunMatch[1])
         : store.retryBusinessRun(cancelRunMatch[1]);
       if (!run) return response({ error: "business run was not found" }, 404);
-      if (cancelRunMatch[2] === "cancel") operator.cancelRun(run.id);
+      if (cancelRunMatch[2] === "cancel") await operator.cancelRun(run.id);
       events.publish(cancelRunMatch[2] === "cancel" ? "business-run.cancelled" : "business-run.retried", { ...run, units: store.listUnitRuns(run.id) });
       if (cancelRunMatch[2] === "retry") dispatchOperatorRun(run.id);
       return response({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) }, 200);
@@ -622,7 +768,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response(graphProjection(store, url.searchParams.get("scope") ?? "factory", url.searchParams.get("workarea")));
     }
     if (url.pathname === "/api/web/harnesses" && request.method === "GET") {
-      return response(officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })));
+      return response(officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })));
     }
     if (url.pathname === "/api/web/harnesses/configure" && request.method === "POST") {
       const body = await readJson(request);
@@ -654,14 +800,14 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       // require a restart or a manual dispatch request.
       if (profile.role === "foreman") recoverQueuedWork();
       const foremanProfile = profile.role === "foreman" ? profile : store.listHarnessProfiles().find((item) => item.role === "foreman");
-      return response({ profile: publicProfile(profile), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, profile: publicProfile(foremanProfile) } }, 200);
+      return response({ profile: publicProfile(profile, (ref) => vault.get(ref)), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) } }, 200);
     }
     if (url.pathname === "/api/web/harnesses/verify" && request.method === "POST") {
       const body = await readJson(request);
       if (typeof body.profile_id !== "string") return response({ error: "profile_id is required" }, 400);
       const existing = store.listHarnessProfiles().find((item) => item.id === body.profile_id);
       if (!existing) return response({ error: "profile was not found" }, 404);
-      if (verificationJobs.has(existing.id)) return response({ profile: publicProfile(existing) }, 202);
+      if (verificationJobs.has(existing.id)) return response({ profile: publicProfile(existing, (ref) => vault.get(ref)) }, 202);
       const profile = store.markHarnessVerification(existing.id, "requested", "正在验证官方 Harness 连通性");
       if (!profile) return response({ error: "profile was not found" }, 404);
       const controller = new AbortController();
@@ -674,9 +820,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         const current = store.listHarnessProfiles().find((item) => item.id === profile.id);
         if (current?.updatedAt !== profile.updatedAt || current.verification?.state !== "requested") return;
         const completed = store.markHarnessVerification(profile.id, state, reason);
-        if (completed) events.publish("harness.profile.verification.completed", { id: profile.id, runtime: profile.runtime, role: profile.role, verification: publicProfile(completed)?.verification });
+        if (completed) events.publish("harness.profile.verification.completed", { id: profile.id, runtime: profile.runtime, role: profile.role, verification: publicProfile(completed, (ref) => vault.get(ref))?.verification });
       }).catch(() => {});
-      return response({ profile: publicProfile(profile) }, 202);
+      return response({ profile: publicProfile(profile, (ref) => vault.get(ref)) }, 202);
     }
     if (url.pathname === "/api/web/assets" && request.method === "GET") {
       const limit = Math.trunc(Math.max(1, Number(url.searchParams.get("limit") ?? 100)));
@@ -717,9 +863,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         graph: { factory: factoryGraph },
         assets: assetPage ? assetPage.items : webAssets(store), logs: webLogs(store, 100), talk,
         ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: assetPage.olderCursor }),
-        harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id)) })), harness_profiles: store.listHarnessProfiles().map(publicProfile), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
+        harnesses: officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses().map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : "unavailable" })) },
-        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile) }, constitution: { available: false } });
+        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime ?? null, model: foremanProfile?.model ?? null, mode: foremanProfile?.mode ?? null, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) }, constitution: { available: false } });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") {
       const signal = AbortSignal.any([request.signal, eventStreams.signal]);
@@ -728,6 +874,14 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (request.method === "GET" && !url.pathname.startsWith("/api/")) return staticResponse(url.pathname);
     return response({ error: "not found" }, 404);
   };
+  const fetch = async (request: Request): Promise<Response> => {
+    const result = await handleRequest(request);
+    const cors = corsHeaders(request);
+    if (!Object.keys(cors).length) return result;
+    const responseHeaders = new Headers(result.headers);
+    for (const [key, value] of Object.entries(cors)) responseHeaders.set(key, value);
+    return new Response(result.body, { status: result.status, statusText: result.statusText, headers: responseHeaders });
+  };
   return { store, events, vault, foreman, operator, registerRepository, fetch, recoverQueuedWork, stop: () => {
     stopped = true;
     eventStreams.abort();
@@ -735,6 +889,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     verificationJobs.clear();
     foreman.stop();
     operator.stop();
+    for (const context of activeKernelContexts.values()) context.close();
+    activeKernelContexts.clear();
     store.close();
   } };
 }
@@ -759,10 +915,12 @@ function officialHarnesses() {
   }));
 }
 
-function publicProfile(profile?: HarnessProfile) {
+function publicProfile(profile?: HarnessProfile, readSecret?: (ref: string) => string | undefined) {
   if (!profile) return null;
   const { secretRef, ...safeProfile } = profile;
-  const configured = profile.role === "foreman" ? Boolean(foremanCredential(profile)) : Boolean(secretRef);
+  const configured = profile.role === "foreman"
+    ? Boolean(foremanCredential(profile, readSecret))
+    : Boolean(secretRef && (!readSecret || readSecret(secretRef)));
   return { ...safeProfile, base_url: profile.baseUrl, session_timeout_s: profile.sessionTimeoutSeconds, api_key_configured: configured, updated_at: profile.updatedAt, verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined };
 }
 
@@ -1027,7 +1185,7 @@ function webLogs(store: SqliteStore, limit: number) {
     .map((event) => ({ id: event.id, kind: event.type, at: event.createdAt, data: event.data }));
 }
 
-function eventsResponse(events: EventBus, cursor: string | null, signal: AbortSignal): Response {
+function eventsResponse(events: EventBus, cursor: string | null, signal: AbortSignal, cors: Record<string, string> = {}): Response {
   const startSequence = Number(cursor);
   let sequence = Number.isSafeInteger(startSequence) && startSequence >= 0 ? startSequence : 0;
   let page: Event[] = [];
@@ -1079,7 +1237,7 @@ function eventsResponse(events: EventBus, cursor: string | null, signal: AbortSi
     },
     cancel() { cleanup(); },
   });
-  return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "connection": "keep-alive" } });
+  return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "connection": "keep-alive", ...cors } });
 }
 
 export function startServer(options: BackendAppOptions & { port?: number; hostname?: string } = {}) {

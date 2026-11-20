@@ -12,6 +12,7 @@ import { SystemClock, type Clock } from "../src/legacy/foundation";
 import type { startEgressForwarder } from "../src/legacy/egress-forwarder";
 import { egressRelayName, launchEgressRelay, type ContainerEgress } from "./egress-relay";
 import { spawnLoggedProcess, type LogPaths } from "./process-logs";
+import { resolveDockerHubImage } from "./dockerhub-mirror";
 
 export type NetworkMode = "none" | "egress";
 
@@ -93,6 +94,7 @@ export type ContainerProvider = {
   health(): Promise<RuntimeHealth>;
   ensureReady(): Promise<RuntimeHealth>;
   resolveImage(image: string): Promise<string>;
+  ensureImage?(image: string): Promise<string>;
   prepareInjectVolume(image: string, volume: string): Promise<void>;
   open(spec: SandboxSpec): Promise<Sandbox>;
   removeVolume(name: string): Promise<boolean>;
@@ -401,6 +403,22 @@ export class PodmanProvider implements ContainerProvider {
       if (fallback.exitCode === 0 && id) return id;
     }
     throw new PodmanError("IMAGE_NOT_FOUND", `Image was not found in ${this.name}`, { image });
+  }
+
+  async ensureImage(image: string): Promise<string> {
+    if (!IMAGE_REF.test(image)) throw new PodmanError("IMAGE_REF_INVALID", "Invalid image reference", { image });
+    try { return await this.resolveImage(image); }
+    catch (error) {
+      if (!(error instanceof PodmanError) || error.code !== "IMAGE_NOT_FOUND") throw error;
+    }
+    const candidate = await resolveDockerHubImage(image);
+    const pulled = await this.run(this.command("pull", candidate), { timeoutMs: 10 * 60_000 });
+    if (pulled.exitCode !== 0) throw new PodmanError("IMAGE_PULL_FAILED", `Image pull failed in ${this.name}`, { image, candidate, stderr: text(pulled.stderr) });
+    const resolved = await this.resolveImage(candidate).catch(() => undefined);
+    const expected = image.slice(image.indexOf("@") + 1).toLowerCase();
+    const actual = resolved?.includes("@") ? resolved.slice(resolved.indexOf("@") + 1).toLowerCase() : resolved?.toLowerCase();
+    if (!resolved || (actual && actual !== expected)) throw new PodmanError("IMAGE_DIGEST_MISMATCH", `Image digest verification failed in ${this.name}`, { image, candidate, actual });
+    return candidate;
   }
 
   async prepareInjectVolume(image: string, volume: string): Promise<void> {

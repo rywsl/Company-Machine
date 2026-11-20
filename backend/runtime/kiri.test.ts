@@ -168,6 +168,29 @@ describe("KiriProvider", () => {
     expect(harness.env.DOCKER_CONTEXT).toBe("");
   });
 
+  test("uses the configured Kiri endpoint when preheating a missing image", async () => {
+    const calls: string[][] = [];
+    const image = `registry.example/worker@sha256:${"b".repeat(64)}`;
+    const provider = new KiriProvider({
+      platform: "linux", mode: "linux-socket", socket: "/run/kiri/docker.sock", dockerExecutable: "docker-test", autoStart: false,
+      runner: async (argv) => {
+        calls.push(argv);
+        if (argv[3] === "info") return result("Kiri");
+        if (argv[3] === "image" && calls.filter((entry) => entry[3] === "image").length <= 2) return result("", "missing", 1);
+        if (argv[3] === "pull") return result("pulled");
+        return result(`sha256:${"b".repeat(64)}`);
+      },
+    });
+
+    await expect(provider.ensureImage(image)).resolves.toBe(image);
+    expect(calls.map((argv) => argv.slice(0, 5))).toEqual([
+      ["docker-test", "--host", "unix:///run/kiri/docker.sock", "image", "inspect"],
+      ["docker-test", "--host", "unix:///run/kiri/docker.sock", "image", "inspect"],
+      ["docker-test", "--host", "unix:///run/kiri/docker.sock", "pull", image],
+      ["docker-test", "--host", "unix:///run/kiri/docker.sock", "image", "inspect"],
+    ]);
+  });
+
   test("reuses the running service and shares one systemd start for concurrent readiness", async () => {
     const calls: string[][] = [];
     let healthy = false;
