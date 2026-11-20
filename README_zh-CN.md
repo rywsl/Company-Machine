@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img alt="Bun + TypeScript" src="https://img.shields.io/badge/Bun%20%2B%20TypeScript-active-f97316?style=flat-square&logo=bun&logoColor=white">
   <img alt="运行时依赖 2 个" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
   <img alt="1448 个测试通过" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
   <img alt="内置 agent：0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
@@ -61,7 +61,7 @@
 
 ### 前置条件
 
-- **Python 3.12+** 和 **[uv](https://docs.astral.sh/uv/)**
+- **Bun** 和 **TypeScript**
 - **Docker**（可选）：默认的 `docker` 沙箱提供者和 Docker 测试层需要它。本文所有内容也可以用 `--provider local` 运行。
 - **agent CLI**（可选）：真实工位用 Claude Code 或 Codex；测试用脚本化的 fake agent 代替。
 
@@ -74,7 +74,7 @@ uv sync
 
 uv run factory --version
 uv run mrl --version
-uv run python tools/harness.py verify     # check specs, implementation and acceptance tests
+bun run verify:bun                       # 检查活动 Bun 实现
 ```
 
 ### 第一条产线

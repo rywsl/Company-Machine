@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white">
-  <img alt="Runtime dependencies: 2" src="https://img.shields.io/badge/runtime%20deps-pyyaml%20%C2%B7%20jsonschema-0f172a?style=flat-square">
-  <img alt="1448 tests passed" src="https://img.shields.io/badge/tests-1448%20passed-22c55e?style=flat-square">
+  <img alt="Bun + TypeScript" src="https://img.shields.io/badge/Bun%20%2B%20TypeScript-active-f97316?style=flat-square&logo=bun&logoColor=white">
+  <img alt="Podman or Kiri" src="https://img.shields.io/badge/runtime-Podman%20%7C%20Kiri-0f172a?style=flat-square">
+  <img alt="43 Bun tests passed" src="https://img.shields.io/badge/Bun%20tests-43%20passed-22c55e?style=flat-square">
   <img alt="Bundled agents: 0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
 
@@ -256,8 +256,9 @@ backend/src/      Bun business control plane and CLI
 removed/python/   historical Python implementation and legacy fixtures
 spec/             normative specs: MRL 1.0, factory profile, schemas, system specs, example registry
 plan/             historical design, task and review material
-tests/            spec-linked acceptance tests, system tests and fixtures
-tools/            verify harness and build utilities
+backend/tests/    active Bun acceptance tests
+tests/fixtures/   shared declarative fixtures
+tools/            Bun verification harness and build utilities
 docs/             architecture design (zh-CN), per-language guides, diagrams
 ```
 
