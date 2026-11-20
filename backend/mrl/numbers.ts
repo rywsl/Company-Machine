@@ -7,6 +7,7 @@ export type MrlNumber = MrlInt | IntegralFloat;
 // Number preserves the kind of fractional values but collapses 1.0 to 1.
 export class IntegralFloat {
   constructor(readonly value: number) {
+    if (value === 0) this.value = 0;
     Object.freeze(this);
   }
 
@@ -21,7 +22,7 @@ export function narrowInt(value: bigint): MrlInt {
 }
 
 export function floatValue(value: number): number | IntegralFloat {
-  return Number.isInteger(value) ? new IntegralFloat(value === 0 ? 0 : value) : value;
+  return Number.isInteger(value) ? new IntegralFloat(value) : value;
 }
 
 export function isInt(value: unknown): value is MrlInt {
@@ -34,6 +35,12 @@ export function isMrlNumber(value: unknown): value is MrlNumber {
 
 export function nativeNumber(value: MrlNumber): number | bigint {
   return value instanceof IntegralFloat ? value.value : value;
+}
+
+export function numericDomainError(value: unknown): "MRL-OVERFLOW" | "MRL-DOMAIN" | undefined {
+  if (typeof value === "bigint") return value < MIN_INT64 || value > MAX_INT64 ? "MRL-OVERFLOW" : undefined;
+  const float = value instanceof IntegralFloat ? value.value : value;
+  return typeof float === "number" && !Number.isFinite(float) ? "MRL-DOMAIN" : undefined;
 }
 
 export function parseNumericScalar(text: string): MrlNumber {

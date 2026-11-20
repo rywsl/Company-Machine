@@ -8,7 +8,7 @@ import {
   parseType,
   type MrlValue,
 } from "./index";
-import { MAX_INT64, MIN_INT64, isInt, mrlJsonReplacer, nativeNumber, parseNumericScalar } from "./numbers";
+import { mrlJsonReplacer, parseNumericScalar } from "./numbers";
 
 type JsonMap = Record<string, MrlValue>;
 
@@ -54,13 +54,9 @@ async function readMapping(value: string | undefined, label: string): Promise<Js
     const parse = JSON.parse as (text: string, reviver: (key: string, value: unknown, context?: { source?: string }) => unknown) => unknown;
     parsed = parse(source, (_key, value, context) => {
       if (typeof value !== "number" || !context?.source) return value;
-      const number = parseNumericScalar(context.source);
-      if (isInt(number) && (number < MIN_INT64 || number > MAX_INT64)) throw new MrlEvalError("MRL-OVERFLOW", "int is outside int64");
-      if (!Number.isFinite(Number(nativeNumber(number)))) throw new MrlEvalError("MRL-DOMAIN", "non-finite number");
-      return number;
+      return parseNumericScalar(context.source);
     });
   } catch (error) {
-    if (error instanceof MrlEvalError) throw error;
     throw new Error(`${label} must be valid JSON${error instanceof Error ? `: ${error.message}` : ""}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${label} must be a JSON object`);

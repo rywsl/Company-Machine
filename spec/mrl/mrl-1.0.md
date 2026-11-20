@@ -122,6 +122,7 @@ MRL-E 的语法取自 CEL：运算符与优先级、`?:`、`in`、成员与下�
 - bool 不是数：`true + 1 ⇒ MRL-TYPE`。
 - “记录”只是静态类型（2.4），运行期的记录就是 map。
 - 宿主值的转换：JSON/YAML 的 null、布尔、整数、浮点数、字符串、数组、对象依次对应 null、bool、int、float、string、list、map。整数超出 int64 → MRL-OVERFLOW；浮点数不是有限数 → MRL-DOMAIN；对象的键不是字符串 → MRL-TYPE；−0.0 变为 0.0。
+- Bun 在表达式宿主值进入环境时检查数值范围，包括嵌套的 list 和 map。规则事实先递归检查数值范围，再按列类型转换。范围错误在事实入口统一返回 MRL-FACT。
 
 ### 2.2 数值模型
 

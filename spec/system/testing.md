@@ -105,7 +105,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 
 ### 7.1 活动 Bun 验收
 
-`bun run verify:bun` 校验系统规范章节、MRL 诊断码与标准库说明、工厂内核声明以及本表与活动测试目录之间的双向映射。Bun 的 JUnit 报告须逐文件记录实际执行的用例，任何失败、跳过、待办或遗漏文件都会使验收失败。该命令还运行后端与 Web 的 TypeScript 检查，以及 `spec/mrl/conformance/` 中的 715 项一致性用例。通过的用例须覆盖全部内核诊断码，并实际触发全部 85 条内核诊断规则。
+`bun run verify:bun` 校验系统规范章节、MRL 诊断码与标准库说明、工厂内核声明以及本表与活动测试目录之间的双向映射。Bun 的 JUnit 报告须逐文件记录实际执行的用例，任何失败、跳过、待办或遗漏文件都会使验收失败。该命令还运行后端与 Web 的 TypeScript 检查，以及 `spec/mrl/conformance/` 中的 719 项一致性用例。通过的用例须覆盖全部内核诊断码，并实际触发全部 85 条内核诊断规则。
 
 | 文件 | 验证 |
 |---|---|

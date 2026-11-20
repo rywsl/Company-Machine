@@ -63,6 +63,20 @@ cases:
     facts: {x: [[[1, 2.5]]]}
     expect: {relations: {y: [[[1.0, 2.5]]]}}
 
+  - id: any-column-rejects-out-of-range-nested-int
+    program: |
+      module t.
+      @input rel x(v: any).
+    facts: {x: [[{nested: [9223372036854775808]}]]}
+    expect: {error: MRL-FACT}
+
+  - id: float-column-rejects-out-of-range-int-before-promotion
+    program: |
+      module t.
+      @input rel x(v: float).
+    facts: {x: [[-9223372036854775809]]}
+    expect: {error: MRL-FACT}
+
   - id: guard-must-be-bool
     program: |
       module t.

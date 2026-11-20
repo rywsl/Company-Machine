@@ -1,5 +1,5 @@
-import { compareCanonical, equalValues, identityKey, evaluate, isMrlMap, standardFunctions, type EvaluateOptions, type MrlValue } from "./evaluator";
-import { MAX_INT64, MIN_INT64, floatValue, isInt, isMrlNumber, nativeNumber } from "./numbers";
+import { compareCanonical, equalValues, identityKey, Evaluator, evaluate, isMrlMap, standardFunctions, type EvaluateOptions, type MrlValue } from "./evaluator";
+import { floatValue, isInt, isMrlNumber, numericDomainError } from "./numbers";
 import { checkAst, MrlStaticError, type FunctionSignature, type MrlDiagnostic } from "./checker";
 import { parseExpression, reserved, type Expr } from "./parser";
 import { BOOL, INT, NUM, comparable, compatible, isNumeric, isPrimitive, list, parseType, type MrlType } from "./types";
@@ -293,10 +293,14 @@ class RelationIndex {
   }
 }
 
+function evaluateBinding(expression: Expr, binding: Binding, options: RuleOptions): MrlValue {
+  return new Evaluator(options).evaluate(expression, binding, false);
+}
+
 function termValue(term: RuleTerm, binding: Binding, options: RuleOptions): MrlValue | undefined {
   if (term.kind === "anonymous") return undefined;
   if (term.kind === "variable") return binding[term.name];
-  return evaluate(term.ast, binding, options);
+  return evaluateBinding(term.ast, binding, options);
 }
 
 function same(a: MrlValue | undefined, b: MrlValue): boolean { return a !== undefined && identityKey(a) === identityKey(b); }
@@ -351,11 +355,12 @@ function normalizeValue(value: MrlValue, type: MrlType): MrlValue | undefined {
     return Object.fromEntries(result);
   }
   if (type.kind !== "primitive") return undefined;
+  if (numericDomainError(value)) return undefined;
   switch (type.name) {
     case "bool": return typeof value === "boolean" ? value : undefined;
     case "string": return typeof value === "string" ? value : undefined;
     case "float": return isMrlNumber(value) ? isInt(value) ? floatValue(Number(value)) : value : undefined;
-    case "int": return isInt(value) && value >= MIN_INT64 && value <= MAX_INT64 ? value : undefined;
+    case "int": return isInt(value) ? value : undefined;
     case "dyn": return value === null || typeof value === "boolean" || typeof value === "string" || isMrlNumber(value) ? value : undefined;
     default: return undefined;
   }
@@ -447,7 +452,7 @@ function aggregateRows(head: RuleHead[], bindings: Iterable<Binding>, options: R
   return [...groups.values()].map((group) => head.map((term, index) => {
     if (term.kind !== "aggregate") return group.values[index];
     if (term.name === "count") return group.arguments.length;
-    const values = group.arguments.map((binding) => evaluate(term.argument!, binding, options)).sort(compareCanonical);
+    const values = group.arguments.map((binding) => evaluateBinding(term.argument!, binding, options)).sort(compareCanonical);
     if (term.name === "set") return standardFunctions.unique(values);
     return standardFunctions[term.name](values);
   }));
@@ -613,13 +618,13 @@ export class RuleProgram {
     const item = body[position];
     if (!item) { yield binding; return; }
     if (item.kind === "guard") {
-      const result = evaluate(item.expression, binding, this.options);
+      const result = evaluateBinding(item.expression, binding, this.options);
       if (typeof result !== "boolean") throw new MrlRuleError("MRL-TYPE", "rule guard must be bool");
       if (result) yield* this.bindBody(body, rows, indexes, binding, aggregate, position + 1);
       return;
     }
     if (item.kind === "assign") {
-      const value = evaluate(item.expression, binding, this.options);
+      const value = evaluateBinding(item.expression, binding, this.options);
       if (Object.hasOwn(binding, item.name)) {
         if (equalValues(binding[item.name], value)) yield* this.bindBody(body, rows, indexes, binding, aggregate, position + 1);
       } else yield* this.bindBody(body, rows, indexes, { ...binding, [item.name]: value }, aggregate, position + 1);

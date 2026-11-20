@@ -1,4 +1,4 @@
-import { evaluate, formatFloat, type EvaluateOptions, type EvalEnvironment, type MrlValue } from "./evaluator";
+import { Evaluator, formatFloat, validateHostNumbers, type EvaluateOptions, type EvalEnvironment, type MrlValue } from "./evaluator";
 import { checkExpression, MrlStaticError, type CheckOptions, type CheckResult } from "./checker";
 import { BOOL, DYN, FLOAT, INT, NUM, STRING, isPrimitive, type MrlType } from "./types";
 import { isInt, isMrlNumber, nativeNumber } from "./numbers";
@@ -73,9 +73,10 @@ export function compileTemplate(source: string, options: CheckOptions = {}): Com
     parts,
     warnings: parts.flatMap((part) => part.kind === "expression" ? part.check.warnings : []),
     render(values, evaluateOptions = {}) {
+      validateHostNumbers(values);
       return parts.map((part) => part.kind === "text"
         ? part.value
-        : renderValue(evaluate(part.check.ast, values, evaluateOptions), part.check.type)).join("");
+        : renderValue(new Evaluator(evaluateOptions).evaluate(part.check.ast, values, false), part.check.type)).join("");
     },
   };
 }

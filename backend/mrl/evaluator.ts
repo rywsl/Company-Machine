@@ -1,7 +1,7 @@
 import { Expr, parseExpression } from "./parser";
 import { checkExpression, type CheckOptions, type FunctionSignature } from "./checker";
 import { DYN, type MrlType } from "./types";
-import { IntegralFloat, MAX_INT64, MIN_INT64, floatValue, isInt, isMrlNumber, narrowInt, nativeNumber, type MrlInt, type MrlNumber } from "./numbers";
+import { IntegralFloat, MAX_INT64, MIN_INT64, floatValue, isInt, isMrlNumber, narrowInt, nativeNumber, numericDomainError, type MrlInt, type MrlNumber } from "./numbers";
 
 export class MrlEvalError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "MrlEvalError"; }
@@ -36,6 +36,16 @@ export function isMrlMap(value: unknown): value is Record<string, MrlValue> {
   return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof IntegralFloat);
 }
 
+export function validateHostNumbers(value: MrlValue): void {
+  const code = numericDomainError(value);
+  if (code) throw new MrlEvalError(code, code === "MRL-OVERFLOW" ? "int is outside int64" : "non-finite number");
+  if (Array.isArray(value)) {
+    for (const item of value) validateHostNumbers(item);
+  } else if (isMrlMap(value)) {
+    for (const item of Object.values(value)) validateHostNumbers(item);
+  }
+}
+
 export interface EvaluateOptions {
   budget?: number;
   functions?: Record<string, (...args: MrlValue[]) => MrlValue>;
@@ -55,27 +65,32 @@ export class Evaluator {
     this.budget = options.budget ?? 100_000;
     this.functions = options.functions;
   }
-  evaluate(ast: Expr, environment: EvalEnvironment): MrlValue {
+  evaluate(ast: Expr, environment: EvalEnvironment, validateEnvironment = true): MrlValue {
+    if (validateEnvironment) validateHostNumbers(environment);
+    return this.evaluateNode(ast, environment);
+  }
+
+  private evaluateNode(ast: Expr, environment: EvalEnvironment): MrlValue {
     this.steps++;
     if (this.steps > this.budget) throw new MrlEvalError("MRL-COST", `evaluation budget ${this.budget} exceeded`);
     switch (ast.kind) {
       case "literal": return ast.numericKind === "float" ? floatValue(ast.value as number) : ast.value as MrlValue;
       case "identifier": if (!Object.hasOwn(environment, ast.name)) throw new MrlEvalError("MRL-UNDEFINED", `undefined name ${ast.name}`); return environment[ast.name];
-      case "list": return ast.items.map((item) => this.evaluate(item, environment));
+      case "list": return ast.items.map((item) => this.evaluateNode(item, environment));
       case "record": {
         const result = new Map<string, MrlValue>();
         for (const entry of ast.entries) {
-          const key = this.evaluate(entry.key, environment);
+          const key = this.evaluateNode(entry.key, environment);
           if (typeof key !== "string") throw new MrlEvalError("MRL-TYPE", "record key must be string");
           if (result.has(key)) throw new MrlEvalError("MRL-DUP-KEY", `duplicate key ${key}`);
-          result.set(key, this.evaluate(entry.value, environment));
+          result.set(key, this.evaluateNode(entry.value, environment));
         }
         return Object.fromEntries(result);
       }
-      case "member": { const object = this.evaluate(ast.object, environment); if (!isMrlMap(object)) throw new MrlEvalError("MRL-TYPE", "field selection requires record"); if (!Object.hasOwn(object, ast.field)) throw new MrlEvalError("MRL-NO-FIELD", `missing field ${ast.field}`); return object[ast.field]; }
+      case "member": { const object = this.evaluateNode(ast.object, environment); if (!isMrlMap(object)) throw new MrlEvalError("MRL-TYPE", "field selection requires record"); if (!Object.hasOwn(object, ast.field)) throw new MrlEvalError("MRL-NO-FIELD", `missing field ${ast.field}`); return object[ast.field]; }
       case "index": {
-        const object = this.evaluate(ast.object, environment);
-        const index = this.evaluate(ast.index, environment);
+        const object = this.evaluateNode(ast.object, environment);
+        const index = this.evaluateNode(ast.index, environment);
         if (Array.isArray(object)) {
           if (!isInt(index)) throw new MrlEvalError("MRL-TYPE", "list index requires int");
           if (index < 0 || index >= object.length) throw new MrlEvalError("MRL-INDEX", "list index out of range");
@@ -88,17 +103,17 @@ export class Evaluator {
         throw new MrlEvalError("MRL-TYPE", "invalid index operation");
       }
       case "unary": {
-        const value = this.evaluate(ast.operand, environment);
+        const value = this.evaluateNode(ast.operand, environment);
         if (ast.op === "!") return !this.mustBool(value);
         const number = numericArgument("-", value);
         return isInt(number) ? int64Result(-number) : finiteFloat(-Number(nativeNumber(number)));
       }
       case "binary": return this.binary(ast.op, ast.left, ast.right, environment);
-      case "conditional": { const condition = this.evaluate(ast.condition, environment); if (typeof condition !== "boolean") throw new MrlEvalError("MRL-TYPE", "condition requires bool"); return this.evaluate(condition ? ast.then : ast.otherwise, environment); }
+      case "conditional": { const condition = this.evaluateNode(ast.condition, environment); if (typeof condition !== "boolean") throw new MrlEvalError("MRL-TYPE", "condition requires bool"); return this.evaluateNode(condition ? ast.then : ast.otherwise, environment); }
       case "call": {
         if (ast.name === "has" && !ast.receiver && ast.args.length === 1 && ast.args[0].kind === "member") {
           const member = ast.args[0];
-          const object = this.evaluate(member.object, environment);
+          const object = this.evaluateNode(member.object, environment);
           if (object === null) return false;
           if (!isMrlMap(object)) throw new MrlEvalError("MRL-TYPE", "has requires a record");
           return Object.hasOwn(object, member.field);
@@ -107,18 +122,20 @@ export class Evaluator {
         const fn = hostFunction ?? (Object.hasOwn(builtins, ast.name) ? builtins[ast.name] : undefined);
         if (!fn) throw new MrlEvalError("MRL-UNDEFINED", `undefined function ${ast.name}`);
         const args = [];
-        if (ast.receiver) args.push(this.evaluate(ast.receiver, environment));
-        for (const arg of ast.args) args.push(this.evaluate(arg, environment));
-        return fn(...args);
+        if (ast.receiver) args.push(this.evaluateNode(ast.receiver, environment));
+        for (const arg of ast.args) args.push(this.evaluateNode(arg, environment));
+        const result = fn(...args);
+        if (hostFunction) validateHostNumbers(result);
+        return result;
       }
       case "macro": return this.macro(ast, environment);
     }
   }
   private binary(op: string, leftAst: Expr, rightAst: Expr, environment: EvalEnvironment): MrlValue {
-    const left = this.evaluate(leftAst, environment);
-    if (op === "&&") { if (typeof left !== "boolean") throw new MrlEvalError("MRL-TYPE", "&& requires bool"); return left && this.mustBool(this.evaluate(rightAst, environment)); }
-    if (op === "||") { if (typeof left !== "boolean") throw new MrlEvalError("MRL-TYPE", "|| requires bool"); return left || this.mustBool(this.evaluate(rightAst, environment)); }
-    const right = this.evaluate(rightAst, environment);
+    const left = this.evaluateNode(leftAst, environment);
+    if (op === "&&") { if (typeof left !== "boolean") throw new MrlEvalError("MRL-TYPE", "&& requires bool"); return left && this.mustBool(this.evaluateNode(rightAst, environment)); }
+    if (op === "||") { if (typeof left !== "boolean") throw new MrlEvalError("MRL-TYPE", "|| requires bool"); return left || this.mustBool(this.evaluateNode(rightAst, environment)); }
+    const right = this.evaluateNode(rightAst, environment);
     if (op === "==") return equalValues(left, right); if (op === "!=") return !equalValues(left, right);
     if (op === "in") { if (Array.isArray(right)) return right.some((item) => equalValues(left, item)); if (isMrlMap(right)) { if (typeof left !== "string") throw new MrlEvalError("MRL-TYPE", "map key must be string"); return Object.hasOwn(right, left); } throw new MrlEvalError("MRL-TYPE", "in requires list or map"); }
     if (["<", "<=", ">", ">="].includes(op)) {
@@ -131,7 +148,7 @@ export class Evaluator {
   }
   private mustBool(value: MrlValue) { if (typeof value !== "boolean") throw new MrlEvalError("MRL-TYPE", "logical operand requires bool"); return value; }
   private macro(ast: Extract<Expr, { kind: "macro" }>, environment: EvalEnvironment): MrlValue {
-    const target = this.evaluate(ast.target, environment);
+    const target = this.evaluateNode(ast.target, environment);
     const items = Array.isArray(target) ? target : isMrlMap(target) ? orderedKeys(target) : null;
     if (!items) throw new MrlEvalError("MRL-TYPE", `${ast.name} requires list or map`);
     let matches = 0;
@@ -139,12 +156,12 @@ export class Evaluator {
     const scope = { ...environment, [ast.variable]: null as MrlValue };
     for (const item of items) {
       scope[ast.variable] = item;
-      const included = ast.predicate ? this.mustBool(this.evaluate(ast.predicate, scope)) : true;
+      const included = ast.predicate ? this.mustBool(this.evaluateNode(ast.predicate, scope)) : true;
       if (ast.name === "all" && !included) return false;
       if (!included) continue;
       if (ast.name === "exists") return true;
       if (ast.name === "filter") output.push(item);
-      if (ast.name === "map") output.push(this.evaluate(ast.body!, scope));
+      if (ast.name === "map") output.push(this.evaluateNode(ast.body!, scope));
       matches += 1;
     }
     if (ast.name === "all") return true;

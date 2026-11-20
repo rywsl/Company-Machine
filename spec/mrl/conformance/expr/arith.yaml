@@ -18,6 +18,8 @@ cases:
   - {id: json-int-times-float, expr: 'm.duration_s * 0.9', env: {m: {duration_s: 60}}, expect: {value: 54.0}}
   - {id: float-add, expr: '0.1 + 0.2', expect: {value: 0.30000000000000004}}
   - {id: big-int-to-float, expr: '9007199254740993 * 1.0', expect: {value: 9007199254740992.0}}
+  - {id: host-int-out-of-range, expr: 'true', env: {value: {nested: [9223372036854775808]}}, expect: {error: MRL-OVERFLOW}}
+  - {id: host-float-non-finite, expr: 'value', env: {value: 1e400}, expect: {error: MRL-DOMAIN}}
   - {id: int-overflow-add, expr: '9223372036854775807 + 1', expect: {error: MRL-OVERFLOW}}
   - {id: int-overflow-mul, expr: '4611686018427387904 * 2', expect: {error: MRL-OVERFLOW}}
   - {id: int-overflow-negate, expr: '-(-9223372036854775808)', expect: {error: MRL-OVERFLOW}}
