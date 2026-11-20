@@ -60,12 +60,22 @@ export const sendTalk = (text: string) => api<{ state: string; message: TalkMess
   body: JSON.stringify({ text }),
 });
 
-export const submitProjectIntake = (payload: { name?: string; repo_url?: string; files?: Array<{ name: string; digest?: string; ref?: string }>; local_folder?: string }) =>
-  api<{ project_id: string; state: string }>("/api/v1/projects/intake", {
+export function submitProjectIntake(payload: { name?: string; repo_url?: string; files?: Array<{ name: string; digest?: string; ref?: string }>; local_folder?: string }, uploads: File[] = []) {
+  if (uploads.length) {
+    const form = new FormData();
+    for (const field of ["name", "repo_url", "local_folder"] as const) {
+      const value = payload[field];
+      if (value) form.set(field, value);
+    }
+    for (const file of uploads) form.append("files", file, file.name);
+    return api<{ project_id: string; state: string }>("/api/v1/projects/intake", { method: "POST", body: form });
+  }
+  return api<{ project_id: string; state: string }>("/api/v1/projects/intake", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
 
 export const requestProjectSecret = (payload: { project_id: string; name: string; purpose?: string; scope?: string }) =>
   api<{ request_id: string; state: string }>("/api/v1/secrets/requests", {

@@ -129,6 +129,8 @@ export interface SecretRecord {
 
 export interface Bootstrap {
   version: string;
+  eventCursor?: number;
+  pendingForemanReplies?: Record<string, string>;
   connection: { state: string; message?: string };
   status: {
     at?: string;

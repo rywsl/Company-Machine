@@ -168,6 +168,9 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState("");
   const [savedProfile, setSavedProfile] = useState<HarnessProfile | null>(null);
+  const persistedProfile = profiles.find((item) => item.id === savedProfile?.id);
+  const verification = (persistedProfile?.verification?.checked_at ?? "") >= (savedProfile?.verification?.checked_at ?? "")
+    ? persistedProfile?.verification ?? savedProfile?.verification : savedProfile?.verification;
 
   useEffect(() => {
     if (!open) return;
@@ -195,7 +198,7 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
       const result = await configureHarness({ ...safeForm, role, context: Number(form.context), session_timeout_s: Number(form.session_timeout_s), session_budget_usd: Number(form.session_budget_usd), daily_budget_usd: Number(form.daily_budget_usd), max_turns: Number(form.max_turns), max_attempts: Number(form.max_attempts), backoff_s: Number(form.backoff_s) });
       setSavedProfile(result.profile);
       setSelectedProfile(result.profile.id);
-      setMessage("配置已保存。可以请求 Foreman 验证 harness 和模型连通性。");
+      setMessage("配置已保存。可以验证连通性 harness 和模型连通性。");
       onSaved(result.profile, result.foreman);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "配置保存失败");
@@ -219,7 +222,7 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
       setChecking(false);
     }
   };
-  return <aside className="detail-panel harness-config-panel"><button className="icon-button" onClick={onClose} aria-label="关闭 Harness 配置">×</button><span className="eyebrow">HARNESS CONFIGURATION</span><h2>{role === "foreman" ? "配置厂长 Harness" : "配置 Operator Harness"}</h2><p className="config-intro">项目只申请实际需要的密钥。密钥值通过项目资源请求写入保险箱，Foreman 负责后续启动和连通性验证。</p>{profiles.length > 0 && <label className="config-field"><span>已保存配置</span><select value={selectedProfile} onChange={(event) => loadProfile(event.target.value)}><option value="">新建配置</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.runtime} · {item.model}</option>)}</select></label>}<form onSubmit={save}><label className="config-field"><span>Harness Runtime</span><select value={form.runtime} onChange={(event) => update("runtime", event.target.value)} required><option value="">选择 agent-cli runtime</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.name}{item.version ? ` · ${item.version}` : ""}</option>)}</select></label><label className="config-field"><span>Base URL</span><input value={form.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="https://api.example.com" required /></label><label className="config-field"><span>Model</span><input value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="claude-sonnet-5-5" required /></label><div className="context-note">密钥由项目主动请求。保存 Harness 配置后，缺失资源会在资源请求卡片中出现。</div><div className="config-grid"><label className="config-field"><span>Thinking effort</span><select value={form.thinking_effort} onChange={(event) => update("thinking_effort", event.target.value)}>{["minimal", "low", "medium", "high", "max"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="config-field"><span>Context</span><input type="number" min="1" value={form.context} onChange={(event) => update("context", event.target.value)} /></label></div><label className="config-field"><span>Harness image</span><input value={form.image} onChange={(event) => update("image", event.target.value)} placeholder="registry.local/operators/...@sha256:..." required /></label><div className="config-grid"><label className="config-field"><span>Network</span><select value={form.network} onChange={(event) => update("network", event.target.value)}><option value="egress">egress</option><option value="none">none</option></select></label><label className="config-field"><span>Mode</span><select value={form.mode} onChange={(event) => update("mode", event.target.value)}><option value="session">session</option><option value="resident">resident</option></select></label></div><div className="config-grid"><label className="config-field"><span>Max turns</span><input type="number" min="1" value={form.max_turns} onChange={(event) => update("max_turns", event.target.value)} /></label><label className="config-field"><span>Timeout seconds</span><input type="number" min="1" value={form.session_timeout_s} onChange={(event) => update("session_timeout_s", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Session budget</span><input type="number" min="0" step="0.01" value={form.session_budget_usd} onChange={(event) => update("session_budget_usd", event.target.value)} /></label><label className="config-field"><span>Daily budget</span><input type="number" min="0" step="0.01" value={form.daily_budget_usd} onChange={(event) => update("daily_budget_usd", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Max attempts</span><input type="number" min="1" value={form.max_attempts} onChange={(event) => update("max_attempts", event.target.value)} /></label><label className="config-field"><span>Backoff seconds</span><input type="number" min="0" value={form.backoff_s} onChange={(event) => update("backoff_s", event.target.value)} /></label></div><div className="config-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存配置"}</button><button className="secondary-button" type="button" onClick={() => void verify()} disabled={checking || !savedProfile}>{checking ? "请求中…" : "请求 Foreman 验证"}</button></div></form>{message && <div className="context-note">{message}</div>}{savedProfile?.verification && <div className="context-line"><span>验证状态</span><strong>{display(savedProfile.verification.state, "待验证")}</strong></div>}</aside>;
+  return <aside className="detail-panel harness-config-panel"><button className="icon-button" onClick={onClose} aria-label="关闭 Harness 配置">×</button><span className="eyebrow">HARNESS CONFIGURATION</span><h2>{role === "foreman" ? "配置厂长 Harness" : "配置 Operator Harness"}</h2><p className="config-intro">项目只申请实际需要的密钥。密钥值通过项目资源请求写入保险箱，Foreman 负责后续启动和连通性验证。</p>{profiles.length > 0 && <label className="config-field"><span>已保存配置</span><select value={selectedProfile} onChange={(event) => loadProfile(event.target.value)}><option value="">新建配置</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.runtime} · {item.model}</option>)}</select></label>}<form onSubmit={save}><label className="config-field"><span>Harness Runtime</span><select value={form.runtime} onChange={(event) => update("runtime", event.target.value)} required><option value="">选择 agent-cli runtime</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.name}{item.version ? ` · ${item.version}` : ""}</option>)}</select></label><label className="config-field"><span>Base URL</span><input value={form.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="使用官方 Harness 默认地址" /></label><label className="config-field"><span>Model</span><input value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="claude-sonnet-5-5" required /></label><div className="context-note">密钥由项目主动请求。保存 Harness 配置后，缺失资源会在资源请求卡片中出现。</div><div className="config-grid"><label className="config-field"><span>Thinking effort</span><select value={form.thinking_effort} onChange={(event) => update("thinking_effort", event.target.value)}>{["minimal", "low", "medium", "high", "max"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="config-field"><span>Context</span><input type="number" min="1" value={form.context} onChange={(event) => update("context", event.target.value)} /></label></div><label className="config-field"><span>Harness image</span><input value={form.image} onChange={(event) => update("image", event.target.value)} placeholder="留空使用本机官方 Harness" /></label><div className="config-grid"><label className="config-field"><span>Network</span><select value={form.network} onChange={(event) => update("network", event.target.value)}><option value="egress">egress</option><option value="none">none</option></select></label><label className="config-field"><span>Mode</span><select value={form.mode} onChange={(event) => update("mode", event.target.value)}><option value="session">session</option><option value="resident">resident</option></select></label></div><div className="config-grid"><label className="config-field"><span>Max turns</span><input type="number" min="1" value={form.max_turns} onChange={(event) => update("max_turns", event.target.value)} /></label><label className="config-field"><span>Timeout seconds</span><input type="number" min="1" value={form.session_timeout_s} onChange={(event) => update("session_timeout_s", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Session budget</span><input type="number" min="0" step="0.01" value={form.session_budget_usd} onChange={(event) => update("session_budget_usd", event.target.value)} /></label><label className="config-field"><span>Daily budget</span><input type="number" min="0" step="0.01" value={form.daily_budget_usd} onChange={(event) => update("daily_budget_usd", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Max attempts</span><input type="number" min="1" value={form.max_attempts} onChange={(event) => update("max_attempts", event.target.value)} /></label><label className="config-field"><span>Backoff seconds</span><input type="number" min="0" value={form.backoff_s} onChange={(event) => update("backoff_s", event.target.value)} /></label></div><div className="config-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存配置"}</button><button className="secondary-button" type="button" onClick={() => void verify()} disabled={checking || !savedProfile}>{checking ? "请求中…" : "验证连通性"}</button></div></form>{message && <div className="context-note">{message}</div>}{verification && <div className="context-line"><span>验证状态</span><strong>{display(verification.reason ?? verification.state, "待验证")}</strong></div>}</aside>;
 }
 
 function ForemanPanel({ open, bootstrap, talk, onConfigureForeman, onClose, onSend }: { open: boolean; bootstrap: Bootstrap; talk: TalkMessage[]; onConfigureForeman: () => void; onClose: () => void; onSend: (text: string) => Promise<void> }): ReactElement | null {
@@ -229,7 +232,7 @@ function ForemanPanel({ open, bootstrap, talk, onConfigureForeman, onClose, onSe
   const foreman = bootstrap.foreman;
   const profile = foreman.profile;
   const submit = async (event: React.FormEvent) => { event.preventDefault(); if (!text.trim() || sending) return; setSending(true); try { await onSend(text.trim()); setText(""); } finally { setSending(false); } };
-  return <aside className="foreman-panel"><div className="panel-head"><div><span className="eyebrow">FOREMAN CONSOLE</span><h2>厂长</h2></div><button className="icon-button" onClick={onClose} aria-label="关闭厂长对话">×</button></div><div className="foreman-harness"><div><span>Harness CLI</span><strong>{foreman.configured ? `${display(foreman.runtime)} · ${display(foreman.model)}` : "未配置"}</strong></div><button className="text-button" onClick={onConfigureForeman}>{foreman.configured ? "编辑配置" : "配置厂长"}</button></div>{foreman.setup_required && <div className="context-note">项目已启动，但厂长 Harness 尚未配置。先完成配置，Foreman 才能接管缺失依赖和运行验证。</div>}<div className="talk-list">{talk.length ? talk.map((item, index) => <div className={`talk-message ${item.role === "human" ? "human" : "agent"}`} key={item.id ?? `${item.at}-${index}`}><span className="talk-role">{item.role === "human" ? "你" : "Foreman"}</span><p>{display(item.body)}</p><small>{display(item.state, "observed")}</small></div>) : <div className="talk-empty"><span className="signal good" /><p>描述目标，Foreman 会创建厂区、管理员工并继续运行。</p></div>}</div><form className="talk-form" onSubmit={submit}><textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="告诉 Foreman 你想让工厂完成什么…" rows={3} /><button className="primary-button" type="submit" disabled={!text.trim() || sending}>{sending ? "发送中…" : "发送给 Foreman"}</button></form></aside>;
+  return <aside className="foreman-panel"><div className="panel-head"><div><span className="eyebrow">FOREMAN CONSOLE</span><h2>厂长</h2></div><button className="icon-button" onClick={onClose} aria-label="关闭厂长对话">×</button></div><div className="foreman-harness"><div><span>Harness CLI</span><strong>{foreman.configured ? `${display(foreman.runtime)} · ${display(foreman.model)}` : "未配置"}</strong></div><button className="text-button" onClick={onConfigureForeman}>{foreman.configured ? "编辑配置" : "配置厂长"}</button></div>{foreman.setup_required && <div className="context-note">项目已启动，但厂长 Harness 尚未配置。先完成配置，Foreman 才能接管缺失依赖和运行验证。</div>}<div className="talk-list">{talk.length ? talk.map((item, index) => <div className={`talk-message ${(item.role === "human" || item.role === "user") ? "human" : "agent"}`} key={item.id ?? `${item.at}-${index}`}><span className="talk-role">{(item.role === "human" || item.role === "user") ? "你" : "Foreman"}</span><p>{display(item.body)}</p><small>{display(item.state, "observed")}</small></div>) : <div className="talk-empty"><span className="signal good" /><p>描述目标，Foreman 会创建厂区、管理员工并继续运行。</p></div>}</div><form className="talk-form" onSubmit={submit}><textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="告诉 Foreman 你想让工厂完成什么…" rows={3} /><button className="primary-button" type="submit" disabled={!text.trim() || sending}>{sending ? "发送中…" : "发送给 Foreman"}</button></form></aside>;
 }
 
 function NodeDetail({ node, bootstrap, onConfigureOperator, onClose }: { node: GraphNode; bootstrap: Bootstrap; onConfigureOperator: (runtime?: string) => void; onClose: () => void }): ReactElement {
@@ -253,18 +256,19 @@ function IntakePanel({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   const [repoUrl, setRepoUrl] = useState("");
   const [localFolder, setLocalFolder] = useState("");
   const [fileRef, setFileRef] = useState("");
+  const [projectFiles, setProjectFiles] = useState<File[]>([]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (saving || (!repoUrl.trim() && !localFolder.trim() && !fileRef.trim())) {
-      setMessage("提供仓库链接、项目文件引用或本地文件夹中的一项。");
+    if (saving || (!repoUrl.trim() && !localFolder.trim() && !fileRef.trim() && !projectFiles.length)) {
+      setMessage("提供仓库链接、项目文件或本地文件夹中的一项。");
       return;
     }
     setSaving(true);
     setMessage("");
     try {
-      await submitProjectIntake({ name: name.trim() || undefined, repo_url: repoUrl.trim() || undefined, local_folder: localFolder.trim() || undefined, files: fileRef.trim() ? [{ name: fileRef.trim(), ref: fileRef.trim() }] : undefined });
+      await submitProjectIntake({ name: name.trim() || undefined, repo_url: repoUrl.trim() || undefined, local_folder: localFolder.trim() || undefined, files: fileRef.trim() ? [{ name: fileRef.trim(), ref: fileRef.trim() }] : undefined }, projectFiles);
       setMessage("项目已进入 Foreman Intake 队列。");
       await onSaved();
     } catch (error) {
@@ -273,7 +277,7 @@ function IntakePanel({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       setSaving(false);
     }
   };
-  return <DetailDrawer title="导入项目" eyebrow="PROJECT INTAKE" onClose={onClose}><p>提供一个来源，Foreman 会继续识别项目、创建 Machine、绑定 Operator 并搭建业务 DAG。</p><form className="intake-form" onSubmit={submit}><label className="config-field"><span>项目名称</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 视频生产系统" /></label><label className="config-field"><span>仓库链接</span><input value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} placeholder="https://..." /></label><label className="config-field"><span>本地文件夹</span><input value={localFolder} onChange={(event) => setLocalFolder(event.target.value)} placeholder="本地目录引用" /></label><label className="config-field"><span>项目文件引用</span><input value={fileRef} onChange={(event) => setFileRef(event.target.value)} placeholder="CAS 或上传引用" /></label><button className="primary-button" type="submit" disabled={saving}>{saving ? "提交中…" : "交给 Foreman 搭建"}</button></form>{message && <div className="context-note">{message}</div>}</DetailDrawer>;
+  return <DetailDrawer title="导入项目" eyebrow="PROJECT INTAKE" onClose={onClose}><p>提供一个来源，Foreman 会继续识别项目、创建 Machine、绑定 Operator 并搭建业务 DAG。</p><form className="intake-form" onSubmit={submit}><label className="config-field"><span>项目名称</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 视频生产系统" /></label><label className="config-field"><span>仓库链接</span><input value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} placeholder="https://..." /></label><label className="config-field"><span>本地文件夹</span><input value={localFolder} onChange={(event) => setLocalFolder(event.target.value)} placeholder="本地目录引用" /></label><label className="config-field"><span>项目文件</span><input type="file" multiple onChange={(event) => setProjectFiles(Array.from(event.currentTarget.files ?? []))} /></label><label className="config-field"><span>已有文件引用</span><input value={fileRef} onChange={(event) => setFileRef(event.target.value)} placeholder="CAS 或上传引用" disabled={projectFiles.length > 0} /></label><button className="primary-button" type="submit" disabled={saving}>{saving ? "提交中…" : "交给 Foreman 搭建"}</button></form>{message && <div className="context-note">{message}</div>}</DetailDrawer>;
 }
 
 function DependencyState({ item }: { item: DependencyStatus }): ReactElement {
@@ -282,11 +286,23 @@ function DependencyState({ item }: { item: DependencyStatus }): ReactElement {
 
 function SettingsPage({ bootstrap, onRuntimeReady }: { bootstrap: Bootstrap; onRuntimeReady: () => Promise<void> }): ReactElement {
   const dependencies = bootstrap.dependencies ?? { harnesses: [], podman: { state: "unknown", message: "尚未读取" } };
-  const runtime = [dependencies.kiri, dependencies.podman, dependencies.docker].find((item) => item?.state === "online") ?? dependencies.kiri ?? dependencies.podman ?? dependencies.docker ?? { state: "unknown", message: "尚未读取" };
+  const runtime = [dependencies.kiri, dependencies.podman, dependencies.docker].find((item) => item && item.state !== "inactive") ?? { state: "unknown", message: "尚未读取" };
+  const runtimeLabel = runtime.provider === "kiri" ? "Kiri" : "Podman";
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState("");
-  const startRuntime = async () => { if (checking) return; setChecking(true); setMessage(""); try { await ensureRuntime(); await onRuntimeReady(); } catch (error) { setMessage(error instanceof Error ? error.message : "Podman 尚未就绪"); } finally { setChecking(false); } };
-  const runtimeLabel = runtime.provider === "kiri" ? "Kiri" : "Podman";
+  const startRuntime = async () => {
+    if (checking) return;
+    setChecking(true);
+    setMessage("");
+    try {
+      await ensureRuntime();
+      await onRuntimeReady();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : `${runtimeLabel} 尚未就绪`);
+    } finally {
+      setChecking(false);
+    }
+  };
   return <section className="page settings-page"><div className="page-heading"><div><span className="eyebrow">PROJECT DEPENDENCIES</span><h1>设置</h1><p>只检查本项目启动所需的 Harness 与容器运行时。</p></div><ConnectionState state={bootstrap.connection.state} message={bootstrap.connection.message} /></div><div className="dependency-grid"><section className="panel dependency-card"><div className="panel-head"><div><span className="eyebrow">CONTAINER RUNTIME</span><h2>{runtimeLabel}</h2></div><DependencyState item={runtime} /></div><div className="context-line"><span>状态</span><strong>{display(runtime.message, "待检查")}</strong></div><div className="context-line"><span>版本</span><strong className="mono">{display(runtime.version, "—")}</strong></div><button className="secondary-button" onClick={() => void startRuntime()} disabled={checking}>{checking ? "检查中…" : `尝试启动 ${runtimeLabel}`}</button>{message && <div className="context-note">{message}</div>}</section><section className="panel dependency-card"><div className="panel-head"><div><span className="eyebrow">AGENT HARNESSES</span><h2>Harness</h2></div><span className="count-badge">{dependencies.harnesses.length} 个</span></div>{dependencies.harnesses.length ? <div className="dependency-list">{dependencies.harnesses.map((item) => <div className="dependency-row" key={item.id}><span><strong>{item.name}</strong><small>{display(item.version, "未声明版本")}</small></span><DependencyState item={item} /></div>)}</div> : <EmptyState text="Registry 中没有发现 agent harness。" />}</section></div></section>;
 }
 
@@ -295,7 +311,7 @@ function AssetsPage({ assets, onOpen }: { assets: AssetRecord[]; onOpen: (asset:
 function LogsPage({ logs, active, onOpen }: { logs: EventRecord[]; active: EventRecord | null; onOpen: (item: EventRecord) => void }): ReactElement { return <section className="page list-page"><div className="page-heading"><div><span className="eyebrow">AUTONOMY LOG</span><h1>日志</h1><p>运行、验证、修复和异常统一进入时间线，不作为审批队列。</p></div><span className="count-badge">{logs.length} 条</span></div><div className="log-layout"><div className="panel list-panel log-list">{logs.length ? logs.slice().reverse().map((item, index) => <button className="log-row" key={item.id ?? index} onClick={() => onOpen(item)}><time>{display(item.at, "").slice(11, 19)}</time><span className={`signal ${statusTone(item.kind)}`} /><span><strong>{item.kind}</strong><small>{item.id}</small></span><b>›</b></button>) : <EmptyState text="还没有事件记录。" />}</div>{active ? <LogContext log={active} /> : <div className="panel log-placeholder"><span className="eyebrow">CONTEXT</span><h2>选择一条日志</h2><p>查看运行、ChangeSet、Epoch、验证和异常上下文。</p></div>}</div></section>; }
 function LogContext({ log }: { log: EventRecord }): ReactElement { return <div className="panel log-context"><span className="eyebrow">EVENT CONTEXT</span><h2>{log.kind}</h2><p>{log.id}</p><div className="context-line"><span>时间</span><strong>{display(log.at)}</strong></div><div className="context-line"><span>运行</span><strong>{display(log.run_id ?? log.job_id, "无")}</strong></div><details open><summary>事件摘要</summary><div className="semantic-list">{semanticEntries(log.data).map(([key, value]) => <div className="context-line" key={key}><span>{key}</span><strong>{value}</strong></div>)}</div></details></div>; }
 function DetailDrawer({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: ReactNode }): ReactElement { return <aside className="context-drawer"><button className="icon-button" onClick={onClose} aria-label="关闭详情">×</button><span className="eyebrow">{eyebrow}</span><h2>{title}</h2>{children}</aside>; }
-function SecretDrawer({ secret, onClose }: { secret: SecretRecord; onClose: () => void }): ReactElement {
+function SecretDrawer({ secret, requests, onSelect, onClose }: { secret: SecretRecord; requests: SecretRecord[]; onSelect: (request: SecretRecord) => void; onClose: () => void }): ReactElement {
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -314,7 +330,20 @@ function SecretDrawer({ secret, onClose }: { secret: SecretRecord; onClose: () =
       setSaving(false);
     }
   };
-  return <DetailDrawer title="项目资源请求" eyebrow="PROJECT RESOURCE" onClose={onClose}><p>项目主动请求这项资源。密钥值直接写入保险箱，Harness 和 Foreman 只接触引用与验证状态。</p><div className="secret-key"><strong>{secret.key}</strong><span className={`status-badge ${secret.configured ? "good" : "bad"}`}>{secret.configured ? "已配置" : "待补充"}</span></div><div className="context-line"><span>使用范围</span><strong>{display(secret.usage_scope, "未声明")}</strong></div><div className="context-line"><span>绑定对象</span><strong>{display(secret.bound_objects, "暂无绑定")}</strong></div><div className="context-line"><span>最近使用</span><strong>{display(secret.last_used, "暂无记录")}</strong></div><div className="context-line"><span>过期状态</span><strong>{secret.expired ? "已过期" : "未发现过期"}</strong></div><details open><summary>项目检查项</summary><ul className="check-list">{(secret.agent_generated_checks ?? []).map((item) => <li key={item}>{item}</li>)}</ul></details>{secret.request && <div className="request-note"><span className="signal warn" /><span>项目请求状态为 {display(secret.request.status)}。</span></div>}{requestId && !secret.configured && <form className="secret-form" onSubmit={submit}><label className="config-field"><span>填写这项项目密钥</span><input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoComplete="off" /></label><button className="primary-button" type="submit" disabled={!value || saving}>{saving ? "写入中…" : "写入保险箱"}</button></form>}{message && <div className="context-note">{message}</div>}</DetailDrawer>;
+  return <DetailDrawer title="项目资源请求" eyebrow="PROJECT RESOURCE" onClose={onClose}>
+    {requests.length > 1 && <label className="config-field"><span>项目请求</span><select value={secret.id} onChange={(event) => {
+      const selection = requests.find((item) => item.id === event.target.value);
+      if (selection) onSelect(selection);
+    }}>{requests.map((item) => <option key={item.id} value={item.id}>{item.key} · {item.configured ? "已配置" : "待补充"}</option>)}</select></label>}
+    <div className="secret-key"><strong>{secret.key}</strong><span className={`status-badge ${secret.configured ? "good" : "bad"}`}>{secret.configured ? "已配置" : "待补充"}</span></div>
+    {secret.request?.purpose && <p>{display(secret.request.purpose)}</p>}
+    <div className="context-line"><span>使用范围</span><strong>{display(secret.usage_scope ?? secret.request?.scope, "未声明")}</strong></div>
+    {requestId && !secret.configured && <form className="secret-form" onSubmit={submit}>
+      <label className="config-field"><span>填写这项项目密钥</span><input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoComplete="off" /></label>
+      <button className="primary-button" type="submit" disabled={!value || saving}>{saving ? "写入中…" : "写入保险箱"}</button>
+    </form>}
+    {message && <div className="context-note">{message}</div>}
+  </DetailDrawer>;
 }
 function AssetDrawer({ asset, onClose }: { asset: AssetRecord; onClose: () => void }): ReactElement {
   const lineage = [...new Set([...(asset.lineage ?? []), ...(asset.inputs ?? [])])];
@@ -339,9 +368,63 @@ export function App(): ReactElement {
   const initialLayout = useRef(readLayout());
   const [page, setPage] = useState<Page>("dashboard"); const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null); const [connection, setConnection] = useState("connecting"); const [error, setError] = useState(""); const [scope, setScope] = useState<Scope>("factory"); const [workarea, setWorkarea] = useState<string | null>(null); const [workareaGraph, setWorkareaGraph] = useState<Graph | null>(null); const [selected, setSelected] = useState<GraphNode | null>(null); const [layout, setLayout] = useState<LayoutState>(initialLayout.current); const [sidebarOpen, setSidebarOpen] = useState(false); const [sidebarDock, setSidebarDock] = useState<"left" | "right">(initialLayout.current.sidebarDock ?? "left"); const [maoTop, setMaoTop] = useState(initialLayout.current.maoTop ?? Math.round(window.innerHeight * 0.5)); const [foremanOpen, setForemanOpen] = useState(false); const [intakeOpen, setIntakeOpen] = useState(false); const [talk, setTalk] = useState<TalkMessage[]>([]); const [harnessConfigRole, setHarnessConfigRole] = useState<"operator" | "foreman" | null>(null); const [harnessConfigRuntime, setHarnessConfigRuntime] = useState(""); const [activeAsset, setActiveAsset] = useState<AssetRecord | null>(null); const [activeSecret, setActiveSecret] = useState<SecretRecord | null>(null); const [activeLog, setActiveLog] = useState<EventRecord | null>(null); const [constitutionOpen, setConstitutionOpen] = useState(false);
   const persistLayout = useCallback((next: LayoutState) => { setLayout(next); localStorage.setItem(LAYOUT_KEY, JSON.stringify(next)); }, []);
-  const retry = useCallback(async () => { setError(""); setConnection("connecting"); try { const next = await getBootstrap(); setBootstrap(next); setTalk(next.talk ?? []); setConnection(next.connection.state); } catch (cause) { setConnection("exception"); setError(cause instanceof Error ? cause.message : "无法连接本地服务"); } }, []);
+  const [liveReplies, setLiveReplies] = useState<Record<string, TalkMessage>>({});
+  const [eventCursor, setEventCursor] = useState<string>();
+  const startedEvents = useRef(false);
+  const retry = useCallback(async () => {
+    setError("");
+    setConnection("connecting");
+    try {
+      const next = await getBootstrap();
+      setBootstrap(next);
+      setTalk(next.talk ?? []);
+      if (!startedEvents.current) {
+        setLiveReplies(Object.fromEntries(Object.entries(next.pendingForemanReplies ?? {}).map(([id, body]) => [id, {
+          id: `live-${id}`, role: "foreman", body, state: "回复中",
+        }])));
+        setEventCursor(String(next.eventCursor ?? 0));
+        startedEvents.current = true;
+      }
+      setConnection(next.connection.state);
+    } catch (cause) {
+      setConnection("exception");
+      setError(cause instanceof Error ? cause.message : "无法连接本地服务");
+    }
+  }, []);
   const refreshLive = useCallback(async (eventType: string, eventData?: Record<string, unknown>) => {
-    const normalized = `${eventType} ${String(eventData?.type ?? "")} ${String(eventData?.kind ?? "")}`.toLowerCase();
+    const type = typeof eventData?.type === "string" ? eventData.type : eventType;
+    const inboxId = eventData?.inboxId;
+    if (type === "harness.profile.verification.completed" && typeof eventData?.id === "string"
+      && eventData.verification && typeof eventData.verification === "object") {
+      const verification = eventData.verification as HarnessProfile["verification"];
+      const id = eventData.id;
+      setBootstrap((current) => current ? {
+        ...current,
+        harness_profiles: current.harness_profiles?.map((item) => item.id === id ? { ...item, verification } : item),
+      } : current);
+      return;
+    }
+    if ((type === "talk.foreman.replied" || type === "talk.message.created") && typeof eventData?.id === "string" && typeof eventData.body === "string") {
+      const message = { id: eventData.id, body: eventData.body, role: typeof eventData.role === "string" ? eventData.role : "foreman" };
+      setTalk((current) => [...current.filter((item) => item.id !== message.id), message]);
+      if (typeof inboxId === "string") setLiveReplies((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== inboxId)));
+      return;
+    }
+    if (type === "foreman.reply.delta" && typeof inboxId === "string" && typeof eventData?.text === "string") {
+      const text = eventData.text;
+      setLiveReplies((current) => ({ ...current, [inboxId]: {
+        id: `live-${inboxId}`, role: "foreman", body: (current[inboxId]?.body ?? "") + text, state: "回复中",
+      } }));
+      return;
+    }
+    if (type === "foreman.session.failed" && typeof inboxId === "string") {
+      const reason = typeof eventData?.reason === "string" ? eventData.reason : "厂长会话中断";
+      setLiveReplies((current) => ({ ...current, [inboxId]: {
+        id: `live-${inboxId}`, role: "foreman", body: current[inboxId]?.body || reason, state: "会话失败",
+      } }));
+      return;
+    }
+    const normalized = `${type} ${String(eventData?.kind ?? "")}`.toLowerCase();
     try {
       if (normalized.includes("talk")) {
         const messages = await getTalk();
@@ -365,7 +448,7 @@ export function App(): ReactElement {
     }
   }, []);
   useEffect(() => { void retry(); }, [retry]);
-  useEffect(() => subscribeToEvents((event) => { void refreshLive(event.type, event.data); }), [refreshLive]);
+  useEffect(() => eventCursor === undefined ? undefined : subscribeToEvents((event) => { void refreshLive(event.type, event.data); }, undefined, eventCursor), [eventCursor, refreshLive]);
   useEffect(() => { if (page !== "compose" || scope !== "workarea" || !workarea) return; void getGraph("workarea", workarea).then(setWorkareaGraph).catch((cause) => setError(cause instanceof Error ? cause.message : "厂区读取失败")); }, [page, scope, workarea]);
   useEffect(() => { const handleResize = () => setMaoTop((value) => Math.max(44, Math.min(window.innerHeight - 44, value))); window.addEventListener("resize", handleResize); return () => window.removeEventListener("resize", handleResize); }, []);
   useEffect(() => { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ ...layout, sidebarDock, maoTop })); }, [layout, sidebarDock, maoTop]);
@@ -378,7 +461,7 @@ export function App(): ReactElement {
   const closeHarnessConfig = () => setHarnessConfigRole(null);
   const updateHarnessProfile = (profile: HarnessProfile, foreman: Bootstrap["foreman"]) => { setBootstrap((current) => { if (!current) return current; const profiles = [...(current.harness_profiles ?? []).filter((item) => item.id !== profile.id), profile]; return { ...current, harness_profiles: profiles, foreman }; }); };
   const updateGraphLayout = useCallback((graph: Graph, nodes: FlowNode[], viewport: Viewport) => { const current = { ...layout, graphs: { ...(layout.graphs ?? {}) } }; current.graphs![graphKey(graph)] = { nodes: Object.fromEntries(nodes.map((node) => [node.id, { x: node.position.x, y: node.position.y }])), viewport: { x: viewport.x, y: viewport.y, zoom: viewport.zoom } }; persistLayout(current); }, [layout, persistLayout]);
-  const sendToForeman = async (text: string) => { try { const response = await sendTalk(text); setTalk((items) => [...items, response.message]); } catch (cause) { setError(cause instanceof Error ? cause.message : "Foreman 对话不可用"); } };
+  const sendToForeman = async (text: string) => { try { const response = await sendTalk(text); setTalk((items) => items.some((item) => item.id === response.message.id) ? items : [...items, response.message]); } catch (cause) { setError(cause instanceof Error ? cause.message : "Foreman 对话不可用"); } };
   if (!bootstrap && connection === "connecting") return <div className="boot-screen"><div className="boot-mark">M</div><strong>正在连接本地工厂</strong><span>读取真实执行图与运行上下文…</span></div>;
-  return <div className={`app-shell dock-${sidebarDock}`}><Sidebar open={sidebarOpen} dock={sidebarDock} page={page} connection={connection} onClose={() => setSidebarOpen(false)} onNavigate={navigate} /><MaoButton dock={sidebarDock} top={maoTop} onToggle={() => setSidebarOpen((value) => !value)} onDock={(dock, top) => { setSidebarDock(dock); setMaoTop(top); }} /><main className="app-main">{error && <ErrorBanner message={error} onRetry={retry} />}{page === "dashboard" && bootstrap && <Dashboard bootstrap={bootstrap} onCompose={() => navigate("compose")} onIntake={() => setIntakeOpen(true)} onSecrets={() => setActiveSecret(bootstrap.secrets[0] ?? null)} onConstitution={() => setConstitutionOpen(true)} onWorkarea={openWorkarea} onForemanConfig={openForemanConfig} />}{page === "compose" && bootstrap && activeGraph && <ComposePage bootstrap={bootstrap} graph={activeGraph} scope={scope} layout={layout} foremanOpen={foremanOpen} selected={selected} talk={talk} harnessConfigRole={harnessConfigRole} harnessConfigRuntime={harnessConfigRuntime} onToggleForeman={() => setForemanOpen((value) => !value)} onBack={returnFactory} onLayout={updateGraphLayout} onSelect={setSelected} onOpenWorkarea={openWorkarea} onConfigureForeman={openForemanConfig} onConfigureOperator={openOperatorConfig} onCloseHarnessConfig={closeHarnessConfig} onHarnessProfileSaved={updateHarnessProfile} onSendTalk={sendToForeman} />}{page === "settings" && bootstrap && <SettingsPage bootstrap={bootstrap} onRuntimeReady={retry} />}{page === "assets" && bootstrap && <AssetsPage assets={bootstrap.assets} onOpen={setActiveAsset} />}{page === "logs" && bootstrap && <LogsPage logs={bootstrap.logs} active={activeLog} onOpen={setActiveLog} />}</main>{intakeOpen && <IntakePanel onClose={() => setIntakeOpen(false)} onSaved={retry} />}{activeSecret && <SecretDrawer secret={activeSecret} onClose={() => setActiveSecret(null)} />}{activeAsset && <AssetDrawer asset={activeAsset} onClose={() => setActiveAsset(null)} />}{constitutionOpen && bootstrap && <ConstitutionDrawer bootstrap={bootstrap} onClose={() => setConstitutionOpen(false)} />}</div>;
+  return <div className={`app-shell dock-${sidebarDock}`}><Sidebar open={sidebarOpen} dock={sidebarDock} page={page} connection={connection} onClose={() => setSidebarOpen(false)} onNavigate={navigate} /><MaoButton dock={sidebarDock} top={maoTop} onToggle={() => setSidebarOpen((value) => !value)} onDock={(dock, top) => { setSidebarDock(dock); setMaoTop(top); }} /><main className="app-main">{error && <ErrorBanner message={error} onRetry={retry} />}{page === "dashboard" && bootstrap && <Dashboard bootstrap={bootstrap} onCompose={() => navigate("compose")} onIntake={() => setIntakeOpen(true)} onSecrets={() => setActiveSecret(bootstrap.secrets.find((item) => !item.configured) ?? bootstrap.secrets[0] ?? null)} onConstitution={() => setConstitutionOpen(true)} onWorkarea={openWorkarea} onForemanConfig={openForemanConfig} />}{page === "compose" && bootstrap && activeGraph && <ComposePage bootstrap={bootstrap} graph={activeGraph} scope={scope} layout={layout} foremanOpen={foremanOpen} selected={selected} talk={[...talk, ...Object.values(liveReplies)]} harnessConfigRole={harnessConfigRole} harnessConfigRuntime={harnessConfigRuntime} onToggleForeman={() => setForemanOpen((value) => !value)} onBack={returnFactory} onLayout={updateGraphLayout} onSelect={setSelected} onOpenWorkarea={openWorkarea} onConfigureForeman={openForemanConfig} onConfigureOperator={openOperatorConfig} onCloseHarnessConfig={closeHarnessConfig} onHarnessProfileSaved={updateHarnessProfile} onSendTalk={sendToForeman} />}{page === "settings" && bootstrap && <SettingsPage bootstrap={bootstrap} onRuntimeReady={retry} />}{page === "assets" && bootstrap && <AssetsPage assets={bootstrap.assets} onOpen={setActiveAsset} />}{page === "logs" && bootstrap && <LogsPage logs={bootstrap.logs} active={activeLog} onOpen={setActiveLog} />}</main>{intakeOpen && <IntakePanel onClose={() => setIntakeOpen(false)} onSaved={retry} />}{activeSecret && <SecretDrawer key={activeSecret.id} secret={bootstrap?.secrets.find((item) => item.id === activeSecret.id) ?? activeSecret} requests={bootstrap?.secrets ?? []} onSelect={setActiveSecret} onClose={() => setActiveSecret(null)} />}{activeAsset && <AssetDrawer asset={activeAsset} onClose={() => setActiveAsset(null)} />}{constitutionOpen && bootstrap && <ConstitutionDrawer bootstrap={bootstrap} onClose={() => setConstitutionOpen(false)} />}</div>;
 }
