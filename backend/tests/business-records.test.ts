@@ -184,4 +184,19 @@ describe("business record and DAG boundaries", () => {
       await rm(dbPath, { force: true });
     }
   });
+
+  test("accepts a long chain and detects a cycle without recursive graph traversal", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Long chain" });
+      const nodes = Array.from({ length: 16_000 }, (_, index) => ({ id: "node-" + index }));
+      const edges = nodes.slice(1).map(({ id }, index) => ({ source: nodes[index].id, target: id }));
+      const submit = () => app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, {
+        method: "POST", headers, body: JSON.stringify({ graph: { nodes, edges } }),
+      }));
+      expect((await submit()).status).toBe(200);
+      edges.push({ source: nodes[nodes.length - 1].id, target: nodes[0].id });
+      expect((await submit()).status).toBe(400);
+    } finally { app.stop(); }
+  });
 });

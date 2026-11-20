@@ -111,7 +111,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 |---|---|
 | `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱、SSE 回放 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库字节、Git 引用、凭据边界和损坏情况 |
-| `backend/tests/business-records.test.ts` | 物料查询和业务 DAG 校验 |
+| `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、物料记录与启动前的运行时就绪 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、Registry 检查、从冻结快照恢复审批和调度运行 |
 | `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |

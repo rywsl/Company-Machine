@@ -122,9 +122,9 @@ function recordsFields(record: Json, clean: Rewrite, useRef: string) {
 export function exportBusinessSystem(
   store: SqliteStore, id: string, fallbackGraph: () => unknown, readSecret?: (ref: string) => string | undefined,
 ) {
-  const system = store.listBusinessSystems().find((item) => item.id === id);
+  const system = store.getBusinessSystem(id);
   if (!system) return undefined;
-  const ownedProjects = store.listProjects().filter((project) => project.businessSystemId === id);
+  const ownedProjects = store.listProjects(id);
   const units = store.listBusinessUnits(id);
   const records = store.listBusinessSystemArtifacts(id);
   const secrets = readSecret ? ownedProjects.flatMap((project) => project.secretRequests.flatMap((request) => {
@@ -152,9 +152,9 @@ export function exportBusinessSystem(
       metadata: metadata(request.metadata, clean),
     })),
   }));
-  const liveHistory = store.listBusinessRuns(id).map((run) => ({
+  const liveHistory = store.listBusinessRunsWithUnits(id).map((run) => ({
     ...run,
-    units: store.listUnitRuns(run.id).map(({ sessionId: _sessionId, error: _error, ...unit }) => unit),
+    units: run.units.map(({ sessionId: _sessionId, error: _error, ...unit }) => unit),
   }));
   return {
     schema: SCHEMA,

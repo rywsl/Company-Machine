@@ -318,6 +318,8 @@ Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。
 
 后端性能基线由 `backend/bench.ts` 生成。交互 API 的本地单用户 p95 目标为 200ms，Foreman 首个事件目标为 1s，事件增量延迟目标为 2s。读模型在一次请求内复用状态、Harness、运行和资产来源查询，业务系统级产物与物料使用一次 JOIN 读取，项目来源与资源请求使用批量投影和索引，事件流使用游标增量发送。
 
+厂区和业务导出查询按业务系统 ID 限定项目、来源与密钥请求。工厂图用 SQL 聚合项目数量。运行历史用两次查询读取运行和对应基础单元，结果维持原有顺序。DAG 校验按边累计入度并迭代移除就绪节点，时间复杂度随节点和边线性增长。
+
 ## 12. 真实 Web App 验收
 
 迁移后的 Bun 验收入口为 `bun run acceptance:bun`，执行 `backend/tests`、`backend/runtime` 和 `backend/mrl` 的 TypeScript 测试。`bun run verify:bun` 执行完整 Bun backend 集合和 Web TypeScript 检查。测试夹具通过注入的官方 Harness process、ACP JSON-RPC stream 和 Podman/Kiri command runner 运行，不调用模型 API，不依赖 shell 拼接。Python 验收目录只作为历史证据保留。

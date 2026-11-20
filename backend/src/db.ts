@@ -145,6 +145,7 @@ export class SqliteStore {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS business_talk_messages_created ON business_talk_messages(created_at, id);
+      CREATE INDEX IF NOT EXISTS projects_system_created ON projects(business_system_id, created_at, id);
       CREATE INDEX IF NOT EXISTS project_sources_project_created ON project_sources(project_id, created_at, id);
       CREATE INDEX IF NOT EXISTS secret_requests_project_created ON secret_requests(project_id, created_at, id);
       CREATE INDEX IF NOT EXISTS artifacts_project_created ON artifacts(project_id, created_at, id);
@@ -154,32 +155,61 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS business_units_system ON business_units(business_system_id, kind, created_at, id);
       CREATE INDEX IF NOT EXISTS business_runs_system ON business_runs(business_system_id, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_run ON unit_runs(run_id, status, created_at, id);
+      CREATE INDEX IF NOT EXISTS unit_runs_history ON unit_runs(run_id, created_at, id);
       CREATE INDEX IF NOT EXISTS business_conversions_system ON business_conversions(business_system_id, created_at, id);
     `);
   }
 
   listBusinessSystems(): BusinessSystem[] {
-    return this.db.query("SELECT * FROM business_systems ORDER BY created_at").all().map((row: any) => ({
-      id: row.id, name: row.name, description: row.description ?? undefined, status: row.status,
-      metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at,
-    }));
+    return this.db.query("SELECT * FROM business_systems ORDER BY created_at").all().map((row) => this.businessSystemFromRow(row));
   }
 
-  listProjects(): Project[] {
-    const rows = this.db.query("SELECT * FROM projects ORDER BY created_at, id").all() as any[];
+  getBusinessSystem(id: string): BusinessSystem | undefined {
+    const row = this.db.query("SELECT * FROM business_systems WHERE id = ?").get(id);
+    return row ? this.businessSystemFromRow(row) : undefined;
+  }
+
+  countProjectsByBusinessSystem(): Map<string, number> {
+    const rows = this.db.query<{ id: string; count: number }>(`
+      SELECT business_system_id AS id, COUNT(*) AS count FROM projects
+      WHERE business_system_id IS NOT NULL GROUP BY business_system_id
+    `).all();
+    return new Map(rows.map(({ id, count }) => [id, count]));
+  }
+
+  private businessSystemFromRow(row: any): BusinessSystem {
+    return {
+      id: row.id, name: row.name, description: row.description ?? undefined, status: row.status,
+      metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at,
+    };
+  }
+
+  listProjects(businessSystemId?: string): Project[] {
+    const db = this.db;
+    const rows = businessSystemId === undefined
+      ? db.query("SELECT * FROM projects ORDER BY created_at, id").all()
+      : db.query("SELECT * FROM projects WHERE business_system_id = ? ORDER BY created_at, id").all(businessSystemId);
+    const sourceRows = businessSystemId === undefined
+      ? db.query("SELECT * FROM project_sources ORDER BY created_at, id").all()
+      : db.query(`SELECT source.* FROM projects AS project JOIN project_sources AS source ON source.project_id = project.id
+          WHERE project.business_system_id = ? ORDER BY source.created_at, source.id`).all(businessSystemId);
+    const requestRows = businessSystemId === undefined
+      ? db.query("SELECT * FROM secret_requests ORDER BY created_at, id").all()
+      : db.query(`SELECT request.* FROM projects AS project JOIN secret_requests AS request ON request.project_id = project.id
+          WHERE project.business_system_id = ? ORDER BY request.created_at, request.id`).all(businessSystemId);
     const sources = new Map<string, any[]>();
-    for (const row of this.db.query("SELECT * FROM project_sources ORDER BY created_at, id").all() as any[]) {
+    for (const row of sourceRows as any[]) {
       const values = sources.get(row.project_id) ?? [];
       values.push(row);
       sources.set(row.project_id, values);
     }
     const secretRequests = new Map<string, any[]>();
-    for (const row of this.db.query("SELECT * FROM secret_requests ORDER BY created_at, id").all() as any[]) {
+    for (const row of requestRows as any[]) {
       const values = secretRequests.get(row.project_id) ?? [];
       values.push(row);
       secretRequests.set(row.project_id, values);
     }
-    return rows.map((row) => this.projectFromRow(row, sources.get(row.id) ?? [], secretRequests.get(row.id) ?? []));
+    return (rows as any[]).map((row) => this.projectFromRow(row, sources.get(row.id) ?? [], secretRequests.get(row.id) ?? []));
   }
 
   getProject(id: string): Project | undefined {
@@ -314,6 +344,23 @@ export class SqliteStore {
 
   listBusinessRuns(businessSystemId: string): BusinessRun[] {
     return this.db.query("SELECT * FROM business_runs WHERE business_system_id = ? ORDER BY created_at, id").all(businessSystemId).map((row: any) => this.businessRunFromRow(row));
+  }
+
+  listBusinessRunsWithUnits(businessSystemId: string): Array<BusinessRun & { units: UnitRun[] }> {
+    return this.db.transaction(() => {
+      const history = this.listBusinessRuns(businessSystemId).map((run) => ({ ...run, units: [] as UnitRun[] }));
+      const byRun = new Map(history.map((run) => [run.id, run]));
+      const rows = this.db.query(`
+        SELECT * FROM unit_runs
+        WHERE run_id IN (SELECT id FROM business_runs WHERE business_system_id = ?)
+        ORDER BY run_id, created_at, id
+      `).all(businessSystemId);
+      for (const row of rows) {
+        const unit = this.unitRunFromRow(row);
+        byRun.get(unit.runId)!.units.push(unit);
+      }
+      return history;
+    })();
   }
 
   getBusinessRun(id: string): BusinessRun | undefined {

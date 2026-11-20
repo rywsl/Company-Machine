@@ -143,15 +143,15 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     const businessSystemMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)$/);
     if (businessSystemMatch && request.method === "GET") {
-      const system = store.listBusinessSystems().find((item) => item.id === businessSystemMatch[1]);
+      const system = store.getBusinessSystem(businessSystemMatch[1]);
       if (!system) return response({ error: "business system was not found" }, 404);
-      const projects = store.listProjects().filter((project) => project.businessSystemId === system.id);
+      const projects = store.listProjects(system.id);
       const artifacts = store.listBusinessSystemArtifacts(system.id);
       return response({ ...system, projects: projects.map(publicProject), artifacts: artifacts.map(publicArtifact), materials: artifacts.filter((item) => item.recordType === "material").map(publicArtifact) });
     }
     const graphMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/graph$/);
     if (graphMatch && request.method === "GET") {
-      const system = store.listBusinessSystems().find((item) => item.id === graphMatch[1]);
+      const system = store.getBusinessSystem(graphMatch[1]);
       if (!system) return response({ error: "business system was not found" }, 404);
       return response(system.metadata.graph ?? graphProjection(store, "workarea", system.id));
     }
@@ -167,14 +167,14 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     const systemArtifactsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/(artifacts|materials)$/);
     if (systemArtifactsMatch && request.method === "GET") {
-      const system = store.listBusinessSystems().find((item) => item.id === systemArtifactsMatch[1]);
+      const system = store.getBusinessSystem(systemArtifactsMatch[1]);
       if (!system) return response({ error: "business system was not found" }, 404);
       const artifacts = store.listBusinessSystemArtifacts(system.id);
       return response((systemArtifactsMatch[2] === "materials" ? artifacts.filter((item) => item.recordType === "material") : artifacts).map(publicArtifact));
     }
     const conversionMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/conversions$/);
     if (conversionMatch && request.method === "GET") {
-      if (!store.listBusinessSystems().some((item) => item.id === conversionMatch[1])) return response({ error: "business system was not found" }, 404);
+      if (!store.getBusinessSystem(conversionMatch[1])) return response({ error: "business system was not found" }, 404);
       return response(store.listBusinessConversions(conversionMatch[1]));
     }
     if (conversionMatch && request.method === "POST") {
@@ -182,7 +182,7 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
       if (typeof body.kind !== "string" || typeof body.summary !== "string") return response({ error: "kind and summary are required" }, 400);
       if (body.inputs !== undefined && (!Array.isArray(body.inputs) || body.inputs.some((item: unknown) => typeof item !== "string"))) return response({ error: "inputs must be string references" }, 400);
       if (body.outputs !== undefined && (!Array.isArray(body.outputs) || body.outputs.some((item: unknown) => typeof item !== "string"))) return response({ error: "outputs must be string references" }, 400);
-      if (!store.listBusinessSystems().some((item) => item.id === conversionMatch[1])) return response({ error: "business system was not found" }, 404);
+      if (!store.getBusinessSystem(conversionMatch[1])) return response({ error: "business system was not found" }, 404);
       const conversion = store.createBusinessConversion({ businessSystemId: conversionMatch[1], kind: body.kind, summary: body.summary, status: body.status === "running" || body.status === "completed" || body.status === "failed" ? body.status : "planned", inputs: body.inputs ?? [], outputs: body.outputs ?? [], producer: body.producer && typeof body.producer === "object" ? body.producer : undefined, metadata: body.metadata && typeof body.metadata === "object" ? body.metadata : {} });
       events.publish("business-conversion.created", conversion);
       return response(conversion, 201);
@@ -195,13 +195,13 @@ export function createApp(options: { dbPath?: string; legacyPath?: string; runti
     }
     const unitsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/units$/);
     if (unitsMatch && request.method === "GET") {
-      if (!store.listBusinessSystems().some((item) => item.id === unitsMatch[1])) return response({ error: "business system was not found" }, 404);
+      if (!store.getBusinessSystem(unitsMatch[1])) return response({ error: "business system was not found" }, 404);
       return response(store.listBusinessUnits(unitsMatch[1]).map(publicUnit));
     }
     const runsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/runs$/);
     if (runsMatch && request.method === "GET") {
-      if (!store.listBusinessSystems().some((item) => item.id === runsMatch[1])) return response({ error: "business system was not found" }, 404);
-      return response(store.listBusinessRuns(runsMatch[1]).map((run) => ({ ...run, units: store.listUnitRuns(run.id).map(publicUnitRun) })));
+      if (!store.getBusinessSystem(runsMatch[1])) return response({ error: "business system was not found" }, 404);
+      return response(store.listBusinessRunsWithUnits(runsMatch[1]).map((run) => ({ ...run, units: run.units.map(publicUnitRun) })));
     }
     if (runsMatch && request.method === "POST") {
       const body = await readJson(request);
@@ -565,17 +565,25 @@ function portableValue(value: unknown, key = ""): any {
 }
 
 function graphProjection(store: SqliteStore, scope: string, workarea: string | null) {
-  const systems = store.listBusinessSystems();
-  const projects = store.listProjects();
   if (scope === "workarea" && workarea) {
-    const selectedProjects = projects.filter((project) => project.businessSystemId === workarea || project.id === workarea);
-    const selectedSystem = systems.find((system) => system.id === workarea);
+    const selectedSystem = store.getBusinessSystem(workarea);
     const units = selectedSystem ? store.listBusinessUnits(selectedSystem.id) : [];
+    const operatorUnits = units.filter((unit) => unit.kind === "operator");
+    const selectedProjects = operatorUnits.length ? [] : store.listProjects(workarea);
+    // A workarea link can also refer directly to a project from an earlier layout.
+    if (!operatorUnits.length) {
+      const directProject = store.getProject(workarea);
+      if (directProject && directProject.businessSystemId !== workarea) {
+        selectedProjects.push(directProject);
+        selectedProjects.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+      }
+    }
     const storedGraph = selectedSystem?.metadata.graph && typeof selectedSystem.metadata.graph === "object" ? selectedSystem.metadata.graph as { nodes?: unknown; edges?: unknown } : undefined;
     const storedNodes = Array.isArray(storedGraph?.nodes) ? storedGraph.nodes.filter((node): node is Record<string, any> => Boolean(node && typeof node === "object" && typeof (node as any).id === "string")) : [];
-    const storedIds = new Set(storedNodes.map((node) => node.id));
+    const storedById = new Map<string, Record<string, any>>();
+    for (const node of storedNodes) if (!storedById.has(node.id)) storedById.set(node.id, node);
     const nodes = units.length ? units.map((unit, index) => {
-      const saved = storedIds.has(unit.id) ? storedNodes.find((node) => node.id === unit.id) : undefined;
+      const saved = storedById.get(unit.id);
       return {
       id: unit.id,
       type: unit.kind,
@@ -589,45 +597,47 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
       { id: `${project.id}:operator`, type: "operator", group: project.id, label: "Operator", position: { x: 170, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, harness: "official" } },
       { id: `${project.id}:machine`, type: "machine", group: project.id, label: project.name, position: { x: 470, y: 130 + index * 180 }, status: "ready", metadata: { project: project.name, sources: project.sources.length } },
     ]);
-    const operatorUnits = units.filter((unit) => unit.kind === "operator");
-    const storedEdges = Array.isArray(storedGraph?.edges) ? storedGraph.edges.filter((edge): edge is Record<string, any> => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string" && storedIds.has((edge as any).source) && storedIds.has((edge as any).target))) : [];
+    const storedEdges = Array.isArray(storedGraph?.edges) ? storedGraph.edges.filter((edge): edge is Record<string, any> => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string" && storedById.has((edge as any).source) && storedById.has((edge as any).target))) : [];
     const edges = storedEdges.length ? storedEdges.map((edge) => ({ id: typeof edge.id === "string" ? edge.id : `${edge.source}:${edge.target}`, source: edge.source, target: edge.target, kind: edge.kind ?? "material", condition: edge.condition, status: edge.status ?? "ready" })) : operatorUnits.length ? operatorUnits.map((unit) => ({ id: `${unit.id}:operator-to-machine`, source: unit.id, target: `${unit.projectId}:machine`, kind: "material", condition: "业务物料", status: "ready" })) : selectedProjects.map((project) => ({ id: `${project.id}:operator-to-machine`, source: `${project.id}:operator`, target: `${project.id}:machine`, kind: "material", condition: "业务物料", status: "ready" }));
-    return { scope: "workarea", id: workarea, title: systems.find((system) => system.id === workarea)?.name ?? workarea, nodes, edges };
+    return { scope: "workarea", id: workarea, title: selectedSystem?.name ?? workarea, nodes, edges };
   }
-  return { scope: "factory", id: "factory", title: "工厂", nodes: systems.map((system, index) => ({ id: system.id, type: "workarea", group: "factory", label: system.name, position: { x: 180 + (index % 3) * 300, y: 160 + Math.floor(index / 3) * 200 }, status: system.status === "active" ? "ready" : "unknown", metadata: { description: system.description, project_count: projects.filter((project) => project.businessSystemId === system.id).length } })), edges: [] };
+  const systems = store.listBusinessSystems();
+  const projectCounts = store.countProjectsByBusinessSystem();
+  return { scope: "factory", id: "factory", title: "工厂", nodes: systems.map((system, index) => ({ id: system.id, type: "workarea", group: "factory", label: system.name, position: { x: 180 + (index % 3) * 300, y: 160 + Math.floor(index / 3) * 200 }, status: system.status === "active" ? "ready" : "unknown", metadata: { description: system.description, project_count: projectCounts.get(system.id) ?? 0 } })), edges: [] };
 }
 
 function validateDag(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return "graph must be an object";
   const graph = value as { nodes?: unknown; edges?: unknown };
   if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return "graph requires nodes and edges arrays";
-  const nodes = new Set<string>();
+  const incoming = new Map<string, number>();
   for (const node of graph.nodes) {
     if (!node || typeof node !== "object" || typeof (node as any).id !== "string" || !(node as any).id) return "every graph node requires an id";
-    if (nodes.has((node as any).id)) return "graph node ids must be unique";
-    nodes.add((node as any).id);
+    if (incoming.has((node as any).id)) return "graph node ids must be unique";
+    incoming.set((node as any).id, 0);
   }
   const next = new Map<string, string[]>();
   for (const edge of graph.edges) {
     if (!edge || typeof edge !== "object" || typeof (edge as any).source !== "string" || typeof (edge as any).target !== "string") return "every graph edge requires source and target";
     const source = (edge as any).source as string;
     const target = (edge as any).target as string;
-    if (!nodes.has(source) || !nodes.has(target)) return "graph edges must reference existing nodes";
-    next.set(source, [...(next.get(source) ?? []), target]);
+    const count = incoming.get(target);
+    if (!incoming.has(source) || count === undefined) return "graph edges must reference existing nodes";
+    const successors = next.get(source);
+    if (successors) successors.push(target);
+    else next.set(source, [target]);
+    incoming.set(target, count + 1);
   }
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const visit = (node: string): boolean => {
-    if (visiting.has(node)) return false;
-    if (visited.has(node)) return true;
-    visiting.add(node);
-    for (const target of next.get(node) ?? []) if (!visit(target)) return false;
-    visiting.delete(node);
-    visited.add(node);
-    return true;
-  };
-  for (const node of nodes) if (!visit(node)) return "graph must be acyclic";
-  return undefined;
+  const ready: string[] = [];
+  for (const [id, count] of incoming) if (count === 0) ready.push(id);
+  for (let index = 0; index < ready.length; index += 1) {
+    for (const target of next.get(ready[index]) ?? []) {
+      const count = incoming.get(target)! - 1;
+      incoming.set(target, count);
+      if (count === 0) ready.push(target);
+    }
+  }
+  return ready.length === incoming.size ? undefined : "graph must be acyclic";
 }
 
 async function readJson(request: Request): Promise<Record<string, any>> {
