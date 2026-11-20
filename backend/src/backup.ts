@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { copyFile, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -303,7 +303,14 @@ async function createRegistryBundle(directory: string, stage: string): Promise<R
   if (!stat(source)?.isDirectory()) throw new FactoryError("BACKUP_SOURCE_MISSING", "找不到 Registry 仓库目录", { path: source });
   const isBare = await git(source, ["rev-parse", "--is-bare-repository"]);
   const root = await git(source, ["rev-parse", isBare === "true" ? "--absolute-git-dir" : "--show-toplevel"]);
-  if (!samePath(source, resolve(root))) throw new FactoryError("BACKUP_SOURCE_INVALID", "请选择 Registry Git 仓库的根目录", { path: source });
+  if (!samePath(source, resolve(root))) {
+    // Git may expand the Windows short spelling of the same directory.
+    const sourceEntry = statSync(source, { bigint: true });
+    const rootEntry = statSync(root, { bigint: true });
+    if (sourceEntry.ino === 0n || sourceEntry.ino !== rootEntry.ino || sourceEntry.dev !== rootEntry.dev) {
+      throw new FactoryError("BACKUP_SOURCE_INVALID", "请选择 Registry Git 仓库的根目录", { path: source });
+    }
+  }
   const objectFormat = await git(source, ["rev-parse", "--show-object-format"]);
   if (objectFormat !== "sha1" && objectFormat !== "sha256") throw new FactoryError("BACKUP_UNSUPPORTED", "Registry 使用不受支持的 Git 对象格式", { path: source });
   const head = await git(source, ["symbolic-ref", "--quiet", "HEAD"], [0, 1]) || null;

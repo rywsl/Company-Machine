@@ -41,7 +41,7 @@ async function requestJson(app: ReturnType<typeof createApp>, path: string, init
 
 async function runCommand(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
-  if (isStationScope(command) || ["--root", "--registry", "--provider", "--local-commands", "--json"].includes(command)) {
+  if (isStationScope(command) || ["--root", "--registry", "--provider", "--local-commands", "--epoch", "--json"].includes(command)) {
     return runStationCli(argv);
   }
   if (!command || command === "help" || command === "--help") {

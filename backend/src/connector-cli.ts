@@ -4,7 +4,7 @@ import { FactoryError } from "./legacy/errors";
 import { canonicalJson } from "./legacy/foundation";
 import { dumpJob, JobStore } from "./legacy/jobs";
 import { Runner } from "./legacy/runner";
-import { RegistrySnapshotStore } from "./legacy/snapshot";
+import type { RegistrySelection } from "./registry-selection";
 import type { ContainerProvider } from "../runtime/podman";
 
 export const connectorCommands = {
@@ -16,7 +16,7 @@ type ConnectorOptions = {
   scope: keyof typeof connectorCommands;
   operation: string;
   args: string[];
-  registry: string;
+  snapshots: RegistrySelection;
   json: boolean;
   provider: () => Promise<ContainerProvider>;
 };
@@ -37,12 +37,12 @@ function options(args: string[], allowed: string[]): Array<[string, string]> {
 }
 
 export async function runConnectorCli(context: Context, request: ConnectorOptions): Promise<number> {
-  const { scope, operation, args, registry, provider } = request;
+  const { scope, operation, args, snapshots, provider } = request;
   const [target, ...rest] = args;
   if (scope === "source") {
     if (operation !== "run") usage(`unknown source command: ${operation}`);
     if (!target || target.startsWith("--")) usage("Source station is required");
-    const snapshot = await new RegistrySnapshotStore(context.db).capture(registry);
+    const snapshot = await snapshots.current();
     const key = snapshot.key("Station", target);
     const station = snapshot.spec(key);
     if (station.role !== "source") throw new FactoryError("ROLE_MISMATCH", "工位必须声明 Source 角色", { station: key, role: station.role, expected: "source" });
@@ -87,7 +87,7 @@ export async function runConnectorCli(context: Context, request: ConnectorOption
   if (operation === "verify") {
     const existing = receipts.get(target);
     const job = new JobStore(context.db, context.clock, context.ids).get(existing.job_id);
-    const snapshot = await new RegistrySnapshotStore(context.db).materialize(job.epoch, registry);
+    const snapshot = await snapshots.saved(job.epoch);
     const result = await verifyReceipt(context, snapshot, await provider(), existing);
     console.log(canonicalJson(receipts.settle(target, result)));
     return result.ok ? 0 : 1;

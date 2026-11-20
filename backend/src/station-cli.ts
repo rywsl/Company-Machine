@@ -1,12 +1,14 @@
 import { join } from "node:path";
 import { selectedContainerProvider } from "../runtime/selected";
-import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RegistrySnapshotStore, RunStore, Runner, canonicalJson, compileRunPlan, dumpJob, loadSnapshot, runTerminalStates, type RunState } from "./legacy";
+import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RunStore, Runner, canonicalJson, compileRunPlan, dumpJob, loadSnapshot, runTerminalStates, type RunState } from "./legacy";
 import { PodmanError, type ContainerProvider } from "../runtime/podman";
 import { Approvals, type ApprovalStatus } from "./legacy/approvals";
 import { ContractRunner, type ContractKind, type ContractResult } from "./legacy/contract";
 import { ReceiptStore } from "./legacy/connectors";
 import { Scheduler } from "./legacy/scheduler";
 import { connectorCommands, runConnectorCli } from "./connector-cli";
+import { epochCommands, runEpochCli } from "./epoch-cli";
+import { hasGovernedRegistry, RegistrySelection } from "./registry-selection";
 import { createBackup, restoreBackup, verifyBackup } from "./backup";
 
 export class CliUsageError extends Error {}
@@ -16,11 +18,13 @@ type Options = {
   registry?: string;
   provider?: string;
   localCommands?: string;
+  epoch?: string;
   json: boolean;
 };
 
 const commands = {
   ...connectorCommands,
+  ...epochCommands,
   bean: ["import --type TYPE --file PATH=HOST", "lineage BEAN --direction up|down"],
   job: ["run STATION [--input PORT=BEAN] [--param NAME=JSON]", "show JOB", "exec JOB"],
   line: ["plan LINE", "run LINE [--in PORT=BEAN] [--budget USD]", "exec RUN", "ls [--state STATE]", "show RUN", "nodes RUN", "cancel RUN", "retry RUN NODE", "rebuild RUN"],
@@ -44,7 +48,7 @@ export function stationUsage(scope: keyof typeof commands): string {
 }
 
 function parse(argv: string[]): { options: Options; args: string[] } {
-  const flags = { "--root": "root", "--registry": "registry", "--provider": "provider", "--local-commands": "localCommands" } as const;
+  const flags = { "--root": "root", "--registry": "registry", "--provider": "provider", "--local-commands": "localCommands", "--epoch": "epoch" } as const;
   const options: Options = { json: false };
   const args: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -140,20 +144,21 @@ export async function runStationCli(argv: string[]): Promise<number> {
   const root = options.root ?? process.env.FACTORY_ROOT ?? ".factory";
   const registry = options.registry ?? process.env.FACTORY_REGISTRY ?? "registry";
   if (scope === "backup") return await runBackupCli(operation, args, root, options);
-  if (scope === "line" && operation === "plan") {
-    if (args.length !== 1 || args[0].startsWith("--")) throw new CliUsageError("Line id is required");
-    console.log(canonicalJson(compileRunPlan(await loadSnapshot(registry), args[0]).toJSON()));
-    return 0;
-  }
+  const isPlanning = scope === "line" && operation === "plan";
+  if (isPlanning && (args.length !== 1 || args[0].startsWith("--"))) throw new CliUsageError("Line id is required");
+  if (isPlanning && !options.epoch && !(await hasGovernedRegistry(root))) return printPlan(await loadSnapshot(registry), args[0]);
   const context = Context.open(root);
+  const snapshots = new RegistrySelection(context, registry, options.epoch, options.registry ?? process.env.FACTORY_REGISTRY);
   try {
+    if (isPlanning) return printPlan(await snapshots.current(), args[0]);
+    if (scope === "epoch") return await runEpochCli(context, operation, args, { registry: options.registry ?? process.env.FACTORY_REGISTRY });
     if (scope === "source" || scope === "receipt") return await runConnectorCli(context, {
-      scope, operation, args, registry, json: options.json, provider: () => provider(options),
+      scope, operation, args, snapshots, json: options.json, provider: () => provider(options),
     });
-    if (scope === "approval") return await runApprovalCli(context, registry, operation, args);
-    if (scope === "schedule") return await runScheduleCli(context, registry, operation, args, options);
-    if (scope === "line") return await runLineCli(context, registry, operation, args, options);
-    if (scope === "contract") return await runContractCli(context, registry, operation, args, options);
+    if (scope === "approval") return await runApprovalCli(context, snapshots, operation, args);
+    if (scope === "schedule") return await runScheduleCli(context, snapshots, operation, args, options);
+    if (scope === "line") return await runLineCli(context, snapshots, operation, args, options);
+    if (scope === "contract") return await runContractCli(context, snapshots, operation, args, options);
     if (scope === "bean" && operation === "lineage") {
       const [id, ...rest] = args;
       if (!id || id.startsWith("--")) throw new CliUsageError("Bean id is required");
@@ -174,7 +179,7 @@ export async function runStationCli(argv: string[]): Promise<number> {
       const paths = fields.get("--file");
       if (!paths?.length) throw new CliUsageError("--file is required");
       const files = Object.fromEntries(paths.map((value) => pair(value, "--file")));
-      const snapshot = await loadSnapshot(registry);
+      const snapshot = await snapshots.current();
       const runtime = await provider(options);
       const gate = new Gate(snapshot, context.warehouse, join(context.root, "tmp", "gate"), runtime);
       const { report, bean } = await gate.admitExternal(type, files, {});
@@ -192,10 +197,9 @@ export async function runStationCli(argv: string[]): Promise<number> {
     const [target, ...rest] = args;
     if (!target || target.startsWith("--")) throw new CliUsageError(operation === "run" ? "Station is required" : "Job id is required");
     const fields = readOptions(rest, operation === "run" ? ["--input", "--param"] : []);
-    const snapshots = new RegistrySnapshotStore(context.db);
     const snapshot = operation === "run"
-      ? await snapshots.capture(registry)
-      : await snapshots.materialize(new JobStore(context.db, context.clock, context.ids).get(target).epoch, registry);
+      ? await snapshots.current()
+      : await snapshots.saved(new JobStore(context.db, context.clock, context.ids).get(target).epoch);
     const runner = new Runner(context, snapshot, await provider(options));
     let id = target;
     if (operation === "run") {
@@ -218,11 +222,16 @@ export async function runStationCli(argv: string[]): Promise<number> {
   }
 }
 
-async function runContractCli(context: Context, registry: string, operation: string, args: string[], options: Options): Promise<number> {
+function printPlan(snapshot: Awaited<ReturnType<typeof loadSnapshot>>, line: string): number {
+  console.log(canonicalJson(compileRunPlan(snapshot, line).toJSON()));
+  return 0;
+}
+
+async function runContractCli(context: Context, snapshots: RegistrySelection, operation: string, args: string[], options: Options): Promise<number> {
   if (!["validator", "golden", "equivalence", "diff", "sink-dry-run", "canary", "ls", "show"].includes(operation)) {
     throw new CliUsageError(`unknown contract command: ${operation}`);
   }
-  const snapshot = await new RegistrySnapshotStore(context.db).capture(registry);
+  const snapshot = await snapshots.current();
   const contract = new ContractRunner(new Runner(context, snapshot, await provider(options)));
   if (operation === "ls") {
     const fields = readOptions(args, ["--kind", "--subject"]);
@@ -277,7 +286,7 @@ async function runContractCli(context: Context, registry: string, operation: str
   return result.verdict === "pass" ? 0 : 1;
 }
 
-async function runApprovalCli(context: Context, registry: string, operation: string, args: string[]): Promise<number> {
+async function runApprovalCli(context: Context, snapshots: RegistrySelection, operation: string, args: string[]): Promise<number> {
   const approvals = new Approvals(context);
   if (operation === "ls") {
     const options = readOptions(args, ["--job", "--status"]);
@@ -295,7 +304,7 @@ async function runApprovalCli(context: Context, registry: string, operation: str
     const note = options.has("--note") ? required(options, "--note") : undefined;
     const jobs = new JobStore(context.db, context.clock, context.ids);
     const job = jobs.get(approvals.get(id).jobId);
-    const snapshot = await new RegistrySnapshotStore(context.db).materialize(job.epoch, registry);
+    const snapshot = await snapshots.saved(job.epoch);
     console.log(canonicalJson(new Approvals(context, snapshot, jobs).applyDecision(id, operation, { by: process.env.FACTORY_HUMAN_BY ?? "human", note })));
   } else throw new CliUsageError(`unknown approval command: ${operation}`);
   return 0;
@@ -323,13 +332,12 @@ async function runBackupCli(operation: string, args: string[], root: string, opt
   throw new CliUsageError("Use backup create, backup verify, or backup restore DEST --root NEW_ROOT");
 }
 
-async function runScheduleCli(context: Context, registry: string, operation: string, args: string[], options: Options): Promise<number> {
-  const snapshots = new RegistrySnapshotStore(context.db);
-  const snapshot = await snapshots.capture(registry);
+async function runScheduleCli(context: Context, snapshots: RegistrySelection, operation: string, args: string[], options: Options): Promise<number> {
+  const snapshot = await snapshots.current();
   const runtime = await provider(options);
   const runner = new Runner(context, snapshot, runtime);
   const scheduler = new Scheduler(context, snapshot, runner, {
-    resolveRunner: async (epoch) => new Runner(context, await snapshots.materialize(epoch, registry), runtime),
+    resolveRunner: async (epoch) => new Runner(context, await snapshots.saved(epoch), runtime),
   });
   const by = process.env.FACTORY_HUMAN_BY ?? "human";
   if (operation === "tick") {
@@ -355,7 +363,7 @@ async function runScheduleCli(context: Context, registry: string, operation: str
   return 0;
 }
 
-async function runLineCli(context: Context, registry: string, operation: string, args: string[], options: Options): Promise<number> {
+async function runLineCli(context: Context, snapshots: RegistrySelection, operation: string, args: string[], options: Options): Promise<number> {
   const store = new RunStore(context.db, context.clock, context.ids);
   const [target, ...rest] = args;
   const print = (value: unknown) => console.log(canonicalJson(value));
@@ -383,10 +391,9 @@ async function runLineCli(context: Context, registry: string, operation: string,
   if (!["run", "exec", "rebuild"].includes(operation)) throw new CliUsageError(`unknown line command: ${operation}`);
   const noCache = operation === "run" && rest.includes("--no-cache");
   const fields = readOptions(rest.filter((word) => !noCache || word !== "--no-cache"), operation === "run" ? ["--in", "--budget", "--variant"] : []);
-  const snapshots = new RegistrySnapshotStore(context.db);
   const snapshot = operation === "exec"
-    ? await snapshots.materialize(store.get(target).epoch, registry)
-    : await snapshots.capture(registry);
+    ? await snapshots.saved(store.get(target).epoch)
+    : await snapshots.current();
   const lines = new LineRunner(new Runner(context, snapshot, await provider(options)));
   if (operation === "rebuild") {
     const previous = store.get(target);
@@ -417,6 +424,6 @@ export function stationErrorExit(error: unknown): number {
   if (!(error instanceof FactoryError || error instanceof PodmanError)) return 1;
   if (error.code === "CLI_USAGE") return 2;
   if (error.code === "REGISTRY_INVALID") return 3;
-  if (["IMAGE_NOT_FOUND", "PODMAN_UNAVAILABLE", "PODMAN_FAILED", "RUNTIME_UNAVAILABLE"].includes(error.code)) return 4;
+  if (["IMAGE_NOT_FOUND", "PODMAN_UNAVAILABLE", "PODMAN_FAILED", "RUNTIME_UNAVAILABLE", "GIT_FAILED", "REGISTRY_NOT_CONFIGURED"].includes(error.code)) return 4;
   return 1;
 }

@@ -74,7 +74,7 @@ def exit_code(exc: FactoryError) -> int
 | `egress` | `egress check STATION@N` | `egress.md` 3.4 | `build_egress` |
 | `contract` | `contract validator TYPE VALIDATOR --timeout S`、`contract golden G@N [--baseline B@N] --timeout S`、`contract equivalence S@N [--timeout S]`、`contract diff S@N [--timeout S]`、`contract sink-dry-run S@N --in PORT=BEAN ... [--param K=V ...] [--timeout S]`、`contract ls [--kind K]` | `contract-tests.md` | `ContractRunner` |
 | `schedule` | `schedule tick`、`schedule dlq ls`、`schedule quarantine BEAN --reason TEXT`、`schedule release BEAN` | `scheduler.md` 3.2 | `Scheduler` |
-| `epoch` | `epoch init COMMIT`、`epoch ls`、`epoch show [COMMIT]`、`epoch rollback [COMMIT]`、`epoch adopt COMMIT` | `governance.md` 3.4 | `EpochStore` |
+| `epoch` | `epoch init COMMIT [--by ACTOR]`、`epoch ls`、`epoch show [COMMIT]`、`epoch rollback [COMMIT] [--by ACTOR]`、`epoch adopt COMMIT [--by ACTOR]` | `governance.md` 3.4 | `EpochStore` |
 | `changeset` | `changeset propose FILE --commit C --by ACTOR`、`changeset ls [--state S]`、`changeset show ID`、`changeset withdraw ID --by ACTOR`、`changeset advance ID` | 同上 | `ChangePipeline` |
 | `governance` | `governance tick`、`governance safe-mode` | 同上 | `ChangePipeline.tick` / `safe_mode` |
 | `audit` | `audit once`、`audit ls [--state S]` | `reconciler.md` 3.1 | `Reconciler` |
@@ -86,6 +86,10 @@ def exit_code(exc: FactoryError) -> int
 | `mcp` | `mcp` | `mcp.md` | M5-05 实现；本任务只注册子命令，未实现时退出码 4 并说明 |
 
 `foreman changeset propose` 与 `foreman review` 的 `by` 不能由命令行参数给出：命令行里的厂长身份是 `$FACTORY_ACTOR`（必须是 OperatorRuntime 引用，例如 `claude-code@4`）。没有该环境变量 → 退出码 2。`changeset propose`（人的命令）用 `--by`。
+
+Bun 的 `epoch` 命令输出规范 JSON。`init`、`rollback` 和 `adopt` 返回 `{ "commit": "<提交 ID>" }`。可用 `--registry DIR` 显式指定 Git 工作树，或让命令读取 `factory.json` 的 `governance.registry`。从 Bun 检查点恢复后，可将 `--registry` 指向恢复根目录下的 `registry`，以重新物化原来的 Git epoch。
+
+Bun 将新运行绑定到已配置的 active 提交，`--epoch` 可选用其它已构建提交。已有 Job、Run、审批和回执按其记录的 epoch 恢复。当前 Bun 的治理路由使用 active 指针，分流规则由后续 EpochRouter 接入。
 
 ### 3.3 全局选项
 

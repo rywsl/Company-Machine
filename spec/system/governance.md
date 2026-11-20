@@ -377,6 +377,8 @@ Registry 仓库里的引用：
 - `rollback(commit=None, *, by)`：目标缺省是 `previous`；没有 → `EPOCH_UNSET`。目标必须已 `build` 且不是当前 `active`，否则 `EPOCH_NOT_FOUND` / `EPOCH_STATE_INVALID`。动作：`previous := 旧 active`，`active := 目标`，`candidate` 删除。不写 `refs/heads/*`，不改 Git 历史。若有 ChangeSet 的 `commit` 等于旧 active 且状态是 `active`，把它改成 `rolled-back`（`code = "MANUAL_ROLLBACK"`）。返回目标 commit。
 - `retain(commit)` 为真，当且仅当：它是任一指针；或 `runs` 表里有未终态的 run 绑定它；或 `jobs` 表里有未终态 job 绑定它；或它是某个非终态 ChangeSet 的 `base_epoch` / `commit`。`list()` 的 `retain` 字段即此值。本组件不删除任何 epoch 目录（`reconciler.md` I12）。
 
+Bun 的 `EpochStore` 从 `factory.json` 的 `governance.registry` 或显式路径打开 Git 工作树。它通过 `git archive` 和 Bun 的归档读取器将提交内容解到临时目录，校验后登记 `epochs` 和 `epoch.built`。备份恢复后如缺少检出目录或冻结解析表，首次物化会校验 Git 提交的树摘要，重建缺少的内容并保留原有解析文件、构建时间和 epoch 标识。`active`、`candidate` 和 `previous` 的变更先提交到 SQLite，再用一次 `git update-ref --stdin` 同步到 Git。`syncRefs()` 可重试引用同步。Bun 的运行快照也支持基于目录树摘要的 SQLite 存储，Git epoch 由本组件按提交物化。
+
 ### 5.4 受理 `propose`（M3-02）
 
 按顺序检查，任一失败抛错，**不**插入 ChangeSet 行：

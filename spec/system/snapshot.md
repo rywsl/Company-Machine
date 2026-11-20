@@ -90,6 +90,8 @@ Bun 的 `RegistrySnapshotStore` 在 `factory.db` 的 `registry_snapshots` 表持
 
 新提交时，捕获后的快照可以从原 Registry 目录读取契约测试夹具。恢复时快照使用 `registry:<epoch>` 标识。已经导入的夹具由仓库 Bean 引用提供。
 
+配置 `factory.json` 的 `governance.registry` 后，新提交默认使用 Git 的 active epoch。命令行可用 `--epoch` 为新提交和产线计划指定已构建的提交。恢复 Job 或 Run、审批和核验回执时，按记录中的 epoch 加载对应的 Git 提交或 SQLite 快照。
+
 ### 4.2 epoch
 
 `epoch` 匹配 `^e-[0-9a-f]{16}$`。它是 Registry **目录树**内容哈希的前 16 个十六进制字符，前面加 `e-`（README D4、名词表）。算法见 5.2。哈希输入是文件字节，不是规范化换行之后的文本。

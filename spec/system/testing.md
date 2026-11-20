@@ -122,6 +122,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/legacy-cache.test.ts` | 缓存键、候选可用性、失效范围与审计 |
 | `backend/tests/legacy-core.test.ts` | 规范 JSON、SQLite 仓库、并发 CAS 提交、快照和值投影 |
 | `backend/tests/legacy-snapshot.test.ts` | 目录树 epoch、冻结快照重启读取、旧记录补齐和跨 epoch 执行保护 |
+| `backend/tests/registry-epochs.test.ts` | Git 提交冻结、解析表保留、active 指针与引用、回滚、保留判定及签名边界 |
 | `backend/tests/legacy-gate.test.ts` | 来料检查和产物验收 |
 | `backend/tests/legacy-harvest.test.ts` | 工位产物采集、路径边界、匹配顺序和异常结果 |
 | `backend/tests/legacy-connectors.test.ts` | Source 摄入与检验、Sink 幂等发布与核验、回执血缘和沙箱命令 |
@@ -207,6 +208,15 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m1/test_m1_09_cli.py::test_bean_lineage_json` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | CLI 封存后向上追溯，结果只包含原输入 Bean |
 | `removed/python/tests/acceptance/m2/test_m2_01_runplan.py::test_templated_params_recorded` | `backend/tests/legacy-runplan.test.ts` | `orders the example by dependency layer and records parameters and budgets` | 归档示例产线的 `to_s3.prefix` 保留模板原文和模板字段标记 |
 | `removed/python/tests/acceptance/m2/test_m2_03_line_runner.py::test_epoch_mismatch` | `backend/tests/legacy-snapshot.test.ts` | `rejects a Run tick from a LineRunner bound to a different epoch` | 不同 Registry 快照下拒绝推进同一个 Run |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_init_sets_active_pointer_and_ref` | `backend/tests/registry-epochs.test.ts` | `initializes the active Git epoch in SQLite and refs/factory exactly once` | active 指针、Git 引用、SQLite 行和物化 epoch 一致 |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_init_twice_rejected` | `backend/tests/registry-epochs.test.ts` | `initializes the active Git epoch in SQLite and refs/factory exactly once` | 重复初始化返回 `EPOCH_STATE_INVALID` |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_build_writes_frozen_resolutions_once` | `backend/tests/registry-epochs.test.ts` | `freezes a committed Registry and its nonempty resolutions once` | 校验提交归档和预计算解析，重复构建保留写入过的解析文件 |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_build_rejects_invalid_registry` | `backend/tests/registry-epochs.test.ts` | `rejects a malformed committed Registry without publishing an epoch or stage` | 格式错误不产生构建行或目录，active 保持原提交 |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_rollback_moves_pointers_only` | `backend/tests/registry-epochs.test.ts` | `rolls back to a built commit by changing epoch pointers and Git refs` | 回滚同时核对 SQLite 指针、Git 引用、主分支和旧提交 |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_rollback_target_must_be_built` | `backend/tests/registry-epochs.test.ts` | `rolls back to a built commit by changing epoch pointers and Git refs` | 无 previous、未构建目标和当前 active 返回各自错误 |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_adopt_requires_constitution_only_signed_commit` | `backend/tests/registry-epochs.test.ts` | `rejects mixed and unsigned constitution adoptions` | 拒绝含非宪法路径或未经签名的提交 |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_retain_rules` | `backend/tests/registry-epochs.test.ts` | `retains activation pointers and unfinished Run, Job and ChangeSet dependencies` | 指针和未完成依赖决定 retain，未保留的目录仍存在 |
+| `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_registry_not_configured` | `backend/tests/registry-epochs.test.ts` | `reports an unconfigured Registry before creating any epochs` | 未配置时打开 Git epoch 返回 `REGISTRY_NOT_CONFIGURED` |
 | `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_not_cacheable_roles` | `backend/tests/legacy-cache.test.ts` | `uses result-affecting inputs without depending on epoch or descriptive metadata` | Sink 的缓存键请求返回 `CACHE_NOT_CACHEABLE` |
 | `removed/python/tests/acceptance/m7/test_m7_04_backup.py::test_restore_refuses` | `backend/tests/backup.test.ts` | `reports corrupt and missing blobs, extra files, and unsafe paths before restore` | 拒绝损坏备份和非空恢复目录，原 CAS 保留 |
 
