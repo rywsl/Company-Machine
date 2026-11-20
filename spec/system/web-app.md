@@ -297,7 +297,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
 - `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
 - `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Podman 在 Windows 尝试启动 machine，Kiri 的 Linux headless 模式尝试启动 `kiri daemon`，Kiri Windows 模式使用自己的 CLI/daemon 状态。不可用时返回 503 和可读原因，不把另一运行时的状态伪装成在线
-- Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，避免桌面进程继承旧 PATH 后误报运行时缺失
+- Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，运行时健康检查和带镜像的官方 Harness/ACP 启动必须复用同一解析结果，避免桌面进程继承旧 PATH 后误报运行时缺失
 - `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱
 
 密钥值只在保险箱写入请求中出现。数据库、事件、Harness、Foreman 和普通 UI 只接触保险箱引用与状态。UI 展示语义化字段、图表、时间线和文件引用，底层 JSON 不作为用户详情内容渲染。
