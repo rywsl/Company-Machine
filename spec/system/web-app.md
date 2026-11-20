@@ -4,7 +4,7 @@
 
 ## 1. 目的与范围
 
-M18 提供一个面向本地部署的独立 Web App。用户打开本地地址后直接进入看板，不经过登录、账号、租户或多用户流程。Web App 是现有控制面的用户交互入口，浏览器中的工厂和厂区是执行图的聚合视图。
+M18 提供一个面向本地部署的独立 Web App。默认模式下用户打开本地地址后直接进入看板，不经过登录、账号、租户或多用户流程。平台部署可以通过 API Bearer scope 开启受保护的业务系统和项目范围控制。Web App 是现有控制面的用户交互入口，浏览器中的工厂和厂区是执行图的聚合视图。
 
 产品关系固定为以下逻辑链路。
 
@@ -33,7 +33,7 @@ M18 的正式实现依赖 M17 阶段门通过。纯 UI demo 用于交互确认�
 
 ### 3.1 本地 Web App 入口
 
-页面打开后直接进入看板。应用不提供登录、注册、账号切换、租户、邀请、用户菜单、远程 SaaS 工作区或多用户配置。
+默认单机场景下页面打开后直接进入看板。应用不提供登录、注册、账号切换、租户、邀请、用户菜单或远程 SaaS 工作区。平台部署的身份和范围由服务端环境变量配置，浏览器不承担主体管理。
 
 ### 3.2 导航入口
 
@@ -193,7 +193,7 @@ Operator 负责发现缺少的密钥或资源并主动提出请求。Foreman 根
 14. Operator 可以主动提出资源请求，Foreman 可以继续处理请求。
 15. Machine 没有人工 sink 开关。
 16. 看板、资产和日志采用摘要与上下文展开。
-17. 应用不存在登录、用户、租户和多用户入口。
+17. 默认单机场景不存在登录、用户、租户和多用户入口。平台 scope 模式的访问控制由 API 服务端执行。
 18. 浏览器控制台无未处理错误。
 19. 项目根目录没有临时截图、Playwright 输出或浏览器缓存。
 
@@ -223,13 +223,13 @@ Operator 发现资源缺口后主动提出请求，Foreman 继续处理。
 - 现有执行图的动态关系可能比 UI 聚合模型更丰富，适配层应保留来源引用和状态来源，不能为了填满画布创造新节点。
 - Harness 版本、启动参数和能力声明可能变化，UI 需要允许本地发现、替换和未知适配器状态。
 - 浏览器布局恢复只保存布局和交互偏好，不能把运行状态、资产事实、密钥值或宪法状态写入布局存储。
-- React Flow 或原生 SVG 都可以作为实现选择。实现细节可以调整，只要保留四入口、两层节点边界、Foreman 自治和本地单机场景。
+- React Flow 或原生 SVG 都可以作为实现选择。实现细节可以调整，只要保留四入口、两层节点边界、Foreman 自治和默认本地单机场景。
 - M18 任务应为未来控制面适配保留空间。遇到后端暂未直接暴露的事实，优先展示来源、当前状态和 Foreman 处理进度。
 
 
 ## 11. 真实 Web App 集成
 
-M18 的正式用户入口由 `factory web` 启动。服务只绑定 `127.0.0.1`，页面和 API 使用同源请求，不提供登录、注册、账号、租户、邀请、远程 SaaS 或多用户会话。已有 `factory console` 保持兼容，继续承担受保护的旧控制台职责，不能被新 Web App 反向依赖。
+M18 的正式用户入口由 `factory web` 启动。默认服务绑定 `127.0.0.1`，页面和 API 使用同源请求，不提供登录、注册、账号、租户、邀请、远程 SaaS 或多用户会话。平台部署可以绑定非回环地址，并使用 `MAO_AUTH_TOKEN` 与 `MAO_AUTH_SCOPES_JSON` 执行 API 范围控制。已有 `factory console` 保持兼容，继续承担受保护的旧控制台职责，不能被新 Web App 反向依赖。
 
 默认入口为 `http://127.0.0.1:<port>/`。页面直接进入看板。默认端口由 `web.port` 配置，未配置时使用本地 Web App 默认端口。端口为 `0` 时允许测试环境使用系统分配端口。
 
@@ -300,6 +300,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `GET/POST /api/v1/business-systems/<id>/runs` 创建和读取业务运行，`GET /api/v1/runs/<id>` 读取运行及 Operator 执行状态，`POST /api/v1/runs/<id>/dispatch` 通过官方 Operator Harness 推进待执行单元
 - 业务系统可声明 `metadata.kernel = {registry_root, line, inputs?, factory_root?, variants?, budget_cap_usd?, sink_mode?}` 将 BusinessRun 绑定到 MAO Registry。运行创建前控制面加载真实 Snapshot，验证 Line、Station 和 Machine 引用，并把脱敏后的 line、epoch、station 与 machine 集合固定到该运行的 metadata。提供按 Line 端口分组的 legacy Bean `inputs` 时，运行会由既有 `Runner` 和 `LineRunner` 接管，Machine unit_run 进入 running，完成后以 legacy Bean 输出收口并继续业务 DAG。没有 inputs 的 kernel 绑定仍只执行快照校验，不得伪造 Runner/Gate 已执行。
 - legacy Runner 的每个封存 Bean 输出必须登记为当前业务系统的 `mao.business-record/1` Material，文件引用复用内容寻址摘要并授予业务项目下载权限，同时写入一条 `legacy-run-output` Conversion。重复恢复或重试必须按 legacy Bean ID 幂等复用已有 Material，不能重复生成产物或 Conversion。
+- kernel 输入可以引用当前业务系统的 `material://`、`artifact://` 或 `record://` 记录。记录带有 legacy Bean 时直接复用，其他记录必须通过已登记文件和 `legacy_type`、`legacy_meta`、`legacy_facts` 物化为封存 Bean，并登记 `material-to-legacy-bean` Conversion。缺少可验证 Bean 类型或文件授权时，运行在提交前失败。
 - Web 编排页读取业务运行列表并显示每个运行的状态和单元数量。`POST /api/v1/runs/<id>/cancel` 取消仍可控的业务运行，`POST /api/v1/runs/<id>/retry` 为失败运行创建可追踪的重试运行。取消请求会先停止本次运行仍在等待或读取输出的官方 Harness，并等待其控制面清理完成后返回，旧进程不能覆盖 `cancelled` 状态。取消后的重试清除本次取消标记，重新使用原始输入和 DAG，每个 Operator 最多启动一次新的 Harness 尝试，不重复登记已完成的 Machine 或 Conversion。后端未提供运行汇总时，看板显示“待观测”，不把缺失状态渲染为零。
 - 创建业务运行默认同时记录派发授权。请求使用 `dispatch: false` 时保留待派发状态，直到调用显式派发接口。历史运行缺少派发记录且没有已完成的 Operator 时，继续通过显式接口派发。
 - 业务运行按 DAG 前置边决定就绪状态。每个未归档的 Operator 和 Machine 都在运行快照中拥有一个 `unit_run`。普通 Machine 在满足前置条件后由控制面执行确定性的项目来源激活，状态从 `queued` 进入 `completed` 或 `blocked`。kernel `inputs` 绑定的 Machine 则进入 `running`，由 legacy `LineRunner` 驱动真实 Job、Gate 和 Bean 输出，完成或失败后再推进同一份业务 DAG。Operator 成功完成后，控制面通过该次运行的依赖边索引检查其直接后继。后继在全部前置基础单元完成后才能领用，输入先保留原有物料，再按依赖快照中的边顺序合并产物引用并去重。首次派发、启动恢复、资源恢复和失败会按完整运行重新核对就绪状态。
@@ -341,7 +342,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
 - SSE 发生读取错误时，前端连接状态进入 `degraded`，恢复收到事件后回到 `connected`。发送 Foreman 消息失败时保留输入内容并显示错误，不能清空输入后伪装成已提交。
 - `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
-- `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Linux Kiri 先探测套接字并复用在线服务，需要时请求 systemd 启动官方 `kiri.service`。自定义套接字使用部署方的服务管理。不可用时返回 503 和诊断。
+- `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Linux Kiri 先探测套接字并复用在线服务，需要时请求 systemd 启动官方 `kiri.service`。headless Kiri 发行版的 `/var/lib/kiri-daemon/.kiri/run/docker.sock` 会自动发现，自定义套接字使用部署方的服务管理。不可用时返回 503 和诊断。
 
 并发的运行时状态查询共用一次在途探测，结果缓存 5 秒。主动就绪检查在并发的被动探测期间完成时，后返回的被动探测使用最新的就绪结果。
 - Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，运行时健康检查和带镜像的官方 Harness/ACP 启动必须复用同一解析结果，避免桌面进程继承旧 PATH 后误报运行时缺失
@@ -352,6 +353,8 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 本地保险箱将加密记录写入同目录的私有临时文件，再原子替换正式文件。首次写入时允许正式文件缺失。读取出错或记录格式损坏时停止写入，保留正式文件供恢复。
 
 本机回环地址默认采用单用户模式。设置 `MAO_AUTH_TOKEN` 后，API 和 SSE 必须使用对应的 Bearer token，写请求还需提供 `X-MAO-CSRF`，值由 `MAO_CSRF_TOKEN` 指定。绑定到非回环地址时也必须配置身份验证。CORS 不再默认开放到任意来源，跨源访问需要显式设置 `MAO_CORS_ORIGIN`。
+
+平台部署可以设置 `MAO_AUTH_SCOPES_JSON` 开启多主体范围控制。对象键是 Bearer token，值支持 `role`（`admin`、`foreman`、`operator`、`viewer`）、`business_systems` 和 `projects` 数组，数组中的 `*` 表示该维度的显式全范围授权。启用后即使请求来自回环地址也必须提供匹配的 Bearer token。业务系统、项目、运行和密钥请求按范围检查，DAG、Conversion、Harness 配置和厂长邮箱控制需要 `foreman` 或 `admin`，Harness 配置与业务系统导入需要 `admin`。范围凭据查询全局聚合投影会被拒绝，避免通过列表接口侧漏其他业务系统。
 
 密钥值只在保险箱写入请求中出现。数据库、事件、Harness、Foreman 和普通 UI 只接触保险箱引用与状态。UI 展示语义化字段、图表、时间线和文件引用，底层 JSON 不作为用户详情内容渲染。
 
@@ -367,7 +370,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 
 Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。业务运行同时保留两类基础单元的生命周期，Machine 负责项目来源激活，Operator 负责通过官方 Harness 操作软件项目。Operator Harness 输出 `mao.record` 事件后，控制面把记录写入该项目并通过事件流返回产物或物料状态。
 
-容器运行时默认采用 Podman。设置 `MAO_CONTAINER_RUNTIME=kiri` 后，Linux 通过 `/run/kiri/docker.sock` 与官方 Kiri headless 服务通信。Windows 上 Kiri 使用自己的 WSL 后端。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。
+容器运行时默认采用 Podman。设置 `MAO_CONTAINER_RUNTIME=kiri` 后，Linux 通过 `/run/kiri/docker.sock` 或自动发现的 headless Kiri 私有套接字与官方服务通信。Windows 上 Kiri 使用自己的 WSL 后端。沙箱保持非 root、只读根文件系统、能力降级、资源限制和无宿主套接字约束。
 
 后端性能基线由 `backend/bench.ts` 生成。交互 API 的本地单用户 p95 目标为 200ms，Foreman 首个事件目标为 1s，事件增量延迟目标为 2s。读模型在一次请求内复用状态、Harness、运行和资产来源查询，业务系统级产物与物料使用一次 JOIN 读取，项目来源与资源请求使用批量投影和索引，事件流使用游标增量发送。
 

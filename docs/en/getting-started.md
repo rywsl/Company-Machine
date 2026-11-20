@@ -49,9 +49,11 @@ MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
 
-MAO connects through `/run/kiri/docker.sock`. Set `MAO_KIRI_SOCKET` for a custom deployment and `MAO_DOCKER_EXECUTABLE` to select the CLI. The official Linux path uses the Unix socket directly and works without a desktop session.
+MAO normally connects through `/run/kiri/docker.sock`. The headless Kiri distribution is also discovered when its socket is at `/var/lib/kiri-daemon/.kiri/run/docker.sock`. Set `MAO_KIRI_SOCKET` for a custom deployment and `MAO_DOCKER_EXECUTABLE` to select the CLI. Run `MAO_CONTAINER_RUNTIME=kiri bun run factory runtime doctor` before starting the service. The official Linux path uses the Unix socket directly and works without a desktop session.
 
 For station jobs inside WSL, point `FACTORY_ROOT` to a Linux filesystem such as `$HOME/.local/share/mao`. The mailbox uses Linux directory permissions to protect host responses.
+
+For a shared deployment, set `MAO_AUTH_TOKEN` and `MAO_CSRF_TOKEN`. Add `MAO_AUTH_SCOPES_JSON` to issue scoped Bearer credentials. Its keys are Bearer tokens and each value can declare `role`, `business_systems`, and `projects`. Scoped credentials are required even on loopback and cannot read or mutate resources outside their declared scope.
 
 Build the fixture images and verify a station job and the Foreman mailbox using Kiri.
 

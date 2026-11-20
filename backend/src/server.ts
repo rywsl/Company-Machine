@@ -4,7 +4,7 @@ import { VaultStore } from "./vault";
 import { exportBusinessSystem, importBusinessSystem } from "./business-portability";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
-import { RandomIds, type Clock } from "./legacy/foundation";
+import { RandomIds, canonicalBytes, digestBytes, type Clock } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
 import type { Artifact, BusinessConversion, BusinessSystem, Event, HarnessProfile } from "./models";
 import type { RuntimeHealth } from "../runtime/podman";
@@ -38,6 +38,76 @@ function isLoopbackHost(host: string): boolean {
   return value === "localhost" || value === "127.0.0.1" || value === "::1";
 }
 
+type AuthScope = {
+  role?: "admin" | "foreman" | "operator" | "viewer";
+  business_systems?: string[];
+  projects?: string[];
+};
+
+type AuthPrincipal = {
+  role: "admin" | "foreman" | "operator" | "viewer";
+  businessSystems?: ReadonlySet<string>;
+  projects?: ReadonlySet<string>;
+  scoped: boolean;
+};
+
+function configuredAuthScopes(): Record<string, AuthScope> | undefined {
+  const raw = process.env.MAO_AUTH_SCOPES_JSON?.trim();
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).flatMap(([token, value]) => {
+      if (!token || !value || typeof value !== "object" || Array.isArray(value)) return [];
+      const scope = value as Record<string, unknown>;
+      const role = scope.role === "admin" || scope.role === "foreman" || scope.role === "operator" || scope.role === "viewer" ? scope.role : "viewer";
+      const systems = Array.isArray(scope.business_systems) ? scope.business_systems.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+      const projects = Array.isArray(scope.projects) ? scope.projects.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+      return [[token, { role, business_systems: systems, projects }]];
+    })) as Record<string, AuthScope>;
+  } catch {
+    return {};
+  }
+}
+
+function authenticateRequest(request: Request): AuthPrincipal | undefined {
+  const scopes = configuredAuthScopes();
+  const configuredToken = process.env.MAO_AUTH_TOKEN?.trim();
+  const authorization = request.headers.get("authorization") ?? "";
+  const presented = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length).trim() : "";
+  if (scopes !== undefined) {
+    const scope = presented ? scopes[presented] : undefined;
+    if (!scope) return undefined;
+    return {
+      role: scope.role ?? "viewer",
+      businessSystems: new Set(scope.business_systems ?? []),
+      projects: new Set(scope.projects ?? []),
+      scoped: true,
+    };
+  }
+  if (configuredToken) {
+    if (presented !== configuredToken) return undefined;
+    return { role: "admin", scoped: false };
+  }
+  if (isLoopbackHost(new URL(request.url).hostname)) return { role: "admin", scoped: false };
+  return undefined;
+}
+
+function canAccessSystem(principal: AuthPrincipal, businessSystemId: string): boolean {
+  return !principal.scoped || principal.role === "admin" || Boolean(principal.businessSystems?.has("*") || principal.businessSystems?.has(businessSystemId));
+}
+
+function canAccessProject(principal: AuthPrincipal, store: SqliteStore, projectId: string): boolean {
+  if (!principal.scoped || principal.role === "admin") return true;
+  if (principal.projects?.has("*") || principal.projects?.has(projectId)) return true;
+  const project = store.getProject(projectId);
+  return Boolean(project?.businessSystemId && (principal.businessSystems?.has("*") || principal.businessSystems?.has(project.businessSystemId)));
+}
+
+function canMutate(principal: AuthPrincipal, role: "foreman" | "operator" = "operator"): boolean {
+  return !principal.scoped || principal.role === "admin" || principal.role === role || principal.role === "foreman";
+}
+
 function corsHeaders(request: Request): Record<string, string> {
   const configured = process.env.MAO_CORS_ORIGIN?.trim();
   const origin = request.headers.get("origin");
@@ -45,14 +115,11 @@ function corsHeaders(request: Request): Record<string, string> {
 }
 
 function authorizedRequest(request: Request): boolean {
-  const token = process.env.MAO_AUTH_TOKEN?.trim();
-  const loopback = isLoopbackHost(new URL(request.url).hostname);
-  if (!token && loopback) return true;
-  const authorization = request.headers.get("authorization") ?? "";
-  if (!token || authorization !== `Bearer ${token}`) return false;
+  const principal = authenticateRequest(request);
+  if (!principal) return false;
   if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return true;
   const csrf = process.env.MAO_CSRF_TOKEN?.trim();
-  if (csrf && request.headers.get("x-mao-csrf") !== csrf) return false;
+  if ((process.env.MAO_AUTH_TOKEN?.trim() || configuredAuthScopes() !== undefined) && (!csrf || request.headers.get("x-mao-csrf") !== csrf)) return false;
   const origin = request.headers.get("origin");
   const configuredOrigin = process.env.MAO_CORS_ORIGIN?.trim();
   return !origin || !configuredOrigin || origin === configuredOrigin;
@@ -219,16 +286,79 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   };
   const activeKernelMachines = new Map<string, Promise<void>>();
   const activeKernelContexts = new Map<string, Context>();
-  const resolveKernelInputs = (businessSystemId: string, inputs: Record<string, string | string[]> | undefined) => {
+  const ensureMaterialToBeanConversion = (businessSystemId: string, artifact: Artifact, beanId: string): void => {
+    const input = `material://${artifact.id}`;
+    const output = `legacy://bean/${beanId}`;
+    if (store.hasBusinessConversion(businessSystemId, "material-to-legacy-bean", input, output)) return;
+    const conversion = store.createBusinessConversion({
+      businessSystemId,
+      kind: "material-to-legacy-bean",
+      summary: `将业务物料 ${artifact.summary ?? artifact.kind} 接入 MAO Bean`,
+      status: "completed",
+      inputs: [input],
+      outputs: [output],
+      metadata: { schema: "mao.business-record/1", artifact_id: artifact.id, legacy_bean_id: beanId },
+    });
+    events.publish("business-conversion.created", conversion);
+  };
+  const activeBusinessBeanConversions = new Map<string, Promise<string>>();
+  const materializeBusinessArtifactAsBean = async (businessSystemId: string, context: Context, artifact: Artifact): Promise<string> => {
+    const legacyBean = artifact.metadata.legacy_bean_id;
+    if (typeof legacyBean === "string" && legacyBean.length > 0) {
+      ensureMaterialToBeanConversion(businessSystemId, artifact, legacyBean);
+      return legacyBean;
+    }
+    const type = typeof artifact.metadata.legacy_type === "string" ? artifact.metadata.legacy_type : artifact.kind;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*@[0-9]+\.[0-9]+$/.test(type)) {
+      throw new Error(`business material ${artifact.ref} has no legacy Bean type`);
+    }
+    const files = artifact.files ?? [];
+    const grants = new Map(store.artifactFileGrants(businessSystemId, [artifact.id]).map((grant) => [grant.position, grant]));
+    const stage = join(context.root, "tmp", `business-input-${store.uuid()}`);
+    mkdirSync(stage, { recursive: true });
+    try {
+      const paths: Record<string, string> = {};
+      for (const [position, file] of files.entries()) {
+        const grant = grants.get(position);
+        if (!grant) throw new Error(`business material ${artifact.ref} has no file grant`);
+        const source = uploads().blobPath(grant.digest);
+        if (!existsSync(source)) throw new Error(`business material ${artifact.ref} file is missing`);
+        const relativePath = typeof file.path === "string" && file.path.length > 0 ? file.path : `file-${position}`;
+        const destination = join(stage, String(position));
+        await Bun.write(destination, Bun.file(source));
+        paths[relativePath] = destination;
+      }
+      const meta = artifact.metadata.legacy_meta && typeof artifact.metadata.legacy_meta === "object" && !Array.isArray(artifact.metadata.legacy_meta)
+        ? artifact.metadata.legacy_meta as Record<string, unknown> : {};
+      const facts = artifact.metadata.legacy_facts && typeof artifact.metadata.legacy_facts === "object" && !Array.isArray(artifact.metadata.legacy_facts)
+        ? artifact.metadata.legacy_facts as Record<string, unknown> : {};
+      const bean = await context.warehouse.add({ type, meta, files: paths });
+      context.warehouse.sealMany([[bean.id, facts]], null, digestBytes(canonicalBytes({ artifact: artifact.id, type, facts })));
+      store.updateArtifactMetadata(artifact.id, { legacy_bean_id: bean.id, legacy_type: type, legacy_facts: facts });
+      ensureMaterialToBeanConversion(businessSystemId, artifact, bean.id);
+      return bean.id;
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
+    }
+  };
+  const resolveKernelInputs = async (businessSystemId: string, context: Context, inputs: Record<string, string | string[]> | undefined) => {
     if (!inputs) return undefined;
-    const resolveOne = (value: string) => {
+    const resolveOne = async (value: string) => {
       if (!/^(?:artifact|material|record):\/\//.test(value)) return value;
       const record = store.resolveBusinessMaterialRefs(businessSystemId, [value])[0]?.record;
-      const legacyBean = record?.metadata.legacy_bean_id;
-      if (typeof legacyBean !== "string") throw new Error(`business material ${value} is not backed by a legacy Bean`);
-      return legacyBean;
+      if (!record) throw new Error(`business material ${value} was not found`);
+      const conversionKey = `${context.root}:${record.id}`;
+      const existing = activeBusinessBeanConversions.get(conversionKey);
+      if (existing) return existing;
+      const pending = materializeBusinessArtifactAsBean(businessSystemId, context, record)
+        .finally(() => activeBusinessBeanConversions.delete(conversionKey));
+      activeBusinessBeanConversions.set(conversionKey, pending);
+      return pending;
     };
-    return Object.fromEntries(Object.entries(inputs).map(([port, value]) => [port, Array.isArray(value) ? value.map(resolveOne) : resolveOne(value)]));
+    const resolved: Record<string, string | string[]> = {};
+    for (const [port, value] of Object.entries(inputs)) resolved[port] = Array.isArray(value)
+      ? await Promise.all(value.map(resolveOne)) : await resolveOne(value);
+    return resolved;
   };
   const materializeLegacyOutputs = async (runId: string, unitRunId: string, context: Context, beanIds: readonly string[]): Promise<string[]> => {
     const run = store.getBusinessRun(runId);
@@ -236,13 +366,25 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     const unit = unitRun ? store.getBusinessUnit(unitRun.unitId) : undefined;
     if (!run || !unitRun || !unit?.projectId) throw new Error("legacy machine output has no business project");
     const outputs: string[] = [];
+    const artifactsByLegacy = new Map<string, Artifact>();
+    const legacyRefs = new Map<string, string>();
+    for (const artifact of store.listArtifacts(unit.projectId)) {
+      const legacyId = artifact.metadata.legacy_bean_id;
+      if (typeof legacyId === "string") {
+        artifactsByLegacy.set(legacyId, artifact);
+        legacyRefs.set(legacyId, `${artifact.recordType ?? "material"}://${artifact.id}`);
+      }
+    }
     for (const beanId of [...new Set(beanIds)]) {
       const bean = context.warehouse.get(beanId);
-      const existing = store.listArtifacts(unit.projectId).find((artifact) => artifact.metadata.legacy_bean_id === bean.id);
+      const existing = artifactsByLegacy.get(bean.id);
       if (existing) {
+        legacyRefs.set(bean.id, `${existing.recordType ?? "material"}://${existing.id}`);
         outputs.push(`${existing.recordType ?? "material"}://${existing.id}`);
         continue;
       }
+      const lineage = context.warehouse.lineage(bean.id, "up").beans.map((id) => legacyRefs.get(id) ?? `legacy://bean/${id}`);
+      const inputs = [...new Set([...unitRun.inputs, ...lineage])];
       const files = bean.payload.map((file) => ({
         ref: `cas://${file.digest}`,
         path: file.path,
@@ -266,7 +408,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         summary: `Legacy MAO Runner 产出 ${bean.type}`,
         status: bean.sealed ? "sealed" : "produced",
         files,
-        inputs: unitRun.inputs.length ? unitRun.inputs : undefined,
+        inputs: inputs.length ? inputs : undefined,
+        lineage: lineage.length ? lineage : undefined,
         metadata: {
           schema: "mao.business-record/1",
           legacy_bean_id: bean.id,
@@ -283,12 +426,14 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         kind: "legacy-run-output",
         summary: `MAO Runner 将 ${bean.type} 产出为业务物料`,
         status: "completed",
-        inputs: unitRun.inputs.length ? unitRun.inputs : beanIds.map((id) => `legacy://bean/${id}`),
+        inputs: inputs.length ? inputs : beanIds.map((id) => `legacy://bean/${id}`),
         outputs: [artifact.ref],
         producer: { machine: unit.id },
         metadata: { schema: "mao.business-record/1", artifact_id: artifact.id, legacy_run_id: run.metadata.legacy_run_id },
       });
       events.publish("business-conversion.created", conversion);
+      artifactsByLegacy.set(bean.id, artifact);
+      legacyRefs.set(bean.id, `material://${artifact.id}`);
       outputs.push(`material://${artifact.id}`);
     }
     return outputs;
@@ -312,7 +457,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         const root = kernel.factoryRoot ?? storageRoot;
         context = Context.open(root, { clock: store.clock });
         activeKernelContexts.set(unitRunId, context);
-        const executableKernel = { ...kernel, inputs: resolveKernelInputs(system.id, kernel.inputs) };
+        const executableKernel = { ...kernel, inputs: await resolveKernelInputs(system.id, context, kernel.inputs) };
         const execution = createBusinessKernelExecution(context, provider);
         const result = legacyRunId
           ? await execution.resume(executableKernel, legacyRunId)
@@ -361,7 +506,30 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   const handleRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...defaultHeaders(), "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "authorization,content-type,last-event-id,x-mao-csrf" } });
-    if (url.pathname.startsWith("/api/") && !authorizedRequest(request)) return response({ code: "AUTH_REQUIRED", message: "需要本地身份或 Bearer token" }, 401);
+    const principal = authenticateRequest(request);
+    if (url.pathname.startsWith("/api/") && (!principal || !authorizedRequest(request))) return response({ code: "AUTH_REQUIRED", message: "需要本地身份或 Bearer token" }, 401);
+    if (principal?.scoped) {
+      const decodeSegment = (value: string): string | undefined => {
+        try { return decodeURIComponent(value); } catch { return undefined; }
+      };
+      const systemPath = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)/);
+      const projectPath = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)/);
+      const runPath = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)/);
+      const systemId = systemPath && systemPath[1] !== "import" ? decodeSegment(systemPath[1]) : undefined;
+      const projectId = projectPath && projectPath[1] !== "intake" ? decodeSegment(projectPath[1]) : undefined;
+      if (systemId && !canAccessSystem(principal, systemId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该业务系统权限" }, 403);
+      if (projectId && !canAccessProject(principal, store, projectId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, 403);
+      if (runPath) {
+        const run = decodeSegment(runPath[1]) ? store.getBusinessRun(decodeSegment(runPath[1])!) : undefined;
+        if (run && !canAccessSystem(principal, run.businessSystemId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该运行权限" }, 403);
+      }
+      if ((url.pathname === "/api/v1/business-systems" || url.pathname === "/api/v1/projects" || url.pathname === "/api/web/bootstrap" || url.pathname === "/api/web/graph" || url.pathname === "/api/web/assets" || url.pathname === "/api/web/assets/page" || url.pathname === "/api/web/logs") && principal.role !== "admin") {
+        return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据需要明确的业务系统范围" }, 403);
+      }
+      if ((url.pathname.startsWith("/api/v1/foreman/") || url.pathname.startsWith("/api/v1/talk") || url.pathname === "/api/web/talk") && !canMutate(principal, "foreman")) {
+        return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有厂长控制权限" }, 403);
+      }
+    }
     if (url.pathname === "/healthz" && request.method === "GET") return response({ ok: true });
     if (url.pathname === "/api/v1/runtime" && request.method === "GET") {
       const health = await runtimeHealth();
@@ -390,6 +558,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response({ provider, health, dependency: runtimeDependency(health, provider) }, 200);
     }
     if (url.pathname === "/api/v1/business-systems/import" && request.method === "POST") {
+      if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以导入业务系统" }, 403);
       const document = await readJson(request);
       try {
         const imported = importBusinessSystem(store, document, validateDag);
@@ -401,6 +570,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     if (url.pathname === "/api/v1/business-systems" && request.method === "GET") return response(store.listBusinessSystems());
     if (url.pathname === "/api/v1/business-systems" && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有创建业务系统权限" }, 403);
       const body = await readJson(request);
       if (!body.name || typeof body.name !== "string") return response({ error: "name is required" }, 400);
       try {
@@ -428,6 +598,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response(system.metadata.graph ?? graphProjection(store, "workarea", system.id));
     }
     if (graphMatch && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "只有厂长或管理员可以更新业务 DAG" }, 403);
       const body = await readJson(request);
       if (!body.graph || typeof body.graph !== "object") return response({ error: "graph is required" }, 400);
       const graphError = validateBusinessGraph(store, graphMatch[1], body.graph);
@@ -450,6 +621,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response(store.listBusinessConversions(conversionMatch[1]));
     }
     if (conversionMatch && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "只有厂长或管理员可以登记 Conversion" }, 403);
       const body = await readJson(request);
       if (typeof body.kind !== "string" || typeof body.summary !== "string") return response({ error: "kind and summary are required" }, 400);
       if (body.inputs !== undefined && (!Array.isArray(body.inputs) || body.inputs.some((item: unknown) => typeof item !== "string"))) return response({ error: "inputs must be string references" }, 400);
@@ -475,6 +647,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     const bindingMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/units\/([^/]+)\/binding$/);
     if (bindingMatch && request.method === "PATCH") {
+      if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "只有厂长或管理员可以绑定 Operator" }, 403);
       const input = parseOperatorBinding(await readJson(request));
       if (!input) return response({ error: "需要有效的官方 Harness ID 和模型 ID" }, 400);
       let systemId: string;
@@ -495,6 +668,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response(store.listBusinessRunsWithUnits(runsMatch[1]).map((run) => ({ ...run, units: run.units.map(publicUnitRun) })));
     }
     if (runsMatch && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "operator")) return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有启动业务运行权限" }, 403);
       const body = await readJson(request);
       const inputs = Array.isArray(body.inputs) ? body.inputs.filter((item: unknown): item is string => typeof item === "string") : [];
       const invalidInputs = store.invalidBusinessInputRefs(runsMatch[1], inputs);
@@ -521,6 +695,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     const dispatchRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/dispatch$/);
     if (dispatchRunMatch && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "operator")) return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有派发业务运行权限" }, 403);
       const run = store.getBusinessRun(dispatchRunMatch[1]);
       if (!run) return response({ error: "business run was not found" }, 404);
       store.authorizeBusinessRunDispatch(run.id);
@@ -529,6 +704,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/(cancel|retry)$/);
     if (cancelRunMatch && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "operator")) return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有控制业务运行权限" }, 403);
       const run = cancelRunMatch[2] === "cancel"
         ? store.cancelBusinessRun(cancelRunMatch[1])
         : store.retryBusinessRun(cancelRunMatch[1]);
@@ -540,6 +716,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects().map(publicProject));
     if (url.pathname === "/api/v1/projects/intake" && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "只有厂长或管理员可以接收新项目" }, 403);
       let body: Record<string, any>;
       let files: File[] = [];
       if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
@@ -554,6 +731,14 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         files = form.getAll("files").filter((file): file is File => typeof file !== "string" && Boolean(file.name));
         body.uploaded_file_refs = form.getAll("uploaded_file_refs").filter((ref): ref is string => typeof ref === "string" && Boolean(ref.trim()));
       } else body = await readJson(request);
+      if (principal?.scoped) {
+        if (typeof body.business_system_id === "string" && !canAccessSystem(principal, body.business_system_id)) {
+          return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该业务系统权限" }, 403);
+        }
+        if (typeof body.business_system_id !== "string" && !canMutate(principal, "foreman")) {
+          return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有创建业务系统权限" }, 403);
+        }
+      }
       if (body.repo_url !== undefined && body.repo_url !== "") {
         const reference = repositoryReference(body.repo_url, "intake");
         if (!reference) return response({ error: "请提交不含凭证、查询参数或片段的仓库链接" }, 400);
@@ -626,6 +811,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     const artifactMatch = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/artifacts$/);
     if (artifactMatch && request.method === "GET") return response(store.listArtifacts(artifactMatch[1]).map(publicArtifact));
     if (artifactMatch && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "operator")) return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有登记业务产物权限" }, 403);
       const body = await readJson(request);
       if (typeof body.kind !== "string" || typeof body.ref !== "string" || typeof body.summary !== "string") return response({ error: "kind, ref, and summary are required" }, 400);
       if (body.record_type !== undefined && body.record_type !== "artifact" && body.record_type !== "material") return response({ error: "record_type must be artifact or material" }, 400);
@@ -702,9 +888,11 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response({ state: "dispatching", inbox_id: foremanDispatch[1] }, 202);
     }
     if (url.pathname === "/api/v1/secrets/requests" && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "operator")) return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有申请项目密钥权限" }, 403);
       const body = await readJson(request);
       if (typeof body.project_id !== "string" || !projectCredentialName(body.name)) return response({ error: "project_id and a valid credential name are required" }, 400);
       if (!store.getProject(body.project_id)) return response({ error: "project was not found" }, 404);
+      if (principal?.scoped && !canAccessProject(principal, store, body.project_id)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, 403);
       const requestRecord = store.createSecretRequest({ projectId: body.project_id, name: body.name, vaultRef: `vault://secret/${store.uuid()}`, metadata: { purpose: body.purpose, scope: body.scope } });
       const { vaultRef: _vaultRef, ...visible } = requestRecord;
       events.publish("secret.requested", visible);
@@ -713,11 +901,14 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     const secretActionMatch = url.pathname.match(/^\/api\/v1\/secrets\/requests\/([^/]+)\/(deny|revoke|rotate|audit)$/);
     if (secretActionMatch && request.method === "GET" && secretActionMatch[2] === "audit") {
       const record = store.getSecretRequest(secretActionMatch[1]);
+      if (record && principal?.scoped && !canAccessProject(principal, store, record.projectId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, 403);
       return record ? response(store.listSecretAudit(record.id)) : response({ error: "secret request was not found" }, 404);
     }
     if (secretActionMatch && request.method === "POST" && secretActionMatch[2] !== "audit") {
+      if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "只有厂长或管理员可以治理项目密钥" }, 403);
       const record = store.getSecretRequest(secretActionMatch[1]);
       if (!record) return response({ error: "secret request was not found" }, 404);
+      if (principal?.scoped && !canAccessProject(principal, store, record.projectId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, 403);
       if (secretActionMatch[2] === "rotate") {
         if (record.status === "revoked") return response({ error: "secret request is already revoked" }, 409);
         store.setSecretStatus(record.id, "revoked", "user", { reason: "rotation" });
@@ -734,8 +925,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     const secretValueMatch = url.pathname.match(/^\/api\/v1\/secrets\/requests\/([^/]+)\/value$/);
     if (secretValueMatch && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "只有厂长或管理员可以写入项目密钥" }, 403);
       const requestRecord = store.getSecretRequest(secretValueMatch[1]);
       if (!requestRecord) return response({ error: "secret request was not found" }, 404);
+      if (principal?.scoped && !canAccessProject(principal, store, requestRecord.projectId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, 403);
       const body = await readJson(request);
       if (typeof body.value !== "string" || body.value.length === 0) return response({ error: "value is required" }, 400);
       if (requestRecord.status !== "requested") return response({ error: `secret request is ${requestRecord.status}` }, 409);
@@ -768,9 +961,11 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response(graphProjection(store, url.searchParams.get("scope") ?? "factory", url.searchParams.get("workarea")));
     }
     if (url.pathname === "/api/web/harnesses" && request.method === "GET") {
+      if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以读取全局 Harness 配置" }, 403);
       return response(officialHarnesses().map((item) => ({ ...item, configuration: publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })));
     }
     if (url.pathname === "/api/web/harnesses/configure" && request.method === "POST") {
+      if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以配置 Harness" }, 403);
       const body = await readJson(request);
       const definition = typeof body.runtime === "string" ? officialHarness(body.runtime) : undefined;
       if (!definition || (body.role !== "foreman" && body.role !== "operator") || typeof body.model !== "string" || !body.model.trim()) {
@@ -803,6 +998,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response({ profile: publicProfile(profile, (ref) => vault.get(ref)), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) } }, 200);
     }
     if (url.pathname === "/api/web/harnesses/verify" && request.method === "POST") {
+      if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以验证 Harness" }, 403);
       const body = await readJson(request);
       if (typeof body.profile_id !== "string") return response({ error: "profile_id is required" }, 400);
       const existing = store.listHarnessProfiles().find((item) => item.id === body.profile_id);
@@ -836,6 +1032,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response(webAssetPage(store, limit, older));
     }
     if (url.pathname === "/api/web/secrets" && request.method === "GET") {
+      if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有全局密钥列表权限" }, 403);
       return response(store.listSecretRequests().map((secret) => ({ id: secret.id, key: secret.name, configured: secret.status === "available", status: secret.status, usage_scope: secret.metadata.scope, request: { id: secret.id, project_id: secret.projectId, project_name: secret.projectName, status: secret.status, purpose: secret.metadata.purpose, scope: secret.metadata.scope } })));
     }
     if (url.pathname === "/api/web/talk" && request.method === "POST") {

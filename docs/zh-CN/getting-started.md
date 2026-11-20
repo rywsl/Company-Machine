@@ -49,9 +49,11 @@ MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
 
-MAO 通过 `/run/kiri/docker.sock` 连接。自定义部署可以设置 `MAO_KIRI_SOCKET` 和 `MAO_DOCKER_EXECUTABLE` 指定套接字和客户端。官方 Linux 路径直接使用 Unix 套接字，无需桌面会话。
+MAO 默认通过 `/run/kiri/docker.sock` 连接。headless Kiri 发行版如果把套接字放在 `/var/lib/kiri-daemon/.kiri/run/docker.sock`，控制面会自动发现该路径。自定义部署可以设置 `MAO_KIRI_SOCKET` 和 `MAO_DOCKER_EXECUTABLE` 指定套接字和客户端。安装后先运行 `MAO_CONTAINER_RUNTIME=kiri bun run factory runtime doctor`，再启动服务。官方 Linux 路径直接使用 Unix 套接字，无需桌面会话。
 
 在 WSL 中运行工位时，保留示例的 Linux 数据目录。文件邮箱使用 Linux 目录权限保护宿主响应。MAO 由系统服务启动时，对该服务的运行账户授权，并给服务配置相同的环境变量。
+
+共享部署时设置 `MAO_AUTH_TOKEN` 和 `MAO_CSRF_TOKEN`。需要多主体范围控制时再设置 `MAO_AUTH_SCOPES_JSON`，对象键是 Bearer token，值可以声明 `role`、`business_systems` 和 `projects`。启用范围控制后，即使来自回环地址也必须提供匹配的 Bearer token，范围凭据不能访问或修改声明范围之外的资源。
 
 可以用项目自带验证命令构建夹具镜像，并在 Kiri 中验证工位和厂长邮箱。
 

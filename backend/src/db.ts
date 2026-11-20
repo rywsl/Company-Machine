@@ -902,6 +902,16 @@ export class SqliteStore {
     return this.db.query("SELECT * FROM artifacts WHERE project_id = ? ORDER BY created_at, id").all(projectId).map((row: any) => this.artifactFromRow(row));
   }
 
+  updateArtifactMetadata(id: string, patch: Record<string, unknown>): Artifact | undefined {
+    return this.db.transaction(() => {
+      const row = this.db.query("SELECT * FROM artifacts WHERE id=?").get(id) as any;
+      if (!row) return undefined;
+      const metadata = { ...parseJson(row.metadata), ...patch };
+      this.db.query("UPDATE artifacts SET metadata=? WHERE id=?").run(json(metadata), id);
+      return this.artifactFromRow(this.db.query("SELECT * FROM artifacts WHERE id=?").get(id));
+    }).immediate();
+  }
+
   registerArtifactFiles(artifactId: string, files: ReadonlyArray<Omit<ArtifactFileGrant, "artifactId">>): void {
     const insert = this.db.query("INSERT INTO artifact_file_grants (artifact_id,position,digest,size) VALUES (?,?,?,?)");
     for (const { position, digest, size } of files) insert.run(artifactId, position, digest, size);
@@ -986,22 +996,26 @@ export class SqliteStore {
   createBusinessConversion(input: Omit<BusinessConversion, "id" | "createdAt" | "updatedAt">): BusinessConversion {
     const invalid = this.invalidBusinessInputRefs(input.businessSystemId, [...input.inputs, ...input.outputs]);
     if (invalid.length) throw new Error("conversion input references are outside the business system");
-    const existing = this.db.query<any>(`
-      SELECT * FROM business_conversions
-      WHERE business_system_id=? AND kind=? AND summary=? AND inputs=? AND outputs=?
-      ORDER BY created_at DESC, id DESC LIMIT 1
-    `).get(input.businessSystemId, input.kind, input.summary, json(input.inputs), json(input.outputs));
-    if (existing) return {
-      id: existing.id, businessSystemId: existing.business_system_id, kind: existing.kind,
-      summary: existing.summary, status: existing.status, inputs: parseList(existing.inputs),
-      outputs: parseList(existing.outputs), producer: existing.producer ? parseJson(existing.producer) as BusinessConversion["producer"] : undefined,
-      metadata: parseJson(existing.metadata), createdAt: existing.created_at, updatedAt: existing.updated_at,
-    };
-    const timestamp = this.timestamp();
-    const value: BusinessConversion = { ...input, id: this.uuid(), createdAt: timestamp, updatedAt: timestamp };
-    this.db.query("INSERT INTO business_conversions (id,business_system_id,kind,summary,status,inputs,outputs,producer,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-      .run(value.id, value.businessSystemId, value.kind, value.summary, value.status, json(value.inputs), json(value.outputs), value.producer ? json(value.producer) : null, json(value.metadata), timestamp, timestamp);
-    return value;
+    return this.db.transaction(() => {
+      const inputJson = json(input.inputs);
+      const outputJson = json(input.outputs);
+      const existing = this.db.query<any>(`
+        SELECT * FROM business_conversions
+        WHERE business_system_id=? AND kind=? AND summary=? AND inputs=? AND outputs=?
+        ORDER BY created_at DESC, id DESC LIMIT 1
+      `).get(input.businessSystemId, input.kind, input.summary, inputJson, outputJson);
+      if (existing) return {
+        id: existing.id, businessSystemId: existing.business_system_id, kind: existing.kind,
+        summary: existing.summary, status: existing.status, inputs: parseList(existing.inputs),
+        outputs: parseList(existing.outputs), producer: existing.producer ? parseJson(existing.producer) as BusinessConversion["producer"] : undefined,
+        metadata: parseJson(existing.metadata), createdAt: existing.created_at, updatedAt: existing.updated_at,
+      };
+      const timestamp = this.timestamp();
+      const value: BusinessConversion = { ...input, id: this.uuid(), createdAt: timestamp, updatedAt: timestamp };
+      this.db.query("INSERT INTO business_conversions (id,business_system_id,kind,summary,status,inputs,outputs,producer,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(value.id, value.businessSystemId, value.kind, value.summary, value.status, inputJson, outputJson, value.producer ? json(value.producer) : null, json(value.metadata), timestamp, timestamp);
+      return value;
+    }).immediate();
   }
 
   listBusinessConversions(businessSystemId: string): BusinessConversion[] {
@@ -1018,6 +1032,16 @@ export class SqliteStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
+  }
+
+  hasBusinessConversion(businessSystemId: string, kind: string, input: string, output: string): boolean {
+    return Boolean(this.db.query(`
+      SELECT 1 FROM business_conversions
+      WHERE business_system_id=? AND kind=?
+        AND json_valid(inputs) AND json_valid(outputs)
+        AND json_extract(inputs, '$[0]')=? AND json_extract(outputs, '$[0]')=?
+      LIMIT 1
+    `).get(businessSystemId, kind, input, output));
   }
 
   private artifactFromRow(row: any): Artifact {
