@@ -10,6 +10,7 @@
     "factory:bun": "bun run backend/src/cli.ts",
     "mrl": "bun run backend/mrl/cli.ts",
     "mrl:bun": "bun run backend/mrl/cli.ts",
+    "build:test-images": "bun run tools/build_test_images.ts",
     "backend:check": "bun build backend/src/index.ts --target bun --outfile output/backend-check.js",
     "backend:build": "bun build backend/src/index.ts --outdir output/backend --target bun",
     "backend:bench": "bun run backend/bench.ts",
