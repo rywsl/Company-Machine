@@ -423,6 +423,7 @@ raise FactoryError("RUN_STUCK", run=run_id)
   - 用原 run 的 `inputs`、`budget_cap_usd`、`variants`，在本 LineRunner 的快照上调用 `start_run(原 line 的名字@版本, …)`，并设置 `rebuilt_from`。
   - 原 run 必须是终态，否则 `RUN_STATE_INVALID`。
   - 已经完成的工位靠缓存（`cache.md`）避免重复执行。
+  - Bun 重建沿用原 Run 的上限，包括合法的零预算。新 Registry 的产线上限低于原预算时拒绝重建。
 
 ### 5.6 触发器 `TriggerEngine.process`
 

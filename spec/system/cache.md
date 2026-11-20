@@ -191,6 +191,8 @@ CREATE TABLE cache_invalidations (
 - 同一个 job 不能绑定两次（`job_id UNIQUE`），重复调用报 `CACHE_BIND_CONFLICT`。
 - 用 `--no-cache` 运行的 job 也要绑定。“不查缓存”不等于“不进缓存”，下次运行仍然可以复用它的产物。
 
+Bun 的 `factory job run` 会绑定可复用工位的缓存键。传入 `--cache` 时先检查已有结果，命中后输出原 Job ID，JSON 输出附带 `cache_hit: true`。`factory cache ls`、`explain` 和 `invalidate` 可从工厂数据库直接查看或管理缓存。产线默认查询缓存，可用 `--no-cache` 重新执行并登记结果。Map 的实例工位与隐式转换沿用相同的键、物料顺序和变体规则。全命中的 Map 在同一次 tick 汇总并完成，无须创建作业或预留费用。
+
 ---
 
 ## 6. 错误

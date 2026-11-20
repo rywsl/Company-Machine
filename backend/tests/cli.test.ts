@@ -102,6 +102,20 @@ describe("Bun factory CLI", () => {
       expect(upstream.beans).toEqual([beanId]);
       const shown = await capture(() => main(["job", "show", upstream.jobs[0].jobId, "--root", root]));
       expect(JSON.parse(shown.output[0])).toMatchObject({ state: "SEALED", attempt: 1, cost_usd: 0, outputs: { note: [outputId] } });
+      const runAgain = (withCache: boolean) => capture(() => main([...options, "job", "run", "upper@1", "--input", `note=${beanId}`, ...(withCache ? ["--cache"] : [])]));
+      const reused = await runAgain(true);
+      expect(reused).toMatchObject({ code: 0, errors: [] });
+      expect(JSON.parse(reused.output[0])).toMatchObject({ id: upstream.jobs[0].jobId, cache_hit: true });
+      const newer = JSON.parse((await runAgain(false)).output[0]);
+      expect(newer.id).not.toBe(upstream.jobs[0].jobId);
+      const inspectCache = (args: string[]) => capture(() => main(["--root", root, "cache", ...args]));
+      const entries = JSON.parse((await inspectCache(["ls", "--station", "upper@1"])).output[0]);
+      expect(entries.map(({ jobId }: { jobId: string }) => jobId)).toEqual([upstream.jobs[0].jobId, newer.id]);
+      const explained = JSON.parse((await inspectCache(["explain", newer.id])).output[0]);
+      expect(explained.hits).toEqual(entries.map(({ jobId }: { jobId: string }) => jobId));
+      const invalidated = await inspectCache(["invalidate", "--job", upstream.jobs[0].jobId, "--reason", "acceptance"]);
+      expect(invalidated.code).toBe(0);
+      expect(JSON.parse((await runAgain(true)).output[0])).toMatchObject({ id: newer.id, cache_hit: true });
     } finally {
       rmSync(root, { recursive: true, force: true, maxRetries: 3 });
     }
@@ -114,10 +128,11 @@ describe("Bun factory CLI", () => {
     try {
       cpSync("tests/fixtures/registry-m1", registry, { recursive: true });
       mkdirSync(join(registry, "lines"), { recursive: true });
-      await Bun.write(join(registry, "lines", "uppercase.yaml"), [
+      const linePath = join(registry, "lines", "uppercase.yaml");
+      await Bun.write(linePath, [
         "apiVersion: mao/v1", "kind: Line", "metadata: {name: uppercase, version: 1}", "spec:",
         "  interface:", "    inputs: {note: {type: note.text@1, requires: [non_empty]}}", "    outputs: {result: {type: note.text@1, from: upper.note}}",
-        "  budget: {cap_usd: 1}", "  steps:", "    upper: {station: upper@1, in: {note: $inputs.note}}",
+        "  budget: {cap_usd: 0}", "  steps:", "    upper: {station: upper@1, in: {note: $inputs.note}}",
       ].join("\n"));
       const note = join(root, "note.txt");
       const commands = join(root, "commands.json");
@@ -147,6 +162,15 @@ describe("Bun factory CLI", () => {
       const reusedNodes = await capture(() => main(["--root", root, "line", "nodes", reusedRun.id]));
       expect(reusedRun.outputs).toEqual(run.outputs);
       expect(JSON.parse(reusedNodes.output[0])).toMatchObject([{ nodeId: "upper", state: "DONE", cacheHit: true }]);
+
+      await Bun.write(linePath, (await Bun.file(linePath).text()).replace("cap_usd: 0", "cap_usd: 1"));
+      const rebuiltResponse = await capture(() => main([...options, "line", "rebuild", run.id]));
+      expect(rebuiltResponse).toMatchObject({ code: 0, errors: [] });
+      const rebuilt = JSON.parse(rebuiltResponse.output[0]);
+      expect(rebuilt).toMatchObject({ state: "PENDING", rebuiltFrom: run.id, budgetCapUsd: 0, inputs: run.inputs });
+      expect(rebuilt.epoch).not.toBe(run.epoch);
+      const result = await capture(() => main([...options, "line", "exec", rebuilt.id]));
+      expect(JSON.parse(result.output[0])).toMatchObject({ state: "SUCCEEDED", outputs: run.outputs, spentUsd: 0 });
     } finally {
       rmSync(root, { recursive: true, force: true, maxRetries: 3 });
     }

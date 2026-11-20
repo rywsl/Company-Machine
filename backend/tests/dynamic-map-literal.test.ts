@@ -150,3 +150,20 @@ test("resumes a saved literal Map plan without compiled members", { timeout: 60_
     expect(await Promise.all(done.outputs.notes.map(task.read))).toEqual(["ALPHA:EN\n", "ALPHA:JA\n"]);
   } finally { task.close(); }
 });
+
+test("reuses Map stations and converters without reserving money or submitting jobs", { timeout: 60_000 }, async () => {
+  const task = await fixture(["EN", "JA"]);
+  try {
+    const original = task.lines.start(line, { inputs: task.inputs, useCache: false });
+    const completed = await task.lines.run(original.id);
+    expect(completed.state).toBe("SUCCEEDED");
+    const rerun = task.lines.start(line, { inputs: task.inputs, budgetCapUsd: 0.1 });
+    expect(task.lines.tick(rerun.id)).toEqual([]);
+    expect(task.lines.runs.get(rerun.id)).toMatchObject({ state: "SUCCEEDED", outputs: completed.outputs, spentUsd: 0, reservedUsd: 0 });
+    const first = task.lines.runs.nodes(original.id).filter(({ nodeId }) => nodeId !== "shout");
+    const reused = task.lines.runs.nodes(rerun.id).filter(({ nodeId }) => nodeId !== "shout");
+    expect(reused.map(({ jobId, cacheHit }) => [jobId, cacheHit])).toEqual([
+      [first[0].jobId, true], [first[0].jobId, true], [first[2].jobId, true], [first[3].jobId, true],
+    ]);
+  } finally { task.close(); }
+});

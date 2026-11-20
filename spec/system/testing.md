@@ -115,7 +115,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |
-| `backend/tests/cli.test.ts` | Bun 工厂命令、Registry 检查、从冻结快照恢复审批和调度运行 |
+| `backend/tests/cli.test.ts` | Bun 工厂命令、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
 | `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
 | `backend/tests/server-recovery.test.ts` | 重开 SQLite 后恢复可派发的队列，保留外部结果未知的执行状态，检查运行时就绪等待期间停止服务 |
@@ -287,6 +287,9 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m3/test_m3_03_rollout.py::test_freeze_blocks_promotion` | `backend/tests/changesets.test.ts` | `executes real diff and GoldenSet jobs before recording a successful shadow` | 封版期间 ChangeSet 留在 shadow，期满可以推广 |
 | `removed/python/tests/acceptance/m3/test_m3_03_rollout.py::test_safe_mode_pauses_t2` | `backend/tests/changesets.test.ts` | `pauses higher-risk releases after repeated rollbacks and resumes after cooldown` | 两次观察期回滚后暂停 T2 推广，T1 仍可推广，冷却结束后恢复 T2 |
 | `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_not_cacheable_roles` | `backend/tests/legacy-cache.test.ts` | `uses result-affecting inputs without depending on epoch or descriptive metadata` | Sink 的缓存键请求返回 `CACHE_NOT_CACHEABLE` |
+| `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_rebuild_hits_everything` | `backend/tests/cli.test.ts` | `executes a durable Line through Bun CLI and exposes its node outputs` | 用新 epoch 重建，沿用零预算并复用原物料 |
+| `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_no_cache_still_binds` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | 独立工位默认执行并登记，后续 `--cache` 可命中该结果 |
+| `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_factory_run_cache_flag` | `backend/tests/cli.test.ts` | `imports material, seals a scripted job and returns its lineage through Bun CLI` | 对活动 `factory job run` 使用 `--cache`，从 JSON 读取复用的 Job ID |
 | `removed/python/tests/acceptance/m2/test_m2_08_contract.py::test_validator_accept_and_reject` | `backend/tests/legacy-contract.test.ts` | `runs validator accept/reject samples and audits removed negative fixtures` | 正样例被接受，反样例被拒绝，报告为通过 |
 | `removed/python/tests/acceptance/m2/test_m2_08_contract.py::test_reject_fixture_that_passes_fails` | `backend/tests/legacy-contract.test.ts` | `fails when declared negative fixture bytes are accepted` | 保持反样例路径，写入正样例字节后返回 `CONTRACT_FIXTURE_ACCEPTED` |
 | `removed/python/tests/acceptance/m2/test_m2_08_contract.py::test_fixture_set_removed` | `backend/tests/legacy-contract.test.ts` | `runs validator accept/reject samples and audits removed negative fixtures` | 报告删除的反样例路径，只新增正样例路径时通过 |
@@ -354,6 +357,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 `parity --json` 输出逐条差异。历史 Python 验收文件只作为需求和证据索引读取。普通验证检查活动源码的依赖边界、Shell 与表达式调用约束，以及 Python 代码归档。完整代码策略中尚未迁移的检查会在 `parity` 中列出。通过的 Registry 用例会按规则文件和行号记录实际生成诊断的规则及触发用例。未触发的诊断规则仍列入覆盖缺口。
 
 Bun 使用工作区固定版本的 TypeScript 编译器解析生产源码。校验检查字符串和模板片段中的测试基础设施路径，以及示例和测试 Registry 实际声明的工位、产线、机器、GoldenSet 和 Baseline 名称。扫描范围是活动后端、运行时和 MRL 的非测试 TypeScript 文件。`verify:bun` 运行 `tools/registry-policy.test.ts`，校验 Registry 声明发现、定位和正反例。
+
+归档 `test_codebase_policy.py` 的模块边界在 Bun 下由编译器和 `tools/module-policy.ts` 检查。TypeScript 类型检查约束模块导出和类成员可见性。静态规则借助编译器解析的符号，检查直接引用导入对象的成员赋值和常见反射写入，以及可静态识别的私有成员下标访问和反射。stdout 由显式列出的命令行和服务进程入口管理。`verify:bun` 运行 `tools/module-policy.test.ts`，覆盖同名局部变量、成员访问、反射、stdout 与 stderr 诊断。
 
 Bun MRL 表达式检查标准库参数、宏短路、集合顺序和嵌套深度。规则检查覆盖模块归属、关系签名、变量绑定、宿主事实类型、分层否定及聚合。Registry 事实交给规范中的 `kernel/refs.mrl`、`kernel/types.mrl`、`kernel/stations.mrl` 和 `kernel/lines.mrl`。内核检查业务引用、类型继承、工位契约和产线绑定，并生成转换解析表。测试可按完整 Line 键或省略 `Line:` 的键匹配解析条目。Registry 的宪法在同一规则程序上执行，编译失败时仍会返回内核诊断。完整 int64 精度和整数值与同值浮点数的身份尚需迁移。超过 JavaScript 安全整数范围的 YAML 用例会报告证据缺口。规范用例以 `spec/mrl/conformance/` 为准。
 

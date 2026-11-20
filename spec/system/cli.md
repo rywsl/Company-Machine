@@ -18,8 +18,9 @@
 | `factory registry check PATH [--json]` | 通过 Bun MRL 检查 Registry 结构与 schema。 |
 | `factory bean import --type TYPE --file PATH=HOST` | 检验并封存外部物料。可以重复传入 `--file`。 |
 | `factory bean lineage BEAN --direction up\|down` | 查询已封存物料的上下游工位和物料。 |
-| `factory job run STATION [--input PORT=BEAN] [--param NAME=JSON]` | 提交并执行一个工位，封存通过 Gate 的产物。列表端口允许重复传入 `--input`。 |
+| `factory job run STATION [--input PORT=BEAN] [--param NAME=JSON] [--cache]` | 执行工位并封存通过 Gate 的产物。`--cache` 可复用已有结果。列表端口允许重复传入 `--input`。 |
 | `factory job show JOB`、`factory job exec JOB` | 查询或继续执行已有工位。 |
+| `factory cache ls`、`explain JOB`、`invalidate` | 列出缓存记录，查看 JobKey，或使用指定范围和原因失效已有记录。 |
 | `factory approval ls`、`show`、`approve`、`deny` | 查询邮箱审批并提交决定，决定者默认取 `FACTORY_HUMAN_BY`。 |
 | `factory source run`、`factory receipt ls`、`show`、`verify`、`void` | 执行摄入，查询、核验与作废发布回执。 |
 | `factory schedule enqueue`、`tick`、`dlq ls`、`quarantine`、`release` | 持久化待执行工位，推进调度并管理死信及物料隔离。`tick` 可用 `--config PATH` 指定文件。 |

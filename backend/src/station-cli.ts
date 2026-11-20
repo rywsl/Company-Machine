@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import { selectedContainerProvider } from "../runtime/selected";
-import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RunStore, Runner, canonicalJson, dumpJob, loadSnapshot, runTerminalStates, type RunState } from "./legacy";
+import { Context, FactoryError, Gate, JobStore, LineRunner, LocalProvider, RunStore, Runner, canonicalJson, dumpJob, loadSnapshot, type RunState } from "./legacy";
 import { compileDynamicRunPlan } from "./legacy/dynamic-switch";
 import { PodmanError, type ContainerProvider } from "../runtime/podman";
 import { Approvals, type ApprovalStatus } from "./legacy/approvals";
+import { JobCache, cacheableRoles, type InvalidationScope } from "./legacy/cache";
 import { ContractRunner, type ContractKind, type ContractResult } from "./legacy/contract";
 import { ReceiptStore } from "./legacy/connectors";
 import { Scheduler } from "./legacy/scheduler";
@@ -30,8 +31,9 @@ const commands = {
   ...changesetCommands,
   ...epochCommands,
   bean: ["import --type TYPE --file PATH=HOST", "lineage BEAN --direction up|down"],
-  job: ["run STATION [--input PORT=BEAN] [--param NAME=JSON]", "show JOB", "exec JOB"],
-  line: ["plan LINE", "run LINE [--in PORT=BEAN] [--budget USD]", "exec RUN", "ls [--state STATE]", "show RUN", "nodes RUN", "cancel RUN", "retry RUN NODE", "rebuild RUN"],
+  job: ["run STATION [--input PORT=BEAN] [--param NAME=JSON] [--cache]", "show JOB", "exec JOB"],
+  cache: ["ls [--station STATION]", "explain JOB", "invalidate (--key KEY|--job JOB|--station STATION|--bean BEAN) --reason TEXT"],
+  line: ["plan LINE", "run LINE [--in PORT=BEAN] [--budget USD] [--variant STEP=VALUE] [--no-cache]", "exec RUN", "ls [--state STATE]", "show RUN", "nodes RUN", "cancel RUN", "retry RUN NODE", "rebuild RUN"],
   approval: ["ls [--job JOB] [--status STATUS]", "show APPROVAL", "approve APPROVAL [--note TEXT]", "deny APPROVAL [--note TEXT]"],
   schedule: ["tick [--config PATH]", "enqueue JOB...", "dlq ls", "quarantine BEAN --reason TEXT", "release BEAN"],
   contract: [
@@ -166,6 +168,7 @@ export async function runStationCli(argv: string[]): Promise<number> {
       scope, operation, args, snapshots, json: options.json, provider: () => provider(options),
     });
     if (scope === "approval") return await runApprovalCli(context, snapshots, operation, args);
+    if (scope === "cache") return runCacheCli(context, operation, args);
     if (scope === "schedule") return await runScheduleCli(context, snapshots, operation, args, options);
     if (scope === "line") return await runLineCli(context, snapshots, operation, args, options);
     if (scope === "contract") return await runContractCli(context, snapshots, operation, args, options);
@@ -206,22 +209,40 @@ export async function runStationCli(argv: string[]): Promise<number> {
     }
     const [target, ...rest] = args;
     if (!target || target.startsWith("--")) throw new CliUsageError(operation === "run" ? "Station is required" : "Job id is required");
-    const fields = readOptions(rest, operation === "run" ? ["--input", "--param"] : []);
+    const useCache = operation === "run" && rest.includes("--cache");
+    const fields = readOptions(useCache ? rest.filter((entry) => entry !== "--cache") : rest, operation === "run" ? ["--input", "--param"] : []);
     const snapshot = operation === "run"
       ? await snapshots.current()
       : await snapshots.saved(new JobStore(context.db, context.clock, context.ids).get(target).epoch);
     const runner = new Runner(context, snapshot, await provider(options));
     let id = target;
+    let hit = false;
     if (operation === "run") {
       const station = snapshot.spec(snapshot.key("Station", target));
       const inputs = materialInputs(fields.get("--input") ?? [], "--input", (port) => station.inputs?.[port]?.type?.startsWith("list<") ?? false);
       const params = parameters(fields.get("--param") ?? []);
-      id = runner.submit(target, inputs, params).id;
+      if (cacheableRoles.has(station.role)) {
+        const cache = new JobCache(context, runner.jobs);
+        const material = cache.material(snapshot, target, inputs, params);
+        id = context.db.transaction(() => {
+          const cached = useCache ? cache.lookup(material.key()) : null;
+          if (cached) {
+            const gate = new Gate(snapshot, context.warehouse, join(context.root, "tmp", "gate"), runner.provider);
+            gate.checkInputs(cached.station, inputs, params);
+            hit = true;
+            return cached.id;
+          }
+          const job = runner.submit(target, inputs, params);
+          cache.bind(job.id, material);
+          return job.id;
+        }).immediate();
+      } else id = runner.submit(target, inputs, params).id;
     }
     const job = await runner.run(id);
-    if (options.json) console.log(canonicalJson(dumpJob(job)));
+    if (options.json) console.log(canonicalJson(hit ? { ...dumpJob(job), cache_hit: true } : dumpJob(job)));
     else if (job.state === "AWAITING_APPROVAL") console.log(`等待审批 ${job.id}`);
     else if (job.state === "SEALED") {
+      if (hit) console.log(`cache hit ${job.id}`);
       for (const port of Object.keys(job.outputs).sort()) {
         for (const bean of job.outputs[port]) console.log(`${port}\t${bean}`);
       }
@@ -230,6 +251,28 @@ export async function runStationCli(argv: string[]): Promise<number> {
   } finally {
     context.close();
   }
+}
+
+function runCacheCli(context: Context, operation: string, args: string[]): number {
+  const cache = new JobCache(context);
+  if (operation === "ls") {
+    const fields = readOptions(args, ["--station"]);
+    console.log(canonicalJson(cache.list(fields.has("--station") ? required(fields, "--station") : undefined)));
+  } else if (operation === "explain") {
+    if (args.length !== 1 || args[0].startsWith("--")) throw new CliUsageError("Job id is required");
+    console.log(canonicalJson(cache.explain(args[0])));
+  } else if (operation === "invalidate") {
+    const scopes = ["--key", "--job", "--station", "--bean"];
+    const fields = readOptions(args, [...scopes, "--reason"]);
+    const selected = scopes.filter((scope) => fields.has(scope));
+    if (selected.length !== 1) throw new CliUsageError("Select one of --key, --job, --station, --bean");
+    const scope = selected[0].slice(2) as InvalidationScope;
+    const value = required(fields, selected[0]);
+    const key = scope === "station" && !value.startsWith("Station:") ? `Station:${value}` : value;
+    const id = cache.invalidate(scope, key, { reason: required(fields, "--reason"), by: process.env.FACTORY_HUMAN_BY ?? "human" });
+    console.log(canonicalJson({ id }));
+  } else throw new CliUsageError(`unknown cache command: ${operation}`);
+  return 0;
 }
 
 function printPlan(snapshot: Awaited<ReturnType<typeof loadSnapshot>>, line: string): number {
@@ -410,12 +453,7 @@ async function runLineCli(context: Context, snapshots: RegistrySelection, operat
     : operation === "run" ? await snapshots.forLine(target, lineInputs) : await snapshots.current();
   const lines = new LineRunner(new Runner(context, snapshot, await provider(options)));
   if (operation === "rebuild") {
-    const previous = store.get(target);
-    if (!runTerminalStates.has(previous.state)) throw new FactoryError("RUN_STATE_INVALID", "只可重建已结束的运行", { run: target, state: previous.state });
-    print(lines.start(previous.line, {
-      inputs: previous.inputs, variants: previous.variants, budgetCapUsd: previous.budgetCapUsd || undefined,
-      rebuiltFrom: previous.id, sinkMode: previous.sinkMode, trigger: { on: "manual", by },
-    }));
+    print(lines.rebuild(target, by));
     return 0;
   }
   let id = target;
