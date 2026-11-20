@@ -150,6 +150,7 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS secret_requests_project_created ON secret_requests(project_id, created_at, id);
       CREATE INDEX IF NOT EXISTS artifacts_project_created ON artifacts(project_id, created_at, id);
       CREATE INDEX IF NOT EXISTS artifacts_created ON artifacts(created_at, id);
+      CREATE INDEX IF NOT EXISTS artifacts_ref_created ON artifacts(ref, created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS secret_requests_project ON secret_requests(project_id, created_at);
       CREATE INDEX IF NOT EXISTS foreman_outbox_status ON foreman_outbox(status, created_at, id);
       CREATE INDEX IF NOT EXISTS business_units_system ON business_units(business_system_id, kind, created_at, id);
@@ -372,6 +373,16 @@ export class SqliteStore {
     return this.db.query("SELECT * FROM unit_runs WHERE run_id = ? ORDER BY created_at, id").all(runId).map((row: any) => this.unitRunFromRow(row));
   }
 
+  getUnitRun(runId: string, id: string): UnitRun | undefined {
+    const row = this.db.query("SELECT * FROM unit_runs WHERE id = ? AND run_id = ?").get(id, runId);
+    return row ? this.unitRunFromRow(row) : undefined;
+  }
+
+  nextQueuedUnitRun(runId: string): UnitRun | undefined {
+    const row = this.db.query("SELECT * FROM unit_runs WHERE run_id = ? AND status = 'queued' ORDER BY created_at, id LIMIT 1").get(runId);
+    return row ? this.unitRunFromRow(row) : undefined;
+  }
+
   listReadyUnitRuns(runId: string): UnitRun[] {
     return this.db.transaction(() => {
       const run = this.getBusinessRun(runId);
@@ -569,6 +580,21 @@ export class SqliteStore {
   listBusinessSystemArtifacts(businessSystemId: string): Artifact[] {
     const rows = this.db.query("SELECT artifacts.* FROM artifacts JOIN projects ON projects.id = artifacts.project_id WHERE projects.business_system_id = ? ORDER BY artifacts.created_at, artifacts.id").all(businessSystemId);
     return rows.map((row: any) => this.artifactFromRow(row));
+  }
+
+  resolveBusinessMaterialRefs(businessSystemId: string, refs: readonly string[]): Array<{ ref: string; record?: Artifact }> {
+    const byId = this.db.query(`
+      SELECT artifact.* FROM artifacts AS artifact JOIN projects AS project ON project.id = artifact.project_id
+      WHERE artifact.id = ? AND project.business_system_id = ?
+    `);
+    const byRef = this.db.query(`
+      SELECT artifact.* FROM artifacts AS artifact JOIN projects AS project ON project.id = artifact.project_id
+      WHERE artifact.ref = ? AND project.business_system_id = ? ORDER BY artifact.created_at DESC, artifact.id DESC LIMIT 1
+    `);
+    return [...new Set(refs)].map((ref) => {
+      const row = byId.get(ref.replace(/^(?:artifact|record|material):\/\//, ""), businessSystemId) ?? byRef.get(ref, businessSystemId);
+      return { ref, record: row ? this.artifactFromRow(row) : undefined };
+    });
   }
 
   createBusinessConversion(input: Omit<BusinessConversion, "id" | "createdAt" | "updatedAt">): BusinessConversion {

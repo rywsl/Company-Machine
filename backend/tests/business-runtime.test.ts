@@ -149,7 +149,10 @@ describe("Bun business execution loop", () => {
   test("waits for DAG predecessors and forwards their material references", async () => {
     const dbPath = `.factory/business-dag-${randomUUID()}.db`;
     let calls = 0;
-    const app = createApp({ dbPath, legacyPath: dbPath, operator: { spawn: () => processForRecord(`cas://report-${++calls}`) } });
+    const tasks: string[] = [];
+    const app = createApp({ dbPath, legacyPath: dbPath, operator: {
+      spawn: (argv) => { tasks.push(argv.join("\n")); return processForRecord(`cas://report-${++calls}`); },
+    } });
     const headers = { "content-type": "application/json" };
     try {
       const system = await (await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers, body: JSON.stringify({ name: "DAG 业务" }) }))).json() as { id: string };
@@ -160,6 +163,9 @@ describe("Bun business execution loop", () => {
       const graph = { nodes: [{ id: firstOperator, type: "operator" }, { id: secondOperator, type: "operator" }], edges: [{ source: firstOperator, target: secondOperator }] };
       const graphResponse = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/graph`, { method: "POST", headers, body: JSON.stringify({ graph }) }));
       expect(graphResponse.status).toBe(200);
+      const other = app.store.createBusinessSystem({ name: "Unrelated system" });
+      const otherProject = app.store.createIntake({ business_system_id: other.id, name: "Unrelated project" });
+      app.store.addArtifact({ projectId: otherProject.id, kind: "private", ref: "cas://input", summary: "外部业务私有内容", metadata: {} });
       app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "https://example.invalid", model: "codex-test", mode: "session" });
       const run = await (await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/runs`, { method: "POST", headers, body: JSON.stringify({ inputs: ["cas://input"] }) }))).json() as { id: string };
       for (let attempt = 0; attempt < 40 && app.store.getBusinessRun(run.id)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -167,6 +173,10 @@ describe("Bun business execution loop", () => {
       expect(app.store.getBusinessRun(run.id)?.status).toBe("completed");
       const unitRuns = app.store.listUnitRuns(run.id);
       expect(unitRuns.find((item) => item.unitId === secondOperator)?.inputs).toContain("cas://report-1");
+      expect(tasks[0]).toContain("cas://input");
+      expect(tasks[0]).not.toContain("外部业务私有内容");
+      expect(tasks[1]).toContain('"title":"构建报告"');
+      expect(tasks[1]).toContain('"path":"build/report.md"');
     } finally {
       app.stop();
       await rm(dbPath, { force: true });
