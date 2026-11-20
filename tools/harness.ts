@@ -58,7 +58,7 @@ function verifyParity(spec: ReturnType<typeof inspectSpecifications>, caseCount:
     policyMigrationRemaining: [
       "时钟、随机数和工作目录边界",
       "模块私有成员、导入对象修改和日志边界",
-      "示例 Registry 字面量、异常处理、文件编码与数据库迁移约束",
+      "异常处理、文件编码与数据库迁移约束",
     ],
     activeAcceptance: { files: spec.mappedFiles.size, passed: caseCount },
   };
@@ -88,6 +88,7 @@ function main(): number {
   const caseCount = acceptance(spec, json);
   if (command === "parity") return verifyParity(spec, caseCount, json);
   if (command === "verify") {
+    run("Registry 夹具策略回归", [process.execPath, "test", "tools/registry-policy.test.ts"]);
     const { mrl, unwitnessedRules } = verifyMrl(spec);
     reportProblems([
       ...mrl.failures.map(({ name, reason }) => name + " " + reason),

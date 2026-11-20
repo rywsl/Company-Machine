@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { listFiles } from "../backend/mrl/factory/paths";
 import { standardFunctions } from "../backend/mrl/evaluator";
+import { registryFixtureNames, registryLiteralProblems } from "./registry-policy";
 
 export const acceptanceRoots = ["backend/tests", "backend/runtime", "backend/mrl", "tests/fakes"];
 const testingSpec = "spec/system/testing.md";
@@ -153,9 +154,11 @@ export function activePolicyProblems(root: string): string[] {
   const transpiler = new Bun.Transpiler({ loader: "ts", trimUnusedImports: false });
   const fixtureRoots = ["tests/", "spec/examples/", "removed/"];
   const builtIn = /^(?:node:|bun:sqlite$)/;
+  const fixtureNames = registryFixtureNames(root);
   for (const path of sources) {
     for (const file of listFiles(join(root, path)).filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))) {
       const source = readFileSync(file, "utf8");
+      problems.push(...registryLiteralProblems(relativePath(root, file), source, fixtureNames));
       for (const entry of transpiler.scanImports(source)) {
         if (entry.path.startsWith(".")) {
           const target = relativePath(root, resolve(file, "..", entry.path));

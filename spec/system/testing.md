@@ -289,6 +289,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 
 `parity --json` 输出逐条差异。历史 Python 验收文件只作为需求和证据索引读取。普通验证检查活动源码的依赖边界、Shell 与表达式调用约束，以及 Python 代码归档。完整代码策略中尚未迁移的检查会在 `parity` 中列出。通过的 Registry 用例会按规则文件和行号记录实际生成诊断的规则及触发用例。未触发的诊断规则仍列入覆盖缺口。
 
+Bun 使用工作区固定版本的 TypeScript 编译器解析生产源码。校验检查字符串和模板片段中的测试基础设施路径，以及示例和测试 Registry 实际声明的工位、产线、机器、GoldenSet 和 Baseline 名称。扫描范围是活动后端、运行时和 MRL 的非测试 TypeScript 文件。`verify:bun` 运行 `tools/registry-policy.test.ts`，校验 Registry 声明发现、定位和正反例。
 
 Bun MRL 表达式检查标准库参数、宏短路、集合顺序和嵌套深度。规则检查覆盖模块归属、关系签名、变量绑定、宿主事实类型、分层否定及聚合。Registry 事实交给规范中的 `kernel/refs.mrl`、`kernel/types.mrl`、`kernel/stations.mrl` 和 `kernel/lines.mrl`。内核检查业务引用、类型继承、工位契约和产线绑定，并生成转换解析表。测试可按完整 Line 键或省略 `Line:` 的键匹配解析条目。Registry 的宪法在同一规则程序上执行，编译失败时仍会返回内核诊断。完整 int64 精度和整数值与同值浮点数的身份尚需迁移。超过 JavaScript 安全整数范围的 YAML 用例会报告证据缺口。规范用例以 `spec/mrl/conformance/` 为准。
 
