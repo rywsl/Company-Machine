@@ -1,7 +1,7 @@
 # runtimes：真实 agent CLI 的接入与模型代理的生产路径（M6-01）
 
 > 规范性文档，遵循 `spec/system/README.md`（下称 README）。任务：**M6-01**。
-> M1–M5 的 agent 全是 `tests/fakes/fake_agent.py`。它不连模型代理，所以下面几处缺口从没暴露：真实 CLI 带不上 `X-Factory-Job`（`plan/drift.md` D-28）；模型代理按 M2 的规则数不对 Anthropic 与 OpenAI 的流式用量；代理只能活在发起 job 的那个进程里（D-27）；容器怎样连到宿主上的代理没有人规定（D-30）。本文件补齐这些，并给出 Claude Code 与 Codex 的参考 runtime 文档。
+> M1–M5 的 agent 全是 `tests/fakes/fake_agent.py`。它不连模型代理，所以下面几处缺口从没暴露：真实 CLI 带不上 `X-Factory-Job`（`plan/drift.md` D-28）；模型代理按 M2 的规则数不对 Anthropic 与 OpenAI 的流式用量；代理只能活在发起 job 的那个进程里（D-27）；容器怎样连到宿主上的代理没有人规定（D-30）。本文件补齐这些，并给出官方 Harness 的参考 runtime 文档。
 > 本任务不需要 Docker，也不需要真实 CLI：用 `tests/fakes/fake_llm.py` 当模型上游。真实 CLI 在 Docker 里的验收在 M6-03（`live.md`）。
 > **M12/M13 增补**：`invoke.resume`、`TranscriptSummary.session_id` 与 `input_tokens` 见 `agents.md` 3.3（M13）。冲突时以新规范为准。
 
@@ -12,7 +12,7 @@
 **做什么（M6-01）**
 
 - 控制面变量 `${...}`：runtime 模板渲染之后、启动之前由控制面替换（5.1）。
-- 参考 runtime 文档 `spec/runtimes/claude-code.yaml`、`spec/runtimes/codex.yaml`（4.1）。
+- 参考 runtime 文档 `spec/runtimes/*.yaml`（4.1）。覆盖 Claude Code、Codex、Pi、Qwen Code 的官方 CLI，以及 DeepSeek Harness、Kimi Code、ZCode 的官方 ACP stdio 边界。
 - transcript 格式 `codex-jsonl`（5.2）。
 - 模型代理：上游 URL 的拼接、可计量路径、流式用量的取法、客户端鉴权头的剥离（5.3）。
 - 代理归 `factory serve` 所有，`job exec` 子进程与值守经 `serve.json` 发现（5.4）。
@@ -98,7 +98,7 @@ class ServeConfig:
 
 ### 4.1 参考 runtime 文档
 
-`spec/runtimes/` 下的两份 YAML 是部署时复制进 Registry 的起点。它们不属于示例 Registry（`spec/examples/registry/` 不改），由本任务的验收测试复制进测试 Registry 编译。
+`spec/runtimes/` 下的参考 YAML 是部署时复制进 Registry 的起点。它们不属于示例 Registry（`spec/examples/registry/` 不改），由部署或验收流程选择后复制进目标 Registry 编译。每份文档只描述官方 Harness 的启动边界，模型循环、工具策略和认证仍由官方 Harness 负责。
 
 `spec/runtimes/claude-code.yaml`：
 
@@ -168,6 +168,18 @@ spec:
 - `ANTHROPIC_API_KEY`、`FACTORY_MODEL_KEY` 的值 `factory-proxy` 不是秘密，只是让 CLI 不去走登录流程。模型代理会剥掉它（5.3 第 3 条），换成真实密钥。
 - 注入卷的 digest 是占位值。部署时用 `images.md` 构建出的引用替换，再经 ChangeSet 提交。
 - CLI 的参数以 `tools/live_versions.json` 固定的版本为准。M6-03 的验收在 Docker 里用这些版本真实运行这两份文档。实现方发现某个参数在固定版本里不存在时，按 `plan/README.md` 第 5 节写日志并阻塞，不要自己改参考文档或换版本。
+
+其余官方 Harness 的参考文档见下表。
+
+| Harness | 官方入口 | 传输 | transcript | 恢复 |
+|---|---|---|---|---|
+| Pi | `pi --print --mode json --model MODEL -- PROMPT` | 官方 CLI | stdout JSONL，包含 `message_update`、嵌套 `text_delta`、`agent_end` 等事件 | `--session SESSION`，由 CLI 维护会话 |
+| Qwen Code | `qwen -p PROMPT --model MODEL --output-format stream-json` | 官方 CLI | stdout stream-json，控制面解析 `assistant`、`stream_event`、`result` 等事件 | 本参考 runtime 不声明恢复 |
+| DeepSeek Harness | 官方可执行文件的 ACP stdio | ACP | ACP JSON-RPC 事件 | 由 ACP `session/load` 能力声明 |
+| Kimi Code | `kimi --model MODEL acp` | ACP | ACP JSON-RPC 事件 | 由 ACP `session/load` 能力声明 |
+| ZCode | 官方可执行文件的 ACP stdio | ACP | ACP JSON-RPC 事件 | 由 ACP `session/load` 能力声明 |
+
+DeepSeek Harness 和 ZCode 的参考文件不猜测未公开的 CLI 子命令。部署时把官方发行物提供的可执行文件放在注入卷中，并让 ACP 进程自行完成供应商认证。Qwen 的 `qwen serve` HTTP/SSE 服务属于实验能力，不接入本项目的 stdio ACP 适配器。
 
 ### 4.2 `serve.json` 的增补（`daemon.md` 4.2）
 
@@ -301,7 +313,7 @@ spec:
 | 文件 | 测试 | 验证什么 |
 |---|---|---|
 | `tests/acceptance/m6/test_m6_01_runtimes.py` | `test_control_vars_kept_until_expanded` | `build_invocation` 的结果保留 `${FACTORY_JOB_ID}`；`expand_control_vars` 替换 argv 与 env 值；缺值 → `EGRESS_PROXY_UNAVAILABLE`；`${HOME}` 这类不在名单的名字 → `INVOCATION_INVALID` |
-| | `test_reference_runtimes_compile` | 两份参考文档复制进 Registry 后编译通过；`build_runtime_invocation` 的 argv 头部、`transcript`、env 中的 `${FACTORY_JOB_ID}` 与 `${MODEL_PROXY}` 符合 4.1 |
+| | `test_reference_runtimes_compile` | 参考 runtime 文档复制进 Registry 后编译通过；`build_runtime_invocation` 的 argv 头部、`transcript`、env 中的 `${FACTORY_JOB_ID}` 与 `${MODEL_PROXY}` 符合 4.1 |
 | | `test_parse_claude_stream` | 真实形状的 stream-json 夹具：`turns`、`cost_usd`、`result`、`is_error` |
 | | `test_parse_codex_jsonl` | codex 夹具：`turns == 2`、`result` 为最后一条 agent_message、`cost_usd == 0.0`；失败夹具 `is_error` 为真 |
 | | `test_meter_anthropic_stream` | 经模型代理请求 fake_llm 的 Anthropic 流：花费按“各取最大值”计算（不是加总）；上游收到的 `x-api-key` 是密钥值，不是 `factory-proxy`；上游没有收到 `x-factory-job` |

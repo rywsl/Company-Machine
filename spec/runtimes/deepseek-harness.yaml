@@ -1,0 +1,16 @@
+# 参考 OperatorRuntime：DeepSeek Harness 的官方 ACP stdio 边界。
+# 具体模型和认证由官方 Harness 配置，控制面不猜测厂商 CLI 参数或调用模型 API。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: deepseek-harness, version: 1}
+spec:
+  kind: agent-cli
+  inject:
+    volume: mao-live/deepseek-harness@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/deepseek-harness]
+  env:
+    HOME: /workspace/.home
+  transcript: {format: acp-events, from: stdout}
+  models_allowed: [configured]

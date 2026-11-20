@@ -1,0 +1,19 @@
+# 参考 OperatorRuntime：Qwen Code 官方 CLI 无头 stream-json 模式。
+# Qwen CLI 负责模型、工具和认证，控制面只分发提示并解析 stdout JSONL。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: qwen-code, version: 1}
+spec:
+  kind: agent-cli
+  inject:
+    volume: mao-live/qwen-code@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/qwen, -p,
+           "{{ brief.factory_contract }}\n\n{{ brief.task }}",
+           --model, "{{ operator.model }}", --output-format, stream-json]
+  env:
+    HOME: /workspace/.home
+    DISABLE_AUTOUPDATER: "1"
+  transcript: {format: stream-json, from: stdout}
+  models_allowed: [qwen-default]

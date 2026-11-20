@@ -60,7 +60,7 @@ apiVersion: mao/v1
 kind: Agent
 metadata: {name: xhs-ops, version: 1}
 spec:
-  runtime: claude-code@1            # agent-cli 的 OperatorRuntime，必须有 invoke.resume
+  runtime: claude-code@1            # agent-cli 的 OperatorRuntime，必须有 invoke.resume；可使用 Codex、Pi、Qwen Code、DeepSeek Harness、Kimi Code 或 ZCode
   model: claude-sonnet-5-5          # 可选；runtime 有 models_allowed 时必须在其中
   charter: |                        # 职责说明，非空，最多 8000 字符
     你负责小红书账号的日常运营……
@@ -203,7 +203,7 @@ OperatorRuntime 的 `invoke` 增加可选的 `resume`：参数模板，变量与
 
 `parse_transcript` 的结果增加 `session_id: str | None`（最后一条带 `session_id` 的事件）与 `input_tokens: int`（`result` 事件 `usage.input_tokens`，没有为 0）。
 
-`spec/runtimes/claude-code.yaml`：`resume: [/opt/operator/bin/claude, --resume, "{{ session.id }}", -p, "{{ brief.task }}", ...]`，其余参数与 `argv` 相同。`codex.yaml`：`[..., exec, resume, "{{ session.id }}", "{{ brief.task }}", ...]`。
+`spec/runtimes/claude-code.yaml`：`resume: [/opt/operator/bin/claude, --resume, "{{ session.id }}", -p, "{{ brief.task }}", ...]`，其余参数与 `argv` 相同。`codex.yaml`：`[..., exec, resume, "{{ session.id }}", "{{ brief.task }}", ...]`。Pi 的 `resume` 使用 `--session`。Qwen Code 的参考 runtime 不声明恢复。ACP Harness 的恢复由 `session/load` 能力声明，控制面只在官方 Harness 声明该能力时发送恢复请求。
 
 ### 3.4 MCP
 

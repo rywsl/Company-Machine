@@ -26,7 +26,7 @@
 
 ---
 
-> **What is this?** A factory control plane. It does not contain an agent and never calls a model API. Every bit of intelligence comes from official Harness CLIs you already use (Claude Code headless, Codex, …) running through the managed Podman or Kiri boundary. The Bun/TypeScript control plane keeps systems, DAGs, materials, Foreman conversations and secrets independent from a host or personal workflow. The former Python implementation is preserved under `removed/python/` as historical evidence.
+> **What is this?** A factory control plane. It does not contain an agent and never calls a model API. Every bit of intelligence comes from official Harnesses you already use (Claude Code headless, Codex, Pi, Qwen Code, DeepSeek Harness, Kimi Code and ZCode) running through the managed Podman or Kiri boundary. The Bun/TypeScript control plane keeps systems, DAGs, materials, Foreman conversations and secrets independent from a host or personal workflow. The former Python implementation is preserved under `removed/python/` as historical evidence.
 
 Agent-native products such as [OpenMontage](https://github.com/OpenMontageInc/OpenMontage) put the agent in charge of the whole pipeline. Machine Agent Org works one level up: it treats such products as **machines** on a production line. Each machine is operated by an agent **operator** at a **station**. What one station produces is checked, sealed and handed to the next station as its input, until a **sink** publishes the result to S3, GitHub, YouTube or anywhere else.
 
@@ -34,11 +34,11 @@ Agent-native products such as [OpenMontage](https://github.com/OpenMontageInc/Op
 |---|---|---|
 | **Bean** | An immutable, content-addressed piece of material with a type and lineage | `note.text@1`, `video.mp4@1`, `brief.video@1` |
 | **Machine** | An existing product described by a *Machine Package* | OpenMontage, MoneyPrinterTurbo, ffmpeg, rclone |
-| **Operator** | Who drives the machine | Claude Code headless, Codex, a script, a human inbox |
+| **Operator** | Who drives the machine | An official Harness such as Claude Code, Codex, Pi or Qwen Code, a script, a human inbox |
 | **Station** | Recipe × Operator × Policy, with typed ports | `explainer@3`, `dub@2`, `publish-s3@2` |
 | **Line** | A typed DAG of stations, with bounded dynamic structure | `explainer-multilang@5` |
 | **Source / Sink** | Stations that ingest from / publish to the outside world | webhook intake / S3, GitHub, YouTube |
-| **Foreman** | An external agent that maintains the factory through verified ChangeSets | a Claude Code or Codex session |
+| **Foreman** | An external agent that maintains the factory through verified ChangeSets | a session in any configured official Harness |
 
 ---
 
@@ -61,7 +61,7 @@ The walkthrough in [docs/en/getting-started.md](docs/en/getting-started.md) show
 ### Prerequisites
 
 - **Bun** for the business control plane and **Podman** or **Kiri** for managed sandboxes. The Kiri backend uses the official Linux headless service and its Unix socket. [Linux setup](docs/en/getting-started.md#use-headless-kiri-on-linux)
-- **An agent CLI** (optional): Claude Code or Codex for real stations. The tests use a scripted fake agent instead.
+- **An agent CLI** (optional): a configured official Harness for real stations. The tests use a scripted fake agent instead.
 
 ### Install and verify
 
@@ -172,7 +172,7 @@ Expensive stations and every sink work in two phases: *propose*, with a cost est
 
 ## Governance and the Foreman
 
-The factory is maintained by a **foreman**: an ordinary Claude Code or Codex session. The foreman is woken by signals and works through the `factory foreman` CLI or the MCP server (`factory mcp --role foreman`). It can propose changes, but deterministic code decides whether a change ships.
+The factory is maintained by a **foreman**: a session in the configured official Harness. The foreman is woken by signals and works through the `factory foreman` CLI or the MCP server (`factory mcp --role foreman`). It can propose changes, but deterministic code decides whether a change ships.
 
 ```mermaid
 flowchart LR

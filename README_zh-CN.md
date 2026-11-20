@@ -26,7 +26,7 @@
 
 ---
 
-> **这是什么？** 一个工厂控制面。它本身不包含任何 agent，也从不调用模型 API。所有智能都来自你已经在用的官方 CLI agent（Claude Code 无头模式、Codex……），它们运行在受控的 Podman 或 Kiri 沙箱里。工位**之间**的一切，包括路由、类型检查、转换、存储、调度、预算、审批和变更控制，都由确定性代码完成。
+> **这是什么？** 一个工厂控制面。它本身不包含任何 agent，也从不调用模型 API。所有智能都来自你已经在用的官方 Harness（Claude Code 无头模式、Codex、Pi、Qwen Code、DeepSeek Harness、Kimi Code 和 ZCode），它们运行在受控的 Podman 或 Kiri 沙箱里。工位**之间**的一切，包括路由、类型检查、转换、存储、调度、预算、审批和变更控制，都由确定性代码完成。
 
 [OpenMontage](https://github.com/OpenMontageInc/OpenMontage) 这类“智能体原生”产品让 agent 掌控整条流水线。Machine Agent Org 工作在它的上一层：把这类产品当作产线上的**机器**，每台机器在一个**工位**上由 agent **操作工**驱动。一个工位的产物经检验、封存后交给下一个工位作为物料，直到**消费者（Sink）**把结果发布到 S3、GitHub、YouTube 或其他地方。
 
@@ -34,11 +34,11 @@
 |---|---|---|
 | **Bean（物料）** | 不可变、内容寻址、带类型和血缘的一份物料 | `note.text@1`、`video.mp4@1`、`brief.video@1` |
 | **Machine（机器）** | 用 *Machine Package* 描述的现成产品 | OpenMontage、MoneyPrinterTurbo、ffmpeg、rclone |
-| **Operator（操作工）** | 驱动机器的一方 | Claude Code 无头模式、Codex、脚本、人工收件箱 |
+| **Operator（操作工）** | 驱动机器的一方 | Claude Code、Codex、Pi、Qwen Code 等官方 Harness、脚本、人工收件箱 |
 | **Station（工位）** | Recipe × Operator × Policy，端口带类型 | `explainer@3`、`dub@2`、`publish-s3@2` |
 | **Line（产线）** | 由工位组成、带类型的 DAG，可含受限的动态结构 | `explainer-multilang@5` |
 | **Source / Sink** | 从外部摄入 / 向外部发布的工位 | webhook 摄入 / S3、GitHub、YouTube |
-| **Foreman（厂长）** | 通过经过验证的 ChangeSet 维护工厂的外部 agent | 一个 Claude Code 或 Codex 会话 |
+| **Foreman（厂长）** | 通过经过验证的 ChangeSet 维护工厂的外部 agent | 一个已配置官方 Harness 的会话 |
 
 ---
 
@@ -62,7 +62,7 @@
 
 - **Bun** 和 **TypeScript**
 - **Podman 或 Kiri**：活动 Bun runtime。Linux 下设置 `MAO_CONTAINER_RUNTIME=kiri` 即可使用官方 Kiri headless 服务。
-- **agent CLI**（可选）：真实工位用 Claude Code 或 Codex；测试用脚本化的 fake agent 代替。
+- **agent CLI**（可选）：真实工位使用已配置的官方 Harness；测试用脚本化的 fake agent 代替。
 
 ### 安装与验证
 
@@ -177,7 +177,7 @@ flowchart LR
 
 ## 治理与厂长
 
-工厂由**厂长**维护。厂长就是一个普通的 Claude Code 或 Codex 会话，由信号唤醒，通过 `factory foreman` CLI 或 MCP 服务（`factory mcp --role foreman`）工作。厂长可以提出变更，但变更能否上线由确定性代码决定。
+工厂由**厂长**维护。厂长就是一个已配置官方 Harness 的普通会话，由信号唤醒，通过 `factory foreman` CLI 或 MCP 服务（`factory mcp --role foreman`）工作。厂长可以提出变更，但变更能否上线由确定性代码决定。
 
 ```mermaid
 flowchart LR

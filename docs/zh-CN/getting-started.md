@@ -6,7 +6,7 @@
 
 - Bun 1.3.14（本项目验收版本，Registry 和夹具使用 `Bun.YAML`）
 - Podman 6 或 Kiri 0.2+
-- 需要真实 Operator 会话时使用 Claude Code、Codex 等官方 Harness CLI
+- 需要真实 Operator 会话时使用 Claude Code、Codex、Pi、Qwen Code、DeepSeek Harness、Kimi Code 或 ZCode 等官方 Harness
 
 ## 安装和验证
 
@@ -64,7 +64,7 @@ bun run tools/verify-runtime.ts --foreman
 
 Registry 工位声明出网策略时，在 Linux 宿主设置 `MAO_EGRESS_RELAY_IMAGE`，指向当前引擎中已导入且含 Bun 的可信固定镜像。工位通过策略允许的地址出网。无需出网的工位可直接运行。
 
-在 Web App 厂长配置中填写含官方 Claude Code 或 Codex 的镜像摘要，网络选择 `egress`。厂长同样使用 `MAO_EGRESS_RELAY_IMAGE`。出网目标来自匹配的模型入口，也可在部署环境用 `MAO_HARNESS_EGRESS_HOSTS` 声明额外的主机名。
+在 Web App 厂长配置中填写含所选官方 Harness 的镜像摘要，网络选择 `egress`。厂长同样使用 `MAO_EGRESS_RELAY_IMAGE`。出网目标来自匹配的模型入口，也可在部署环境用 `MAO_HARNESS_EGRESS_HOSTS` 声明额外的主机名。
 
 在 MAO 服务的部署环境中配置所选 Harness 对应的 `MAO_FOREMAN_ANTHROPIC_API_KEY` 或 `MAO_FOREMAN_CODEX_API_KEY`。使用自定义模型入口时，同时配置对应的 `MAO_FOREMAN_ANTHROPIC_BASE_URL` 或 `MAO_FOREMAN_CODEX_BASE_URL`，并在 Web App 中保存匹配的地址。页面只显示凭证状态，业务项目所需密钥通过各自的资源请求配置。
 

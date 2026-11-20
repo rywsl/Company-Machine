@@ -1,0 +1,21 @@
+# 参考 OperatorRuntime：Pi 官方 CLI 无头 JSON 模式（spec/system/runtimes.md 4.1）。
+# Pi 由官方 CLI 负责模型、工具和认证，控制面只接收 stdout JSONL。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: pi, version: 1}
+spec:
+  kind: agent-cli
+  inject:
+    volume: mao-live/pi@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/pi, --print, --mode, json,
+           --model, "{{ operator.model }}",
+           --, "{{ brief.factory_contract }}\n\n{{ brief.task }}"]
+    resume: [/opt/operator/bin/pi, --print, --mode, json,
+             --model, "{{ operator.model }}", --session, "{{ session.id }}",
+             --, "{{ brief.factory_contract }}\n\n{{ brief.task }}"]
+  env:
+    HOME: /workspace/.home
+  transcript: {format: stream-json, from: stdout}
+  models_allowed: [pi-default]

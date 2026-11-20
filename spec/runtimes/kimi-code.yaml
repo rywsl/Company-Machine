@@ -1,0 +1,17 @@
+# 参考 OperatorRuntime：Kimi Code 官方 ACP stdio 模式。
+# Kimi Code 的官方入口是 `kimi --model MODEL acp`，模型由启动参数选择。
+apiVersion: mao/v1
+kind: OperatorRuntime
+metadata: {name: kimi-code, version: 1}
+spec:
+  kind: agent-cli
+  inject:
+    volume: mao-live/kimi-code@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    mount: /opt/operator
+  invoke:
+    argv: [/opt/operator/bin/kimi, --model, "{{ operator.model }}", acp]
+    resume: [/opt/operator/bin/kimi, --model, "{{ operator.model }}", acp]
+  env:
+    HOME: /workspace/.home
+  transcript: {format: acp-events, from: stdout}
+  models_allowed: [kimi-default]
