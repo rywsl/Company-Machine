@@ -160,6 +160,9 @@ export class SqliteStore {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS business_talk_messages_created ON business_talk_messages(created_at, id);
+      CREATE INDEX IF NOT EXISTS business_talk_foreman_reply ON business_talk_messages (
+        role, CASE WHEN json_valid(metadata) THEN json_extract(metadata,'$.inbox_id') END
+      );
       CREATE INDEX IF NOT EXISTS projects_system_created ON projects(business_system_id, created_at, id);
       CREATE INDEX IF NOT EXISTS project_sources_project_created ON project_sources(project_id, created_at, id);
       CREATE INDEX IF NOT EXISTS secret_requests_project_created ON secret_requests(project_id, created_at, id);
@@ -772,6 +775,24 @@ export class SqliteStore {
     return parseJson(row?.metadata);
   }
 
+  previousForemanTurns(inboxId: string): Array<{ user: string; foreman?: string }> {
+    const previous = this.db.query<{ id: string; user: string }>(`
+      SELECT prior.id, substr(message.body, 1, 1000) AS user
+      FROM foreman_outbox AS prior
+      JOIN business_talk_messages AS message ON message.id = prior.message_id
+      WHERE prior.rowid < (SELECT rowid FROM foreman_outbox WHERE id = ?)
+        AND prior.status = 'done' AND message.role IN ('user','human')
+        AND CASE WHEN json_valid(message.metadata) THEN json_extract(message.metadata,'$.source') IS NOT 'project-intake' ELSE 0 END
+      ORDER BY prior.rowid DESC LIMIT 4
+    `).all(inboxId);
+    const reply = this.db.query<{ text: string }>(`
+      SELECT substr(body, 1, 1000) AS text FROM business_talk_messages
+      WHERE role = 'foreman' AND CASE WHEN json_valid(metadata) THEN json_extract(metadata,'$.inbox_id') END = ?
+      ORDER BY rowid DESC LIMIT 1
+    `);
+    return previous.reverse().map(({ id, user }) => ({ user, foreman: reply.get(id)?.text }));
+  }
+
   queueForemanMessage(messageId: string, text: string): ForemanEnvelope {
     const value: ForemanEnvelope = { id: this.uuid(), messageId, text, status: "queued", createdAt: this.timestamp() };
     this.db.query("INSERT INTO foreman_outbox (id,message_id,text,status,created_at,claimed_at) VALUES (?,?,?,?,?,NULL)").run(value.id, value.messageId, value.text, value.status, value.createdAt);
@@ -802,7 +823,7 @@ export class SqliteStore {
 
   listForemanInbox(limit = 50): ForemanEnvelope[] {
     const bounded = Math.max(1, Math.min(200, Math.trunc(limit)));
-    return this.db.query("SELECT * FROM foreman_outbox WHERE status IN ('queued','claimed') ORDER BY created_at, id LIMIT ?").all(bounded).map((row: any) => ({
+    return this.db.query("SELECT * FROM foreman_outbox WHERE status IN ('queued','claimed') ORDER BY rowid LIMIT ?").all(bounded).map((row: any) => ({
       id: row.id,
       messageId: row.message_id,
       text: row.text,
@@ -814,7 +835,7 @@ export class SqliteStore {
 
   listQueuedForemanMessageIds(): string[] {
     return this.db.query<{ id: string }>(
-      "SELECT id FROM foreman_outbox WHERE status='queued' ORDER BY created_at, id",
+      "SELECT id FROM foreman_outbox WHERE status='queued' ORDER BY rowid",
     ).all().map(({ id }) => id);
   }
 

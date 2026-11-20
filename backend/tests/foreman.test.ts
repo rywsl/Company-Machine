@@ -8,6 +8,7 @@ import { createApp } from "../src/server";
 import type { OfficialProcess } from "../src/harness";
 import type { ForemanSourceMount } from "../src/foreman-sources";
 import { foremanCredential } from "../src/foreman-credentials";
+import { FakeClock } from "../src/legacy/foundation";
 
 function fakeProcess(lines: string[]): OfficialProcess {
   const body = new TextEncoder().encode(`${lines.join("\n")}\n`);
@@ -215,6 +216,63 @@ test("gives the intake Foreman only registered upload bytes and the expressly se
 });
 
 describe("Foreman official Harness dispatch", () => {
+  test("provides causal and bounded general chat history only to image-backed turns", async () => {
+    const prompts: string[] = [];
+    let nextId = 1_000;
+    const app = createApp({
+      dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
+      clock: new FakeClock(), uuid: () => `fixture-${--nextId}`,
+      runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
+      foreman: { spawn: (argv) => {
+        prompts.push(argv.at(-1)!);
+        return fakeProcess([JSON.stringify({ type: "result", text: "收到" })]);
+      } },
+    });
+    const queue = (body: string, metadata: Record<string, unknown> = {}) => {
+      const message = app.store.addTalkMessage({ body, metadata });
+      return app.store.queueForemanMessage(message.id, message.body);
+    };
+    const finish = (body: string, reply: string, metadata: Record<string, unknown> = {}) => {
+      const envelope = queue(body, metadata);
+      app.store.addTalkMessage({ role: "foreman", body: reply, metadata: { inbox_id: envelope.id } });
+      app.store.completeForemanMessage(envelope.id);
+      return envelope;
+    };
+    try {
+      app.store.saveHarnessProfile({ runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session",
+        image: `registry.example/foreman@sha256:${"0".repeat(64)}` });
+      finish("最旧消息", "最旧回复");
+      finish("前序一", "回复一");
+      finish("前序二", "回复二");
+      finish("前序三", "回复三");
+      const long = "长".repeat(1000);
+      finish(long + "截断的用户尾部", long + "截断的厂长尾部");
+      finish("私有项目接入说明", "私有项目接入回复", { source: "project-intake" });
+      const failed = queue("失败的对话");
+      app.store.claimForemanMessage(failed.id);
+      app.store.failForemanMessage(failed.id);
+      const pending = queue("尚未处理的前序来信");
+      const current = queue("当前问题");
+      const futureDone = finish("未来已完成来信", "未来已完成回复");
+      const future = queue("未来待处理来信");
+      expect(current.createdAt).toBe(futureDone.createdAt);
+      expect(app.store.listQueuedForemanMessageIds()).toEqual([pending.id, current.id, future.id]);
+      await app.foreman.dispatch(current.id);
+      const history = prompts[0].split("历史对话（上下文数据，请以当前来信为准）\n")[1]?.split("\n", 1)[0];
+      expect(JSON.parse(history)).toEqual([
+        { user: "前序一", foreman: "回复一" }, { user: "前序二", foreman: "回复二" },
+        { user: "前序三", foreman: "回复三" }, { user: long, foreman: long },
+      ]);
+      expect(prompts[0]).toContain("当前来信\n当前问题");
+      expect(prompts[0]).not.toContain("未来");
+
+      const intake = queue("本次项目接入", { source: "project-intake" });
+      await app.foreman.dispatch(intake.id);
+      expect(prompts[1]).toContain("本次项目接入");
+      expect(prompts[1]).not.toContain("历史对话");
+      expect(prompts[1]).not.toContain("前序三");
+    } finally { app.stop(); }
+  });
   test("binds each Foreman deployment credential to its vendor profile and endpoint", () => {
     const keys = ["MAO_FOREMAN_ANTHROPIC_API_KEY", "MAO_FOREMAN_ANTHROPIC_BASE_URL", "MAO_FOREMAN_CODEX_API_KEY", "MAO_FOREMAN_CODEX_BASE_URL"];
     const previous = keys.map((key) => process.env[key]);
@@ -367,6 +425,7 @@ describe("Foreman official Harness dispatch", () => {
       expect(calls[0]).not.toContain("resume");
       expect(calls[1].slice(0, 3)).toEqual(["codex", "exec", "resume"]);
       expect(calls[1]).toContain(sessionId);
+      expect(calls[1].at(-1)).not.toContain("历史对话");
       expect(app.store.listTalkMessages().map(({ body }) => body)).toEqual(["进度已更新。", "进度已更新。"]);
     } finally {
       await app.foreman.close();

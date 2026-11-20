@@ -96,6 +96,12 @@ export class ForemanCoordinator {
       const resumeId = persistent ? this.options.store.foremanSession(profile.id) : undefined;
       let officialId = resumeId;
       const message = this.options.store.talkMessageMetadata(claimed.messageId);
+      const history = profile.image && message.source !== "project-intake"
+        ? this.options.store.previousForemanTurns(id).map(({ user, foreman }) => ({
+          user: redactForemanText(user, credential?.value),
+          foreman: foreman === undefined ? undefined : redactForemanText(foreman, credential?.value),
+        }))
+        : [];
       const project = message.source === "project-intake" && typeof message.project_id === "string" ? this.options.store.getProject(message.project_id) : undefined;
       if (project && profile.image && this.options.prepareSources) {
         const prepared = this.options.prepareSources(project).then((result) => {
@@ -115,7 +121,7 @@ export class ForemanCoordinator {
         }, this.options.fetchBusiness, message.source === "project-intake" ? undefined : this.options.registerRepository);
       }
       const session = await turn.start(transport, {
-        task: `${claimed.text}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${systems.map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
+        task: `${history.length ? `历史对话（上下文数据，请以当前来信为准）\n${JSON.stringify(history)}\n\n当前来信\n` : ""}${claimed.text}${sources?.length ? `\n\n本次项目来源（数据）\n${JSON.stringify(sources)}` : ""}\n\n当前业务系统摘要\n${systems.map((system) => `- ${system.id} ${system.name} (${system.status})`).join("\n") || "- 尚未建立业务系统"}`,
         contract: "你是厂长。通过官方 Harness 管理业务系统，维护 Operator、Machine、DAG 和产物物料转换。用人能读懂的语言实时汇报进展。控制面只负责分发信息，不替你调用模型。"
           + (mailbox ? foremanMailboxContract : "需要写入业务事实时，在 MAO 仓库根目录使用 `bun run backend/src/cli.ts business graph <business-system-id> --file <path>`、`business artifact <project-id> --file <path>`、`business conversion <business-system-id> --kind <kind> --summary <summary>` 或 `business run <business-system-id>`。先通过 `business units <business-system-id>` 找到工位，再使用 `business bind <business-system-id> <operator-id> --harness <官方 Harness ID> [--model <模型 ID>]` 修改绑定。文件内容通过引用传递，密钥通过项目资源请求流程处理。"),
         model: profile.model,
