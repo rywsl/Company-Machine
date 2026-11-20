@@ -199,9 +199,11 @@ describe("official Harness boundary", () => {
       "zcode",
       "kimi-code",
       "pi",
+      "qwen-code",
     ]);
     expect(chooseTransport(officialHarness("kimi-code")!, true)).toBe("acp");
     expect(chooseTransport(officialHarness("kimi-code")!, false)).toBe("official-cli");
+    expect(chooseTransport(officialHarness("pi")!, true)).toBe("official-cli");
   });
 
   test("renders official CLI invocations without implementing a model loop", () => {
@@ -210,6 +212,19 @@ describe("official Harness boundary", () => {
     expect(argv[0]).toBe("codex");
     expect(argv).toContain("--json");
     expect(argv.at(-1)).toContain("write tests");
+  });
+
+  test("uses the documented headless invocations for Pi and Qwen Code", () => {
+    const request = { task: "build", contract: "write tests", model: "target/model", cwd: "/workspace" };
+    expect(officialCliInvocation(officialHarness("pi")!, request)).toEqual([
+      "pi", "--print", "--mode", "json", "--model", "target/model", "--", "write tests\n\nbuild",
+    ]);
+    expect(officialCliInvocation(officialHarness("pi")!, { ...request, resumeId: "session-1" })).toEqual([
+      "pi", "--print", "--mode", "json", "--model", "target/model", "--session", "session-1", "--", "write tests\n\nbuild",
+    ]);
+    expect(officialCliInvocation(officialHarness("qwen-code")!, request)).toEqual([
+      "qwen", "-p", "write tests\n\nbuild", "--model", "target/model", "--output-format", "stream-json",
+    ]);
   });
 
   test("selects the exact advertised ACP model before sending the prompt", async () => {
@@ -244,6 +259,13 @@ describe("official Harness boundary", () => {
     expect(decodeOfficialLine('{"type":"assistant","message":{"content":[{"type":"text","text":"已完成"}]}}')).toMatchObject({ type: "text.delta", text: "已完成" });
     expect(decodeOfficialLine('{"type":"result","text":"done"}')).toMatchObject({ type: "session.finished", text: "done" });
     expect(decodeOfficialLine('{"type":"mao.secret_request","name":"VIDEO_API_KEY"}')).toMatchObject({ type: "secret.request" });
+    expect(decodeOfficialLine('{"type":"assistant","session_id":"q-1","message":{"content":[{"type":"text","text":"Qwen 完成"}]},"is_error":false}')).toMatchObject({ type: "text.delta", sessionId: "q-1", text: "Qwen 完成" });
+  });
+
+  test("maps Pi JSON mode events into bounded Harness events", () => {
+    expect(decodeOfficialLine('{"type":"session","session":{"id":"pi-1"}}')).toMatchObject({ type: "session.started", sessionId: "pi-1" });
+    expect(decodeOfficialLine('{"type":"message_update","sessionId":"pi-1","assistantMessageEvent":{"type":"text_delta","delta":"Pi 回复"}}')).toMatchObject({ type: "text.delta", sessionId: "pi-1", text: "Pi 回复" });
+    expect(decodeOfficialLine('{"type":"agent_end","sessionId":"pi-1"}')).toMatchObject({ type: "session.finished", sessionId: "pi-1" });
   });
 
   test("initializes ACP, creates a session and sends the prompt through stdin", async () => {

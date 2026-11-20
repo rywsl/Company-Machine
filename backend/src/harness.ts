@@ -16,7 +16,7 @@ import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 
 export const harnessControlPlaneRoot = resolve(import.meta.dir, "../..");
 
-export type OfficialHarnessName = "claude-code" | "codex" | "deepseek-harness" | "zcode" | "kimi-code" | "pi";
+export type OfficialHarnessName = "claude-code" | "codex" | "deepseek-harness" | "zcode" | "kimi-code" | "pi" | "qwen-code";
 export type HarnessTransportKind = "acp" | "official-cli";
 
 export interface HarnessDefinition {
@@ -82,7 +82,8 @@ const DEFINITIONS: Record<OfficialHarnessName, HarnessDefinition> = {
   "deepseek-harness": { id: "deepseek-harness", displayName: "DeepSeek Harness", executable: "deepseek-harness", transportPreference: "acp", transcriptFormat: "acp-events", supportsResume: true },
   zcode: { id: "zcode", displayName: "ZCode", executable: "zcode", transportPreference: "acp", transcriptFormat: "acp-events", supportsResume: true },
   "kimi-code": { id: "kimi-code", displayName: "Kimi Code", executable: "kimi", transportPreference: "acp", transcriptFormat: "acp-events", supportsResume: true },
-  pi: { id: "pi", displayName: "Pi", executable: "pi", transportPreference: "acp", transcriptFormat: "acp-events", supportsResume: true },
+  pi: { id: "pi", displayName: "Pi", executable: "pi", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: true },
+  "qwen-code": { id: "qwen-code", displayName: "Qwen Code", executable: "qwen", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: false },
 };
 
 export function officialHarnesses(): HarnessDefinition[] {
@@ -109,6 +110,8 @@ export function officialCliInvocation(definition: HarnessDefinition, request: Ha
   if (definition.id === "codex") return [definition.executable, "exec", ...(request.resumeId ? ["resume"] : []), "--json", "--skip-git-repo-check", "--model", request.model, ...(request.resumeId ? [request.resumeId] : []), prompt];
   if (definition.id === "claude-code") return [definition.executable, "--print", "--model", request.model, "--output-format", "stream-json", "--verbose", "--include-partial-messages", ...(request.resumeId ? ["--resume", request.resumeId] : []), "--", prompt];
   if (definition.id === "kimi-code") return [definition.executable, "--model", request.model, "--output-format", "stream-json", ...(request.resumeId ? ["--session", request.resumeId] : []), "--prompt", prompt];
+  if (definition.id === "pi") return [definition.executable, "--print", "--mode", "json", "--model", request.model, ...(request.resumeId ? ["--session", request.resumeId] : []), "--", prompt];
+  if (definition.id === "qwen-code") return [definition.executable, "-p", prompt, "--model", request.model, "--output-format", "stream-json"];
   return [definition.executable, "-p", prompt, "--model", request.model, "--output-format", "stream-json"];
 }
 
@@ -120,8 +123,11 @@ export function decodeOfficialLine(line: string): HarnessEvent | null {
   const record = value as Record<string, unknown>;
   const item = record.item && typeof record.item === "object" ? record.item as Record<string, unknown> : undefined;
   const message = record.message && typeof record.message === "object" ? record.message as Record<string, unknown> : undefined;
+  const assistantMessageEvent = record.assistantMessageEvent && typeof record.assistantMessageEvent === "object"
+    ? record.assistantMessageEvent as Record<string, unknown> : undefined;
   const type = typeof record.type === "string" ? record.type : typeof item?.type === "string" ? item.type : "";
-  const identifier = record.session_id ?? record.sessionId ?? record.thread_id;
+  const session = record.session && typeof record.session === "object" ? record.session as Record<string, unknown> : undefined;
+  const identifier = record.session_id ?? record.sessionId ?? record.thread_id ?? session?.id;
   const sessionId = typeof identifier === "string" ? identifier : undefined;
   if (type === "stream_event") {
     const event = record.event as { type?: string; delta?: { type?: string; text?: string } } | undefined;
@@ -135,14 +141,18 @@ export function decodeOfficialLine(line: string): HarnessEvent | null {
     ? content.filter((part) => part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string").map((part) => (part as Record<string, unknown>).text as string).join("")
     : undefined;
   const text = typeof record.text === "string" ? record.text : typeof record.delta === "string" ? record.delta
-    : typeof item?.text === "string" ? item.text : typeof record.result === "string" ? record.result : contentText;
+    : typeof assistantMessageEvent?.text === "string" ? assistantMessageEvent.text
+      : typeof assistantMessageEvent?.delta === "string" ? assistantMessageEvent.delta
+        : typeof item?.text === "string" ? item.text : typeof record.result === "string" ? record.result : contentText;
+  const assistantEventType = typeof assistantMessageEvent?.type === "string" ? assistantMessageEvent.type : "";
   const eventType: HarnessEvent["type"] = type.includes("error") || type.includes("fail") || record.is_error === true ? "session.failed"
     : type === "item.completed" && item?.type === "agent_message" ? "text.delta"
-    : type.includes("start") || type.includes("init") ? "session.started"
+    : type === "message_update" && assistantEventType === "text_delta" ? "text.delta"
+      : type.includes("start") || type.includes("init") || type === "session" ? "session.started"
       : type === "mao.record" || type === "record" ? "record"
       : type.includes("secret") && type.includes("request") ? "secret.request"
       : type.includes("tool") && !type.includes("complete") ? "tool.started"
-        : type.includes("complete") || type.includes("finish") || type === "result" ? "session.finished"
+        : type.includes("complete") || type.includes("finish") || type.endsWith("_end") || type === "agent_settled" || type === "result" ? "session.finished"
           : "text.delta";
   return { type: eventType, sessionId, text, metadata: record };
 }
