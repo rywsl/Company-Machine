@@ -73,6 +73,19 @@ spec:
   steps:
     plan: {station: planner@1, in: {task: $inputs.task}}
 `);
+    await Bun.write(join(root, "lines", "note-plan-wrapper.yaml"), `apiVersion: mao/v1
+kind: Line
+metadata: {name: note-plan-wrapper, version: 1}
+spec:
+  interface:
+    inputs:
+      task: {type: agent.task@1, requires: [has_steps]}
+      note: {type: note.text@1, requires: [non_empty]}
+      raw: {type: note.raw@1, requires: [non_empty]}
+  budget: {cap_usd: 2.5}
+  steps:
+    child: {subline: note-plan@1, in: {task: $inputs.task, note: $inputs.note, raw: $inputs.raw}}
+`);
     const snapshot = await loadSnapshot(root);
     const run = { id: "r-plan", line: parent, epoch: snapshot.epoch, budgetCapUsd: 2.5, spentUsd: 0, reservedUsd: 0 };
     return { snapshot, run, check: (document: unknown, remainingUsd?: number) => compilePlan(snapshot, document, { plannerKey, run, remainingUsd }) };
@@ -309,13 +322,29 @@ test("merges missing conversion requests without blocking planner retries", { ti
   const world = await runWorld([invalid]);
   try {
     const run = world.lines.start(parent, { inputs: world.inputs });
-    expect((await world.lines.run(run.id)).state).toBe("FAILED");
-    const job = world.runner.jobs.get(world.lines.runs.node(run.id, "plan").jobId!);
+    const [id] = world.lines.tick(run.id);
+    const job = await world.runner.run(id);
     expect(job).toMatchObject({ attempt: 2, state: "DEAD" });
     expect(job.feedback).toContain("E-NO-CONVERTER");
     expect(world.context.db.query("SELECT from_type, to_type, status, blocked_runs FROM conversion_requests").all()).toEqual([
       { from_type: "agent.task@1", to_type: "note.text@1", status: "open", blocked_runs: "[]" },
     ]);
+    expect((await world.lines.run(run.id)).state).toBe("FAILED");
+    const request = world.context.db.query<{ blocked_runs: string }>("SELECT blocked_runs FROM conversion_requests").get();
+    expect(JSON.parse(request!.blocked_runs)).toEqual([run.id]);
+  } finally { world.close(); }
+});
+
+test("links a missing conversion in a Subline to its original root Run", { timeout: 60_000 }, async () => {
+  const invalid = plan({ publish: { station: "publish-local@1", in: { note: "$inputs.task" }, params: { dir: "/tmp/plan" } } });
+  const world = await runWorld([invalid]);
+  try {
+    const root = world.lines.start("note-plan-wrapper@1", { inputs: world.inputs });
+    expect((await world.lines.run(root.id)).state).toBe("FAILED");
+    const child = world.lines.runs.node(root.id, "child");
+    expect(child).toMatchObject({ state: "FAILED", error: { code: "SUBLINE_FAILED" } });
+    const request = world.context.db.query<{ blocked_runs: string }>("SELECT blocked_runs FROM conversion_requests").get();
+    expect(JSON.parse(request!.blocked_runs)).toEqual([root.id]);
   } finally { world.close(); }
 });
 

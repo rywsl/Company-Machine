@@ -206,7 +206,7 @@ Bun 从 planner 的 `plan` 输出读取 `plan.json`，使用父产线接口和�
 
 追加必须在一个事务里完成：读侧车文件，若键已存在且链不同 → `RUN_PLAN_INVALID`，不覆盖。键不存在则追加并写回。同一 epoch 的两次追加，输入相同则链相同，因为 `resolve` 是纯函数。
 
-Bun 用 SQLite 写锁串行处理同一工厂的追加，并通过临时文件替换 `epochs/<epoch>/resolution-runtime.json`。缓存只登记自动转换决议。自动解析缺少转换时按类型及属性合并到 `conversion_requests`，保留发现位置，`blocked_runs` 为空。
+Bun 用 SQLite 写锁串行处理同一工厂的追加，并通过临时文件替换 `epochs/<epoch>/resolution-runtime.json`。缓存只登记自动转换决议。自动解析缺少转换时按类型及属性合并到 `conversion_requests`，保留发现位置。Planner 的尝试退回时可以改选方案。Run 最终失败且缺失转换是终态失败原因时才关联到 `blocked_runs`。
 
 ---
 

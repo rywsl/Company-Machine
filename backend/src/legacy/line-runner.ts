@@ -12,6 +12,9 @@ import type { PlanNode, RunPlan } from "./runplan";
 import { RunStore, runTerminalStates, type Run, type RunNode } from "./runs";
 import { beanValue, inputsValue, propertyEnv } from "./values";
 import type { Runner } from "./runner";
+import type { Context } from "./context";
+import type { Snapshot } from "./snapshot";
+import { blockedPlanConversions, registerBlockedPlanRun } from "./plan-resolutions";
 
 export class LineRunner {
   readonly runs: RunStore;
@@ -24,52 +27,15 @@ export class LineRunner {
   }
 
   start(line: string, options: Parameters<RunStore["create"]>[1]): Run {
-    return this.startPlan(compileDynamicRunPlan(this.runner.snapshot, line), options);
+    return startLineRun(this.runner.context, this.runner.snapshot, this.runs, compileDynamicRunPlan(this.runner.snapshot, line), options);
   }
 
   rebuild(id: string, by: string): Run {
-    const previous = this.runs.get(id);
-    if (!runTerminalStates.has(previous.state)) {
-      throw new FactoryError("RUN_STATE_INVALID", "只可重建已结束的运行", { run: id, state: previous.state });
-    }
-    return this.start(previous.line, {
-      inputs: previous.inputs, variants: previous.variants, sinkMode: previous.sinkMode,
-      rebuiltFrom: id, trigger: { on: "manual", by },
-    });
+    return rebuildLineRun(this.runner.context, this.runner.snapshot, this.runs, id, { on: "manual", by });
   }
 
   private startPlan(plan: RunPlan, options: Parameters<RunStore["create"]>[1]): Run {
-    const problems: Array<{ port: string; bean: string; reason: string }> = [];
-    for (const [port, type] of Object.entries(plan.inputs)) {
-      const ids = options.inputs[port];
-      if (ids === undefined) continue; // RunStore checks interface shape.
-      const expected = type.replace(/^list<(.+)>$/, "$1");
-      for (const id of typeof ids === "string" ? [ids] : ids) {
-        try {
-          const bean = this.runner.context.warehouse.get(id);
-          const concrete = bean.type.replace(/(@\d+)\.\d+$/, "$1");
-          if (!bean.sealed || bean.expiredAt || (expected !== "any" && !this.runner.snapshot.isSubtype(concrete, expected))) {
-            problems.push({ port, bean: id, reason: "material" });
-            continue;
-          }
-          for (const name of plan.inputRequires[port] ?? []) {
-            const expression = this.runner.snapshot.properties(concrete)[name];
-            const ok = typeof expression === "string" && compileExpr(expression, { environment: { bean: DYN }, expect: BOOL })
-              .evaluate(propertyEnv(bean) as EvalEnvironment) === true;
-            if (!ok) problems.push({ port, bean: id, reason: name });
-          }
-        } catch (error) {
-          problems.push({ port, bean: id, reason: error instanceof FactoryError ? error.code : "property" });
-        }
-      }
-    }
-    for (const [step, variant] of Object.entries(options.variants ?? {})) {
-      if (!variant || !plan.nodes.some((node) => (node.kind === "station" || node.kind === "until" || node.kind === "map") && node.step === step)) {
-        problems.push({ port: step, bean: "", reason: "variant" });
-      }
-    }
-    if (problems.length) throw new FactoryError("RUN_INPUT_INVALID", "产线来料检验未通过", { problems });
-    return this.runs.create(plan, options);
+    return startLineRun(this.runner.context, this.runner.snapshot, this.runs, plan, options);
   }
 
   tick(id: string, dispatch?: (jobIds: readonly string[]) => void): string[] {
@@ -191,6 +157,9 @@ export class LineRunner {
 
       const active = activeChild || [...nodes.values()].some((node) => node.state === "SUBMITTED");
       if (!active && (run.state === "FAILING" || run.state === "CANCELLING")) {
+        if (run.state === "FAILING" && run.trigger.on !== "subline" && run.error?.code === "NODE_FAILED") {
+          registerBlockedPlanRun(this.runner.context, id, this.blockingConversions(nodes.values()));
+        }
         this.runs.transition(id, run.state === "FAILING" ? "FAILED" : "CANCELLED");
       } else if (run.state === "RUNNING" && [...nodes.values()].every((node) => node.state === "DONE" || node.state === "SKIPPED")) {
         const outputs = Object.fromEntries(Object.entries(plan.outputs).map(([name, [node, port]]) => [name, nodes.get(node)?.outputs[port] ?? []]));
@@ -202,6 +171,18 @@ export class LineRunner {
       }
       return submitted.sort();
     }).immediate();
+  }
+
+  private blockingConversions(nodes: Iterable<RunNode>): string[] {
+    const failures: string[][] = [];
+    for (const node of nodes) {
+      if (node.state !== "FAILED") continue;
+      const child = node.params?.child_run;
+      if (node.error?.code === "SUBLINE_FAILED" && typeof child === "string") {
+        failures.push(this.blockingConversions(this.runs.nodes(child)));
+      } else failures.push(blockedPlanConversions(node.error));
+    }
+    return failures.every((ids) => ids.length > 0) ? failures.flat() : [];
   }
 
   private advanceChild(parent: Run, node: RunNode, nodes: Map<string, RunNode>, submitted: string[], pending: string[]): boolean {
@@ -381,6 +362,52 @@ export class LineRunner {
     }
     return params;
   }
+}
+
+
+function startLineRun(context: Context, snapshot: Snapshot, runs: RunStore, plan: RunPlan, options: Parameters<RunStore["create"]>[1]): Run {
+  const problems: Array<{ port: string; bean: string; reason: string }> = [];
+  for (const [port, type] of Object.entries(plan.inputs)) {
+    const ids = options.inputs[port];
+    if (ids === undefined) continue; // RunStore checks interface shape.
+    const expected = type.replace(/^list<(.+)>$/, "$1");
+    for (const id of typeof ids === "string" ? [ids] : ids) {
+      try {
+        const bean = context.warehouse.get(id);
+        const concrete = bean.type.replace(/(@\d+)\.\d+$/, "$1");
+        if (!bean.sealed || bean.expiredAt || (expected !== "any" && !snapshot.isSubtype(concrete, expected))) {
+          problems.push({ port, bean: id, reason: "material" });
+          continue;
+        }
+        for (const name of plan.inputRequires[port] ?? []) {
+          const expression = snapshot.properties(concrete)[name];
+          const ok = typeof expression === "string" && compileExpr(expression, { environment: { bean: DYN }, expect: BOOL })
+            .evaluate(propertyEnv(bean) as EvalEnvironment) === true;
+          if (!ok) problems.push({ port, bean: id, reason: name });
+        }
+      } catch (error) {
+        problems.push({ port, bean: id, reason: error instanceof FactoryError ? error.code : "property" });
+      }
+    }
+  }
+  for (const [step, variant] of Object.entries(options.variants ?? {})) {
+    if (!variant || !plan.nodes.some((node) => (node.kind === "station" || node.kind === "until" || node.kind === "map") && node.step === step)) {
+      problems.push({ port: step, bean: "", reason: "variant" });
+    }
+  }
+  if (problems.length) throw new FactoryError("RUN_INPUT_INVALID", "产线来料检验未通过", { problems });
+  return runs.create(plan, options);
+}
+
+export function rebuildLineRun(context: Context, snapshot: Snapshot, runs: RunStore, id: string, trigger: Run["trigger"]): Run {
+  const previous = runs.get(id);
+  if (!runTerminalStates.has(previous.state)) {
+    throw new FactoryError("RUN_STATE_INVALID", "只可重建已结束的运行", { run: id, state: previous.state });
+  }
+  return startLineRun(context, snapshot, runs, compileDynamicRunPlan(snapshot, previous.line), {
+    inputs: previous.inputs, variants: previous.variants, sinkMode: previous.sinkMode,
+    rebuiltFrom: id, trigger,
+  });
 }
 
 function runValue(run: Run) {

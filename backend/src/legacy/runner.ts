@@ -535,9 +535,11 @@ export class Runner {
       }
       const runs = new RunStore(this.context.db, this.context.clock, this.context.ids);
       const checked = compilePlan(this.snapshot, document, { plannerKey: job.station, run: runs.get(runId), deferRunBudget: true });
-      recordPlanResolutions(this.context, this.snapshot, checked.resolutions);
+      const missing = recordPlanResolutions(this.context, this.snapshot, checked.resolutions);
       if (!checked.plan) {
-        return this.jobs.transition(job.id, "REJECTED", { feedback: checked.feedback, error: { code: "PLAN_INVALID", detail: { diagnostics: checked.diagnostics } } });
+        const onlyMissing = missing.length && checked.diagnostics.length && checked.diagnostics.every(({ code }) => code === "E-NO-CONVERTER");
+        const detail = { diagnostics: checked.diagnostics, ...(onlyMissing ? { blocked_conversions: missing } : {}) };
+        return this.jobs.transition(job.id, "REJECTED", { feedback: checked.feedback, error: { code: "PLAN_INVALID", detail } });
       }
       proposal = { bean, plan: checked.plan, runs, runId };
     }

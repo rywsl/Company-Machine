@@ -12,6 +12,7 @@ import type { VerificationContracts } from "../src/legacy/change-verification";
 import { ContractRunner } from "../src/legacy/contract";
 import { Context } from "../src/legacy/context";
 import { ConversionStore } from "../src/legacy/conversion-requests";
+import { compileRunPlan } from "../src/legacy/runplan";
 import { CounterIds, FakeClock, canonicalJson, utcIso } from "../src/legacy/foundation";
 import { EpochStore } from "../src/legacy/registry-epochs";
 import { Runner } from "../src/legacy/runner";
@@ -332,6 +333,60 @@ test("records independent reviews and uses canary SLO samples before promotion",
     expect(conversions.get(request.id)).toMatchObject({ status: "resolved", changeset_id: draft.id });
     expect(w.epochs.pointers()).toEqual({ active: draft.commit, candidate: null, previous: w.base });
     expect(await git(w.registry, "rev-parse", "refs/factory/active")).toBe(draft.commit);
+  } finally { w.close(); }
+});
+
+test("rebuilds blocked Runs once in the promoted epoch and catches late settlement", { timeout: 120_000 }, async () => {
+  const w = await world();
+  try {
+    const runs = new RunStore(w.context.db, w.context.clock, w.context.ids);
+    const snapshot = await w.epochs.materialize(w.base);
+    const plan = compileRunPlan(snapshot, "note-pipeline@1");
+    const sourceBean = await w.context.warehouse.add({ type: "agent.task@1.0", files: {} });
+    w.context.warehouse.sealMany([[sourceBean.id, { steps: 1 }]], null, "sha256:" + "0".repeat(64));
+    const original = () => runs.create(plan, { inputs: { task: sourceBean.id }, budgetCapUsd: 2, variants: { write: "draft" } });
+    const fail = (id: string) => {
+      runs.transition(id, "RUNNING");
+      runs.transition(id, "FAILING");
+      runs.transition(id, "FAILED");
+    };
+    const blocked = original();
+    fail(blocked.id);
+    const late = original();
+    const newSighting = original();
+    const unavailable = runs.create(plan, { inputs: { task: "missing-source" } });
+    fail(unavailable.id);
+    const requests = new ConversionStore(w.context);
+    const contract = { from: "note.raw@1", guarantees: ["non_empty"], to: "note.text@1", requires: ["non_empty"] };
+    const first = requests.openOrMerge(contract, { foundAt: { step: "first" }, runId: blocked.id });
+    requests.addBlockedRun(first.id, unavailable.id);
+    const second = requests.openOrMerge({ ...contract, requires: [] }, { foundAt: { step: "second" }, runId: blocked.id });
+
+    const upper = readFileSync(join(w.registry, "stations", "upper.yaml"), "utf8");
+    const commit = await commitFile(w.registry, "stations/upper-v2.yaml", upper.replace("version: 1", "version: 2").replace("60s", "30s"));
+    const proposal = await w.changesets.propose(document(w.base), commit, { by: "human:a" });
+    const stage = new ChangeSetStages(w.changesets, { contracts: () => contracts("pass"), shadow: async () => ({ ok: true, runs: 0, regressions: [], spent_usd: 0 }) });
+    expect((await stage.advance(proposal.id)).state).toBe("verified");
+    expect((await stage.advance(proposal.id)).state).toBe("shadow");
+    expect((await stage.advance(proposal.id)).state).toBe("active");
+    expect(runs.get(blocked.id).state).toBe("FAILED");
+    const rebuilt = runs.list("PENDING").filter(({ rebuiltFrom }) => rebuiltFrom === blocked.id);
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0]).toMatchObject({ epoch: proposal.commit, rebuiltFrom: blocked.id, inputs: blocked.inputs, variants: blocked.variants, budgetCapUsd: 2, useCache: true });
+    expect(runs.events(blocked.id).filter(({ kind }) => kind === "conversion.rebuilt")).toHaveLength(1);
+    expect(runs.events(unavailable.id).filter(({ kind }) => kind === "conversion.rebuild_failed")).toMatchObject([
+      { data: { error: { code: "RUN_INPUT_INVALID" } } },
+    ]);
+
+    requests.addBlockedRun(second.id, late.id);
+    fail(late.id);
+    requests.openOrMerge(contract, { foundAt: { step: "after-promotion" }, runId: newSighting.id });
+    fail(newSighting.id);
+    await stage.tick();
+    await stage.tick();
+    expect(runs.list("PENDING").filter(({ rebuiltFrom }) => rebuiltFrom === late.id)).toMatchObject([{ epoch: proposal.commit, rebuiltFrom: late.id }]);
+    expect(runs.list("PENDING").filter(({ rebuiltFrom }) => rebuiltFrom === newSighting.id)).toMatchObject([{ epoch: proposal.commit, rebuiltFrom: newSighting.id }]);
+    expect(runs.list("PENDING").filter(({ rebuiltFrom }) => rebuiltFrom === blocked.id)).toHaveLength(1);
   } finally { w.close(); }
 });
 

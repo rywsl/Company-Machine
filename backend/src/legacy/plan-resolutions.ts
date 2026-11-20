@@ -22,7 +22,7 @@ function contract(value: Record<string, unknown>): Contract | null {
   return { from, to, guarantees: [...new Set(guarantees)].sort(), requires: [...new Set(requires)].sort() };
 }
 
-export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows: readonly FactoryResolution[]): void {
+export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows: readonly FactoryResolution[]): string[] {
   const epoch = snapshot.epoch;
   if (!/^[a-z0-9-]+$/i.test(epoch)) throw new FactoryError("RUN_PLAN_INVALID", "Planner epoch 标识不合法", { epoch });
   const invalid = (reason: string): never => { throw new FactoryError("RUN_PLAN_INVALID", "Planner 转换解析表不一致", { epoch, reason }); };
@@ -51,7 +51,7 @@ export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows
       return { ...typed, chain, origin: "runtime" };
     });
   };
-  context.db.transaction(() => {
+  return context.db.transaction(() => {
     const existing = readSidecar();
     const known = new Map<string, string>();
     for (const { chain, origin: _origin, ...typed } of existing) {
@@ -60,13 +60,15 @@ export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows
       known.set(key, canonicalJson(chain));
     }
     const fresh: RuntimeResolution[] = [];
+    const missing = new Set<string>();
     let requests: ConversionStore | undefined;
     for (const row of rows) {
       const typed = contract(row);
       const chain = names(row.chain);
       if (!typed || !chain) continue;
       if (row.status === "no-converter") {
-        (requests ??= new ConversionStore(context)).openOrMerge(typed, { foundAt: { epoch, step: row.step, port: row.port } });
+        const request = (requests ??= new ConversionStore(context)).openOrMerge(typed, { foundAt: { epoch, step: row.step, port: row.port } });
+        missing.add(request.id);
         continue;
       }
       if (row.status !== "direct" && row.status !== "convert") continue;
@@ -80,12 +82,26 @@ export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows
       fresh.push({ ...typed, chain, origin: "runtime" });
       known.set(key, encoded);
     }
-    if (!fresh.length) return;
+    if (!fresh.length) return [...missing];
     const temporary = `${path}.${randomUuid()}.part`;
     mkdirSync(dirname(path), { recursive: true });
     try {
       writeFileSync(temporary, canonicalJson([...existing, ...fresh]), { encoding: "utf8", flag: "wx" });
       renameSync(temporary, path);
     } finally { rmSync(temporary, { force: true }); }
+    return [...missing];
   }).immediate();
+}
+
+export function blockedPlanConversions(error: Record<string, unknown> | null): string[] {
+  const detail = error?.detail;
+  if (error?.code !== "PLAN_INVALID" || !detail || typeof detail !== "object" || !("blocked_conversions" in detail)) return [];
+  const ids = detail.blocked_conversions;
+  return Array.isArray(ids) && ids.every((id) => typeof id === "string") ? ids : [];
+}
+
+export function registerBlockedPlanRun(context: Context, runId: string, ids: readonly string[]): void {
+  if (!ids.length) return;
+  const requests = new ConversionStore(context);
+  for (const id of new Set(ids)) requests.addBlockedRun(id, runId);
 }

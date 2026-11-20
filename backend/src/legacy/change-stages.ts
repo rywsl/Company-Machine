@@ -7,6 +7,7 @@ import { verificationReject, verifyChangeSet, type VerificationContracts, type V
 import type { ChangeSet, ChangeSetStore } from "./changesets";
 import { ContractRunner } from "./contract";
 import { ConversionStore } from "./conversion-requests";
+import { hasLateBlockedRuns, rebuildResolvedRuns } from "./conversion-rebuild";
 import { FactoryError } from "./errors";
 import { canonicalJson, parseDuration, utcIso } from "./foundation";
 import { Runner } from "./runner";
@@ -39,6 +40,16 @@ export class ChangeSetStages {
     for (const { id } of rows) {
       const advanced = await this.advanceOne(id, true);
       if (advanced) changed.push(advanced);
+    }
+    const epoch = this.store.epochs.pointers().active;
+    if (epoch) {
+      const active = this.store.context.db.query<{ id: string }>("SELECT id FROM changesets WHERE state='active' AND \"commit\"=? ORDER BY activated_at DESC LIMIT 1").get(epoch);
+      if (active && hasLateBlockedRuns(this.store.context, epoch, active.id)) {
+        const snapshot = await this.store.epochs.materialize(epoch);
+        this.store.context.db.transaction(() => {
+          if (this.store.epochs.pointers().active === epoch) rebuildResolvedRuns(this.store.context, snapshot, active.id);
+        }).immediate();
+      }
     }
     return changed;
   }
@@ -219,6 +230,7 @@ export class ChangeSetStages {
       if (!epochs.updateRolloutPointers(change.base_epoch, change.commit, outcome)) return this.rejectStale(change);
       if (candidate) {
         new ConversionStore(context).resolveMatching(change.id, candidate);
+        rebuildResolvedRuns(context, candidate, change.id);
         return this.transition(change, "active", { ...change.report, stage: "active", ok: true, code: null, detail: {} }, undefined, "active");
       }
       if (restored) new ConversionStore(context).restoreAfterRollback(change.id, restored);

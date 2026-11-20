@@ -520,6 +520,8 @@ Bun 的 `factory line run` 通过 `RegistrySelection.forLine` 选择金丝雀快
 
 run 因为缺少转换失败时（`dynamic.md` 的运行期 `no-converter`），发现方用 `ConversionStore.open_or_merge` 登记需求，并把 run id 写进需求的 `blocked_runs`。这就是架构 9.5 的“被阻塞”：run 本身以 `FAILED` 结束，`RunState` 不增加新值。推广一个解决该需求的 ChangeSet 后，5.10 第 3 步用新 epoch 重建这些 run；已完成的节点按 `cache.md` 命中缓存，不重复执行。重建失败只写唤醒票，不影响推广结果。
 
+Bun 在 Planner 重试耗尽且缺失转换是最终节点失败原因时，将已保存的需求 ID 与 `FAILED` Run 关联。子产线的缺失转换关联到根 Run。晋升时按新 epoch 编译替代 Run，保留原输入、变体与预算，交由调度器正常推进。只有当前关联需求都已结案的 Run 可以重建，原 Run 的历史仍可查询。`conversion_rebuilds` 按原 Run 和目标 epoch 防止重复，匹配结果与替代 Run 在 SQLite 中一起提交。在晋升后才完成失败结算的 Run 由后续治理 tick 补处理。Bun 通过 `conversion.rebuild_failed` 事件记录无法重建的原因。
+
 ### 5.13 安全模式（M3-03）
 
 `tick()` 先评估安全模式，再对每个非终态 ChangeSet（按 id 升序）`advance` 一次，返回发生了状态变化的那些。

@@ -68,6 +68,16 @@ export class ConversionStore {
     return rows.map(decode);
   }
 
+  addBlockedRun(id: string, runId: string): void {
+    const { db, clock } = this.context;
+    db.transaction(() => {
+      const request = this.get(id);
+      if (request.blocked_runs.includes(runId)) return;
+      db.query("UPDATE conversion_requests SET blocked_runs = ?, updated_at = ? WHERE id = ?")
+        .run(canonicalJson([...request.blocked_runs, runId]), utcIso(clock.now()), id);
+    }).immediate();
+  }
+
   openOrMerge(contract: ConversionContract, origin: { foundAt: Record<string, unknown>; sample?: string; runId?: string }): ConversionRequest {
     const { db, clock, ids } = this.context;
     const properties = (values: readonly string[]) => canonicalJson([...new Set(values)].sort());
@@ -103,10 +113,10 @@ export class ConversionStore {
     }).immediate();
   }
 
-  resolveMatching(changesetId: string, snapshot: Snapshot): string[] {
+  resolveMatching(changesetId: string, snapshot: Snapshot, candidates?: ReadonlySet<string>): string[] {
     const { db, clock } = this.context;
     return db.transaction(() => {
-      const open = this.list().filter(({ status }) => status !== "resolved");
+      const open = this.list().filter(({ id, status }) => status !== "resolved" && (!candidates || candidates.has(id)));
       if (!open.length) return [];
       const resolve = contractResolver(snapshot);
       const at = utcIso(clock.now());
