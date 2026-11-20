@@ -41,7 +41,9 @@ describe("Bun business execution loop", () => {
       expect(spawned).toBe(1);
       expect(app.store.getBusinessRun(run.id)?.status).toBe("completed");
     } finally {
-      app.stop();
+      await app.operator.close();
+      await app.foreman.close();
+      app.store.close();
       await rm(dbPath, { force: true });
     }
   });
