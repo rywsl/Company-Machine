@@ -18,14 +18,16 @@ function yamlParser(): ((source: string) => unknown) {
   return bun.YAML.parse;
 }
 
-function splitDocuments(source: string): Array<{ text: string; line: number }> {
+function splitDocuments(source: string): Array<{ text: string; line: number; index: number }> {
   const lines = source.split(/\r?\n/);
-  const documents: Array<{ text: string; line: number }> = [];
+  const documents: Array<{ text: string; line: number; index: number }> = [];
   let start = 1;
+  let documentIndex = 0;
   let current: string[] = [];
   const push = () => {
     const text = current.join("\n");
-    if (text.trim() && !/^\.\.\.\s*(?:#.*)?$/.test(text.trim())) documents.push({ text, line: start });
+    if (text.trim() && !/^\.\.\.\s*(?:#.*)?$/.test(text.trim())) documents.push({ text, line: start, index: documentIndex });
+    documentIndex += 1;
     current = [];
   };
   for (let index = 0; index < lines.length; index += 1) {
@@ -48,7 +50,7 @@ function splitDocuments(source: string): Array<{ text: string; line: number }> {
 
 export function loadDocuments(source: string): YamlDocument[] {
   const parse = yamlParser();
-  return splitDocuments(source).flatMap(({ text, line }, index) => {
+  return splitDocuments(source).flatMap(({ text, line, index }) => {
     try {
       const data = parse(text);
       if (data === null || data === undefined) return [];

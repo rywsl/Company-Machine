@@ -23,8 +23,9 @@ describe("Bun MRL factory registry", () => {
   });
 
   test("supports YAML documents and reports schema errors", () => {
-    const documents = loadDocuments("---\na: true\n---\nb: on\n");
+    const documents = loadDocuments("---\n---\na: true\n---\nb: on\n");
     expect(documents.map((document) => document.data)).toEqual([{ a: true }, { b: "on" }]);
+    expect(documents.map((document) => document.index)).toEqual([2, 3]);
     expect(validate({ apiVersion: "mao/v1", kind: "Type", metadata: { name: "bad", version: "nope" }, spec: {} }).length).toBeGreaterThan(0);
   });
 });
