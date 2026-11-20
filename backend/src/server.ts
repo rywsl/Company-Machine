@@ -11,6 +11,7 @@ import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
 import { prepareProjectSources, type PrepareProjectSources } from "./project-source-mounts";
+import { repositoryReference } from "./project-sources";
 import { createMaterialFileStage } from "./material-files";
 import type { RegisterRepository } from "./project-registration";
 import { foremanCredential } from "./foreman-credentials";
@@ -322,6 +323,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (url.pathname === "/api/v1/projects" && request.method === "GET") return response(store.listProjects().map(publicProject));
     if (url.pathname === "/api/v1/projects/intake" && request.method === "POST") {
       let body: Record<string, any>;
+      let files: File[] = [];
       if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
         let form: FormData;
         try { form = await request.formData(); }
@@ -331,14 +333,19 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
           const value = form.get(field);
           if (typeof value === "string" && value.trim()) body[field] = value.trim();
         }
-        const files = form.getAll("files").filter((file): file is File => typeof file !== "string" && Boolean(file.name));
+        files = form.getAll("files").filter((file): file is File => typeof file !== "string" && Boolean(file.name));
         body.uploaded_file_refs = form.getAll("uploaded_file_refs").filter((ref): ref is string => typeof ref === "string" && Boolean(ref.trim()));
-        if (files.length) body.files = await saveProjectUploads(storageRoot, uploads(), store, files);
       } else body = await readJson(request);
+      if (body.repo_url !== undefined && body.repo_url !== "") {
+        const reference = repositoryReference(body.repo_url, "intake");
+        if (!reference) return response({ error: "请提交不含凭证、查询参数或片段的仓库链接" }, 400);
+        body.repo_url = reference;
+      }
       if (body.secret_requests !== undefined && (!Array.isArray(body.secret_requests)
         || body.secret_requests.some((item: any) => !item || !projectCredentialName(item.name)))) {
         return response({ error: "project credential requests are invalid" }, 400);
       }
+      if (files.length) body.files = await saveProjectUploads(storageRoot, uploads(), store, files);
       if (!body.repo_url && !body.local_folder && !(Array.isArray(body.files) && body.files.length) && !(Array.isArray(body.uploaded_file_refs) && body.uploaded_file_refs.length)) {
         return response({ error: "one project source is required" }, 400);
       }
@@ -656,7 +663,7 @@ function publicProject(project: any) {
     sources: Array.isArray(project.sources)
       ? project.sources.map((source: any) => {
         const { localFolder: _localFolder, ...portableSource } = source;
-        return { ...portableSource, metadata: portableValue(source.metadata ?? {}) };
+        return { ...portableSource, repoUrl: repositoryReference(source.repoUrl), metadata: portableValue(source.metadata ?? {}) };
       })
       : [],
     secretRequests: Array.isArray(project.secretRequests)

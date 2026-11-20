@@ -88,6 +88,30 @@ describe("Bun business backend", () => {
     } finally { app.stop(); }
   });
 
+  test("keeps repository credentials out of project intake and public project views", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    const intake = (repo_url: string) => app.fetch(new Request("http://localhost/api/v1/projects/intake", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Repository", repo_url }),
+    }));
+    const repository = "https://example.test/team/repo.git";
+    const historic = "https://legacy-user:legacy-value@example.test/team/repo.git?signature=legacy-query#legacy-fragment";
+    try {
+      for (const url of [historic, repository + "?token=value", "ssh://git:password@example.test/team/repo.git"]) {
+        expect((await intake(url)).status).toBe(400);
+      }
+      expect(app.store.listProjects()).toEqual([]);
+      expect(app.events.after()).toEqual([]);
+
+      app.store.createIntake({ name: "Historical repository", repo_url: historic });
+      const ssh = "git@example.test:team/repo.git";
+      expect((await intake(ssh)).status).toBe(201);
+      const visible = await app.fetch(new Request("http://localhost/api/v1/projects"));
+      const projects = await visible.json() as Array<{ sources: Array<{ repoUrl: string }> }>;
+      expect(projects.map(({ sources }) => sources[0].repoUrl)).toEqual([repository, ssh]);
+    } finally { app.stop(); }
+  });
+
   test("persists chat and its Foreman queue events together before notifying subscribers", async () => {
     const root = mkdtempSync(join(tmpdir(), "mao-atomic-talk-"));
     const dbPath = join(root, "business.db");

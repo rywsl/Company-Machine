@@ -475,7 +475,8 @@ describe("Bun business execution loop", () => {
     try {
       const system = await (await app.fetch(new Request("http://localhost/api/v1/business-systems", { method: "POST", headers, body: JSON.stringify({ name: "DAG 业务" }) }))).json() as { id: string };
       const first = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "第一步", repo_url: "https://example.test/one.git" }) }))).json() as { id: string };
-      const second = await (await app.fetch(new Request("http://localhost/api/v1/projects/intake", { method: "POST", headers, body: JSON.stringify({ business_system_id: system.id, name: "第二步", repo_url: "https://fixture:repo-password@example.test/two.git?access_token=repo-secret" }) }))).json() as { id: string };
+      // An older project may already contain credentials in its repository URL.
+      const second = app.store.createIntake({ business_system_id: system.id, name: "第二步", repo_url: "https://fixture:repo-password@example.test/two.git?access_token=repo-secret" });
       const firstOperator = `${first.id}:operator`;
       const secondOperator = `${second.id}:operator`;
       const graph = { nodes: [{ id: firstOperator, type: "operator" }, { id: secondOperator, type: "operator" }], edges: [{ source: firstOperator, target: secondOperator }] };

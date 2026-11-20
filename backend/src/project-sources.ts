@@ -1,18 +1,20 @@
 import type { Project } from "./models";
 
-function repositoryReference(value?: string): string | undefined {
-  if (!value) return undefined;
+export function repositoryReference(value: unknown, mode: "public" | "intake" = "public"): string | undefined {
+  if (typeof value !== "string" || !value.trim() || /[\u0000-\u001f\u007f]/.test(value)) return undefined;
+  const reference = value.trim();
   try {
-    const url = new URL(value);
+    const url = new URL(reference);
     if (!["https:", "http:", "ssh:", "git:"].includes(url.protocol)) return undefined;
-    if (url.protocol === "https:" || url.protocol === "http:") url.username = "";
+    const http = url.protocol === "https:" || url.protocol === "http:";
+    if (!url.hostname || (mode === "intake" && (url.password || (http && url.username) || /[?#]/.test(reference)))) return undefined;
+    if (http) url.username = "";
     url.password = "";
-    for (const name of [...url.searchParams.keys()]) {
-      if (/token|secret|password|api[_-]?key|authorization|credential/i.test(name)) url.searchParams.delete(name);
-    }
+    url.search = "";
+    url.hash = "";
     return url.href;
   } catch {
-    return /^[\w.-]+@[\w.-]+:[^\s]+$/.test(value) ? value : undefined;
+    return /^[\w.-]+@[\w.-]+:[^\s\\?#]+$/.test(reference) ? reference : undefined;
   }
 }
 
