@@ -148,7 +148,8 @@ describe("Bun M1 core boundaries", () => {
 
   test("rolls back a failed Bean seal and keeps facts stable across resealing", async () => {
     const root = tempRoot("warehouse-seals");
-    const context = Context.open(root, { clock: new FakeClock() });
+    const clock = new FakeClock();
+    const context = Context.open(root, { clock });
     const report = "sha256:" + "ab".repeat(32);
     const latestReport = "sha256:" + "cd".repeat(32);
     try {
@@ -162,6 +163,9 @@ describe("Bun M1 core boundaries", () => {
       expectErrorCode(() => store.sealMany([[first.id, { chars: 1 }], [missing, {}]], "j-1", report), "BEAN_NOT_FOUND");
       expect(store.get(first.id).sealed).toBe(false);
       expect(store.get(second.id).sealed).toBe(false);
+      expectErrorCode(() => store.sealMany([[first.id, { chars: 1 }], [first.id, { chars: 9 }]], null, report), "FACTS_CONFLICT");
+      expect(store.get(first.id)).toMatchObject({ sealed: false, facts: {} });
+      expect(context.db.query("SELECT id FROM seals").all()).toEqual([]);
       store.sealMany([[first.id, { chars: 1, lines: 1 }], [second.id, { chars: 2, lines: 1 }]], "j-1", report);
       const sealed = { sealed: true, facts: { chars: 1, lines: 1 } };
       expect(store.get(first.id)).toMatchObject({ ...sealed, createdAt: "2026-01-01T00:00:00.000Z" });
@@ -169,6 +173,19 @@ describe("Bun M1 core boundaries", () => {
       expect(store.get(first.id).facts).toEqual(sealed.facts);
       store.sealMany([[first.id, { lines: 1, chars: 1 }]], "j-2", latestReport);
       expect(store.get(first.id)).toMatchObject(sealed);
+      clock.advance(1);
+      store.sealMany([[first.id, sealed.facts]], null, report);
+      clock.advance(1);
+      store.sealMany([[first.id, sealed.facts]], null, report);
+      store.sealMany([[first.id, sealed.facts]], null, latestReport);
+      const evidence = context.db.query("SELECT job_id, report_digest, facts_json, sealed_at FROM seals WHERE bean_id=? ORDER BY id").all(first.id);
+      const facts_json = canonicalJson(sealed.facts);
+      expect(evidence).toEqual([
+        { job_id: "j-1", report_digest: report, facts_json, sealed_at: "2026-01-01T00:00:00.000Z" },
+        { job_id: "j-2", report_digest: latestReport, facts_json, sealed_at: "2026-01-01T00:00:00.000Z" },
+        { job_id: null, report_digest: report, facts_json, sealed_at: "2026-01-01T00:00:01.000Z" },
+        { job_id: null, report_digest: latestReport, facts_json, sealed_at: "2026-01-01T00:00:02.000Z" },
+      ]);
     } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
   });
 
@@ -192,6 +209,8 @@ describe("Bun M1 core boundaries", () => {
         expect(readFileSync(file, "utf8")).toBe("hello");
         expect(readFileSync(join(layout, "bean.json"), "utf8")).toBe(expected);
       }
+      await expect(store.materialize(bean.id, input, "bean")).rejects.toMatchObject({ code: "DEST_INVALID" });
+      expect(readFileSync(input, "utf8")).toBe("hello");
     } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
   });
 
@@ -217,8 +236,77 @@ describe("Bun M1 core boundaries", () => {
       writeFileSync(blob, "nx");
       expect((await store.verify()).some(({ kind }) => kind === "digest_mismatch")).toBe(true);
       context.db.query("UPDATE beans SET meta_json=? WHERE id=?").run(canonicalJson({ tampered: true }), noteBean.id);
-      expect((await store.verify()).some(({ kind, bean_id }) => kind === "id_mismatch" && bean_id === noteBean.id)).toBe(true);
+      const cardBlob = store.blobPath(cardBean.payload[0].digest);
+      rmSync(cardBlob);
+      mkdirSync(cardBlob);
+      context.db.query("UPDATE beans SET sealed = 0 WHERE id=?").run(noteBean.id);
+      const problems = await store.verify();
+      expect(problems.map(({ kind }) => kind)).toEqual(["digest_mismatch", "facts_unsealed", "id_mismatch", "missing_blob", "seal_flag"]);
+      expect(problems.find(({ kind }) => kind === "id_mismatch")).toMatchObject({ bean_id: noteBean.id });
+      expect(problems.find(({ kind }) => kind === "missing_blob")).toMatchObject({
+        bean_id: cardBean.id, digest: cardBean.payload[0].digest, path: "card.json",
+      });
+      expect(store.get(noteBean.id).facts).toEqual({ chars: 1 });
+      expect(lstatSync(cardBlob).isDirectory()).toBe(true);
       expect(existsSync(join(root, "cas", "sha256"))).toBe(true);
+    } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("hashes Unicode-ordered Bean payloads and reuses earlier Bun identities", async () => {
+    const root = tempRoot("warehouse-identity-paths");
+    const context = Context.open(root, { clock: new FakeClock() });
+    try {
+      const input = join(root, "note.txt");
+      await Bun.write(input, "hi");
+      const digest = await context.warehouse.putFile(input);
+      const paths = ["Z.txt", "a.txt", "中.txt", "豈.txt", "𐀀.txt"];
+      const records = paths.map((path) => ({ path, digest, size: 2, media_type: "text/plain" }));
+      const files = Object.fromEntries([...paths].reverse().map((path) => [path, input]));
+      const type = "note.text@1.1";
+      const bean = await context.warehouse.add({ type, files });
+      expect(bean.id).toBe(digestBytes(canonicalBytes({ type, meta: {}, payload: records })));
+      expect(bean.payload.map(({ path }) => path)).toEqual(paths);
+
+      const meta = { title: "earlier build" };
+      const previousOrder = [...records].sort((left, right) => left.path.localeCompare(right.path));
+      expect(previousOrder).not.toEqual(records);
+      const previousId = digestBytes(canonicalBytes({ type, meta, payload: previousOrder }));
+      const timestamp = "2025-12-31T00:00:00.000Z";
+      context.db.query("INSERT INTO beans (id,type,meta_json,facts_json,created_at) VALUES (?,?,?,?,?)")
+        .run(previousId, type, canonicalJson(meta), "{}", timestamp);
+      const insert = context.db.query("INSERT INTO payload_files (bean_id,path,digest,size,media_type) VALUES (?,?,?,?,?)");
+      for (const { path, digest, size, media_type } of previousOrder) insert.run(previousId, path, digest, size, media_type);
+      expect(await context.warehouse.add({ type, meta, files })).toMatchObject({ id: previousId, createdAt: timestamp });
+      expect(context.warehouse.list({ sealedOnly: false })).toHaveLength(2);
+      expect(await context.warehouse.verify()).toEqual([]);
+    } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("replaces lineage atomically and traverses cycles without losing port ordinals", async () => {
+    const root = tempRoot("warehouse-lineage");
+    const context = Context.open(root);
+    try {
+      const store = context.warehouse;
+      const input = join(root, "note.txt");
+      await Bun.write(input, "hi");
+      const draft = { type: "note.text@1.1", files: { "note.txt": input } };
+      const [source, sibling, leaf] = await Promise.all(["source", "sibling", "leaf"]
+        .map(async (name) => (await store.add({ ...draft, meta: { name } })).id));
+      store.recordLineage("j-2", { lines: [sibling, source], constructor: [source] }, { output: [leaf] });
+      store.recordLineage("j-1", { input: [leaf] }, { output: [source] });
+      const expected: ReturnType<typeof store.lineage>["jobs"] = [
+        { jobId: "j-1", inputs: { input: [leaf] }, outputs: { output: [source] } },
+        { jobId: "j-2", inputs: { constructor: [source], lines: [sibling, source] }, outputs: { output: [leaf] } },
+      ];
+      expect(store.lineage(leaf, "up")).toEqual({ id: leaf, direction: "up", jobs: expected, beans: [sibling, source].sort() });
+      expect(store.lineage(sibling, "down")).toEqual({ id: sibling, direction: "down", jobs: expected, beans: [leaf, source].sort() });
+      const missing = "sha256:" + "22".repeat(32);
+      expectErrorCode(() => store.recordLineage("j-2", { lines: [missing] }, { output: [leaf] }), "BEAN_NOT_FOUND");
+      expect(store.lineage(leaf, "up").jobs).toEqual(expected);
+      store.recordLineage("j-2", { lines: [source] }, { output: [leaf] });
+      expect(store.lineage(sibling, "down")).toEqual({ id: sibling, direction: "down", jobs: [], beans: [] });
+      expect(store.lineage(leaf, "up").jobs[1]).toEqual({ jobId: "j-2", inputs: { lines: [source] }, outputs: { output: [leaf] } });
+      expect(() => store.lineage(leaf, "sideways" as "up")).toThrow("direction must be up or down");
     } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
   });
   test("canonical JSON, IDs and durations are deterministic", () => {

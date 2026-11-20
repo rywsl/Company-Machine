@@ -159,6 +159,51 @@ describe("Bun business execution loop", () => {
     }
   });
 
+  test("dispatches a join once all predecessors complete in a historical frozen graph", () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
+    const { store } = app;
+    try {
+      const system = store.createBusinessSystem({ name: "DAG fan-in" });
+      const operator = (name: string) => `${store.createIntake({ business_system_id: system.id, name }).id}:operator`;
+      const root = operator("Root");
+      const left = operator("Left");
+      const right = operator("Right");
+      const join = operator("Join");
+      const edges = [
+        { source: root, target: left }, { source: root, target: right },
+        { source: right, target: join }, { source: left, target: join },
+      ];
+      store.updateBusinessSystemMetadata(system.id, { graph: { edges } });
+      const run = store.createBusinessRun(system.id, "test", {}, ["cas://original"])!;
+      const finish = (unitId: string, outputs: string[] = []) => {
+        const unit = store.claimUnitRun(run.id, unitId, "fixture-session")!;
+        store.completeUnitRun(unit.id, "completed", outputs);
+        return unit.id;
+      };
+
+      expect(store.listReadyUnitRuns(run.id).map(({ unitId }) => unitId)).toEqual([root]);
+      const completedRoot = finish(root, ["cas://root"]);
+      store.db.exec("DELETE FROM business_run_edges; ALTER TABLE business_run_graphs DROP COLUMN edges_indexed");
+      store.init();
+      store.updateBusinessSystemMetadata(system.id, { graph: { edges: [] } });
+
+      const ready = store.listReadyUnitRuns(run.id, completedRoot);
+      expect(ready.map(({ unitId }) => unitId).sort()).toEqual([left, right].sort());
+      expect(ready.map(({ inputs }) => inputs)).toEqual([["cas://original", "cas://root"], ["cas://original", "cas://root"]]);
+      expect(store.db.query("SELECT edges_indexed FROM business_run_graphs WHERE run_id=?").get(run.id)).toEqual({ edges_indexed: 1 });
+
+      const completedLeft = finish(left, ["cas://shared", "cas://left"]);
+      expect(store.listReadyUnitRuns(run.id, completedLeft)).toEqual([]);
+      const completedRight = finish(right, ["cas://right", "cas://shared", "cas://original"]);
+      const joinInputs = ["cas://original", "cas://right", "cas://shared", "cas://left"];
+      expect(store.listReadyUnitRuns(run.id, completedRight)).toMatchObject([{ unitId: join, inputs: joinInputs }]);
+      expect(store.listReadyUnitRuns(run.id, completedRight)).toMatchObject([{ unitId: join, inputs: joinInputs }]);
+      expect(store.claimUnitRun(run.id, join, "join-session")?.inputs).toEqual(joinInputs);
+      expect(store.claimUnitRun(run.id, join, "duplicate-session")).toBeUndefined();
+      expect(store.listReadyUnitRuns(run.id, completedRight)).toEqual([]);
+    } finally { app.stop(); }
+  });
+
   test("ensures the selected container runtime before a containerized Operator starts", async () => {
     const dbPath = ":memory:";
     let ensured = 0;

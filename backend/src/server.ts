@@ -146,16 +146,15 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (!stopped) console.error("Background dispatch failed", redactText(error instanceof Error ? error.message : String(error)));
     });
   };
-  let dispatchOperatorRun = (_runId: string) => {};
-  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: (runId) => dispatchOperatorRun(runId), ensureRuntime, readSecret: (ref) => vault.get(ref) });
+  const operator = new OperatorCoordinator({ store, events, cwd: options.operator?.cwd, spawn: options.operator?.spawn, acpSpawn: options.operator?.acpSpawn, onProgress: dispatchOperatorRun, ensureRuntime, readSecret: (ref) => vault.get(ref) });
   const hasForeman = () => store.listHarnessProfiles().some((profile) => profile.role === "foreman");
   const dispatchForemanIfConfigured = (id: string) => {
     if (options.dispatchWork !== false && hasForeman()) runInBackground(foreman.dispatch(id));
   };
-  dispatchOperatorRun = (runId: string) => {
+  function dispatchOperatorRun(runId: string, completedUnitRunId?: string) {
     if (options.dispatchWork === false) return;
-    for (const unitRun of store.listReadyUnitRuns(runId)) runInBackground(operator.dispatch(runId, unitRun.id));
-  };
+    for (const unitRun of store.listReadyUnitRuns(runId, completedUnitRunId)) runInBackground(operator.dispatch(runId, unitRun.id));
+  }
   const recoverQueuedWork = () => {
     if (hasForeman()) {
       for (const id of store.listQueuedForemanMessageIds()) runInBackground(foreman.dispatch(id));

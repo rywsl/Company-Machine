@@ -276,6 +276,8 @@ Bun 从源文件描述符分块读取，每一块同时写入工厂根目录下�
    - 否则插入 `beans`（`facts_json` 为 `canonical_json({})`，`sealed` 为 0，`created_at = utc_iso(self.clock.now())`）和 `payload_files`。
 6. 返回 `get(id)`。未封存，`facts == {}`，`sealed is False`，`payload` 按 `path` 升序。
 
+活动 Bun 仓库按照路径的 UTF-8 字节升序生成身份，与 SQLite 的路径排序和 Unicode 码点顺序一致。早期 Bun 按本地排序生成的身份仍可读取。重提时若本地排序算出的旧摘要已登记，沿用原身份和原封存记录。完整性检查通过库存 payload 行的写入顺序验证旧摘要。
+
 `get` 返回的 `meta` / `facts` 是新的 dict。调用方修改它们不影响下一次 `get`。
 
 ### 5.6 `get` / `list`

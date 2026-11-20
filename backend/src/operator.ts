@@ -13,7 +13,7 @@ export interface OperatorCoordinatorOptions {
   cwd?: string;
   spawn?: OfficialSpawn;
   acpSpawn?: AcpSpawn;
-  onProgress?: (runId: string) => void;
+  onProgress?: (runId: string, completedUnitRunId?: string) => void;
   ensureRuntime?: () => Promise<void>;
   readSecret?: (ref: string) => string | undefined;
 }
@@ -48,9 +48,13 @@ export class OperatorCoordinator {
     if (!unitRun) return Promise.resolve();
     const existing = this.active.get(unitRun.id);
     if (existing) return existing;
-    const work = this.run(runId, unitRun.id).finally(() => {
+    const advance = (completedUnitRunId?: string) => {
       this.active.delete(unitRun.id);
-      if (!this.closed) this.options.onProgress?.(runId);
+      if (!this.closed) this.options.onProgress?.(runId, unitRunId ? completedUnitRunId : undefined);
+    };
+    const work = this.run(runId, unitRun.id).then(advance, (error) => {
+      advance();
+      throw error;
     });
     this.active.set(unitRun.id, work);
     return work;
@@ -67,7 +71,7 @@ export class OperatorCoordinator {
     await Promise.allSettled(this.active.values());
   }
 
-  private async run(runId: string, unitRunId: string): Promise<void> {
+  private async run(runId: string, unitRunId: string): Promise<string | undefined> {
     if (this.closed) return;
     const unitRun = this.options.store.getUnitRun(runId, unitRunId);
     if (!unitRun || unitRun.status !== "queued") return;
@@ -171,6 +175,7 @@ export class OperatorCoordinator {
       }
       const completed = this.options.store.completeUnitRun(unitRun.id, failed ? "failed" : "completed", [...outputIds], failed ? "official-harness-failed" : undefined);
       if (completed) this.options.events.publish("operator.run.completed", completed);
+      if (completed?.status === "completed") return completed.id;
     } catch (error) {
       if (this.closed) return;
       const message = redactCredentialValues(error instanceof Error ? error.message : "official-harness-failed", Object.values(credentials)) as string;

@@ -56,6 +56,8 @@ export interface IntakeInput {
   secret_requests?: Array<{ name: string; metadata?: Record<string, unknown> }>;
 }
 
+type BusinessRunEdge = { source: string; target: string };
+
 export class SqliteStore {
   readonly db: Database;
   readonly legacy?: Database;
@@ -146,7 +148,12 @@ export class SqliteStore {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS business_run_dispatch (run_id TEXT PRIMARY KEY);
-      CREATE TABLE IF NOT EXISTS business_run_graphs (run_id TEXT PRIMARY KEY, edges TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS business_run_graphs (run_id TEXT PRIMARY KEY, edges TEXT NOT NULL, edges_indexed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS business_run_edges (
+        run_id TEXT NOT NULL, source_id TEXT NOT NULL, target_id TEXT NOT NULL, position INTEGER NOT NULL,
+        PRIMARY KEY (run_id, source_id, target_id)
+      ) WITHOUT ROWID;
+      CREATE INDEX IF NOT EXISTS business_run_edge_predecessors ON business_run_edges(run_id, target_id, position);
       CREATE TABLE IF NOT EXISTS unit_runs (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL, unit_id TEXT NOT NULL,
         status TEXT NOT NULL, session_id TEXT, inputs TEXT NOT NULL DEFAULT '[]',
@@ -176,16 +183,19 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS unit_runs_run ON unit_runs(run_id, status, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_history ON unit_runs(run_id, created_at, id);
       CREATE INDEX IF NOT EXISTS unit_runs_pending_dispatch ON unit_runs(run_id) WHERE status='queued';
+      CREATE INDEX IF NOT EXISTS unit_runs_unfinished ON unit_runs(run_id) WHERE status!='completed';
       CREATE INDEX IF NOT EXISTS business_conversions_system ON business_conversions(business_system_id, created_at, id);
     `);
-    const columns = () => this.db.query<{ name: string }>("PRAGMA table_info(harness_profiles)").all();
-    if (!columns().some(({ name }) => name === "session_timeout_s")) {
-      this.db.transaction(() => {
-        if (!columns().some(({ name }) => name === "session_timeout_s")) {
-          this.db.exec(`ALTER TABLE harness_profiles ADD COLUMN session_timeout_s INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}`);
-        }
-      }).immediate();
-    }
+    this.addColumnIfMissing("harness_profiles", "session_timeout_s", `INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}`);
+    this.addColumnIfMissing("business_run_graphs", "edges_indexed", "INTEGER NOT NULL DEFAULT 0");
+  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const hasColumn = () => this.db.query<{ name: string }>(`PRAGMA table_info(${table})`).all().some(({ name }) => name === column);
+    if (hasColumn()) return;
+    this.db.transaction(() => {
+      if (!hasColumn()) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }).immediate();
   }
 
   listBusinessSystems(): BusinessSystem[] {
@@ -382,7 +392,9 @@ export class SqliteStore {
       this.db.query("INSERT INTO business_runs (id,business_system_id,status,trigger,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
         .run(run.id, businessSystemId, run.status, trigger, json(metadata), timestamp, timestamp);
       if (dispatch && run.status === "queued") this.authorizeBusinessRunDispatch(run.id);
-      this.db.query("INSERT INTO business_run_graphs (run_id, edges) VALUES (?,?)").run(run.id, json(this.businessGraph(businessSystemId).edges));
+      const edges = this.businessGraph(businessSystemId).edges;
+      this.db.query("INSERT INTO business_run_graphs (run_id, edges) VALUES (?,?)").run(run.id, json(edges));
+      this.indexRunEdges(run.id, edges);
       const insert = this.db.query("INSERT INTO unit_runs (id,run_id,unit_id,status,session_id,inputs,outputs,error,created_at,updated_at) VALUES (?,?,?,'queued',NULL,?,'[]',NULL,?,?)");
       const serializedInputs = json(inputs);
       for (const unit of units) insert.run(this.uuid(), run.id, unit.id, serializedInputs, timestamp, timestamp);
@@ -448,10 +460,16 @@ export class SqliteStore {
     return row ? this.unitRunFromRow(row) : undefined;
   }
 
-  listReadyUnitRuns(runId: string): UnitRun[] {
+  listReadyUnitRuns(runId: string, completedUnitRunId?: string): UnitRun[] {
     return this.db.transaction(() => {
       const run = this.getBusinessRun(runId);
       if (!run || run.status === "cancelled") return [];
+      if (completedUnitRunId && run.status === "completed") return [];
+      if (completedUnitRunId && run.status === "running") {
+        const completed = this.getUnitRun(runId, completedUnitRunId);
+        const indexed = this.db.query("SELECT 1 FROM business_run_graphs WHERE run_id=? AND edges_indexed=1").get(runId);
+        if (completed?.status === "completed" && indexed) return this.listReadySuccessorUnitRuns(completed);
+      }
       const unitRuns = this.listUnitRuns(runId);
       const byUnit = new Map(unitRuns.map((item) => [item.unitId, item]));
       const predecessors = new Map<string, UnitRun[]>();
@@ -471,15 +489,44 @@ export class SqliteStore {
         if (item.status !== "queued") continue;
         const required = predecessors.get(item.unitId) ?? [];
         if (required.some((predecessor) => predecessor.status !== "completed")) continue;
-        const inputs = [...new Set([...item.inputs, ...required.flatMap((predecessor) => predecessor.outputs)])];
-        if (inputs.length !== item.inputs.length || inputs.some((value, index) => value !== item.inputs[index])) {
-          this.db.query("UPDATE unit_runs SET inputs=?, updated_at=? WHERE id=? AND status='queued'").run(json(inputs), this.timestamp(), item.id);
-          item.inputs = inputs;
-        }
+        this.mergeUnitRunInputs(item, required.flatMap((predecessor) => predecessor.outputs));
         ready.push(item);
       }
       return ready;
     }).immediate();
+  }
+
+  private listReadySuccessorUnitRuns(completed: UnitRun): UnitRun[] {
+    // Keep the indexed outgoing edges as the outer loop, even when many units are queued.
+    const rows = this.db.query(`
+      SELECT successor.* FROM business_run_edges AS outbound
+      CROSS JOIN unit_runs AS successor ON successor.run_id=outbound.run_id AND successor.unit_id=outbound.target_id
+      WHERE outbound.run_id=? AND outbound.source_id=? AND successor.status='queued'
+        AND NOT EXISTS (
+          SELECT 1 FROM business_run_edges AS inbound
+          JOIN unit_runs AS predecessor ON predecessor.run_id=inbound.run_id AND predecessor.unit_id=inbound.source_id
+          WHERE inbound.run_id=outbound.run_id AND inbound.target_id=outbound.target_id AND predecessor.status!='completed'
+        )
+      ORDER BY successor.created_at, successor.id
+    `).all(completed.runId, completed.unitId);
+    const predecessors = this.db.query<{ outputs: string }>(`
+      SELECT predecessor.outputs FROM business_run_edges AS edge
+      JOIN unit_runs AS predecessor ON predecessor.run_id=edge.run_id AND predecessor.unit_id=edge.source_id
+      WHERE edge.run_id=? AND edge.target_id=? ORDER BY edge.position
+    `);
+    return rows.map((row) => {
+      const successor = this.unitRunFromRow(row);
+      const outputs = predecessors.all(successor.runId, successor.unitId).flatMap(({ outputs }) => parseList(outputs));
+      this.mergeUnitRunInputs(successor, outputs);
+      return successor;
+    });
+  }
+
+  private mergeUnitRunInputs(unit: UnitRun, outputs: string[]): void {
+    const inputs = [...new Set([...unit.inputs, ...outputs])];
+    if (inputs.length === unit.inputs.length && inputs.every((value, index) => value === unit.inputs[index])) return;
+    this.db.query("UPDATE unit_runs SET inputs=?, updated_at=? WHERE id=? AND status='queued'").run(json(inputs), this.timestamp(), unit.id);
+    unit.inputs = inputs;
   }
 
   /** Propagate terminal failures through the DAG so a run cannot stay running forever. */
@@ -508,12 +555,18 @@ export class SqliteStore {
     if (nextStatus !== run.status) this.db.query("UPDATE business_runs SET status=?, updated_at=? WHERE id=?").run(nextStatus, timestamp, run.id);
   }
 
-  private runEdges(run: BusinessRun): Array<{ source: string; target: string }> {
-    const stored = this.db.query<{ edges: string }>("SELECT edges FROM business_run_graphs WHERE run_id=?").get(run.id);
-    if (stored) return JSON.parse(stored.edges);
-    const edges = this.businessGraph(run.businessSystemId).edges;
-    this.db.query("INSERT INTO business_run_graphs (run_id,edges) VALUES (?,?)").run(run.id, json(edges));
+  private runEdges(run: BusinessRun): BusinessRunEdge[] {
+    const stored = this.db.query<{ edges: string; edges_indexed: number }>("SELECT edges, edges_indexed FROM business_run_graphs WHERE run_id=?").get(run.id);
+    const edges: BusinessRunEdge[] = stored ? JSON.parse(stored.edges) : this.businessGraph(run.businessSystemId).edges;
+    if (!stored) this.db.query("INSERT INTO business_run_graphs (run_id,edges) VALUES (?,?)").run(run.id, json(edges));
+    if (!stored?.edges_indexed) this.indexRunEdges(run.id, edges);
     return edges;
+  }
+
+  private indexRunEdges(runId: string, edges: BusinessRunEdge[]): void {
+    const insert = this.db.query("INSERT OR IGNORE INTO business_run_edges (run_id,source_id,target_id,position) VALUES (?,?,?,?)");
+    for (const [position, { source, target }] of edges.entries()) insert.run(runId, source, target, position);
+    this.db.query("UPDATE business_run_graphs SET edges_indexed=1 WHERE run_id=?").run(runId);
   }
 
   claimUnitRun(runId: string, unitId: string, sessionId: string): UnitRun | undefined {
@@ -542,7 +595,7 @@ export class SqliteStore {
       this.db.query(`
         UPDATE business_runs SET status = CASE
           WHEN EXISTS (SELECT 1 FROM unit_runs WHERE run_id = ? AND status IN ('failed', 'blocked')) THEN 'failed'
-          WHEN EXISTS (SELECT 1 FROM unit_runs WHERE run_id = ? AND status != 'completed') THEN 'running'
+          WHEN EXISTS (SELECT 1 FROM unit_runs INDEXED BY unit_runs_unfinished WHERE run_id = ? AND status != 'completed') THEN 'running'
           ELSE 'completed'
         END, updated_at = ? WHERE id = ?
       `).run(unit.runId, unit.runId, timestamp, unit.runId);
@@ -552,11 +605,11 @@ export class SqliteStore {
     }).immediate();
   }
 
-  private businessGraph(businessSystemId: string): { edges: Array<{ source: string; target: string }> } {
+  private businessGraph(businessSystemId: string): { edges: BusinessRunEdge[] } {
     const row = this.db.query("SELECT metadata FROM business_systems WHERE id=?").get(businessSystemId) as { metadata?: string } | undefined;
     const metadata = parseJson(row?.metadata);
     const graph = metadata.graph && typeof metadata.graph === "object" ? metadata.graph as { edges?: unknown } : {};
-    const edges = Array.isArray(graph.edges) ? graph.edges.filter((edge): edge is { source: string; target: string } => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string")) : [];
+    const edges = Array.isArray(graph.edges) ? graph.edges.filter((edge): edge is BusinessRunEdge => Boolean(edge && typeof edge === "object" && typeof (edge as any).source === "string" && typeof (edge as any).target === "string")) : [];
     return { edges };
   }
 

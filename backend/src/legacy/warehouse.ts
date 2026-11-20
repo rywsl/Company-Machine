@@ -23,6 +23,11 @@ function isObject(value: unknown): value is Record<string, unknown> { return Boo
 export interface FileRef { path: string; digest: string; size: number; mediaType: string; }
 export interface Bean { id: string; type: string; meta: Record<string, unknown>; facts: Record<string, unknown>; payload: FileRef[]; sealed: boolean; createdAt: string; expiredAt?: string; }
 export interface BeanDraft { type: string; meta?: Record<string, unknown>; files: Record<string, string>; }
+type PayloadIdentity = { path: string; digest: string; size: number; media_type: string };
+
+function beanId(type: string, meta: Record<string, unknown>, payload: PayloadIdentity[]): string {
+  return digestBytes(canonicalBytes({ type, meta, payload }));
+}
 
 export function mediaTypeOf(path: string): string {
   const name = path.replaceAll("\\", "/").split("/").pop() ?? path;
@@ -115,16 +120,24 @@ export class Warehouse {
       const { digest, size } = await this.storeFile(source);
       payload.push({ path, digest, size, mediaType: mediaTypeOf(path) });
     }
-    payload.sort((a, b) => a.path.localeCompare(b.path));
-    const identity = { type: draft.type, meta, payload: payload.map((item) => ({ path: item.path, digest: item.digest, size: item.size, media_type: item.mediaType })) };
-    const id = digestBytes(canonicalBytes(identity));
+    const records = payload.map(({ path, digest, size, mediaType }) => ({ path, digest, size, media_type: mediaType }));
+    const ordered = records.map((record) => ({ record, pathBytes: Buffer.from(record.path, "utf8") }))
+      .sort((left, right) => left.pathBytes.compare(right.pathBytes))
+      .map(({ record }) => record);
+    let id = beanId(draft.type, meta, ordered);
     const timestamp = utcIso(this.clock.now());
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const existing = this.db.query("SELECT id FROM beans WHERE id = ?").get(id) as any;
-      if (!existing) {
-        this.db.query("INSERT INTO beans (id,type,meta_json,facts_json,sealed,created_at,expired_at) VALUES (?,?,?,?,0,?,NULL)").run(id, draft.type, canonicalJson(meta), canonicalJson({}), timestamp);
-        for (const item of payload) this.db.query("INSERT INTO payload_files (bean_id,path,digest,size,media_type) VALUES (?,?,?,?,?)").run(id, item.path, item.digest, item.size, item.mediaType);
+      const find = this.db.query("SELECT id FROM beans WHERE id = ?");
+      if (!find.get(id)) {
+        // Earlier Bun builds sorted by locale before hashing and inserting payload rows.
+        const previous = records.length > 1 ? beanId(draft.type, meta, records.sort((a, b) => a.path.localeCompare(b.path))) : id;
+        if (previous !== id && find.get(previous)) id = previous;
+        else {
+          this.db.query("INSERT INTO beans (id,type,meta_json,facts_json,sealed,created_at,expired_at) VALUES (?,?,?,?,0,?,NULL)").run(id, draft.type, canonicalJson(meta), canonicalJson({}), timestamp);
+          const insert = this.db.query("INSERT INTO payload_files (bean_id,path,digest,size,media_type) VALUES (?,?,?,?,?)");
+          for (const item of ordered) insert.run(id, item.path, item.digest, item.size, item.media_type);
+        }
       }
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
@@ -156,7 +169,7 @@ export class Warehouse {
           this.db.query("UPDATE beans SET facts_json = ?, sealed = 1 WHERE id = ?").run(factsJson, id);
           this.db.query("INSERT INTO seals (bean_id,job_id,report_digest,facts_json,sealed_at) VALUES (?,?,?,?,?)").run(id, jobId, reportDigest, factsJson, utcIso(this.clock.now()));
         } else if (row.facts_json !== factsJson) throw new FactoryError("FACTS_CONFLICT", "封存 facts 与首次封存不一致", { beanId: id });
-        else if (!this.db.query("SELECT 1 FROM seals WHERE bean_id = ? AND report_digest = ? AND ifnull(job_id,'') = ifnull(?,'')").get(id, reportDigest, jobId)) this.db.query("INSERT INTO seals (bean_id,job_id,report_digest,facts_json,sealed_at) VALUES (?,?,?,?,?)").run(id, jobId, reportDigest, factsJson, utcIso(this.clock.now()));
+        else if (!this.db.query("SELECT 1 FROM seals WHERE bean_id = ? AND report_digest = ? AND job_id IS ?").get(id, reportDigest, jobId)) this.db.query("INSERT INTO seals (bean_id,job_id,report_digest,facts_json,sealed_at) VALUES (?,?,?,?,?)").run(id, jobId, reportDigest, factsJson, utcIso(this.clock.now()));
       }
     }).immediate();
   }
@@ -164,6 +177,8 @@ export class Warehouse {
     const bean = this.get(id);
     if (bean.expiredAt) throw new FactoryError("BEAN_EXPIRED", "Bean 已过期", { beanId: id });
     if (layout !== "port" && layout !== "bean") throw new Error("layout must be port or bean");
+    const target = statSync(destination, { throwIfNoEntry: false });
+    if (target && !target.isDirectory()) throw new FactoryError("DEST_INVALID", "物化目标不是目录", { dest: destination });
     mkdirSync(destination, { recursive: true });
     const prefix = layout === "bean" ? join(destination, "payload") : destination;
     for (const file of bean.payload) { const target = join(prefix, ...file.path.replaceAll("\\", "/").split("/")); mkdirSync(join(target, ".."), { recursive: true }); await copyFile(this.blobPath(file.digest), target); }
@@ -179,33 +194,54 @@ export class Warehouse {
   }
   lineage(id: string, direction: "up" | "down"): { id: string; direction: "up" | "down"; jobs: Array<{ jobId: string; inputs: Record<string, string[]>; outputs: Record<string, string[]> }>; beans: string[] } {
     this.get(id);
+    if (direction !== "up" && direction !== "down") throw new Error("direction must be up or down");
     const visitedBeans = new Set([id]); const visitedJobs = new Set<string>(); const queue = [id];
-    while (queue.length) {
-      const current = queue.shift()!;
-      const sourceDirection = direction === "up" ? "out" : "in";
-      const rows = this.db.query("SELECT job_id FROM lineage WHERE bean_id = ? AND direction = ?").all(current, sourceDirection) as any[];
+    const sourceDirection = direction === "up" ? "out" : "in";
+    const targetDirection = direction === "up" ? "in" : "out";
+    const relatedJobs = this.db.query<{ job_id: string }>("SELECT DISTINCT job_id FROM lineage WHERE bean_id = ? AND direction = ?");
+    const relatedBeans = this.db.query<{ bean_id: string }>("SELECT DISTINCT bean_id FROM lineage WHERE job_id = ? AND direction = ?");
+    for (let index = 0; index < queue.length; index += 1) {
+      const rows = relatedJobs.all(queue[index], sourceDirection);
       for (const row of rows) {
         if (visitedJobs.has(row.job_id)) continue;
         visitedJobs.add(row.job_id);
-        const targetDirection = direction === "up" ? "in" : "out";
-        for (const item of this.db.query("SELECT bean_id FROM lineage WHERE job_id = ? AND direction = ?").all(row.job_id, targetDirection) as any[]) if (!visitedBeans.has(item.bean_id)) { visitedBeans.add(item.bean_id); queue.push(item.bean_id); }
+        for (const item of relatedBeans.all(row.job_id, targetDirection)) {
+          if (visitedBeans.has(item.bean_id)) continue;
+          visitedBeans.add(item.bean_id);
+          queue.push(item.bean_id);
+        }
       }
     }
     const jobs = [...visitedJobs].sort().map((jobId) => ({ jobId, inputs: this.ports(jobId, "in"), outputs: this.ports(jobId, "out") }));
     return { id, direction, jobs, beans: [...visitedBeans].filter((item) => item !== id).sort() };
   }
-  private ports(jobId: string, direction: string): Record<string, string[]> { const result: Record<string, string[]> = {}; for (const row of this.db.query("SELECT port,bean_id FROM lineage WHERE job_id = ? AND direction = ? ORDER BY port,ordinal").all(jobId, direction) as any[]) (result[row.port] ??= []).push(row.bean_id); return result; }
+  private ports(jobId: string, direction: string): Record<string, string[]> {
+    const ports: Record<string, string[]> = Object.create(null);
+    const rows = this.db.query<{ port: string; bean_id: string }>(
+      "SELECT port,bean_id FROM lineage WHERE job_id = ? AND direction = ? ORDER BY port,ordinal",
+    ).all(jobId, direction);
+    for (const { port, bean_id } of rows) (ports[port] ??= []).push(bean_id);
+    return { ...ports };
+  }
   labels(id: string): Record<string, string> { this.get(id); return Object.fromEntries((this.db.query("SELECT key,value FROM bean_labels WHERE bean_id = ?").all(id) as any[]).map((row) => [row.key, row.value])); }
   label(id: string, key: string, value: string, by: string): void { this.get(id); this.db.query("INSERT INTO bean_labels (bean_id,key,value,set_by,at) VALUES (?,?,?,?,?) ON CONFLICT(bean_id,key) DO UPDATE SET value=excluded.value,set_by=excluded.set_by,at=excluded.at").run(id, key, value, by, utcIso(this.clock.now())); }
   async verify(): Promise<Array<Record<string, string>>> {
     const problems: Array<Record<string, string>> = [];
     const cas = join(this.root, "cas", "sha256");
     for (const file of listFiles(cas)) if (statSync(file).isFile()) { const parts = file.replaceAll("\\", "/").split("/"); const expected = `sha256:${parts.at(-2)}${parts.at(-1)}`; if (await digestFile(file) !== expected) problems.push({ kind: "digest_mismatch", path: file, bean_id: "", digest: expected }); }
-    for (const row of this.db.query("SELECT bean_id,path,digest FROM payload_files").all() as any[]) if (!existsSync(this.blobPath(row.digest))) problems.push({ kind: "missing_blob", path: row.path, bean_id: row.bean_id, digest: row.digest });
+    for (const row of this.db.query("SELECT bean_id,path,digest FROM payload_files").all() as any[]) {
+      if (!statSync(this.blobPath(row.digest), { throwIfNoEntry: false })?.isFile()) {
+        problems.push({ kind: "missing_blob", path: row.path, bean_id: row.bean_id, digest: row.digest });
+      }
+    }
     for (const row of this.db.query("SELECT id,type,meta_json,facts_json,sealed FROM beans").all() as any[]) {
-      const payload = (this.db.query("SELECT path,digest,size,media_type FROM payload_files WHERE bean_id = ? ORDER BY path").all(row.id) as any[]).map((item) => ({ path: item.path, digest: item.digest, size: item.size, media_type: item.media_type }));
-      const expected = digestBytes(canonicalBytes({ type: row.type, meta: jsonParse(row.meta_json), payload }));
-      if (expected !== row.id) problems.push({ kind: "id_mismatch", path: "", bean_id: row.id, digest: expected });
+      const payload = this.db.query<PayloadIdentity>("SELECT path,digest,size,media_type FROM payload_files WHERE bean_id = ? ORDER BY path").all(row.id);
+      const meta = jsonParse(row.meta_json);
+      const expected = beanId(row.type, meta, payload);
+      if (expected !== row.id) {
+        const publishedOrder = this.db.query<PayloadIdentity>("SELECT path,digest,size,media_type FROM payload_files WHERE bean_id = ? ORDER BY rowid").all(row.id);
+        if (beanId(row.type, meta, publishedOrder) !== row.id) problems.push({ kind: "id_mismatch", path: "", bean_id: row.id, digest: expected });
+      }
       const hasSeal = Boolean(this.db.query("SELECT 1 FROM seals WHERE bean_id = ? LIMIT 1").get(row.id));
       if (Boolean(row.sealed) !== hasSeal) problems.push({ kind: "seal_flag", path: "", bean_id: row.id, digest: "" });
       if (!row.sealed && row.facts_json !== canonicalJson({})) problems.push({ kind: "facts_unsealed", path: "", bean_id: row.id, digest: "" });
