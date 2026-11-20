@@ -18,6 +18,8 @@
 
 Registry 的活动结构检查位于 `backend/mrl/factory/`。`paths.ts` 解析 `MRL_SPEC_DIR` 或仓库内的 `spec/`，`yamlio.ts` 使用 Bun 原生 YAML 解析器处理 YAML 1.2 文档，`registry.ts` 按工厂 profile 的目录布局读取 Spec，`schema.ts` 解析 `spec/schemas/` 的 Draft 2020-12 结构约束，`check.ts` 输出布局、YAML、schema、重复键和宪法缺失诊断。
 
+M1 的基础值、快照和本地仓库边界位于 `backend/src/legacy/`。`foundation.ts` 提供规范 JSON、摘要、时钟和 ID，`snapshot.ts` 读取已检查 Registry 并提供 Spec/type/facts/always 查询，`warehouse.ts` 提供 CAS、Bean、封存、物化和血缘，`context.ts` 负责工厂目录与 Bun SQLite 装配。它们与 BusinessSystem 表保持独立，便于后续把 Runner/Gate 接到同一仓库。
+
 命令行入口是 `bun run factory registry check <registry>`，加上 `--json` 输出稳定的机器可读诊断。`backend/mrl/factory.test.ts` 使用 `tests/fixtures/registry-m1` 和 `tests/fixtures/registry-m2` 锁定 YAML、布局和 schema 阶段。内核事实抽取、宪法求值、表达式位置类型环境、转换解析和完整诊断排序仍需在后续阶段接入同一个 Registry 结果，不得恢复 Python 入口。
 
 旧 Python MRL 和 factory profile 实现只保存在 `removed/python/`，不参与活动控制面启动。表达式静态检查、模板 API、MRL-R 规则和 Registry 结构检查由 TypeScript 测试锁定边界。

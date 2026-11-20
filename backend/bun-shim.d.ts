@@ -15,6 +15,7 @@ declare module "bun:sqlite" {
 declare module "node:crypto" {
   export const randomUUID: () => string;
   export const randomBytes: (size: number) => any;
+  export const createHash: (algorithm: string) => { update(value: unknown): any; digest(format: "hex"): string };
   export const createCipheriv: (...args: any[]) => any;
 }
 
@@ -22,8 +23,12 @@ declare module "node:fs" {
   export const mkdirSync: (...args: any[]) => void;
   export const readdirSync: (...args: any[]) => any[];
   export const statSync: (...args: any[]) => any;
+  export const renameSync: (...args: any[]) => void;
+  export const unlinkSync: (...args: any[]) => void;
+  export const rmSync: (...args: any[]) => void;
   export const readFileSync: (...args: any[]) => any;
   export const writeFileSync: (...args: any[]) => void;
+  export const chmodSync: (...args: any[]) => void;
   export const existsSync: (...args: any[]) => boolean;
 }
 
@@ -51,6 +56,7 @@ declare const Bun: {
   YAML: { parse(source: string): unknown };
   serve(options: { port: number; hostname?: string; fetch: (request: Request) => Response | Promise<Response> }): { url: URL; stop(): void };
   file(path: string): Blob;
+  write(path: string, source: unknown): Promise<number>;
 };
 declare const process: { env: Record<string, string | undefined>; cwd(): string; exit(code?: number): never; exitCode?: number };
 declare const Buffer: {
