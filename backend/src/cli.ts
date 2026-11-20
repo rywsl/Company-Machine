@@ -31,8 +31,8 @@ export function usage(scope?: string): string {
   if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID [--package DEST]\n  verify PACKAGE\n  import PACKAGE --root NEW_ROOT\n  graph ID [--file PATH]\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID\n  conversion ls [--status open|in_progress|resolved] [--root PATH]`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
-  if (scope === "registry") return "factory registry check PATH [--json]";
-  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project register --repo URL [--name NAME] [--system ID]\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  project secret request PROJECT --name KEY --purpose PURPOSE\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID [--file PATH]\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
+  if (scope === "registry") return "factory registry check PATH [--json] [--strict]";
+  return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project register --repo URL [--name NAME] [--system ID]\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  project secret request PROJECT --name KEY --purpose PURPOSE\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID [--file PATH]\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json] [--strict]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
 
 function requireValue(args: string[], name: string): string {
@@ -56,23 +56,27 @@ function runRegistryCli(args: string[]): number {
     console.log(usage("registry"));
     return 0;
   }
-  if (operation !== "check" || !root || root.startsWith("--") || options.length > 1 || (options.length === 1 && options[0] !== "--json")) {
-    throw new CliUsageError("registry expects check PATH [--json]");
+  if (operation !== "check" || !root || root.startsWith("--")
+    || new Set(options).size !== options.length || options.some((option) => option !== "--json" && option !== "--strict")) {
+    throw new CliUsageError("registry expects check PATH [--json] [--strict]");
   }
   const { ok, stats, diagnostics }: Pick<RegistryCheckResult, "ok" | "stats" | "diagnostics"> =
     statSync(root, { throwIfNoEntry: false })?.isDirectory()
       ? checkRegistry(root)
       : { ok: false, stats: {}, diagnostics: [{ severity: "error", code: "E-LAYOUT", subject: root, message: "Registry path must be an existing directory" }] };
-  if (options[0] === "--json") {
-    console.log(JSON.stringify({ root, ok, stats, diagnostics }, null, 2));
+  const counts = { error: 0, warning: 0, info: 0 };
+  for (const diagnostic of diagnostics) counts[diagnostic.severity]++;
+  const passed = ok && (!options.includes("--strict") || counts.warning === 0);
+  if (options.includes("--json")) {
+    console.log(JSON.stringify({ root, ok, counts, stats, diagnostics }, null, 2));
   } else {
     for (const diagnostic of diagnostics) {
       const location = diagnostic.file ? `${diagnostic.file}:${diagnostic.line ?? 0}` : "(registry)";
       console.log(`${diagnostic.severity === "error" ? "✖" : "⚠"} ${diagnostic.code} ${location} ${diagnostic.subject}\n    ${diagnostic.message}`);
     }
-    console.log(ok ? "✔ registry passed" : "✖ registry failed");
+    console.log(passed ? "✔ registry passed" : "✖ registry failed");
   }
-  return ok ? 0 : 1;
+  return passed ? 0 : 1;
 }
 
 async function runCommand(argv: string[]): Promise<number> {

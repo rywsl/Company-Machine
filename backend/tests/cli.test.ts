@@ -143,10 +143,11 @@ describe("Bun factory CLI", () => {
   });
 
   test("reports Registry usage errors and rejects a missing or non-directory path", async () => {
-    const usage = "factory registry check PATH [--json]";
+    const usage = "factory registry check PATH [--json] [--strict]";
     expect(await capture(() => main(["registry", "--help"]))).toEqual({ code: 0, output: [usage], errors: [] });
     for (const args of [[], ["unknown"], ["check"], ["check", "--json"],
-      ["check", ".", "--wrong"], ["check", ".", "--json", "extra"], ["check", ".", "--json", "--json"]]) {
+      ["check", ".", "--wrong"], ["check", ".", "--json", "extra"], ["check", ".", "--json", "--json"],
+      ["check", ".", "--strict", "--strict"]]) {
       const result = await capture(() => main(["registry", ...args]));
       expect(result.code).toBe(2);
       expect(result.output).toEqual([]);

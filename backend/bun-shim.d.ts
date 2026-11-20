@@ -27,6 +27,10 @@ declare module "node:url" {
   export function pathToFileURL(path: string): URL;
 }
 
+declare module "node:util" {
+  export function isDeepStrictEqual(a: unknown, b: unknown): boolean;
+}
+
 declare module "node:crypto" {
   export const randomUUID: () => string;
   export const randomBytes: (size: number) => any;

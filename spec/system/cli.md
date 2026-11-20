@@ -19,7 +19,7 @@
 | `factory project intake --file PATH`、`factory project fetch PROJECT SHA256 --output PATH` | 导入文件字节并通过稳定摘要取回。`--file` 可重复。 |
 | `factory business ...` | 读取或写入业务系统、DAG、运行、产物和转换。 |
 | `factory business graph ID [--file PATH]` | 读取已有 DAG。传入图文件时写入更新。 |
-| `factory registry check PATH [--json]` | 通过 Bun MRL 只读检查 Registry 的结构、schema 与引用。 |
+| `factory registry check PATH [--json] [--strict]` | 通过 Bun MRL 只读检查 Registry 的结构、schema、引用与表达式。严格模式有警告时退出 1。JSON 中的 `counts` 按严重度统计诊断，`ok` 表示无错误。 |
 | `factory bean import --type TYPE --file PATH=HOST` | 检验并封存外部物料。可以重复传入 `--file`。 |
 | `factory bean lineage BEAN --direction up\|down` | 查询已封存物料的上下游工位和物料。 |
 | `factory job run STATION [--input PORT=BEAN] [--param NAME=JSON] [--cache]` | 执行工位并封存通过 Gate 的产物。`--cache` 可复用已有结果。列表端口允许重复传入 `--input`。 |

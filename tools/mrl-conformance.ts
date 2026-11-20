@@ -247,7 +247,11 @@ function factory(root: string, file: string, test: ConformanceCase, baseCache: M
   return fired;
 }
 
-export function runMrlConformance(root: string, kernelCodes: ReadonlySet<string>) {
+export function runMrlConformance(
+  root: string,
+  kernelCodes: ReadonlySet<string>,
+  suites: readonly string[] = listFiles(join(root, "spec/mrl/conformance")).filter((file) => /\.ya?ml$/.test(file)),
+) {
   const counts = { expr: 0, template: 0, rules: 0, factory: 0 };
   const passed = { ...counts };
   const failures: Array<{ name: string; kind?: Kind; reason: string }> = [];
@@ -255,7 +259,6 @@ export function runMrlConformance(root: string, kernelCodes: ReadonlySet<string>
   const coveredCodes = new Set<string>();
   const coveredRules = new Map<string, Set<string>>();
   const baseCache = new Map<string, Record<string, string>>();
-  const suites = listFiles(join(root, "spec/mrl/conformance")).filter((file) => /\.ya?ml$/.test(file));
   for (const file of suites) {
     const path = relative(root, file).replaceAll("\\", "/");
     let suite: { suite: string; kind: Kind; base?: string; cases: ConformanceCase[] };
