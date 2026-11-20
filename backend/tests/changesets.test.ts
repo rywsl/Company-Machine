@@ -4,6 +4,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runChangeSetCli } from "../src/changeset-cli";
+import { main as runFactoryCli } from "../src/cli";
 import { diffChangeFacts, scoreChangeRisk } from "../src/legacy/change-facts";
 import { ChangeSetStore } from "../src/legacy/changesets";
 import { ChangeSetStages } from "../src/legacy/change-stages";
@@ -14,7 +15,7 @@ import { CounterIds, FakeClock, canonicalJson, utcIso } from "../src/legacy/foun
 import { EpochStore } from "../src/legacy/registry-epochs";
 import { Runner } from "../src/legacy/runner";
 import { RunStore } from "../src/legacy/runs";
-import { runMetrics } from "../src/legacy/change-rollout";
+import { GovernanceSafeMode, runMetrics } from "../src/legacy/change-rollout";
 import { RegistrySelection } from "../src/registry-selection";
 import { LocalProvider } from "../src/legacy/sandbox";
 
@@ -396,4 +397,108 @@ test("aggregates terminal rollout run outcomes, current cost, and distinct rejec
     context.db.query("INSERT INTO events (id,job_id,kind,data,at) VALUES ('legacy-reject-j1','j1','job.state',?,?)").run('{"to":"REJECTED"}', since);
     expect(runMetrics(context, epoch, since)).toEqual({ runs: 2, jobs: 4, success_rate: 0.5, gate_reject_rate: 0.25, cost_per_run_usd: 1.5 });
   } finally { context.close(); rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
+test("pauses higher-risk releases after repeated rollbacks and resumes after cooldown", { timeout: 120_000 }, async () => {
+  const w = await world();
+  try {
+    const stage = new ChangeSetStages(w.changesets, {
+      contracts: () => contracts("pass"), shadow: async () => ({ ok: true, runs: 0, regressions: [], spent_usd: 0 }),
+    });
+    const stationPath = "stations/upper-v2.yaml";
+    const upper = readFileSync(join(w.registry, "stations/upper.yaml"), "utf8").replace("version: 1", "version: 2");
+    const clock = w.context.clock as FakeClock;
+    const proposeStation = async (timeout: string) => {
+      await git(w.registry, "switch", "-C", "candidate-work", w.base);
+      const source = await commitFile(w.registry, stationPath, upper.replace("60s", timeout));
+      return w.changesets.propose(document(w.base, {
+        rollout: { shadow: { budget_usd: 1 }, observe: "1h", slo: { success_rate: ">= 0.9" } },
+      }), source, { by: "human:a" });
+    };
+    for (const timeout of ["30s", "45s"]) {
+      const proposal = await proposeStation(timeout);
+      expect(await stage.tick()).toMatchObject([{ state: "verified", risk_tier: "T1" }]);
+      expect(await stage.tick()).toMatchObject([{ state: "shadow" }]);
+      expect(await stage.tick()).toMatchObject([{ state: "active" }]);
+      recordSample(w.context, { id: `failed-${proposal.id}`, epoch: proposal.commit, state: "FAILED" });
+      clock.advance(7200);
+      expect(await stage.tick()).toMatchObject([{ state: "rolled-back", report: { code: "SLO_ROLLBACK" } }]);
+    }
+    await git(w.registry, "update-ref", "-d", "refs/factory/active");
+    expect(await stage.tick()).toEqual([]);
+    expect(await git(w.registry, "rev-parse", "refs/factory/active")).toBe(w.base);
+    const safeMode = new GovernanceSafeMode(w.context);
+    const status = safeMode.current();
+    expect(status).toEqual({ on: true, level: 1, since: utcIso(clock.now()), until: utcIso(new Date(clock.now().getTime() + 3_600_000)) });
+    const output: unknown[] = [];
+    const log = console.log;
+    try {
+      console.log = (value) => output.push(JSON.parse(String(value)));
+      expect(await runFactoryCli(["governance", "safe-mode", "--root", w.root, "--json"])).toBe(0);
+    } finally { console.log = log; }
+    expect(output).toEqual([status]);
+
+    await git(w.registry, "switch", "-C", "candidate-work", w.base);
+    const machinePath = "machines/toolbox/machine.yaml";
+    const machine = readFileSync(join(w.registry, machinePath), "utf8");
+    const source = await commitFile(w.registry, machinePath, machine + "\n---\n" + machine.replace("version: 1", "version: 2").replace("09b42648636a8405", "19b42648636a8405"));
+    const high = await w.changesets.propose(document(w.base, { changes: [{ op: "upsert", kind: "Machine", name: "toolbox" }] }), source, { by: "fake-agent@1" });
+    expect(await stage.tick()).toMatchObject([{ id: high.id, state: "verified", risk_tier: "T2" }]);
+    await w.changesets.addReview(high.id, { runtime: "script@1", verdict: "approve", note: "", by: "script" });
+    expect(await stage.advance(high.id)).toMatchObject({ state: "verified", report: { reason: "safe-mode" } });
+    expect(await stage.tick()).toEqual([]);
+
+    const low = await proposeStation("50s");
+    expect(await stage.tick()).toMatchObject([{ id: low.id, state: "verified" }]);
+    expect(await stage.tick()).toMatchObject([{ id: low.id, state: "shadow" }]);
+    expect(await stage.tick()).toMatchObject([{ id: low.id, state: "active" }]);
+    expect(w.epochs.pointers()).toMatchObject({ active: low.commit, candidate: null });
+    await w.epochs.rollback(w.base, "human:a");
+
+    clock.advance(86400 + 3600 + 1);
+    expect(await stage.advance(low.id)).toMatchObject({ state: "active", report: { stage: "observe", ok: true } });
+    expect(await stage.tick()).toMatchObject([{ id: high.id, state: "shadow" }]);
+    expect(safeMode.current()).toEqual({ ...status, on: false });
+
+    const { db } = w.context;
+    db.exec("CREATE TABLE audit_findings (id TEXT PRIMARY KEY, state TEXT NOT NULL)");
+    db.query("INSERT INTO audit_findings VALUES ('audit-1', 'wake')").run();
+    expect(await stage.tick()).toMatchObject([{ id: high.id, state: "shadow", report: { reason: "safe-mode" } }]);
+    db.query("UPDATE audit_findings SET state='closed'").run();
+    clock.advance(7200);
+    expect(await stage.tick()).toMatchObject([{ id: high.id, state: "canary" }]);
+    db.query("UPDATE audit_findings SET state='wake'").run();
+    recordSample(w.context, { id: "canary-success-1", epoch: high.commit, state: "SUCCEEDED" });
+    recordSample(w.context, { id: "canary-success-2", epoch: high.commit, state: "SUCCEEDED" });
+    expect(await stage.tick()).toMatchObject([{ id: high.id, state: "canary", report: { reason: "safe-mode" } }]);
+    recordSample(w.context, { id: "canary-failure", epoch: high.commit, state: "FAILED" });
+    expect(await stage.tick()).toMatchObject([{ id: high.id, state: "rolled-back", report: { code: "SLO_ROLLBACK" } }]);
+    expect(w.epochs.pointers()).toMatchObject({ active: w.base, candidate: null });
+  } finally { w.close(); }
+});
+
+test("retains safe mode for an open audit finding and doubles the next cooldown", async () => {
+  const w = await world();
+  try {
+    const { db } = w.context;
+    const clock = w.context.clock as FakeClock;
+    const safeMode = new GovernanceSafeMode(w.context);
+    db.exec("CREATE TABLE audit_findings (id TEXT PRIMARY KEY, state TEXT NOT NULL)");
+    db.query("INSERT INTO audit_findings VALUES ('audit-1', 'wake')").run();
+    const first = safeMode.evaluate();
+    expect(first).toMatchObject({ on: true, level: 1 });
+    clock.advance(3600);
+    const extended = safeMode.evaluate();
+    expect(extended).toEqual({ ...first, until: utcIso(new Date(clock.now().getTime() + 3_600_000)) });
+    db.query("UPDATE audit_findings SET state='closed'").run();
+    expect(safeMode.evaluate()).toEqual(extended);
+    clock.advance(3600);
+    expect(safeMode.evaluate()).toEqual({ ...extended, on: false });
+    db.query("UPDATE audit_findings SET state='wake'").run();
+    expect(safeMode.evaluate()).toEqual({ on: true, level: 2, since: utcIso(clock.now()), until: utcIso(new Date(clock.now().getTime() + 7_200_000)) });
+    const events = db.query<{ data: string }>("SELECT data FROM events WHERE kind='governance.safe_mode' ORDER BY seq").all().map(({ data }) => JSON.parse(data));
+    expect(events.map(({ on, level, reason }) => [on, level, reason])).toEqual([
+      [true, 1, "audit-wake"], [true, 1, "audit-wake"], [false, 1, null], [true, 2, "audit-wake"],
+    ]);
+  } finally { w.close(); }
 });

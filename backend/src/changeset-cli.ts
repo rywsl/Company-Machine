@@ -2,21 +2,36 @@ import { readFileSync } from "node:fs";
 import { loadDocuments } from "../mrl/factory/yamlio";
 import type { ContainerProvider } from "../runtime/podman";
 import { ChangeSetStages } from "./legacy/change-stages";
+import { GovernanceSafeMode } from "./legacy/change-rollout";
 import { ChangeSetStore } from "./legacy/changesets";
 import type { Context } from "./legacy/context";
 import { FactoryError } from "./legacy/errors";
 import { canonicalJson } from "./legacy/foundation";
 import { EpochStore } from "./legacy/registry-epochs";
 
-export const changesetCommands = { changeset: [
+type GovernanceCliOptions = {
+  registry?: string;
+  provider?: () => ContainerProvider | Promise<ContainerProvider>;
+};
+
+export const changesetCommands = { governance: ["tick", "safe-mode"], changeset: [
   "propose FILE --commit COMMIT --by ACTOR", "ls [--state STATE]", "show ID", "advance ID",
   "review ID --runtime RUNTIME --verdict approve|deny --by ACTOR [--note TEXT]", "withdraw ID --by ACTOR",
 ] };
 
-export async function runChangeSetCli(context: Context, operation: string, args: string[], options: {
-  registry?: string;
-  provider?: () => ContainerProvider | Promise<ContainerProvider>;
-} = {}): Promise<number> {
+export async function runGovernanceCli(context: Context, operation: string, args: string[], options: GovernanceCliOptions = {}): Promise<number> {
+  if (args.length || !changesetCommands.governance.includes(operation)) {
+    throw new FactoryError("CLI_USAGE", "governance expects tick or safe-mode");
+  }
+  const epochs = await EpochStore.open(context, options);
+  const result = operation === "safe-mode"
+    ? new GovernanceSafeMode(context).current()
+    : await new ChangeSetStages(new ChangeSetStore(context, epochs), { provider: options.provider }).tick();
+  console.log(canonicalJson(result));
+  return 0;
+}
+
+export async function runChangeSetCli(context: Context, operation: string, args: string[], options: GovernanceCliOptions = {}): Promise<number> {
   const usage = (message: string) => new FactoryError("CLI_USAGE", message);
   const optionNames: Record<string, string[]> = {
     ls: ["--state"], propose: ["--commit", "--by"], review: ["--runtime", "--verdict", "--by", "--note"],

@@ -528,6 +528,10 @@ run 因为缺少转换失败时（`dynamic.md` 的运行期 `no-converter`），
 - **生效**：等级 ≥ T2 的 ChangeSet 停在 `verified`（5.9），已经在 `shadow`、`canary` 的 T2+ 也不再推进；`active` 不会因此被移动（它已经是最近一个健康的 epoch）。T1 照常。
 - **退出**：`now >= until` 且进入条件都不再成立 → `safe := 0`（`level` 保留，下次进入冷却加倍）。条件仍成立时把 `until` 顺延一个冷却期。
 
+Bun 的 `factory governance tick` 评估安全模式，恢复同步 SQLite 指针与 Git 引用，然后按 ID 推进待处理的 ChangeSet，包括尚未结束的观察期。结果包含状态或报告有变化的 ChangeSet 并跳过其他进程正在推进的记录。直接执行 `factory changeset advance ID` 时，T2+ 的 `verified`、`shadow` 和 `canary` 推广仍经过安全模式检查。金丝雀和已激活版本继续检查 SLO，在违反阈值时允许回滚。
+
+`factory governance safe-mode` 读取持久化的 `{on, level, since, until}`。SQLite 在同一事务写入模式和 `governance.safe_mode` 事件。事件携带触发或延长的原因以及退出状态。归档数据库中的 `audit_findings` 表存在时，未关闭的 `wake` 发现也参与评估。Bun 通过治理事件记录这类变化，旧版 WakeQueue 唤醒票属于历史实现。
+
 ---
 
 ## 6. 错误

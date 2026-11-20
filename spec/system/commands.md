@@ -129,7 +129,8 @@ stdout 只有一个规范 JSON 值（`canonical_json`），后面跟一个换行
 | `epoch show [COMMIT]` | 该 commit 的 `Epoch`（缺省 active），另加键 `pointers`：指向它的指针名数组 |
 | `epoch ls` | `Epoch` 数组 |
 | `changeset propose`、`show`、`advance`、`withdraw` | `ChangeSet.to_json()` |
-| `governance tick` | 状态有变化的 `ChangeSet` 数组 |
+| `governance tick` | 状态或报告有变化的 `ChangeSet` 数组 |
+| `governance safe-mode` | `{on, level, since, until}` |
 | `foreman next` | `Wake`；没有票时为 `null` |
 | `foreman get KEY` | `ForemanQuery.registry_get` 的返回值（文档） |
 | `foreman list KIND` | Spec 键数组 |

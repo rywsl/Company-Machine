@@ -8,7 +8,7 @@ import { ContractRunner, type ContractKind, type ContractResult } from "./legacy
 import { ReceiptStore } from "./legacy/connectors";
 import { Scheduler } from "./legacy/scheduler";
 import { connectorCommands, runConnectorCli } from "./connector-cli";
-import { changesetCommands, runChangeSetCli } from "./changeset-cli";
+import { changesetCommands, runChangeSetCli, runGovernanceCli } from "./changeset-cli";
 import { epochCommands, runEpochCli } from "./epoch-cli";
 import { readGovernedRegistry } from "./legacy/registry-config";
 import { RegistrySelection } from "./registry-selection";
@@ -157,6 +157,9 @@ export async function runStationCli(argv: string[]): Promise<number> {
     if (isPlanning) return printPlan(await snapshots.current(), args[0]);
     if (scope === "epoch") return await runEpochCli(context, operation, args, { registry: options.registry ?? process.env.FACTORY_REGISTRY });
     if (scope === "changeset") return await runChangeSetCli(context, operation, args, {
+      registry: options.registry ?? process.env.FACTORY_REGISTRY, provider: () => provider(options),
+    });
+    if (scope === "governance") return await runGovernanceCli(context, operation, args, {
       registry: options.registry ?? process.env.FACTORY_REGISTRY, provider: () => provider(options),
     });
     if (scope === "source" || scope === "receipt") return await runConnectorCli(context, {

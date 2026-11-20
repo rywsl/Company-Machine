@@ -1,7 +1,7 @@
 import type { ContainerProvider } from "../../runtime/podman";
 import { selectedContainerProvider } from "../../runtime/selected";
 import { governanceLimits, object } from "./change-facts";
-import { runMetrics, sloViolation } from "./change-rollout";
+import { GovernanceSafeMode, runMetrics, sloViolation } from "./change-rollout";
 import { runShadowWith, type ShadowExecution } from "./change-shadow";
 import { verificationReject, verifyChangeSet, type VerificationContracts, type VerificationOutcome } from "./change-verification";
 import type { ChangeSet, ChangeSetStore } from "./changesets";
@@ -20,27 +20,59 @@ type Options = {
 };
 
 export class ChangeSetStages {
+  private readonly safeMode: GovernanceSafeMode;
+
   constructor(readonly store: ChangeSetStore, readonly options: Options = {}) {
     store.context.db.exec(`CREATE TABLE IF NOT EXISTS changeset_stage_locks (id TEXT PRIMARY KEY, pid INTEGER NOT NULL)`);
+    this.safeMode = new GovernanceSafeMode(store.context);
+  }
+
+  async tick(): Promise<ChangeSet[]> {
+    this.safeMode.evaluate();
+    await this.store.epochs.syncRefs();
+    const rows = this.store.context.db.query<{ id: string }>(`SELECT id FROM changesets
+      WHERE state IN ('draft','verifying','verified','shadow','canary') OR
+        (state='active' AND NOT (json_extract(report,'$.stage') IS 'observe' AND json_extract(report,'$.ok') IS 1))
+      ORDER BY id`).all();
+    const changed: ChangeSet[] = [];
+    for (const { id } of rows) {
+      const advanced = await this.advanceOne(id, true);
+      if (advanced) changed.push(advanced);
+    }
+    return changed;
   }
 
   async advance(id: string): Promise<ChangeSet> {
-    this.lock(id);
+    return (await this.advanceOne(id, false))!;
+  }
+
+  private async advanceOne(id: string, fromTick: boolean): Promise<ChangeSet | undefined> {
+    if (!this.tryLock(id)) {
+      if (fromTick) return;
+      throw new FactoryError("CHANGESET_STATE_INVALID", "变更已有推进进程", { id });
+    }
     try {
-      let change = this.store.get(id);
-      if (change.state === "draft") {
-        change = this.transition(change, "verifying", { stage: "verifying", ok: null, code: null, detail: {} });
-      }
-      if (change.state === "verifying") return await this.verify(change);
-      if (change.state === "verified" || (change.state === "shadow" && change.report.ok !== true)) return await this.shadow(change);
-      if (change.state === "shadow") return await this.afterShadow(change);
-      if (change.state === "canary") return await this.canary(change);
-      if (change.state === "active") return await this.observe(change);
-      if (change.state === "rolled-back" || change.state === "rejected") await this.store.epochs.syncRefs();
-      throw new FactoryError("CHANGESET_STATE_INVALID", "当前状态不能推进", { id, state: change.state });
+      const before = this.store.get(id);
+      const after = await this.advanceLocked(before, fromTick);
+      if (!fromTick || (after && (after.state !== before.state || canonicalJson(after.report) !== canonicalJson(before.report)))) return after;
     } finally {
       this.store.context.db.query("DELETE FROM changeset_stage_locks WHERE id = ? AND pid = ?").run(id, process.pid);
     }
+  }
+
+  private async advanceLocked(change: ChangeSet, fromTick: boolean): Promise<ChangeSet | undefined> {
+    if (change.state === "draft") change = this.transition(change, "verifying", { stage: "verifying", ok: null, code: null, detail: {} });
+    if (change.state === "verifying") return this.verify(change);
+    if (change.state === "verified" || (change.state === "shadow" && change.report.ok !== true)) return this.shadow(change);
+    if (change.state === "shadow") return this.afterShadow(change);
+    if (change.state === "canary") return this.canary(change);
+    if (change.state === "active") return this.observe(change, !fromTick);
+    if (change.state === "rolled-back" || change.state === "rejected") await this.store.epochs.syncRefs();
+    if (!fromTick) throw new FactoryError("CHANGESET_STATE_INVALID", "当前状态不能推进", { id: change.id, state: change.state });
+  }
+
+  private safeModeHolds(change: ChangeSet): boolean {
+    return Number(change.risk_tier?.slice(1)) >= 2 && this.safeMode.evaluate().on;
   }
 
   private async verify(change: ChangeSet): Promise<ChangeSet> {
@@ -61,6 +93,7 @@ export class ChangeSetStages {
 
   private async shadow(change: ChangeSet): Promise<ChangeSet> {
     const { epochs, context } = this.store;
+    if (this.safeModeHolds(change)) return this.wait(change, "safe-mode");
     const candidateRef = epochs.pointers().candidate;
     if (change.base_epoch !== epochs.current()) {
       const rejected = context.db.transaction(() => this.rejectStale(change)).immediate();
@@ -74,6 +107,7 @@ export class ChangeSetStages {
     const shadow = object(rollout.shadow);
     const goldenOnly = change.risk_tier === "T1" && shadow.runs === undefined;
     const claimed = context.db.transaction(() => {
+      if (this.safeModeHolds(change)) return { change: this.wait(change, "safe-mode"), run: false };
       if (epochs.current() !== change.base_epoch) return { change: this.rejectStale(change), run: false };
       if (change.reviews_required > 0 && this.store.approvals(change.id, candidate).length < change.reviews_required) {
         return { change: this.wait(change, "reviews"), run: false };
@@ -129,6 +163,7 @@ export class ChangeSetStages {
     if (!Array.isArray(change.report.stages) || !change.report.stages.includes("canary")) return this.completeRollout(change, "promote");
     const { db } = this.store.context;
     const canary = db.transaction(() => {
+      if (this.safeModeHolds(change)) return this.wait(change, "safe-mode");
       const pointers = this.store.epochs.pointers();
       if (pointers.active !== change.base_epoch || pointers.candidate !== change.commit) {
         return this.rejectStale(change);
@@ -143,16 +178,17 @@ export class ChangeSetStages {
     const rollout = object(object(change.document.spec).rollout);
     const minimum = Number(object(rollout.canary).min_runs ?? 1) * Number(change.report.multiplier ?? 1);
     const metrics = runMetrics(this.store.context, change.commit, change.stage_started_at ?? change.updated_at);
-    if (metrics.runs < minimum) return this.wait(change, "samples");
-    const violation = sloViolation(metrics, object(rollout.slo));
+    const violation = metrics.runs >= minimum ? sloViolation(metrics, object(rollout.slo)) : undefined;
     if (violation) return this.completeRollout(change, "discard", violation);
+    if (this.safeModeHolds(change)) return this.wait(change, "safe-mode");
+    if (metrics.runs < minimum) return this.wait(change, "samples");
     if (this.store.freezeUntil()) return this.wait(change, "freeze");
     return this.completeRollout(change, "promote");
   }
 
-  private async observe(change: ChangeSet): Promise<ChangeSet> {
+  private async observe(change: ChangeSet, syncRefs: boolean): Promise<ChangeSet> {
     // Retry publishing durable SQLite pointers after an interrupted ref update.
-    await this.store.epochs.syncRefs();
+    if (syncRefs) await this.store.epochs.syncRefs();
     if (change.report.stage === "observe" && change.report.ok === true) return change;
     const rollout = object(object(change.document.spec).rollout);
     const multiplier = Number(change.report.multiplier ?? 1);
@@ -176,6 +212,7 @@ export class ChangeSetStages {
   private async completeRollout(change: ChangeSet, outcome: "promote" | "discard" | "rollback", violation?: Data): Promise<ChangeSet> {
     const { epochs, context } = this.store;
     const completed = context.db.transaction(() => {
+      if (outcome === "promote" && this.safeModeHolds(change)) return this.wait(change, "safe-mode");
       if (!epochs.updateRolloutPointers(change.base_epoch, change.commit, outcome)) return this.rejectStale(change);
       if (outcome === "promote") {
         return this.transition(change, "active", { ...change.report, stage: "active", ok: true, code: null, detail: {} }, undefined, "active");
@@ -212,19 +249,22 @@ export class ChangeSetStages {
     }).immediate();
   }
 
-  private lock(id: string): void {
+  private tryLock(id: string): boolean {
     const { db } = this.store.context;
-    db.transaction(() => {
+    return db.transaction(() => {
       const lock = db.query<{ pid: number }>("SELECT pid FROM changeset_stage_locks WHERE id = ?").get(id);
       if (lock) {
         try {
           process.kill(lock.pid, 0);
-          throw new FactoryError("CHANGESET_STATE_INVALID", "变更已有推进进程", { id });
+          return false;
         } catch (error) {
-          if ((error as { code?: unknown }).code !== "ESRCH") throw error;
+          const code = (error as { code?: unknown }).code;
+          if (code === "EPERM") return false;
+          if (code !== "ESRCH") throw error;
         }
       }
       db.query("INSERT OR REPLACE INTO changeset_stage_locks (id, pid) VALUES (?, ?)").run(id, process.pid);
+      return true;
     }).immediate();
   }
 }
