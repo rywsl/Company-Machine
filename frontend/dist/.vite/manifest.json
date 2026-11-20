@@ -26,7 +26,7 @@
     "name": "rolldown-runtime"
   },
   "index.html": {
-    "file": "assets/index-CNK3hq1x.js",
+    "file": "assets/index-D1OvPBql.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -36,7 +36,7 @@
       "_react-vendor-BHgRd556.js"
     ],
     "css": [
-      "assets/index-BHZGp-bq.css"
+      "assets/index-8cThfElp.css"
     ]
   }
 }

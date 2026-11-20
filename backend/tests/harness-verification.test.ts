@@ -33,6 +33,38 @@ function line(record: object): Uint8Array { return encoder.encode(`${JSON.string
 const online: RuntimeHealth = { available: true, platform: "linux", executable: "kiri", machine: "not-needed", rootless: true };
 
 describe("Harness verification API", () => {
+  test("verifies Foreman with the deployment credential scoped to its configured endpoint", async () => {
+    const keyName = "MAO_FOREMAN_ANTHROPIC_API_KEY";
+    const endpointName = "MAO_FOREMAN_ANTHROPIC_BASE_URL";
+    const previous = [process.env[keyName], process.env[endpointName]];
+    const secret = "verification-only-fixture";
+    process.env[keyName] = secret;
+    process.env[endpointName] = "https://provider.example";
+    let scoped = false;
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", foreman: { spawn: (_argv, { env }) => {
+      scoped = env.ANTHROPIC_API_KEY === secret && env[keyName] === undefined;
+      return { stdout: new ReadableStream({ start(controller) {
+        controller.enqueue(line({ type: "result", result: "MAO-OK" }));
+        controller.close();
+      } }), kill() {} };
+    } } });
+    try {
+      await configure(app, "claude-code");
+      const done = completed(app);
+      await post(app, "verify", { profile_id: "foreman:claude-code" });
+      await done;
+      expect(scoped).toBe(true);
+      expect(app.store.listHarnessProfiles()[0]?.verification?.state).toBe("verified");
+      expect(JSON.stringify(app.events.after()).includes(secret)).toBe(false);
+    } finally {
+      app.stop();
+      [keyName, endpointName].forEach((name, index) => {
+        if (previous[index] === undefined) delete process.env[name];
+        else process.env[name] = previous[index];
+      });
+    }
+  });
+
   test("verifies an official CLI response and projects the completed state without probe data", async () => {
     let processOptions: Parameters<OfficialSpawn>[1] | undefined;
     let processArgs: string[] = [];

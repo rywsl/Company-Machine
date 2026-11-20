@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, chooseTransport, harnessEndpointEnv, resolveOfficialHarness, type HarnessSession, type OfficialSpawn } from "./harness";
 import type { HarnessProfile } from "./models";
+import { foremanCredential } from "./foreman-credentials";
 
 const verificationReply = "MAO-OK";
 type Outcome = { state: "verified" | "failed"; reason: string };
@@ -22,8 +23,10 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
   const definition = resolveOfficialHarness(profile.runtime);
   if (!definition) return failed("未找到配置的官方 Harness");
   let env: Record<string, string>;
+  const credential = foremanCredential(profile);
   try {
-    env = harnessEndpointEnv(definition, profile.baseUrl);
+    env = harnessEndpointEnv(definition, credential?.baseUrl ?? profile.baseUrl);
+    if (credential) env[credential.variable] = credential.value;
   } catch {
     return failed("Harness Base URL 无效");
   }
@@ -80,7 +83,7 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
       env,
       containerImage: profile.image,
       network: profile.network === "egress" ? "egress" : "none",
-      egressBaseUrl: profile.baseUrl,
+      egressBaseUrl: credential?.baseUrl ?? profile.baseUrl,
     });
     if (stopped) {
       await started.close();

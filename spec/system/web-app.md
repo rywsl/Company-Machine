@@ -313,6 +313,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - 在普通厂长对话中，`project.register` 使用 `repoUrl` 和可选 `name` 创建项目及业务系统，返回 `projectId` 和 `systemId`。可在同一轮使用这些 ID 配置 Operator、DAG 和运行。省略名称时使用仓库路径最后一段并去除 `.git`。链接须为 HTTP(S)、SSH 或 Git URL，且不携带用户信息、查询参数或片段。登记只保存来源引用并发布项目事件，当前厂长继续处理本轮。
 - Harness 配置的 `session_timeout_s` 为单轮会话的超时秒数，适用于 Foreman 与 Operator 启动官方 CLI、建立 ACP 会话和读取回复。现有配置与新建时省略此值的配置默认 600 秒。接口接受 1 至 2147483 的整数，更新时省略该项保留已保存值。超时记录 `SESSION_TIMEOUT` 并取消本轮子进程，后续已排队的工作继续处理。配置页的连通性验证有独立超时。
 - 启动官方 Harness 时只继承运行所需的基础环境和显式声明的变量。宿主环境中的其他密钥不会被批量转发
+- 无桌面部署可为厂长的 Claude Code 提供 `MAO_FOREMAN_ANTHROPIC_API_KEY`，并为 `codex exec` 提供 `MAO_FOREMAN_CODEX_API_KEY`。MAO 将其分别传给对应的 `ANTHROPIC_API_KEY` 或 `CODEX_API_KEY`，同样用于厂长的连通性验证。缺省匹配官方 HTTPS 服务。自定义 Base URL 须与部署方设置的 `MAO_FOREMAN_ANTHROPIC_BASE_URL` 或 `MAO_FOREMAN_CODEX_BASE_URL` 匹配。页面仅显示部署凭证是否可用于当前配置。厂长的实时回复、事件和会话标识会屏蔽已传入的凭证值。
 - `POST /api/web/harnesses/verify` 为配置创建一次连通性检查，返回 `202` 和 `requested` 状态。同一配置的并发请求复用当前检查。检查通过官方 CLI 或 ACP 开一个新会话，在临时工作目录请求固定的简短文本。项目数据、保险箱凭据和已有会话都不进入检查。启动带 `image` 的 Harness 前同样检查运行时就绪。
 - 连接就绪、会话启动及响应共用 45 秒时限。收到预期文本且会话正常结束后保存 `verified`，其他情况保存 `failed` 和固定说明。`harness.profile.verification.completed` 事件和配置读模型只提供验证状态、说明和时间。重新保存配置将取消原检查，旧结果不会覆盖新配置。
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
@@ -329,7 +330,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 
 下游 Operator 获得输入引用及当前业务系统内匹配的记录说明和文件引用。数据库先按记录 ID 解析，再按引用查询该业务系统内最新匹配。未登记的输入仍按原引用传递。
 
-厂长与 Operator 使用同一份项目来源投影。仓库 URL 的密码和凭据查询参数在交给 Harness 前移除。上传文件使用内容摘要引用，可通过项目文件路由读取。容器内的 Harness 收到本地文件夹来源的项目引用。主机上的 Harness 可读取用户提交的原始文件夹位置。
+厂长与 Operator 使用同一份项目来源投影。仓库 URL 的密码和凭据查询参数在交给 Harness 前移除。上传文件使用内容摘要引用，可通过项目文件路由读取。手动接收项目时，Linux Kiri 和 Podman 中的容器厂长在来源摘要中看到实际文件名或文件夹名，以及 `/mao/sources/<序号>` 下的只读位置。每个位置只挂载该项目登记的上传文件或用户选择的本地目录。宿主目录须为规范绝对路径，符号链接路径及与工厂存储重叠的目录不可挂载。本地目录沿用宿主文件访问权限。主机上的 Harness 可读取用户提交的原始文件夹位置。
 
 Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。业务运行只调度 Operator，Machine 作为被操作的软件项目和 DAG 节点存在。Operator Harness 输出 `mao.record` 事件后，控制面把记录写入该项目并通过事件流返回产物或物料状态。
 

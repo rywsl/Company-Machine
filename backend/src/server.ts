@@ -6,10 +6,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { RandomIds, type Clock } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
-import type { BusinessConversion, BusinessSystem, Event } from "./models";
+import type { BusinessConversion, BusinessSystem, Event, HarnessProfile } from "./models";
 import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
+import { prepareForemanSources } from "./foreman-sources";
+import { foremanCredential } from "./foreman-credentials";
 import { verifyHarness } from "./harness-verification";
 import { OperatorCoordinator, projectCredentialName } from "./operator";
 import { operatorBindingView, parseOperatorBinding } from "./operator-binding";
@@ -123,6 +125,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     store, events, ...options.foreman, ensureRuntime,
     factoryEnv: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: databasePath(store.legacyPath), BUSINESS_DB_PATH: databasePath(store.dbPath) },
     fetchBusiness: (request) => fetch(request),
+    prepareSources: (project) => prepareForemanSources(project, (digest) => {
+      const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
+      if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
+    }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)]),
     registerRepository: ({ name, repoUrl }) => {
       const { system, project } = store.db.transaction(() => {
         const system = store.createBusinessSystem({ name, metadata: { intake: true } });
@@ -569,9 +575,11 @@ function officialHarnesses() {
   }));
 }
 
-function publicProfile(profile: any) {
+function publicProfile(profile?: HarnessProfile) {
   if (!profile) return null;
-  return { ...profile, base_url: profile.baseUrl, session_timeout_s: profile.sessionTimeoutSeconds, api_key_configured: Boolean(profile.secretRef), updated_at: profile.updatedAt, verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined };
+  const { secretRef, ...safeProfile } = profile;
+  const configured = profile.role === "foreman" ? Boolean(foremanCredential(profile)) : Boolean(secretRef);
+  return { ...safeProfile, base_url: profile.baseUrl, session_timeout_s: profile.sessionTimeoutSeconds, api_key_configured: configured, updated_at: profile.updatedAt, verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined };
 }
 
 function publicUnit(unit: any) {

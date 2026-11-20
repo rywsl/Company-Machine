@@ -63,6 +63,8 @@ bun run tools/verify-runtime.ts
 
 Registry 工位声明出网策略时，在 Linux 宿主设置 `MAO_EGRESS_RELAY_IMAGE`，指向当前引擎中已导入且含 Bun 的可信固定镜像。工位通过策略允许的地址出网。无需出网的工位可直接运行。
 
+容器化厂长使用官方 Claude Code 或 Codex 时，可在 MAO 服务的部署环境中分别配置 `MAO_FOREMAN_ANTHROPIC_API_KEY` 或 `MAO_FOREMAN_CODEX_API_KEY`。使用自定义模型入口时，同时配置对应的 `MAO_FOREMAN_ANTHROPIC_BASE_URL` 或 `MAO_FOREMAN_CODEX_BASE_URL`，并在 Web App 中保存匹配的地址。页面只显示凭证状态。
+
 ## 交给厂长
 
 ```bash

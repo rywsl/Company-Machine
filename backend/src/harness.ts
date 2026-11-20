@@ -5,10 +5,12 @@
  */
 
 import { isAbsolute, join, resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { resolveKiriClient } from "../runtime/kiri";
 import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
 import { prepareHarnessEgress } from "./harness-sandbox";
 import { foremanMailboxTarget } from "./foreman-mailbox";
+import { foremanSourceRoot, type ForemanSourceMount } from "./foreman-sources";
 import { SystemClock, type Clock } from "./legacy/foundation";
 
 export const harnessControlPlaneRoot = resolve(import.meta.dir, "../..");
@@ -37,6 +39,7 @@ export interface HarnessSessionRequest {
   network?: "none" | "egress";
   egressBaseUrl?: string;
   foremanMailbox?: string;
+  foremanSources?: ForemanSourceMount[];
 }
 
 export interface HarnessEvent {
@@ -66,7 +69,7 @@ export type OfficialProcess = {
   kill(): void | Promise<void>;
 };
 
-type SpawnOptions = { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string };
+type SpawnOptions = { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string; foremanSources?: ForemanSourceMount[] };
 type HarnessRelay = Awaited<ReturnType<typeof prepareHarnessEgress>>;
 export type OfficialSpawn = (argv: string[], options: SpawnOptions) => OfficialProcess | Promise<OfficialProcess>;
 
@@ -220,7 +223,10 @@ export class OfficialCliTransport implements HarnessTransport {
   constructor(private readonly definition: HarnessDefinition, private readonly spawn: OfficialSpawn = defaultOfficialSpawn, private readonly clock: Clock = new SystemClock()) {}
 
   async start(request: HarnessSessionRequest): Promise<HarnessSession> {
-    const process = await this.spawn(officialCliInvocation(this.definition, request), { cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage, network: request.network, egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox });
+    const process = await this.spawn(officialCliInvocation(this.definition, request), {
+      cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage,
+      network: request.network, egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox, foremanSources: request.foremanSources,
+    });
     return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${this.clock.now().getTime()}`);
   }
 }
@@ -236,7 +242,7 @@ function validateImage(image?: string): void {
 }
 
 function processCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox">, relay?: HarnessRelay,
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "foremanSources">, relay?: HarnessRelay,
 ): { command: string[]; env: Record<string, string> } {
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
   const env: Record<string, string> = {};
@@ -266,6 +272,16 @@ function processCommand(
       "--mount", "type=bind,source=" + join(root, "requests") + ",target=" + foremanMailboxTarget + "/requests",
       "--mount", "type=bind,source=" + join(root, "responses") + ",target=" + foremanMailboxTarget + "/responses,readonly",
     );
+  }
+  const indexes = new Set<number>();
+  for (const { index, source } of options.foremanSources ?? []) {
+    if (!options.foremanMailbox || !Number.isSafeInteger(index) || index < 1 || indexes.has(index)
+        || !isAbsolute(source) || /[,\u0000-\u001f\u007f]/.test(source)) throw new Error("Invalid Foreman source mount");
+    try {
+      if (realpathSync(source) !== source) throw new Error("Not a canonical source");
+    } catch { throw new Error("Foreman source mount is no longer available"); }
+    indexes.add(index);
+    mounts.push("--mount", "type=bind,source=" + source + ",target=" + foremanSourceRoot + "/" + index + ",readonly");
   }
   const envFlags = envNames.flatMap((name) => ["--env", name]);
   const engine = kiri?.argv ?? [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE)];

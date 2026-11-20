@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { existsSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, symlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { createApp } from "../src/server";
 import type { OfficialProcess } from "../src/harness";
+import type { ForemanSourceMount } from "../src/foreman-sources";
+import { foremanCredential } from "../src/foreman-credentials";
 
 function fakeProcess(lines: string[]): OfficialProcess {
   const body = new TextEncoder().encode(`${lines.join("\n")}\n`);
@@ -139,7 +142,143 @@ test("registers a repository from a general Foreman turn and uses its new scope"
   } finally { app.stop(); }
 });
 
+test("gives the intake Foreman only registered upload bytes and the expressly selected folder", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-intake-source-"));
+  const projectFolder = join(root, "project folder");
+  const storageRoot = join(root, "factory");
+  mkdirSync(projectFolder);
+  await Bun.write(join(projectFolder, "readme.txt"), "selected folder");
+  const bytes = Uint8Array.from([0, 1, 13, 255]);
+  const mountsByTurn: ForemanSourceMount[][] = [];
+  const app = createApp({
+    dbPath: ":memory:", legacyPath: ":memory:", storageRoot, dispatchWork: false,
+    runtime: { health: async () => ({ available: true, platform: "linux", executable: "fixture", machine: null, rootless: null }) },
+    foreman: { spawn: async (argv, options) => {
+      const mounts = options.foremanSources ?? [];
+      mountsByTurn.push(mounts);
+      if (mounts.length) {
+        const prompt = argv.join(" ");
+        expect(prompt).toContain("source name.bin");
+        expect(prompt).toContain("/mao/sources/");
+        expect(prompt).not.toContain(root);
+        const folder = mounts.find(({ source }) => source === projectFolder)!;
+        const upload = mounts.find(({ source }) => source !== projectFolder)!;
+        expect(await Bun.file(join(folder.source, "readme.txt")).text()).toBe("selected folder");
+        expect(new Uint8Array(await Bun.file(upload.source).arrayBuffer())).toEqual(bytes);
+      }
+      return fakeProcess([JSON.stringify({ type: "result", text: "已检查来源" })]);
+    } },
+  });
+  try {
+    app.store.saveHarnessProfile({
+      runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session",
+      image: "registry.example/foreman@sha256:" + "a".repeat(64),
+    });
+    const form = new FormData();
+    form.set("name", "项目");
+    form.set("local_folder", projectFolder);
+    form.set("files", new File([bytes], "source name.bin"));
+    const intakeUrl = "http://localhost/api/v1/projects/intake";
+    const intake = await app.fetch(new Request(intakeUrl, { method: "POST", body: form }));
+    const received = await intake.json();
+    expect(intake.status).toBe(201);
+    await app.foreman.dispatch(received.foreman_inbox_id);
+    expect(app.store.getForemanMessage(received.foreman_inbox_id)?.status).toBe("done");
+    expect(mountsByTurn[0].map(({ index }) => index)).toEqual([1, 2]);
+
+    const symlink = join(root, "alias");
+    symlinkSync(projectFolder, symlink, "junction");
+    for (const folder of [symlink, storageRoot, root, join(projectFolder, "unsafe,syntax")]) {
+      const response = await app.fetch(new Request(intakeUrl, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "拒绝不安全挂载", local_folder: folder }),
+      }));
+      const row = await response.json();
+      await app.foreman.dispatch(row.foreman_inbox_id);
+      expect(app.store.getForemanMessage(row.foreman_inbox_id)?.status).toBe("done");
+      expect(mountsByTurn.at(-1)).toEqual([]);
+    }
+    const unregistered = "b".repeat(64);
+    const blobFolder = join(storageRoot, "cas", "sha256", unregistered.slice(0, 2));
+    mkdirSync(blobFolder, { recursive: true });
+    await Bun.write(join(blobFolder, unregistered.slice(2)), "unregistered");
+    const unknown = await app.fetch(new Request(intakeUrl, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "未登记来源", uploaded_file_refs: ["cas://sha256:" + unregistered] }),
+    }));
+    const unregisteredIntake = await unknown.json();
+    await app.foreman.dispatch(unregisteredIntake.foreman_inbox_id);
+    expect(mountsByTurn.at(-1)).toEqual([]);
+  } finally {
+    app.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 describe("Foreman official Harness dispatch", () => {
+  test("binds each Foreman deployment credential to its vendor profile and endpoint", () => {
+    const keys = ["MAO_FOREMAN_ANTHROPIC_API_KEY", "MAO_FOREMAN_ANTHROPIC_BASE_URL", "MAO_FOREMAN_CODEX_API_KEY", "MAO_FOREMAN_CODEX_BASE_URL"];
+    const previous = keys.map((key) => process.env[key]);
+    try {
+      process.env.MAO_FOREMAN_ANTHROPIC_API_KEY = "claude-fixture";
+      delete process.env.MAO_FOREMAN_ANTHROPIC_BASE_URL;
+      process.env.MAO_FOREMAN_CODEX_API_KEY = "codex-fixture";
+      process.env.MAO_FOREMAN_CODEX_BASE_URL = "https://approved.example/v1";
+      const profile = { role: "foreman", runtime: "claude-code", baseUrl: "" };
+      expect(foremanCredential(profile)).toEqual({ variable: "ANTHROPIC_API_KEY", value: "claude-fixture", baseUrl: "https://api.anthropic.com" });
+      expect(foremanCredential({ ...profile, role: "operator" })).toBeUndefined();
+      expect(foremanCredential({ ...profile, baseUrl: "http://api.anthropic.com" })).toBeUndefined();
+      expect(foremanCredential({ ...profile, baseUrl: "https://api.anthropic.com.other.example" })).toBeUndefined();
+      const codex = { ...profile, runtime: "codex" };
+      expect(foremanCredential(codex)).toBeUndefined();
+      expect(foremanCredential({ ...codex, baseUrl: "https://approved.example/other" })).toBeUndefined();
+      expect(foremanCredential({ ...codex, baseUrl: "https://approved.example/v1/" })).toEqual({ variable: "CODEX_API_KEY", value: "codex-fixture", baseUrl: "https://approved.example/v1/" });
+    } finally {
+      keys.forEach((key, index) => {
+        if (previous[index] === undefined) delete process.env[key];
+        else process.env[key] = previous[index];
+      });
+    }
+  });
+
+  test("forwards one configured Foreman credential and redacts it across reply deltas", async () => {
+    const key = "MAO_FOREMAN_ANTHROPIC_API_KEY";
+    const endpoint = "MAO_FOREMAN_ANTHROPIC_BASE_URL";
+    const previous = [process.env[key], process.env[endpoint]];
+    const secret = "key-fixture-split-by-official-harness";
+    process.env[key] = secret;
+    delete process.env[endpoint];
+    let received: Record<string, string> = {};
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, foreman: { spawn: (_argv, options) => {
+      received = options.env;
+      return fakeProcess([
+        JSON.stringify({ type: "system", session_id: secret }),
+        JSON.stringify({ type: "assistant", text: "结果 " + secret.slice(0, 7) }),
+        JSON.stringify({ type: "assistant", text: secret.slice(7) + " 已处理" }),
+        JSON.stringify({ type: "result", text: "完成" }),
+      ]);
+    } } });
+    try {
+      app.store.saveHarnessProfile({ runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session", secretRef: "vault://historical-ref" });
+      const envelope = app.store.queueForemanMessage("turn-redact", "处理项目");
+      await app.foreman.dispatch(envelope.id);
+      expect(received.ANTHROPIC_API_KEY === secret).toBe(true);
+      expect(received[key]).toBeUndefined();
+      expect(app.store.listTalkMessages().map(({ body }) => body)).toEqual(["结果 [REDACTED] 已处理"]);
+      expect(JSON.stringify(app.events.after()).includes(secret)).toBe(false);
+      const response = await app.fetch(new Request("http://localhost/api/web/harnesses"));
+      const payload = await response.text();
+      expect(payload).toContain('"api_key_configured":true');
+      expect(payload.includes(secret)).toBe(false);
+      expect(payload).not.toContain("vault://historical-ref");
+    } finally {
+      app.stop();
+      [key, endpoint].forEach((name, index) => {
+        if (previous[index] === undefined) delete process.env[name];
+        else process.env[name] = previous[index];
+      });
+    }
+  });
+
   test("times out a stalled Foreman turn and continues the queue", async () => {
     let launches = 0;
     let killed = 0;
