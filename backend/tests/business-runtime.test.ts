@@ -9,6 +9,7 @@ import type { OfficialProcess } from "../src/harness";
 import { OperatorCoordinator, projectCredentialName } from "../src/operator";
 import { prepareProjectSources, type PreparedProjectSources } from "../src/project-source-mounts";
 import { Warehouse } from "../src/legacy/warehouse";
+import { createMaterialFileStage } from "../src/material-files";
 import { VaultStore } from "../src/vault";
 
 function processForRecord(ref = "cas://report-1", summary = "项目已完成构建"): OfficialProcess {
@@ -23,6 +24,108 @@ function processForFailure(): OfficialProcess {
 }
 
 describe("Bun business execution loop", () => {
+  test("publishes staged Operator bytes and grants them to the dependent Operator and UI", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-material-handoff-"));
+    const bytes = Uint8Array.from([0, 7, 128, 255, 13]);
+    const stages: string[] = [];
+    let producerClosed = false;
+    let producerId = "";
+    let failProducer = false;
+    let consumerReads = 0;
+    const app = createApp({
+      dbPath: ":memory:", legacyPath: ":memory:", storageRoot: root, dispatchWork: false,
+      runtime: { health: async () => ({ available: true, platform: process.platform, machine: null, executable: "fixture", rootless: true }) },
+      operator: {
+        materialStage: () => createMaterialFileStage(warehouse),
+        spawn: async (argv, options) => {
+          const stage = options.materialFiles!;
+          const prompt = argv.at(-1)!;
+          stages.push(stage.outputDirectory);
+          expect(options.foremanMailbox).toBeUndefined();
+          if (!prompt.includes(producerId)) {
+            expect(stage.inputs).toHaveLength(1);
+            expect([...new Uint8Array(await Bun.file(stage.inputs[0].source).arrayBuffer())]).toEqual([...bytes]);
+            expect(prompt).toContain("/mao/inputs/1");
+            expect(prompt).not.toContain(root);
+            consumerReads++;
+            return processForRecord("material://review");
+          }
+          expect(stage.inputs).toEqual([]);
+          await Bun.write(join(stage.outputDirectory, "report.bin"), bytes);
+          const lines = [
+            { type: "mao.record", record_type: "material", kind: "report", ref: "material://report", summary: "Report bytes",
+              files: [{ staged: "report.bin", path: "reports/report.bin" }] },
+            { type: failProducer ? "error" : "result", text: "finished" },
+          ];
+          const stdout = new ReadableStream<Uint8Array>({ start(controller) {
+            controller.enqueue(new TextEncoder().encode(lines.map((item) => JSON.stringify(item)).join("\n") + "\n"));
+            controller.close();
+          } });
+          return { stdout, kill() {
+            expect(app.store.listArtifacts(producerId).length).toBe(failProducer ? 1 : 0);
+            producerClosed = true;
+          } };
+        },
+      },
+    });
+    const warehouse = new Warehouse(root, app.store.db, app.store.clock);
+    try {
+      const system = app.store.createBusinessSystem({ name: "File handoff" });
+      const create = (name: string) => app.store.createIntake({
+        name, business_system_id: system.id, repo_url: "https://example.test/" + name,
+      });
+      const producer = create("producer");
+      producerId = producer.id;
+      const consumer = create("consumer");
+      const sourceUnit = producer.id + ":operator";
+      const targetUnit = consumer.id + ":operator";
+      app.store.updateBusinessSystemMetadata(system.id, { graph: {
+        nodes: [{ id: sourceUnit }, { id: targetUnit }], edges: [{ source: sourceUnit, target: targetUnit }],
+      } });
+      app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session",
+        image: `registry.example/operator@sha256:${"a".repeat(64)}` });
+      const run = app.store.createBusinessRun(system.id)!;
+      const [upstream] = app.store.listReadyUnitRuns(run.id);
+      await app.operator.dispatch(run.id, upstream.id);
+      expect(producerClosed).toBe(true);
+      expect(app.store.getUnitRun(run.id, upstream.id)?.status).toBe("completed");
+      const [material] = app.store.listArtifacts(producer.id);
+      const [grant] = app.store.artifactFileGrants(system.id, [material.id]);
+      expect(material.files?.[0]).toMatchObject({ ref: "cas://" + grant.digest, path: "reports/report.bin" });
+      expect([...new Uint8Array(await Bun.file(warehouse.blobPath(grant.digest)).arrayBuffer())]).toEqual([...bytes]);
+      const forged = app.store.addArtifact({
+        projectId: consumer.id, kind: "report", ref: "material://ungranted", files: material.files, metadata: {},
+      });
+      const [downstream] = app.store.listReadyUnitRuns(run.id, upstream.id);
+      expect(downstream.inputs).toEqual([`material://${material.id}`]);
+      app.store.db.query("UPDATE unit_runs SET inputs=? WHERE id=?").run(JSON.stringify([...downstream.inputs, forged.ref]), downstream.id);
+      await app.operator.dispatch(run.id, downstream.id);
+      expect(consumerReads).toBe(1);
+      expect(app.store.getBusinessRun(run.id)?.status).toBe("completed");
+      const path = `/api/v1/projects/${producer.id}/artifacts/${material.id}/files/${grant.digest}`;
+      const get = (target: string) => app.fetch(new Request("http://localhost" + target));
+      const downloaded = await get(path);
+      expect(downloaded.status).toBe(200);
+      expect(downloaded.headers.get("content-disposition")).toContain("report.bin");
+      expect([...new Uint8Array(await downloaded.arrayBuffer())]).toEqual([...bytes]);
+      expect((await get(path.replace(producer.id, consumer.id))).status).toBe(404);
+      expect((await get(`/api/v1/projects/${consumer.id}/artifacts/${forged.id}/files/${grant.digest}`)).status).toBe(404);
+      const assets = await (await get("/api/web/assets")).json() as Array<{ id: string; files: object[] }>;
+      expect(assets.find(({ id }) => id === material.id)?.files[0]).toMatchObject({ download: path });
+      expect(assets.find(({ id }) => id === forged.id)?.files[0]).not.toHaveProperty("download");
+
+      failProducer = true;
+      const failed = app.store.createBusinessRun(system.id)!;
+      await app.operator.dispatch(failed.id, app.store.listReadyUnitRuns(failed.id)[0].id);
+      expect(app.store.getBusinessRun(failed.id)?.status).toBe("failed");
+      expect(app.store.listArtifacts(producer.id)).toHaveLength(1);
+      for (const stage of stages) expect(existsSync(stage)).toBe(false);
+    } finally {
+      await app.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("stages only the Operator project's registered sources and clears private upload copies", async () => {
     const root = mkdtempSync(join(tmpdir(), "mao-operator-sources-"));
     const storageRoot = join(root, "factory");

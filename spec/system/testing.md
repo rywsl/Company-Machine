@@ -94,6 +94,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 
 设置 `MAO_CONTAINER_RUNTIME=podman` 可复用这套验收。容器内的 Bun 夹具通过厂长邮箱登记仓库、查询 Operator 和 Machine、保存 DAG，并为登记的项目申请一个必需密钥。重复申请应复用同一记录。夹具再把第二个仓库加入同一业务系统并读取四个基础单元。随后通过项目接收入口提交文件夹和私有 CAS 上传文件，验证两项来源的挂载只读、交付字节正确、该轮无法登记其他仓库，以及会话结束时邮箱和暂存文件已清理。夹具通过官方 CLI 的 JSONL 适配器返回回复，运行时无需模型凭证。
 
+同一命令执行两个 Operator。上游暂存二进制产物并通过官方 CLI 的 JSONL 适配器声明文件。宿主核对 CAS 摘要、项目下载权限和所属业务系统。DAG 后继读取只读挂载并核对文件字节，结束后检查临时目录已清理。
+
 ### 5.2 端到端
 
 活动 Bun 测试在 `backend/tests/legacy-runner.test.ts` 中用 `LocalProvider` 执行 `upper` 工位，检查已封存的输入、脚本执行和输出封存。业务 Harness 在容器启动前的就绪检查由 `backend/tests/business-runtime.test.ts` 覆盖。验证实际容器时，`MAO_CONTAINER_RUNTIME` 选择引擎，`imageIds` 提供已构建夹具的镜像 ID。用同一工位比较正文和 facts，Bean ID 可随规范化后的文件字节变化。
@@ -123,7 +125,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱的原子发布与异常保护、资源恢复事务、对话入队与事件事务、SSE 分页回放与跨进程写入 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
-| `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、Operator 项目来源只读交接、超时清理和启动前的运行时就绪 |
+| `backend/tests/business-runtime.test.ts` | 业务 DAG、Operator 来源只读交接、暂存物料的成功登记和下游挂载、文件下载授权、超时清理和启动前的运行时就绪 |
+| `backend/tests/material-files.test.ts` | 验证暂存普通文件、按摘要复用输入挂载、跨读取边界的密钥检测及临时文件清理 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、登记仓库与读取厂区 DAG、只读 Registry 检查与用法、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
 | `backend/tests/business-package.test.ts` | 业务包 CLI 跨目录移交、字节闭包校验、回滚和已知密钥拒绝 |

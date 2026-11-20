@@ -36,7 +36,13 @@ declare module "node:fs" {
   export const closeSync: (fd: number) => void;
   export const rmdirSync: (path: string) => void;
   export const appendFileSync: (path: string, data: string, options?: string) => void;
-  export const constants: { readonly COPYFILE_EXCL: number };
+  export const constants: {
+    readonly COPYFILE_EXCL: number;
+    readonly O_RDONLY: number;
+    readonly O_NOFOLLOW?: number;
+    readonly O_NONBLOCK?: number;
+  };
+  export const linkSync: (source: string, target: string) => void;
   export const symlinkSync: (target: string, path: string, type?: "file" | "dir" | "junction") => void;
   export const mkdirSync: (...args: any[]) => void;
   export const mkdtempSync: (prefix: string) => string;
@@ -72,9 +78,10 @@ declare module "node:path" {
 }
 
 declare module "node:fs/promises" {
-  export const open: (path: string, flags: string) => Promise<{
+  export const open: (path: string, flags: string | number) => Promise<{
     read(buffer: Uint8Array, offset: number, length: number, position: number | null): Promise<{ bytesRead: number }>;
     write(buffer: Uint8Array, offset: number, length: number, position: number | null): Promise<{ bytesWritten: number }>;
+    stat(): Promise<ReturnType<typeof import("node:fs").lstatSync>>;
     close(): Promise<void>;
   }>;
   export const copyFile: (source: string, target: string, mode?: number) => Promise<void>;
@@ -102,6 +109,8 @@ declare const Bun: {
 declare const process: { env: Record<string, string | undefined>; platform: string; pid: number; getuid?(): number; kill(pid: number, signal: 0): boolean; cwd(): string; exit(code?: number): never; exitCode?: number; stdout: { write(value: string): boolean }; stderr: { write(value: string): boolean } };
 declare const Buffer: {
   from(value: any, encoding?: string): any;
+  from(value: ArrayBufferLike, offset: number, length: number): any;
+  byteLength(value: string | ArrayBuffer | ArrayBufferView, encoding?: string): number;
   concat(values: any[]): any;
 };
 interface ImportMeta { main?: boolean; dir: string }

@@ -3,8 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
-import { createBusinessPackage } from "../src/business-package";
+import { businessPackageBlob, createBusinessPackage } from "../src/business-package";
 import { digestBytes } from "../src/legacy/foundation";
+import { Warehouse } from "../src/legacy/warehouse";
+import { createMaterialFileStage } from "../src/material-files";
 import { VaultStore } from "../src/vault";
 
 function factory(root: string) {
@@ -45,11 +47,23 @@ test("moves selected business data and file bytes into a fresh factory root", { 
     const other = seller.store.createBusinessSystem({ name: "Unselected factory" });
     const project = await intake(seller, selected.id, "Public input", "source document\n");
     await intake(seller, other.id, "PRIVATE-UNRELATED-MARKER", "unselected bytes\n");
+    const outputPath = join(sellerRoot, "generated.txt");
+    const outputText = "output that a downstream Operator can read\n";
+    await Bun.write(outputPath, outputText);
+    const sellerWarehouse = new Warehouse(sellerRoot, seller.store.db, seller.store.clock);
+    const outputDigest = await sellerWarehouse.putFile(outputPath);
+    const outputSize = new TextEncoder().encode(outputText).byteLength;
+    const material = seller.store.addArtifact({
+      projectId: project.id, recordType: "material", kind: "build.report", ref: "material://report", summary: "Build report",
+      files: [{ ref: "cas://" + outputDigest, path: "generated.txt", digest: outputDigest, mediaType: "text/plain" }],
+      metadata: {},
+    });
+    seller.store.registerArtifactFiles(material.id, [{ position: 0, digest: outputDigest, size: outputSize }]);
     seller.store.createBusinessRun(selected.id);
     const exported = await cli(sellerRoot, "export", selected.id, "--package", packageRoot);
     expect(exported.code).toBe(0);
     expect(readdirSync(packageRoot).sort()).toEqual(["blobs", "business.json", "manifest.json"]);
-    expect(JSON.parse(exported.stdout).blobs).toHaveLength(1);
+    expect(JSON.parse(exported.stdout).blobs).toHaveLength(2);
     expect(await Bun.file(join(packageRoot, "business.json")).text()).not.toContain("PRIVATE-UNRELATED-MARKER");
 
     const verified = await cli(join(root, "isolated"), "verify", packageRoot);
@@ -70,7 +84,34 @@ test("moves selected business data and file bytes into a fresh factory root", { 
       const download = await buyer.fetch(new Request(`http://localhost/api/v1/projects/${importedProject.id}/files/${digest}`));
       expect(download.status).toBe(200);
       expect(await download.text()).toBe("source document\n");
+      const [importedMaterial] = buyer.store.listArtifacts(importedProject.id);
+      expect(importedMaterial.id).not.toBe(material.id);
+      expect(importedMaterial.files).toEqual(material.files);
+      const grants = buyer.store.artifactFileGrants(system.id, [importedMaterial.id]);
+      expect(grants).toEqual([{ artifactId: importedMaterial.id, position: 0, digest: outputDigest, size: outputSize }]);
+      const buyerWarehouse = new Warehouse(buyerRoot, buyer.store.db, buyer.store.clock);
+      const stage = createMaterialFileStage(buyerWarehouse);
+      try {
+        const { mounts } = await stage.prepareInputs(grants);
+        expect(await Bun.file(mounts[0].source).text()).toBe(outputText);
+      } finally { stage.close(); }
+
+      const metadataImport = await buyer.fetch(new Request("http://localhost/api/v1/business-systems/import", {
+        method: "POST", headers: { "content-type": "application/json" }, body: await Bun.file(join(packageRoot, "business.json")).text(),
+      }));
+      expect(metadataImport.status).toBe(201);
+      const { system: metadataSystem, records } = await metadataImport.json();
+      expect(records[0].files).toEqual(material.files);
+      expect(buyer.store.artifactFileGrants(metadataSystem.id, [records[0].id])).toEqual([]);
     } finally { buyer.stop(); }
+
+    await Bun.write(businessPackageBlob(packageRoot, outputDigest), "Changed" + outputText.slice(7));
+    const changed = await cli(join(root, "isolated"), "verify", packageRoot);
+    expect(changed.code).toBe(1);
+    expect(JSON.parse(changed.stdout)).toMatchObject({ ok: false, problems: [{ reason: "blob checksum" }] });
+    const rejectedRoot = join(root, "rejected-import");
+    expect((await cli(join(root, "isolated"), "import", packageRoot, "--root", rejectedRoot)).code).toBe(1);
+    expect(existsSync(rejectedRoot)).toBe(false);
   } finally { seller.stop(); rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 

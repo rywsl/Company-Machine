@@ -11,6 +11,7 @@ import { resolvePodmanExecutable, runCommand } from "../runtime/podman";
 import { prepareHarnessEgress } from "./harness-sandbox";
 import { foremanMailboxTarget } from "./foreman-mailbox";
 import { projectSourceRoot, type ProjectSourceMount } from "./project-source-mounts";
+import { materialInputRoot, materialOutputRoot, type MaterialInputMount } from "./material-files";
 import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 
 export const harnessControlPlaneRoot = resolve(import.meta.dir, "../..");
@@ -40,6 +41,7 @@ export interface HarnessSessionRequest {
   egressBaseUrl?: string;
   foremanMailbox?: string;
   projectSources?: ProjectSourceMount[];
+  materialFiles?: { outputDirectory: string; inputs: MaterialInputMount[] };
 }
 
 export interface HarnessEvent {
@@ -69,7 +71,8 @@ export type OfficialProcess = {
   kill(): void | Promise<void>;
 };
 
-type SpawnOptions = { cwd: string; env: Record<string, string>; stdout: "pipe"; stdin?: "pipe"; containerImage?: string; network?: "none" | "egress"; egressBaseUrl?: string; foremanMailbox?: string; projectSources?: ProjectSourceMount[] };
+type SpawnOptions = Pick<HarnessSessionRequest, "cwd" | "containerImage" | "network" | "egressBaseUrl" | "foremanMailbox" | "projectSources" | "materialFiles">
+  & { env: Record<string, string>; stdout: "pipe"; stdin?: "pipe" };
 type HarnessRelay = Awaited<ReturnType<typeof prepareHarnessEgress>>;
 export type OfficialSpawn = (argv: string[], options: SpawnOptions) => OfficialProcess | Promise<OfficialProcess>;
 
@@ -226,13 +229,14 @@ export class OfficialCliTransport implements HarnessTransport {
     const process = await this.spawn(officialCliInvocation(this.definition, request), {
       cwd: request.cwd, env: request.env ?? {}, stdout: "pipe", stdin: "pipe", containerImage: request.containerImage,
       network: request.network, egressBaseUrl: request.egressBaseUrl, foremanMailbox: request.foremanMailbox, projectSources: request.projectSources,
+      materialFiles: request.materialFiles,
     });
     return new OfficialCliSession(process, request.resumeId ?? `${this.definition.id}:${this.clock.now().getTime()}`);
   }
 }
 
 export function harnessProcessCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "projectSources">,
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "projectSources" | "materialFiles">,
 ): { command: string[]; env: Record<string, string> } {
   const { command, env } = processCommand(argv, options);
   return { command, env };
@@ -250,8 +254,14 @@ export function supportsLocalProjectMounts(): boolean {
     : runtime === "podman" && !process.env.CONTAINER_HOST && !process.env.CONTAINER_CONNECTION;
 }
 
+function materialMountPath(path: string) {
+  if (!isAbsolute(path) || /[,\u0000-\u001f\u007f]/.test(path) || resolve(path, "..") === path) return;
+  const info = statSync(path, { throwIfNoEntry: false });
+  if (info && realpathSync(path) === path) return info;
+}
+
 function processCommand(
-  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "projectSources">,
+  argv: string[], options: Pick<SpawnOptions, "env" | "containerImage" | "network" | "foremanMailbox" | "projectSources" | "materialFiles">,
   relay?: HarnessRelay, containerName?: string,
 ) {
   const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
@@ -274,6 +284,21 @@ function processCommand(
     ? resolveKiriClient()
     : undefined;
   const mounts: string[] = [];
+  if (options.materialFiles) {
+    if (!image || !supportsLocalProjectMounts()) throw new Error("Material file mounts require a local Linux container runtime");
+    if (options.foremanMailbox !== undefined) throw new Error("Material file mounts cannot be combined with a Foreman mailbox");
+    const { outputDirectory, inputs } = options.materialFiles;
+    if (!materialMountPath(outputDirectory)?.isDirectory()) throw new Error("Invalid material output directory");
+    mounts.push("--mount", "type=bind,source=" + outputDirectory + ",target=" + materialOutputRoot);
+    const indexes = new Set<number>();
+    for (const { index, source } of inputs) {
+      if (!Number.isSafeInteger(index) || index < 1 || indexes.has(index) || !materialMountPath(source)?.isFile()) {
+        throw new Error("Invalid material input mount");
+      }
+      indexes.add(index);
+      mounts.push("--mount", "type=bind,source=" + source + ",target=" + materialInputRoot + "/" + index + ",readonly");
+    }
+  }
   if (options.foremanMailbox !== undefined) {
     const root = options.foremanMailbox;
     if (!image || process.platform !== "linux" || !isAbsolute(root) || /[,\u0000]/.test(root)

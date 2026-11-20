@@ -4,6 +4,7 @@ import { copyFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { FactoryError } from "./legacy/errors";
 import { canonicalJson } from "./legacy/foundation";
+import type { SqliteStore } from "./db";
 
 const format = "mao.business-package/1";
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
@@ -156,4 +157,19 @@ export async function readBusinessPackage(directory: string) {
     }
   }
   return { root, document, blobs: data.blobs };
+}
+
+export function registerVerifiedArtifactFiles(store: SqliteStore, systemId: string, blobs: readonly FileDescription[]): void {
+  const sizes = new Map(blobs.map(({ digest, size }) => [digest, size]));
+  store.db.transaction(() => {
+    for (const artifact of store.listBusinessSystemArtifacts(systemId)) {
+      const verified = (artifact.files ?? []).flatMap(({ ref }, position) => {
+        if (!ref.startsWith("cas://")) return [];
+        const digest = ref.slice(6);
+        const size = sizes.get(digest);
+        return size === undefined ? [] : [{ digest, size, position }];
+      });
+      store.registerArtifactFiles(artifact.id, verified);
+    }
+  }).immediate();
 }

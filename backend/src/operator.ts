@@ -1,6 +1,7 @@
 import type { EventBus } from "./event-bus";
-import type { SqliteStore } from "./db";
-import type { BusinessUnit, UnitRun } from "./models";
+import type { ArtifactFileGrant, SqliteStore } from "./db";
+import type { Artifact, BusinessUnit, UnitRun } from "./models";
+import { materialOutputRoot, type CollectedMaterialFile, type createMaterialFileStage, type StagedMaterialFile } from "./material-files";
 import { projectSourceFacts } from "./project-sources";
 import type { PrepareProjectSources, PreparedProjectSources } from "./project-source-mounts";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
@@ -18,7 +19,13 @@ export interface OperatorCoordinatorOptions {
   ensureRuntime?: () => Promise<void>;
   readSecret?: (ref: string) => string | undefined;
   prepareSources?: PrepareProjectSources;
+  materialStage?: () => ReturnType<typeof createMaterialFileStage> | undefined;
 }
+
+type ArtifactDraft = Omit<Artifact, "id" | "createdAt">;
+type PendingFiles = { draft: ArtifactDraft; staged: Array<{ position: number; file: StagedMaterialFile }> };
+type MaterialRecord = ReturnType<SqliteStore["resolveBusinessMaterialRefs"]>[number];
+type MountedFile = ArtifactFileGrant & { containerPath: string };
 
 export function projectCredentialName(name: unknown): name is string {
   return typeof name === "string" && /^[A-Z][A-Z0-9_]{0,95}$/.test(name)
@@ -110,6 +117,8 @@ export class OperatorCoordinator {
     const requested = new Set<string>();
     let recordedSessionId = sessionId;
     let sourceMounts: PreparedProjectSources | undefined;
+    let materialStage: ReturnType<typeof createMaterialFileStage> | undefined;
+    const pendingFiles: PendingFiles[] = [];
     let finishing = false;
     try {
       if (profile.image && this.options.ensureRuntime) await turn.wait(this.options.ensureRuntime());
@@ -123,6 +132,10 @@ export class OperatorCoordinator {
         }));
       }
       const sources = sourceMounts?.facts ?? (ownProject ? projectSourceFacts(ownProject, !profile.image) : []);
+      const materials = this.options.store.resolveBusinessMaterialRefs(unit.businessSystemId, unitRun.inputs);
+      materialStage = ownProject && profile.image ? this.options.materialStage?.() : undefined;
+      const artifactIds = materials.flatMap(({ record }) => record ? [record.id] : []);
+      const materialInputs = materialStage ? await turn.wait(materialStage.prepareInputs(this.options.store.artifactFileGrants(unit.businessSystemId, artifactIds))) : undefined;
       for (const resource of this.options.store.unitSecretRequests(unitRun.id)) {
         if (resource.projectId !== unit.projectId || resource.status !== "available" || !projectCredentialName(resource.name)) continue;
         const value = this.options.readSecret?.(resource.vaultRef);
@@ -130,8 +143,9 @@ export class OperatorCoordinator {
         credentials[resource.name] = value;
       }
       const session = await turn.start(transport, {
-        task: this.taskFor(unit, runId, unitRun, sources),
-        contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。缺少项目资源时输出 {\"type\":\"mao.secret_request\",\"name\":\"...\",\"purpose\":\"...\",\"scope\":\"...\"}，由项目资源请求流程向用户呈现。",
+        task: this.taskFor(unit, runId, sources, materials, materialInputs?.files ?? []),
+        contract: "你是业务系统 Operator。只使用官方 Harness 能力处理项目。每个可交付结果必须额外输出一行 JSONL，格式为 {\"type\":\"mao.record\",\"record_type\":\"material\",\"kind\":\"...\",\"ref\":\"...\",\"summary\":\"面向人的说明\",\"files\":[{\"ref\":\"...\",\"path\":\"...\"}]}。文件字段只放引用，不嵌入文件内容。缺少项目资源时输出 {\"type\":\"mao.secret_request\",\"name\":\"...\",\"purpose\":\"...\",\"scope\":\"...\"}，由项目资源请求流程向用户呈现。"
+          + (materialStage ? `读取输入文件时使用其 containerPath。把本轮生成的文件写入 ${materialOutputRoot}，每项使用单层文件名，例如 {\"staged\":\"preview.mp4\",\"path\":\"preview.mp4\"}。成功后平台保存文件并生成内容引用。` : ""),
         model,
         requireModelSelection: explicitModel,
         env: { ...credentials, ...harnessEndpointEnv(definition, profile.baseUrl) },
@@ -140,6 +154,7 @@ export class OperatorCoordinator {
         network: profile.network === "egress" ? "egress" : "none",
         egressBaseUrl: profile.baseUrl,
         projectSources: sourceMounts?.mounts,
+        materialFiles: materialStage ? { outputDirectory: materialStage.outputDirectory, inputs: materialInputs?.mounts ?? [] } : undefined,
       });
       if (this.closed) return;
       if (useAcp) {
@@ -148,6 +163,7 @@ export class OperatorCoordinator {
       }
       const secretValues = Object.values(credentials);
       let failed = false;
+      let finished = false;
       for await (const emitted of turn.events(session)) {
         if (this.closed) return;
         const event = redactCredentialValues(emitted, secretValues) as HarnessEvent;
@@ -156,10 +172,18 @@ export class OperatorCoordinator {
           recordedSessionId = event.sessionId;
         }
         if (event.type === "record") {
-          const artifact = this.recordFromEvent(event, unit.projectId, unit, definition.id);
-          if (artifact) {
-            outputIds.add(artifact.ref);
-            this.options.events.publish("artifact.created", artifact);
+          const draft = this.recordFromEvent(event, unit.projectId, unit, definition.id);
+          if (draft) {
+            const staged = (draft.files ?? []).flatMap((file, position) => file && typeof file === "object" && Object.hasOwn(file, "staged")
+              ? [{ position, file: file as unknown as StagedMaterialFile }] : []);
+            if (staged.length) {
+              if (!materialStage) throw new Error("当前 Operator 容器不支持暂存产物");
+              pendingFiles.push({ draft, staged });
+            } else {
+              const artifact = this.options.store.addArtifact(draft);
+              outputIds.add(artifact.ref);
+              this.options.events.publish("artifact.created", artifact);
+            }
           }
         }
         if (event.type === "secret.request") {
@@ -179,6 +203,7 @@ export class OperatorCoordinator {
         const payload = { runId, unitRunId, unitId: unit.id, sessionId: event.sessionId ?? session.id, harness: definition.id, text: event.text, metadata: event.metadata };
         this.options.events.publish(`operator.session.${event.type}`, payload);
         if (event.type === "session.failed") failed = true;
+        if (event.type === "session.finished") finished = true;
       }
       if (this.closed) return;
       if (requested.size) {
@@ -187,7 +212,33 @@ export class OperatorCoordinator {
         this.options.store.resumeResourceRuns(requested.values().next().value!);
         return;
       }
-      const completed = this.options.store.completeUnitRun(unitRun.id, failed ? "failed" : "completed", [...outputIds], failed ? "official-harness-failed" : undefined);
+      let completed: UnitRun | undefined;
+      if (!failed && materialStage && pendingFiles.length) {
+        if (!finished) throw new Error("官方 Harness 没有完成本轮，无法收取产物");
+        await turn.wait(session.close());
+        const settled: Array<{ draft: ArtifactDraft; byPosition: Map<number, CollectedMaterialFile> }> = [];
+        for (const { draft, staged } of pendingFiles) {
+          const files = await turn.wait(materialStage.collect(staged.map(({ file }) => file), secretValues));
+          const byPosition = new Map(staged.map(({ position }, index) => [position, files[index]]));
+          settled.push({ draft: { ...draft, files: draft.files?.map((file, index) => byPosition.get(index) ?? file) }, byPosition });
+        }
+        const store = this.options.store;
+        const saved = store.db.transaction(() => {
+          if (store.getUnitRun(runId, unitRun.id)?.status !== "running") throw new Error("Operator 已结束，无法登记产物");
+          const outputs = [...outputIds];
+          const events = settled.map(({ draft, byPosition }) => {
+            const artifact = store.addArtifact(draft);
+            store.registerArtifactFiles(artifact.id, [...byPosition].map(([position, { digest, size }]) => ({ position, digest, size })));
+            outputs.push(`${artifact.recordType}://${artifact.id}`);
+            return store.appendEvent("artifact.created", artifact);
+          });
+          return { events, completed: store.completeUnitRun(unitRun.id, "completed", [...new Set(outputs)]) };
+        }).immediate();
+        for (const event of saved.events) this.options.events.notifyCommitted(event);
+        completed = saved.completed;
+      } else {
+        completed = this.options.store.completeUnitRun(unitRun.id, failed ? "failed" : "completed", [...outputIds], failed ? "official-harness-failed" : undefined);
+      }
       if (completed) this.options.events.publish("operator.run.completed", completed);
       if (completed?.status === "completed") return completed.id;
     } catch (error) {
@@ -200,18 +251,22 @@ export class OperatorCoordinator {
       try { await turn.close(); }
       finally {
         this.turns.delete(unitRun.id);
-        sourceMounts?.close();
+        try { sourceMounts?.close(); }
+        finally { materialStage?.close(); }
       }
     }
   }
 
-  private taskFor(unit: BusinessUnit, runId: string, unitRun: UnitRun, sources: ReturnType<typeof projectSourceFacts>): string {
-    const inputs = this.options.store.resolveBusinessMaterialRefs(unit.businessSystemId, unitRun.inputs).map(({ ref, record }) => {
+  private taskFor(unit: BusinessUnit, runId: string, sources: ReturnType<typeof projectSourceFacts>, materials: MaterialRecord[], mounted: MountedFile[]): string {
+    const positions = new Map(mounted.map((file) => [`${file.artifactId}:${file.position}`, file.containerPath]));
+    const inputs = materials.map(({ ref, record }) => {
       if (!record) return { ref };
       return {
         ref, record_type: record.recordType, kind: record.kind, title: record.title,
         description: record.description, summary: record.summary, purpose: record.purpose,
-        files: record.files?.map(({ ref, path, mediaType, digest }) => ({ ref, path, mediaType, digest })),
+        files: record.files?.map(({ ref, path, mediaType, digest }, index) => ({
+          ref, path, mediaType, digest, containerPath: positions.get(`${record.id}:${index}`),
+        })),
       };
     });
     return [
@@ -222,11 +277,11 @@ export class OperatorCoordinator {
     ].join("\n");
   }
 
-  private recordFromEvent(event: HarnessEvent, projectId: string, unit: { id: string; machineRef?: string }, harness: string) {
+  private recordFromEvent(event: HarnessEvent, projectId: string, unit: { id: string; machineRef?: string }, harness: string): ArtifactDraft | undefined {
     const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata as Record<string, unknown> : {};
     const value = metadata.record && typeof metadata.record === "object" ? metadata.record as Record<string, unknown> : metadata;
     if (typeof value.kind !== "string" || typeof value.ref !== "string" || typeof value.summary !== "string") return undefined;
-    return this.options.store.addArtifact({
+    return {
       projectId,
       recordType: value.record_type === "artifact" ? "artifact" : "material",
       kind: value.kind,
@@ -242,6 +297,6 @@ export class OperatorCoordinator {
       outputs: Array.isArray(value.outputs) ? value.outputs.filter((item): item is string => typeof item === "string") : undefined,
       lineage: Array.isArray(value.lineage) ? value.lineage.filter((item): item is string => typeof item === "string") : undefined,
       metadata: value,
-    });
+    };
   }
 }

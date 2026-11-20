@@ -71,6 +71,15 @@ test("backs up a shared WAL database and warehouse and restores business IDs and
     context.warehouse.sealMany([[bean.id, { chars: 17 }]], null, `sha256:${"a".repeat(64)}`);
     const system = store.createBusinessSystem({ name: "Sales" });
     const project = store.createIntake({ name: "Invoices", business_system_id: system.id, repo_url: "https://example.test/invoices" });
+    const materialBytes = "completed invoice\n";
+    const materialFile = join(source, "invoice.txt");
+    await Bun.write(materialFile, materialBytes);
+    const digest = await context.warehouse.putFile(materialFile);
+    const material = store.addArtifact({
+      projectId: project.id, kind: "invoice", recordType: "material", ref: "material://invoice",
+      files: [{ ref: "cas://" + digest, path: "invoice.txt" }], metadata: {},
+    });
+    store.registerArtifactFiles(material.id, [{ position: 0, digest, size: Buffer.byteLength(materialBytes) }]);
     const run = store.createBusinessRun(system.id)!;
     const request = store.createSecretRequest({ projectId: project.id, name: "PAYMENT_KEY", vaultRef: "vault://secret/sample", status: "available" });
     context.db.exec("CREATE TABLE job_execution_locks(job_id TEXT, pid INTEGER); INSERT INTO job_execution_locks VALUES ('job-a', 42)");
@@ -84,8 +93,9 @@ test("backs up a shared WAL database and warehouse and restores business IDs and
     expect(manifest).toMatchObject({ format: "mao-backup/bun/1", databases: { factory: "factory.db", business: "factory.db" }, secrets: ["LEGACY_KEY", "PAYMENT_KEY"], with_logs: true });
     expect(manifest.files.map(({ path }) => path)).toEqual([
       `cas/sha256/${bean.payload[0].digest.slice(7, 9)}/${bean.payload[0].digest.slice(9)}`,
+      `cas/sha256/${digest.slice(7, 9)}/${digest.slice(9)}`,
       "factory.db", "logs/foreman/sessions/session-a/trace/events.log", "logs/jobs/job-a/2/stdout",
-    ]);
+    ].sort());
     expect(await verifyBackup(destination)).toEqual({ ok: true, problems: [] });
 
     const restored = await restoreBackup(destination, restoreRoot);
@@ -99,6 +109,10 @@ test("backs up a shared WAL database and warehouse and restores business IDs and
       expect(restoredStore.listBusinessSystems().map(({ id }) => id)).toEqual([system.id]);
       expect(restoredStore.listBusinessUnits(system.id).map(({ id }) => id)).toEqual(store.listBusinessUnits(system.id).map(({ id }) => id));
       expect(restoredStore.listBusinessRuns(system.id).map(({ id }) => id)).toEqual([run.id]);
+      expect(restoredStore.artifactFileGrants(system.id, [material.id])).toEqual([
+        { artifactId: material.id, position: 0, digest, size: Buffer.byteLength(materialBytes) },
+      ]);
+      expect(await Bun.file(restoredContext.warehouse.blobPath(digest)).text()).toBe(materialBytes);
       expect(restoredStore.getSecretRequest(request.id)?.status).toBe("requested");
       expect(store.getSecretRequest(request.id)?.status).toBe("available");
       expect(restoredContext.db.query("SELECT * FROM job_execution_locks").all()).toEqual([]);

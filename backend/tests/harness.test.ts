@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chooseTransport, decodeOfficialLine, harnessProcessCommand, officialCliInvocation, officialHarness, officialHarnesses, OfficialCliTransport, spawnOfficialProcess, windowsClaudeExecutable } from "../src/harness";
@@ -95,6 +95,61 @@ test("gives container Harness configuration a writable temporary home", () => {
   expect(result.command).toContain("XDG_CONFIG_HOME=/tmp/.config");
   expect(result.command).toContain("--read-only");
   expect(result.env.HOME).not.toBe("/configured");
+});
+
+test("mounts only validated Operator material files on a local Linux container engine", () => {
+  const root = mkdtempSync(join(realpathSync(tmpdir()), "mao-harness-material-"));
+  const outputDirectory = join(root, "outputs");
+  const source = join(root, "input.bin");
+  const input = { source, index: 1 };
+  const materialFiles = { outputDirectory, inputs: [input] };
+  const image = "registry.example/harness@sha256:" + "a".repeat(64);
+  const previous = { runtime: process.env.MAO_CONTAINER_RUNTIME, connection: process.env.CONTAINER_HOST, podmanConnection: process.env.CONTAINER_CONNECTION, kiriMode: process.env.MAO_KIRI_MODE };
+  try {
+    mkdirSync(outputDirectory);
+    writeFileSync(source, "input", "utf8");
+    process.env.MAO_CONTAINER_RUNTIME = "podman";
+    delete process.env.CONTAINER_HOST;
+    delete process.env.CONTAINER_CONNECTION;
+    expect(() => harnessProcessCommand(["codex"], { env: {}, materialFiles })).toThrow("local Linux container runtime");
+    const command = (files = materialFiles, foremanMailbox?: string) =>
+      harnessProcessCommand(["codex"], { containerImage: image, env: {}, materialFiles: files, foremanMailbox }).command;
+    if (process.platform !== "linux") {
+      expect(() => command()).toThrow("local Linux container runtime");
+      return;
+    }
+    process.env.CONTAINER_HOST = "ssh://remote.example";
+    expect(() => command()).toThrow("local Linux container runtime");
+    delete process.env.CONTAINER_HOST;
+    for (const runtime of ["podman", "kiri"]) {
+      process.env.MAO_CONTAINER_RUNTIME = runtime;
+      process.env.MAO_KIRI_MODE = "linux-socket";
+      const argv = command();
+      expect(argv).toContain("--read-only");
+      expect(argv.filter((_, index) => argv[index - 1] === "--mount")).toEqual([
+        `type=bind,source=${outputDirectory},target=/mao/outputs`,
+        `type=bind,source=${source},target=/mao/inputs/1,readonly`,
+      ]);
+    }
+    const alias = join(root, "alias");
+    symlinkSync(source, alias);
+    expect(() => command({ ...materialFiles, outputDirectory: source })).toThrow("Invalid material output directory");
+    expect(() => command({ ...materialFiles, inputs: [input, input] })).toThrow("Invalid material input mount");
+    expect(() => command({ ...materialFiles, inputs: [{ index: 1, source: alias }] })).toThrow("Invalid material input mount");
+    expect(() => command({ ...materialFiles, inputs: [{ index: 1, source: outputDirectory }] })).toThrow("Invalid material input mount");
+    expect(() => command(materialFiles, root)).toThrow("cannot be combined with a Foreman mailbox");
+    process.env.MAO_KIRI_MODE = "docker-context";
+    expect(() => command()).toThrow("local Linux container runtime");
+  } finally {
+    for (const [key, value] of Object.entries({
+      MAO_CONTAINER_RUNTIME: previous.runtime, CONTAINER_HOST: previous.connection,
+      CONTAINER_CONNECTION: previous.podmanConnection, MAO_KIRI_MODE: previous.kiriMode,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function frame(value: object): Uint8Array {
@@ -299,24 +354,35 @@ describe("official Harness boundary", () => {
     expect(killed()).toBe(true);
   });
 
-  test("passes the requested managed network to ACP spawn", async () => {
-    let observed: { network?: string; image?: string } | undefined;
+  test("passes the requested managed network and material files to official transports", async () => {
+    const materialFiles = { outputDirectory: "/stage/outputs", inputs: [{ index: 1, source: "/stage/inputs/1" }] };
+    let observed: { network?: string; image?: string; materialFiles?: typeof materialFiles } | undefined;
     const body = [
       JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } }),
       JSON.stringify({ jsonrpc: "2.0", id: 2, result: { sessionId: "s-egress" } }),
       JSON.stringify({ method: "session/complete", params: { sessionId: "s-egress" } }),
     ].join("\n") + "\n";
     const transport = new AcpTransport(officialHarness("kimi-code")!, (_argv, options) => {
-      observed = { network: options.network, image: options.containerImage };
+      observed = { network: options.network, image: options.containerImage, materialFiles: options.materialFiles };
       return {
         stdout: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); } }),
         stdin: { write() {}, end() {} },
         kill() {},
       };
     });
-    const session = await transport.start({ task: "构建", contract: "你是厂长", model: "kimi", cwd: "/workspace", network: "egress", containerImage: "registry.example/harness@sha256:" + "a".repeat(64) });
+    const containerImage = "registry.example/harness@sha256:" + "a".repeat(64);
+    const request = { ...acpRequest, network: "egress" as const, containerImage, materialFiles };
+    const session = await transport.start(request);
     for await (const _event of session.events()) { /* drain */ }
-    expect(observed).toEqual({ network: "egress", image: "registry.example/harness@sha256:" + "a".repeat(64) });
+    const expected = { network: "egress", image: containerImage, materialFiles };
+    expect(observed).toEqual(expected);
     await session.close();
+    observed = undefined;
+    const cli = new OfficialCliTransport(officialHarness("codex")!, (_argv, options) => {
+      observed = { network: options.network, image: options.containerImage, materialFiles: options.materialFiles };
+      return { stdout: new ReadableStream({ start(controller) { controller.close(); } }), kill() {} };
+    });
+    await (await cli.start(request)).close();
+    expect(observed).toEqual(expected);
   });
 });

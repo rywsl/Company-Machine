@@ -67,7 +67,7 @@ export interface AssetRecord {
   summary?: string;
   purpose?: string;
   status?: string;
-  files?: Array<{ ref: string; path?: string; mediaType?: string; digest?: string }>;
+  files?: Array<{ ref: string; path?: string; mediaType?: string; digest?: string; download?: string }>;
   inputs?: string[];
   outputs?: string[];
   lineage?: string[];

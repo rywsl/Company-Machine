@@ -2,7 +2,7 @@ import { EventBus } from "./event-bus";
 import { SqliteStore } from "./db";
 import { VaultStore } from "./vault";
 import { exportBusinessSystem, importBusinessSystem } from "./business-portability";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { RandomIds, type Clock } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
@@ -11,10 +11,11 @@ import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
 import { prepareProjectSources, type PrepareProjectSources } from "./project-source-mounts";
+import { createMaterialFileStage } from "./material-files";
 import type { RegisterRepository } from "./project-registration";
 import { foremanCredential } from "./foreman-credentials";
 import { verifyHarness } from "./harness-verification";
-import { OperatorCoordinator, projectCredentialName } from "./operator";
+import { OperatorCoordinator, projectCredentialName, type OperatorCoordinatorOptions } from "./operator";
 import { operatorBindingView, parseOperatorBinding } from "./operator-binding";
 import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, supportsLocalProjectMounts, type OfficialSpawn } from "./harness";
 import type { AcpSpawn } from "./acp";
@@ -66,7 +67,7 @@ interface BackendAppOptions {
   vault?: VaultStore;
   storageRoot?: string;
   foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn };
-  operator?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn };
+  operator?: Pick<OperatorCoordinatorOptions, "cwd" | "spawn" | "acpSpawn" | "materialStage">;
   harnessVerificationTimeoutMs?: number;
   dispatchWork?: boolean;
   clock?: Clock;
@@ -156,7 +157,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     });
   };
   const operator = new OperatorCoordinator({
-    store, events, ...options.operator, onProgress: dispatchOperatorRun, ensureRuntime, readSecret: (ref) => vault.get(ref),
+    store, events, materialStage: () => supportsLocalProjectMounts() ? createMaterialFileStage(uploads()) : undefined,
+    ...options.operator, onProgress: dispatchOperatorRun, ensureRuntime, readSecret: (ref) => vault.get(ref),
     prepareSources: async (project) => supportsLocalProjectMounts() ? prepareSources(project) : undefined,
   });
   const hasForeman = () => store.listHarnessProfiles().some((profile) => profile.role === "foreman");
@@ -373,6 +375,20 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const path = uploads().blobPath(digest);
       if (!existsSync(path)) return response({ error: "project upload was not found" }, 404);
       const filename = typeof source.metadata.name === "string" ? source.metadata.name : digest;
+      return new Response(Bun.file(path), { headers: {
+        "content-type": "application/octet-stream", "x-content-type-options": "nosniff", "cache-control": "no-store",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      } });
+    }
+    const artifactFile = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/artifacts\/([^/]+)\/files\/(sha256:[0-9a-f]{64})$/);
+    if (artifactFile && request.method === "GET") {
+      const [, projectId, artifactId, digest] = artifactFile;
+      const grant = store.projectArtifactFile(projectId, artifactId, digest);
+      if (!grant) return response({ error: "artifact file was not found" }, 404);
+      const path = uploads().blobPath(digest);
+      const file = lstatSync(path, { throwIfNoEntry: false });
+      if (!file?.isFile() || file.size !== grant.size) return response({ error: "artifact file was not found" }, 404);
+      const filename = grant.path?.split("/").at(-1) || digest;
       return new Response(Bun.file(path), { headers: {
         "content-type": "application/octet-stream", "x-content-type-options": "nosniff", "cache-control": "no-store",
         "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
@@ -650,7 +666,10 @@ function webAssets(store: SqliteStore) {
       source: { node: typeof document.producer === "object" && document.producer ? (document.producer as Record<string, unknown>).operator : undefined },
     };
   });
-  const business = store.listAllArtifacts().map((record) => ({
+  const records = store.listAllArtifacts();
+  const grants = new Map(store.artifactFileGrants(null, records.map(({ id }) => id))
+    .map(({ artifactId, position, digest }) => [`${artifactId}:${position}`, digest]));
+  const business = records.map((record) => ({
     id: record.id,
     type: record.kind,
     record_type: record.recordType,
@@ -660,7 +679,15 @@ function webAssets(store: SqliteStore) {
     summary: record.summary,
     purpose: record.purpose,
     status: record.status,
-    files: portableValue(record.files ?? []),
+    files: (record.files ?? []).flatMap((file, position) => {
+      if (typeof file?.ref !== "string") return [];
+      const { ref, path, mediaType, digest } = file;
+      const trustedDigest = grants.get(`${record.id}:${position}`);
+      const download = trustedDigest
+        ? `/api/v1/projects/${encodeURIComponent(record.projectId)}/artifacts/${encodeURIComponent(record.id)}/files/${trustedDigest}`
+        : undefined;
+      return [{ ref, path, mediaType, digest, download }];
+    }),
     inputs: record.inputs ?? [],
     outputs: record.outputs ?? [],
     lineage: record.lineage ?? [],

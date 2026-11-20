@@ -57,6 +57,7 @@ export interface IntakeInput {
 }
 
 type BusinessRunEdge = { source: string; target: string };
+export type ArtifactFileGrant = { artifactId: string; position: number; digest: string; size: number };
 
 export class SqliteStore {
   readonly db: Database;
@@ -107,6 +108,11 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS artifacts (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, source_id TEXT, kind TEXT NOT NULL,
         ref TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS artifact_file_grants (
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL, digest TEXT NOT NULL, size INTEGER NOT NULL,
+        PRIMARY KEY (artifact_id, position)
       );
       CREATE TABLE IF NOT EXISTS secret_requests (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, vault_ref TEXT NOT NULL,
@@ -698,6 +704,35 @@ export class SqliteStore {
 
   listArtifacts(projectId: string): Artifact[] {
     return this.db.query("SELECT * FROM artifacts WHERE project_id = ? ORDER BY created_at, id").all(projectId).map((row: any) => this.artifactFromRow(row));
+  }
+
+  registerArtifactFiles(artifactId: string, files: ReadonlyArray<Omit<ArtifactFileGrant, "artifactId">>): void {
+    const insert = this.db.query("INSERT INTO artifact_file_grants (artifact_id,position,digest,size) VALUES (?,?,?,?)");
+    for (const { position, digest, size } of files) insert.run(artifactId, position, digest, size);
+  }
+
+  artifactFileGrants(businessSystemId: string | null, artifactIds: readonly string[]): ArtifactFileGrant[] {
+    if (!artifactIds.length) return [];
+    return this.db.query<ArtifactFileGrant>(`
+      SELECT grant.artifact_id AS artifactId, grant.position, grant.digest, grant.size
+      FROM artifact_file_grants AS grant
+      JOIN artifacts AS artifact ON artifact.id=grant.artifact_id
+      JOIN projects AS project ON project.id=artifact.project_id
+      WHERE grant.artifact_id IN (SELECT value FROM json_each(?))
+      ${businessSystemId === null ? "" : "AND project.business_system_id=?"}
+      ORDER BY grant.artifact_id, grant.position
+    `).all(json(artifactIds), ...(businessSystemId === null ? [] : [businessSystemId]));
+  }
+
+  projectArtifactFile(projectId: string, artifactId: string, digest: string): { size: number; path?: string } | undefined {
+    const row = this.db.query<{ size: number; path: unknown }>(`
+      SELECT grant.size, json_extract(artifact.metadata, '$.files[' || grant.position || '].path') AS path
+      FROM artifact_file_grants AS grant
+      JOIN artifacts AS artifact ON artifact.id=grant.artifact_id
+      WHERE artifact.project_id=? AND grant.artifact_id=? AND grant.digest=?
+      ORDER BY grant.position LIMIT 1
+    `).get(projectId, artifactId, digest);
+    if (row) return { size: row.size, path: typeof row.path === "string" ? row.path : undefined };
   }
 
   listAllArtifacts(): Artifact[] {

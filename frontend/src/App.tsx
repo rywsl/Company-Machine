@@ -431,6 +431,26 @@ function SecretDrawer({ secret, requests, onSelect, onClose }: { secret: SecretR
     {message && <div className="context-note">{message}</div>}
   </DetailDrawer>;
 }
+const artifactFileDownload = /^\/api\/v1\/projects\/[a-z0-9][a-z0-9_.-]*\/artifacts\/[a-z0-9][a-z0-9_.-]*\/files\/sha256(?::|%3a)[a-f0-9]{64}$/i;
+
+function AssetFiles({ files }: { files: NonNullable<AssetRecord["files"]> }) {
+  return <details className="detail-collapse" open>
+    <summary>文件附件</summary>
+    <ul className="check-list">
+      {files.map((file, index) => {
+        const basename = file.path && !file.path.includes("://") ? file.path.split(/[\\/]/).at(-1)?.trim() : undefined;
+        const name = basename && !basename.includes(":") ? basename : "文件附件";
+        const download = file.download && artifactFileDownload.test(file.download) ? file.download : undefined;
+        const mediaType = file.mediaType && /^[\w.+-]+\/[\w.+-]+$/.test(file.mediaType) ? file.mediaType : undefined;
+        return <li key={`${file.ref}-${index}`} className="breakable">
+          {download ? <a href={download} download aria-label={`下载 ${name}`}>{name}</a> : <strong>{name}</strong>}
+          {mediaType && <>{" "}<small>{mediaType}</small></>}
+        </li>;
+      })}
+    </ul>
+  </details>;
+}
+
 function AssetDrawer({ asset, onClose }: { asset: AssetRecord; onClose: () => void }): ReactElement {
   const lineage = [...new Set([...(asset.lineage ?? []), ...(asset.inputs ?? [])])];
   const outputs = [...new Set(asset.outputs ?? [])];
@@ -446,7 +466,7 @@ function AssetDrawer({ asset, onClose }: { asset: AssetRecord; onClose: () => vo
       <span className="asset-flow-node current">{assetTitle(asset)}</span>
       {outputs.map((ref, index) => <Fragment key={`output-${ref}-${index}`}><b>→</b><span className="asset-flow-node">{ref}</span></Fragment>)}
     </div></section>
-    {asset.files?.length ? <details className="detail-collapse" open><summary>文件引用</summary><ul className="check-list">{asset.files.map((file, index) => <li key={`${file.ref}-${index}`}><strong>{file.path || file.ref}</strong><small>{file.mediaType || "引用文件"}</small></li>)}</ul></details> : null}
+    {asset.files?.length ? <AssetFiles files={asset.files} /> : null}
   </DetailDrawer>;
 }
 function ConstitutionDrawer({ bootstrap, onClose }: { bootstrap: Bootstrap; onClose: () => void }): ReactElement { const constitution = bootstrap.constitution; return <DetailDrawer title="宪法" eyebrow="CONSTITUTION" onClose={onClose}><div className="context-line"><span>当前版本</span><strong>{display(constitution.version, "未配置")}</strong></div><div className="context-line"><span>生效状态</span><strong>{display(constitution.status, "未知")}</strong></div><div className="context-line"><span>最近变更</span><strong>{display(constitution.recent_change, "暂无")}</strong></div><div className="context-note">宪法冲突会进入日志异常上下文，由人处理边界决策，普通运行由 Foreman 自治。</div></DetailDrawer>; }

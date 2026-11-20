@@ -24,6 +24,7 @@ export interface FileRef { path: string; digest: string; size: number; mediaType
 export interface Bean { id: string; type: string; meta: Record<string, unknown>; facts: Record<string, unknown>; payload: FileRef[]; sealed: boolean; createdAt: string; expiredAt?: string; }
 export interface BeanDraft { type: string; meta?: Record<string, unknown>; files: Record<string, string>; }
 type PayloadIdentity = { path: string; digest: string; size: number; media_type: string };
+type OpenFileReader = Pick<Awaited<ReturnType<typeof open>>, "read">;
 
 function beanId(type: string, meta: Record<string, unknown>, payload: PayloadIdentity[]): string {
   return digestBytes(canonicalBytes({ type, meta, payload }));
@@ -65,6 +66,13 @@ export class Warehouse {
     return (await this.storeFile(source)).digest;
   }
   private async storeFile(source: string): Promise<{ digest: string; size: number }> {
+    const input = await open(source, "r");
+    try { return await this.putOpenedFile(input); }
+    finally { await input.close(); }
+  }
+
+  /** Store a validated open file without opening its original path again. The caller owns the handle. */
+  async putOpenedFile(input: OpenFileReader, expectedSize?: number, inspectChunk?: (chunk: Uint8Array) => void): Promise<{ digest: string; size: number }> {
     const scratch = join(this.root, "tmp");
     mkdirSync(scratch, { recursive: true });
     const part = join(scratch, `cas-${randomUuid()}.part`);
@@ -72,26 +80,31 @@ export class Warehouse {
     const hash = createHash("sha256");
     const buffer = new Uint8Array(1024 * 1024);
     let size = 0;
-    const input = await open(source, "r");
     try {
+      const output = await open(part, "wx");
+      ownsPart = true;
       try {
-        const output = await open(part, "wx");
-        ownsPart = true;
-        try {
-          while (true) {
-            const { bytesRead } = await input.read(buffer, 0, buffer.length, null);
-            if (bytesRead === 0) break;
-            let offset = 0;
-            while (offset < bytesRead) {
-              const { bytesWritten } = await output.write(buffer, offset, bytesRead - offset, null);
-              if (bytesWritten === 0) throw new Error("CAS staging file stopped accepting bytes");
-              offset += bytesWritten;
-            }
-            hash.update(buffer.subarray(0, bytesRead));
-            size += bytesRead;
+        while (true) {
+          const { bytesRead } = await input.read(buffer, 0, buffer.length, size);
+          if (bytesRead === 0) break;
+          if (expectedSize !== undefined && size + bytesRead > expectedSize) {
+            throw new FactoryError("CAS_SIZE_CHANGED", "收货过程中读取的字节数与已检查的文件大小不符");
           }
-        } finally { await output.close(); }
-      } finally { await input.close(); }
+          const chunk = buffer.subarray(0, bytesRead);
+          inspectChunk?.(chunk);
+          let offset = 0;
+          while (offset < bytesRead) {
+            const { bytesWritten } = await output.write(buffer, offset, bytesRead - offset, null);
+            if (bytesWritten === 0) throw new Error("CAS staging file stopped accepting bytes");
+            offset += bytesWritten;
+          }
+          hash.update(chunk);
+          size += bytesRead;
+        }
+        if (expectedSize !== undefined && size !== expectedSize) {
+          throw new FactoryError("CAS_SIZE_CHANGED", "收货过程中读取的字节数与已检查的文件大小不符");
+        }
+      } finally { await output.close(); }
 
       const digest = `sha256:${hash.digest("hex")}`;
       const destination = this.blobPath(digest);

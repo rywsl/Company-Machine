@@ -297,6 +297,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - 业务运行按 DAG 前置边决定就绪状态。Operator 成功完成后，控制面通过该次运行的依赖边索引检查其直接后继。后继在全部前置 Operator 完成后才能领用，输入先保留原有物料，再按依赖快照中的边顺序合并产物引用并去重。首次派发、启动恢复、资源恢复和失败会按完整运行重新核对就绪状态。
 - 前置 Operator 失败或被阻塞时，所有受影响的后继 Operator 必须进入 `blocked`，业务运行进入 `failed`，不能因没有新的可调度单元而永久停留在 `running`
 - `GET/POST /api/v1/projects/<id>/artifacts` 读写带摘要、用途、文件引用、输入输出和 lineage 的物料 JSON
+- `GET /api/v1/projects/<project-id>/artifacts/<artifact-id>/files/<sha256>` 通过项目与记录的文件授权返回下载。资产界面展示文件名和已授权下载入口。
 - `GET/POST /api/v1/business-systems/<id>/graph` 读取或接收外部 Foreman 维护的 DAG 快照。写入时节点标识唯一，边必须引用存在节点，图必须无环
 
 Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现。运行在领用单元时解析绑定，并记录官方 Harness ID 和生效的模型 ID。官方 CLI 接收模型参数。ACP 优先用 `session/new` 或 `session/load` 提供的 `model` 配置选项，并在 `session/prompt` 前确认选择。Kimi Code 可通过原生启动参数接收模型。无法使用明确绑定的模型时，执行会报告原因。
@@ -339,6 +340,10 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 业务记录的 JSON 契约保留 `record_type`（`artifact` 或 `material`）、`kind`、`ref`、`title`、`description`、`summary`、`purpose`、`status`、`producer`、`files`、`inputs`、`outputs` 和 `lineage`。`title`、`description` 或 `summary` 至少有一个面向人的说明。`files` 只保存引用、路径、媒体类型和摘要，不内嵌文件字节。记录由官方 Harness 产生或转换后写入，控制面只保存和分发这些描述，不执行记录中的指令。
 
 下游 Operator 获得输入引用及当前业务系统内匹配的记录说明和文件引用。数据库先按记录 ID 解析，再按引用查询该业务系统内最新匹配。未登记的输入仍按原引用传递。
+
+本地 Linux Kiri 和 Podman 工位可把本轮文件写入 `/mao/outputs`，通过 `mao.record` 的 `files` 项声明 `staged` 文件名和可选显示路径。控制面在官方 Harness 成功结束并关闭会话后检查普通文件，流式计算摘要并拒绝包含本轮注入凭据的文件。业务记录、文件授权、成功状态和对应事件在同一事务提交。后继获得稳定记录 ID，并从同一业务系统的输入记录读取已授权的 `/mao/inputs/<序号>` 只读挂载。运行结束清理暂存区。
+
+已校验的业务包导入恢复随包交付的文件授权。直接导入 JSON 保存文件引用。备份记录活动文件授权和对应 CAS 文件。
 
 厂长与 Operator 使用同一份项目来源投影。仓库 URL 的密码和凭据查询参数在交给 Harness 前移除。上传文件使用内容摘要引用，可通过项目文件路由读取。本地 Linux Kiri 和 Podman 中，接收项目的厂长和执行该项目的 Operator 都可在来源摘要中看到文件名或文件夹名，以及 `/mao/sources/<序号>` 下的只读位置。每个位置只挂载该项目登记的上传文件或用户选择的本地目录。宿主目录须为规范绝对路径，符号链接路径及与工厂存储重叠的目录不可挂载。本地目录沿用宿主文件访问权限。私有上传文件按轮暂存，正常结束、失败或取消后清理。主机上的 Harness 可读取用户提交的原始文件夹位置，其他容器运行方式使用来源引用。
 

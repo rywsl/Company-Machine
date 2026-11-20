@@ -6,7 +6,8 @@ import { resolveKiriClient } from "../backend/runtime/kiri";
 import { parseImageId, resolvePodmanExecutable, runCommand } from "../backend/runtime/podman";
 import { selectedContainerProvider } from "../backend/runtime/selected";
 import { spawnOfficialProcess } from "../backend/src/harness";
-import { Context, Gate, Runner, Warehouse, loadSnapshot } from "../backend/src/legacy";
+import { Context, Gate, Runner, Warehouse, digestBytes, loadSnapshot } from "../backend/src/legacy";
+import { materialInputRoot, materialOutputRoot } from "../backend/src/material-files";
 import { createApp } from "../backend/src/server";
 import { imageIds, imageTag, renderRegistry, writeJson, writeText } from "../tests/fakes/fakelib";
 
@@ -76,6 +77,7 @@ async function foremanImage(provider: string): Promise<string> {
 const checkedReply = "已登记仓库、更新业务图并验证只读来源";
 const folderText = "selected project folder";
 const upload = [0, 1, 13, 255];
+const producedBytes = [3, 10, 42, 255, 0];
 const repoUrl = "https://code.example/team/runtime-fixture.git";
 const companionRepo = "https://code.example/team/companion-fixture.git";
 const projectKey = "PROJECT_FIXTURE_KEY";
@@ -85,6 +87,7 @@ const foremanFixture = `
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 const { reply, folderText, upload, repoUrl, companionRepo, graph, projectKey } = ${JSON.stringify({ reply: checkedReply, folderText, upload, repoUrl, companionRepo, graph, projectKey })};
+const { producedBytes, materialInputRoot, materialOutputRoot } = ${JSON.stringify({ producedBytes, materialInputRoot, materialOutputRoot })};
 const mailbox = "/mao/foreman";
 const mountInfo = readFileSync("/proc/self/mountinfo", "utf8").split("\\n").map((line) => line.split(" "));
 const mode = (path) => mountInfo.find((fields) => fields[4] === path)?.[5].split(",")[0];
@@ -110,7 +113,16 @@ try {
   const operator = sources?.operator === true;
   assert.equal(mode(mailbox + "/requests"), operator ? undefined : "rw");
   assert.equal(mode(mailbox + "/responses"), operator ? undefined : "ro");
-  if (sources) {
+  if (operator) assert.equal(mode(materialOutputRoot), "rw");
+  if (sources?.consumer) {
+    const input = materialInputRoot + "/1";
+    assert.equal(mode(input), "ro");
+    assert.equal(mode(materialInputRoot + "/2"), undefined);
+    assert.equal(mode("/mao/sources/1"), undefined);
+    assert.deepEqual([...readFileSync(input)], producedBytes);
+    assert.throws(() => writeFileSync(input, "unexpected"));
+    console.log(JSON.stringify({ type: "mao.record", record_type: "material", kind: "source-check", ref: "material://consumed-file", summary: "Read the upstream file" }));
+  } else if (sources) {
     const folder = "/mao/sources/" + sources.folder;
     const file = "/mao/sources/" + sources.file;
     assert.equal(mode(folder), "ro");
@@ -118,7 +130,12 @@ try {
     assert.equal(readFileSync(folder + "/readme.txt", "utf8"), folderText);
     assert.deepEqual([...readFileSync(file)], upload);
     if (operator) {
-      console.log(JSON.stringify({ type: "mao.record", record_type: "material", kind: "source-check", ref: "material://sources-checked", summary: "Read both registered project sources" }));
+      assert.equal(mode(materialInputRoot + "/1"), undefined);
+      writeFileSync(materialOutputRoot + "/result.bin", Uint8Array.from(producedBytes), { mode: 0o644 });
+      console.log(JSON.stringify({
+        type: "mao.record", record_type: "material", kind: "source-check", ref: "material://sources-checked", summary: "Read both registered project sources",
+        files: [{ staged: "result.bin", path: "build/result.bin" }],
+      }));
     } else {
       assert.equal((await ask(1, "project.register", { repoUrl })).error.code, "FOREMAN_OPERATION_INVALID");
     }
@@ -159,6 +176,8 @@ async function verifyForeman(provider: string): Promise<void> {
   const sourceFolder = join(root, "selected project");
   const mailboxes: string[] = [];
   const uploads: string[] = [];
+  const outputStages: string[] = [];
+  const inputCopies: string[] = [];
   const sourceTargets = (prompt: string | undefined, sources: Array<{ index: number; source: string }>) => {
     assert.equal(sources.length, 2);
     const folder = sources.find(({ source }) => source === sourceFolder);
@@ -180,8 +199,24 @@ async function verifyForeman(provider: string): Promise<void> {
     } },
     operator: { spawn: (argv, options) => {
       assert.equal(options.foremanMailbox, undefined);
-      const targets = sourceTargets(argv.at(-1), options.projectSources ?? []);
-      return spawnOfficialProcess(["bun", "-e", foremanFixture, JSON.stringify({ ...targets, operator: true })], { ...options, env: {}, stdin: undefined });
+      assert.ok(options.materialFiles);
+      const { outputDirectory, inputs } = options.materialFiles;
+      outputStages.push(outputDirectory);
+      const sources = options.projectSources ?? [];
+      const prompt = argv.at(-1);
+      let targets;
+      if (sources.length) {
+        assert.deepEqual(inputs, []);
+        targets = { ...sourceTargets(prompt, sources), operator: true };
+      } else {
+        assert.equal(inputs.length, 1);
+        assert.equal(inputs[0].index, 1);
+        assert.ok(prompt?.includes(materialInputRoot + "/1") && prompt.includes("build/result.bin"));
+        assert.ok(!prompt.includes(root));
+        inputCopies.push(inputs[0].source);
+        targets = { operator: true, consumer: true };
+      }
+      return spawnOfficialProcess(["bun", "-e", foremanFixture, JSON.stringify(targets)], { ...options, env: {}, stdin: undefined });
     } },
   });
   let passed = false;
@@ -233,16 +268,42 @@ async function verifyForeman(provider: string): Promise<void> {
     });
     const intakeProject = app.store.getProject(project_id);
     assert.ok(intakeProject?.businessSystemId);
-    const run = app.store.createBusinessRun(intakeProject.businessSystemId);
+    const systemId = intakeProject.businessSystemId;
+    const consumer = app.store.createIntake({ name: "Material consumer", business_system_id: systemId, repo_url: "https://code.example/consumer.git" });
+    const producerUnit = project_id + ":operator";
+    const consumerUnit = consumer.id + ":operator";
+    app.store.updateBusinessSystemMetadata(systemId, { graph: { edges: [{ source: producerUnit, target: consumerUnit }] } });
+    const run = app.store.createBusinessRun(systemId);
     assert.ok(run);
-    await app.operator.dispatch(run.id);
+    const initial = app.store.listReadyUnitRuns(run.id);
+    assert.deepEqual(initial.map(({ unitId }) => unitId), [producerUnit]);
+    await app.operator.dispatch(run.id, initial[0].id);
+    const artifact = app.store.listArtifacts(project_id).find(({ ref }) => ref === "material://sources-checked");
+    assert.ok(artifact, JSON.stringify(app.store.listUnitRuns(run.id)));
+    const bytes = Uint8Array.from(producedBytes);
+    const digest = digestBytes(bytes);
+    assert.deepEqual(app.store.artifactFileGrants(systemId, [artifact.id]), [{ artifactId: artifact.id, position: 0, digest, size: bytes.length }]);
+    assert.deepEqual(app.store.artifactFileGrants(project.businessSystemId, [artifact.id]), []);
+    const producedBlob = new Warehouse(storageRoot, app.store.db, app.store.clock).blobPath(digest);
+    await chmod(producedBlob, 0o600);
+    const stored = await app.fetch(new Request(`http://localhost/api/v1/projects/${project_id}/artifacts/${artifact.id}/files/${digest}`));
+    assert.equal(stored.status, 200);
+    assert.deepEqual(new Uint8Array(await stored.arrayBuffer()), bytes);
+    const downstream = app.store.listReadyUnitRuns(run.id, initial[0].id);
+    assert.deepEqual(downstream.map(({ unitId, inputs }) => ({ unitId, inputs })), [
+      { unitId: consumerUnit, inputs: [`material://${artifact.id}`] },
+    ]);
+    await app.operator.dispatch(run.id, downstream[0].id);
     assert.equal(app.store.getBusinessRun(run.id)?.status, "completed", JSON.stringify(app.store.listUnitRuns(run.id)));
-    assert.ok(app.store.listArtifacts(project_id).some(({ ref }) => ref === "material://sources-checked"));
+    assert.ok(app.store.listArtifacts(consumer.id).some(({ ref }) => ref === "material://consumed-file"));
+    assert.equal(inputCopies.length, 1);
+    assert.notEqual(inputCopies[0], producedBlob);
+    assert.equal(outputStages.length, 2);
     assert.equal(uploads.length, 2);
     for (const path of uploads) assert.notEqual(path, blob);
-    for (const path of [...mailboxes, ...uploads]) await assert.rejects(stat(path), { code: "ENOENT" });
+    for (const path of [...mailboxes, ...uploads, ...outputStages, ...inputCopies]) await assert.rejects(stat(path), { code: "ENOENT" });
     assert.equal(app.store.listTalkMessages().filter(({ body }) => body === checkedReply).length, 2);
-    console.log(`${provider}: 厂长邮箱、仓库登记、业务图、项目密钥申请、厂长与 Operator 的项目来源只读挂载和清理通过`);
+    console.log(`${provider}: 厂长邮箱、仓库登记、业务图、项目密钥申请、项目来源挂载、Operator 间 CAS 文件交接和清理通过`);
     passed = true;
   } finally {
     app.stop();

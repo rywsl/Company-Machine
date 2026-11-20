@@ -7,7 +7,7 @@ import { ConversionStore, conversionDocument } from "./legacy/conversion-request
 import { FactoryError } from "./legacy/errors";
 import { RandomIds } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
-import { businessPackageBlob, createBusinessPackage, publishBusinessDirectory, readBusinessPackage } from "./business-package";
+import { businessPackageBlob, createBusinessPackage, publishBusinessDirectory, readBusinessPackage, registerVerifiedArtifactFiles } from "./business-package";
 import { parseRepositoryRegistration } from "./project-registration";
 import { VaultStore } from "./vault";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
@@ -305,6 +305,7 @@ async function importBusinessPackage(source: string, destination: string) {
       const document = await requestJson(buyer, "/api/v1/business-systems/import", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(verified.document),
       });
+      registerVerifiedArtifactFiles(buyer.store, document.system.id, verified.blobs);
       return { root: resolve(destination), system: document.system, acceptance: "not_run" };
     } finally { buyer.stop(); }
   });

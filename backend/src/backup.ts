@@ -176,6 +176,13 @@ function inspectDatabase(root: string, name: string): { liveBlobs: string[]; sec
       `).all();
       for (const { digest } of uploaded) liveBlobs.push(digest);
     }
+    if (known.has("artifact_file_grants") && known.has("artifacts")) {
+      const files = db.query<{ digest: string }>(`
+        SELECT DISTINCT grant.digest FROM artifact_file_grants AS grant
+        JOIN artifacts AS artifact ON artifact.id=grant.artifact_id
+      `).all();
+      for (const { digest } of files) liveBlobs.push(digest);
+    }
     const secrets = known.has("secret_requests") ? db.query<{ name: string }>("SELECT DISTINCT name FROM secret_requests").all().map(({ name }) => name) : [];
     return { liveBlobs, secrets, hasBusiness: known.has("business_systems") };
   } finally { db.close(); }
