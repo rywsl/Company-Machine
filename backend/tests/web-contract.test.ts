@@ -62,6 +62,29 @@ test("public artifact projection redacts metadata secrets", async () => {
   } finally { app.stop(); }
 });
 
+test("public business projections redact local source and execution references", async () => {
+  const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+  try {
+    const system = app.store.createBusinessSystem({ name: "Portable references" });
+    const project = app.store.createIntake({ business_system_id: system.id, name: "Project", uploaded_file_refs: ["/srv/private/input.txt"] });
+    const run = app.store.createBusinessRun(system.id, "web", {}, ["file:///srv/private/input.txt", "/srv/private/output.txt"], false)!;
+    app.store.createBusinessConversion({
+      businessSystemId: system.id, kind: "path-test", summary: "Path test", status: "completed",
+      inputs: ["file:///srv/private/input.txt"], outputs: ["/srv/private/output.txt"], metadata: {},
+    });
+    const detail = await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}`));
+    const detailBody = await detail.json() as Record<string, any>;
+    expect(JSON.stringify(detailBody)).not.toContain("/srv/private");
+    expect(detailBody.projects[0].sources[0].fileRef).toBe("[REDACTED]");
+    const conversions = await (await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/conversions`))).json() as Array<Record<string, any>>;
+    expect(conversions[0].inputs).toEqual(["[REDACTED]"]);
+    expect(conversions[0].outputs).toEqual(["[REDACTED]"]);
+    const runs = await (await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/runs`))).json() as Array<Record<string, any>>;
+    expect(JSON.stringify(runs)).not.toContain("/srv/private");
+    expect(run.id).toBe(runs[0].id);
+  } finally { app.stop(); }
+});
+
 test("Harness projection distinguishes host availability from configured container transport", async () => {
   const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
   try {

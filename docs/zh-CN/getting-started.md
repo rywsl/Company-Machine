@@ -25,7 +25,7 @@ bun run backend/src/index.ts
 
 服务监听 `127.0.0.1:3000`，Web App 静态资源位于 `frontend/dist`。
 
-生产部署可以使用 `deploy/mao-control-plane.Containerfile` 构建 Podman 镜像，并用 `deploy/mao-control-plane.container` 作为 Quadlet 单元。`/healthz` 是进程存活检查，`/readyz` 会检查 SQLite 和当前 Podman/Kiri 运行时。
+完整生产部署使用同一用户的 Bun systemd user service 和 rootless Podman/Kiri，参见 `deploy/mao-control-plane.service`。控制面与运行时共享宿主路径命名空间，项目来源、物料文件和厂长邮箱才能继续使用本地挂载。`deploy/mao-control-plane.Containerfile` 可用于构建便携 Web 镜像，容器化控制面需要额外的宿主路径映射设计。`/healthz` 是进程存活检查，`/readyz` 会检查 SQLite 和当前 Podman/Kiri 运行时。
 
 ## 准备 Podman
 
@@ -36,7 +36,7 @@ bun run factory status
 
 桌面进程继承旧 PATH 时设置 `MAO_PODMAN_EXECUTABLE`。
 
-`bun run build:test-images` 使用默认 `oven/bun` 基础镜像时会先读取配置的 GeoIP 端点。中国大陆网络会并行探测配置的 Docker Hub 镜像，并选择能返回目标 manifest 且下载速度最快的镜像。使用 `--base` 可以明确指定基础镜像。部署环境可以通过 `MAO_GEOIP_COUNTRY`、`MAO_GEOIP_URL` 或 `MAO_DOCKERHUB_MIRRORS` 指定区域、GeoIP 端点和镜像清单。
+`bun run build:test-images` 使用默认 `oven/bun` 基础镜像时会先读取配置的 GeoIP 端点。中国大陆网络会并行探测配置的 Docker Hub 镜像，并选择能返回目标 manifest 且下载速度最快的镜像。GeoIP 支持按顺序配置多个端点，单个端点超时或返回异常时继续尝试后续端点。使用 `--base` 可以明确指定基础镜像。部署环境可以通过 `MAO_GEOIP_COUNTRY`、`MAO_GEOIP_URL`、`MAO_GEOIP_URLS` 或 `MAO_DOCKERHUB_MIRRORS` 指定区域、GeoIP 端点和镜像清单。
 
 ## 在 Linux 上使用 headless Kiri
 

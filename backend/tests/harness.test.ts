@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chooseTransport, decodeOfficialLine, harnessProcessCommand, officialCliInvocation, officialHarness, officialHarnesses, OfficialCliTransport, spawnOfficialProcess, windowsClaudeExecutable } from "../src/harness";
+import { chooseTransport, decodeOfficialLine, harnessEndpointEnv, harnessProcessCommand, officialCliInvocation, officialHarness, officialHarnesses, OfficialCliTransport, spawnOfficialProcess, windowsClaudeExecutable } from "../src/harness";
 import { harnessEgressPlan } from "../src/harness-sandbox";
 import { AcpTransport, decodeAcpLine } from "../src/acp";
 import type { HarnessEvent, HarnessSession } from "../src/harness";
@@ -10,6 +10,13 @@ import type { HarnessEvent, HarnessSession } from "../src/harness";
 const acpRequest = { task: "构建项目", contract: "你是厂长", model: "kimi", cwd: "/workspace" };
 const acpDefinition = officialHarness("kimi-code")!;
 const encoder = new TextEncoder();
+
+test("Harness endpoints reject credential-bearing query strings", () => {
+  expect(() => harnessEndpointEnv(officialHarness("claude-code")!, "https://provider.example/v1?api_key=secret")).toThrow();
+  expect(() => harnessEndpointEnv(officialHarness("codex")!, "https://provider.example/v1?token=secret")).toThrow();
+  expect(() => harnessEndpointEnv(officialHarness("kimi-code")!, "https://provider.example/acp?credential=secret")).toThrow();
+  expect(harnessEndpointEnv(officialHarness("claude-code")!, "https://provider.example/v1?tenant=mao")).toEqual({ ANTHROPIC_BASE_URL: "https://provider.example/v1?tenant=mao" });
+});
 
 test("cancels a pending official CLI event read when the owned stream stays open", async () => {
   let cancellations = 0;

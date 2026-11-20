@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chooseFastestMirror, mirrorImageReference, parseDockerHubImage, selectDockerHubMirror } from "./dockerhub-mirror";
+import { chooseFastestMirror, detectGeoIpCountry, mirrorImageReference, parseDockerHubImage, selectDockerHubMirror } from "./dockerhub-mirror";
 
 test("normalizes Docker Hub image names without rewriting non-Docker Hub registries", () => {
   expect(parseDockerHubImage("ubuntu")).toEqual({ path: "library/ubuntu", reference: "latest" });
@@ -42,4 +42,42 @@ test("probes domestic mirrors only for mainland China and falls back on GeoIP fa
     mirrors: ["fast.example"],
   });
   expect(outside).toMatchObject({ mainlandChina: false, image: "oven/bun:1.3-alpine", probes: [] });
+});
+
+test("tries GeoIP endpoints in order and continues after failures", async () => {
+  const requests: string[] = [];
+  const country = await detectGeoIpCountry({
+    geoIpUrls: ["https://unavailable.example/country", "https://cn.example/country"],
+    fetcher: async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("unavailable.example")) throw new Error("network unavailable");
+      return new Response(JSON.stringify({ country_code: "CN" }), { status: 200 });
+    },
+  });
+  expect(country).toBe("CN");
+  expect(requests).toEqual(["https://unavailable.example/country", "https://cn.example/country"]);
+});
+
+test("keeps the legacy single GeoIP URL option as the first and only endpoint", async () => {
+  const requests: string[] = [];
+  const country = await detectGeoIpCountry({
+    geoIpUrl: "https://legacy.example/country",
+    geoIpUrls: ["https://ignored.example/country"],
+    fetcher: async (input) => {
+      requests.push(String(input));
+      return new Response("US", { status: 200 });
+    },
+  });
+  expect(country).toBe("US");
+  expect(requests).toEqual(["https://legacy.example/country"]);
+});
+
+test("keeps the original image when every GeoIP endpoint fails", async () => {
+  const selection = await selectDockerHubMirror("oven/bun:1.3-alpine", {
+    geoIpUrls: ["https://first.example/country", "https://second.example/country"],
+    fetcher: async () => { throw new Error("network unavailable"); },
+    mirrors: ["fast.example"],
+  });
+  expect(selection).toMatchObject({ mainlandChina: false, image: "oven/bun:1.3-alpine", probes: [] });
 });

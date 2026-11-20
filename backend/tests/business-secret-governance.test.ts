@@ -36,3 +36,22 @@ test("sanitizes credentials before persisting business records and conversions",
     app.stop();
   }
 });
+
+test("sanitizes secret request metadata and audit details at the storage boundary", () => {
+  const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+  try {
+    const project = app.store.createIntake({ name: "Secret metadata", skip_default_units: true });
+    const secret = "request-secret-value";
+    const request = app.store.createSecretRequest({
+      projectId: project.id,
+      name: "PROJECT_TOKEN",
+      vaultRef: "vault://request-secret",
+      metadata: { api_key: secret, note: `token=${secret}` },
+    });
+    app.store.recordSecretAudit(request.id, "checked", "operator", undefined, { authorization: secret, note: `secret=${secret}` });
+    expect(JSON.stringify(app.store.db.query("SELECT metadata FROM secret_requests").all())).not.toContain(secret);
+    expect(JSON.stringify(app.store.db.query("SELECT detail FROM secret_audit").all())).not.toContain(secret);
+    expect(app.store.getSecretRequest(request.id)?.metadata).toMatchObject({ api_key: "[REDACTED]", note: "token=[REDACTED]" });
+    expect(app.store.listSecretAudit(request.id).find((entry) => Object.hasOwn(entry.detail, "authorization"))?.detail).toMatchObject({ authorization: "[REDACTED]", note: "secret=[REDACTED]" });
+  } finally { app.stop(); }
+});

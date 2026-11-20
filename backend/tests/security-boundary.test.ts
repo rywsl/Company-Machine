@@ -84,3 +84,26 @@ test("scoped SSE filters foreign events and redacts event payloads", async () =>
     if (previous.csrf === undefined) delete process.env.MAO_CSRF_TOKEN; else process.env.MAO_CSRF_TOKEN = previous.csrf;
   }
 });
+
+test("scoped Foreman talk requires and enforces a business context", async () => {
+  const previous = { scopes: process.env.MAO_AUTH_SCOPES_JSON, csrf: process.env.MAO_CSRF_TOKEN };
+  process.env.MAO_AUTH_SCOPES_JSON = JSON.stringify({ foreman: { role: "foreman", business_systems: ["allowed"] } });
+  process.env.MAO_CSRF_TOKEN = "csrf";
+  const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+  try {
+    app.store.createBusinessSystem({ id: "allowed", name: "Allowed" });
+    app.store.createBusinessSystem({ id: "denied", name: "Denied" });
+    const headers = { authorization: "Bearer foreman", "x-mao-csrf": "csrf", "content-type": "application/json" };
+    const missing = await app.fetch(new Request("http://localhost/api/web/talk", { method: "POST", headers, body: JSON.stringify({ text: "missing scope" }) }));
+    expect(missing.status).toBe(400);
+    const accepted = await app.fetch(new Request("http://localhost/api/web/talk", { method: "POST", headers, body: JSON.stringify({ text: "allowed scope", business_system_id: "allowed" }) }));
+    expect(accepted.status).toBe(201);
+    const foreign = await app.fetch(new Request("http://localhost/api/web/talk", { method: "POST", headers, body: JSON.stringify({ text: "foreign scope", business_system_id: "denied" }) }));
+    expect(foreign.status).toBe(403);
+    expect((await app.fetch(new Request("http://localhost/api/web/talk", { headers }))).status).toBe(403);
+  } finally {
+    app.stop();
+    if (previous.scopes === undefined) delete process.env.MAO_AUTH_SCOPES_JSON; else process.env.MAO_AUTH_SCOPES_JSON = previous.scopes;
+    if (previous.csrf === undefined) delete process.env.MAO_CSRF_TOKEN; else process.env.MAO_CSRF_TOKEN = previous.csrf;
+  }
+});

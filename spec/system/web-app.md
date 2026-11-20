@@ -315,7 +315,9 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 
 Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现。运行在领用单元时解析绑定，并记录官方 Harness ID 和生效的模型 ID。官方 CLI 接收模型参数。ACP 使用 `session/new` 或 `session/load` 提供的 `model` 配置选项，并在 `session/prompt` 前确认选择。Kimi Code 通过 `--model MODEL acp` 接收模型，Pi 通过 `--model MODEL` 接收模型，Qwen Code 通过 `--model MODEL` 接收模型。无法使用明确绑定的模型时，执行会报告原因。
 - `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
+- scoped Foreman 的对话写入必须带 `business_system_id` 或 `project_id`，邮箱操作和 SSE 事件按该业务上下文过滤。全局对话读取保留给管理员。
 - 业务系统、DAG、运行、基础单元和 Conversion 的公开响应统一经过字段级脱敏。平台 scoped viewer 不能读取平台机器、可执行文件和运行时连接细节，只有管理员可以读取或启动全局运行时。
+- 项目来源的 `fileRef`、运行输入输出、Conversion 输入输出和 Lineage 只公开可移植业务引用。绝对宿主路径、`file://`、`data:` 和其他本地定位在公开投影中替换为脱敏占位值。
 - `GET /api/v1/foreman/inbox`、`POST /api/v1/foreman/inbox/<id>/claim` 和 `POST /api/v1/foreman/inbox/<id>/done` 提供 Foreman 的持久信息分配队列
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
 - 保存厂长 Harness 配置后，控制面立即重新扫描此前已入队的厂长消息并派发，不要求重启服务或用户再次点击 dispatch。服务启动和恢复周期会按 `claimed_at` 回收超过 `MAO_FOREMAN_CLAIM_TIMEOUT_S` 的失联轮次，默认超时为 900 秒，并记录 `foreman.message.requeued` 事件。
@@ -353,6 +355,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，运行时健康检查和带镜像的官方 Harness/ACP 启动必须复用同一解析结果，避免桌面进程继承旧 PATH 后误报运行时缺失
 - `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱。保险箱写入成功后，SQLite 在同一事务内更新请求状态、记录可用事件并重新排队所需请求均已可用的工位。事件推送与派发在提交后执行。若保险箱已写入而 SQLite 提交失败，用户可重新提交同一请求。
 - 密钥请求状态支持 `requested`、`available`、`denied`、`revoked` 和 `expired`。已经 `available` 的请求不能覆盖写入，轮换必须先调用 `rotate` 生成新的请求和保险箱引用。`deny`、`revoke`、`rotate` 和 `audit` 路由只返回请求标识、状态和脱敏审计记录，审计记录不能包含密钥值。Operator 读取可用密钥时登记使用事件，并按项目请求和工位绑定范围恢复运行。
+- SecretRequest 元数据与审计明细在存储边界统一脱敏，历史记录读取也重新经过脱敏，避免内部 Harness 事件绕过 Web 路由保护。
 - 服务启动恢复时，已授权运行中等待资源的工位在所有已绑定的本项目请求均为可用时重新排队，再按 DAG 派发。缺少资源关联、请求仍未完成或归属其他项目的工位继续等待。
 
 本地保险箱将加密记录写入同目录的私有临时文件，再原子替换正式文件。首次写入时允许正式文件缺失。读取出错或记录格式损坏时停止写入，保留正式文件供恢复。

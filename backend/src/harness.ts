@@ -79,6 +79,7 @@ type SpawnOptions = Pick<HarnessSessionRequest, "cwd" | "containerImage" | "netw
 type HarnessRelay = Awaited<ReturnType<typeof prepareHarnessEgress>>;
 export type OfficialSpawn = (argv: string[], options: SpawnOptions) => OfficialProcess | Promise<OfficialProcess>;
 const MAX_STDERR_BYTES = 16 * 1024;
+const SENSITIVE_ENDPOINT_QUERY = /(?:api[_-]?key|secret|token|password|authorization|credential)/i;
 
 const DEFINITIONS: Record<OfficialHarnessName, HarnessDefinition> = {
   "claude-code": { id: "claude-code", displayName: "Claude Code", executable: "claude", transportPreference: "official-cli", transcriptFormat: "stream-json", supportsResume: true },
@@ -115,10 +116,15 @@ export function requireDeclaredTransport(definition: HarnessDefinition, acpAvail
 }
 
 export function harnessEndpointEnv(definition: HarnessDefinition, baseUrl: string): Record<string, string> {
-  if (!baseUrl || (definition.id !== "claude-code" && definition.id !== "codex")) return {};
+  if (!baseUrl) return {};
   const url = new URL(baseUrl);
-  if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new Error("Harness Base URL must be an HTTP(S) address without credentials");
-  return definition.id === "claude-code" ? { ANTHROPIC_BASE_URL: baseUrl } : { OPENAI_BASE_URL: baseUrl };
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.hash
+    || [...url.searchParams.keys()].some((key) => SENSITIVE_ENDPOINT_QUERY.test(key))) {
+    throw new Error("Harness Base URL must be an HTTP(S) address without credentials");
+  }
+  if (definition.id === "claude-code") return { ANTHROPIC_BASE_URL: baseUrl };
+  if (definition.id === "codex") return { OPENAI_BASE_URL: baseUrl };
+  return {};
 }
 
 export function officialCliInvocation(definition: HarnessDefinition, request: HarnessSessionRequest): string[] {

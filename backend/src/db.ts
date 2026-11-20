@@ -56,6 +56,11 @@ const parseList = (value: unknown): string[] => {
   }
 };
 
+function mergedConversionStatus(current: BusinessConversion["status"], incoming: BusinessConversion["status"]): BusinessConversion["status"] {
+  const rank: Record<BusinessConversion["status"], number> = { planned: 0, running: 1, failed: 2, completed: 3 };
+  return rank[incoming] > rank[current] ? incoming : current;
+}
+
 export interface IntakeInput {
   name?: string;
   project_name?: string;
@@ -185,7 +190,7 @@ export class SqliteStore {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS business_run_dispatch (run_id TEXT PRIMARY KEY);
-      CREATE TABLE IF NOT EXISTS business_run_graphs (run_id TEXT PRIMARY KEY, edges TEXT NOT NULL, edges_indexed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS business_run_graphs (run_id TEXT PRIMARY KEY, edges TEXT NOT NULL, nodes TEXT, edges_indexed INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS business_run_edges (
         run_id TEXT NOT NULL, source_id TEXT NOT NULL, target_id TEXT NOT NULL, position INTEGER NOT NULL,
         PRIMARY KEY (run_id, source_id, target_id)
@@ -251,6 +256,7 @@ export class SqliteStore {
     }).immediate();
     this.addColumnIfMissing("harness_profiles", "session_timeout_s", `INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}`);
     this.addColumnIfMissing("business_run_graphs", "edges_indexed", "INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("business_run_graphs", "nodes", "TEXT");
     this.addColumnIfMissing("machine_attempts", "owner_token", "TEXT");
   }
 
@@ -463,18 +469,21 @@ export class SqliteStore {
     return this.db.transaction(() => {
       if (!this.db.query("SELECT 1 FROM business_systems WHERE id = ?").get(businessSystemId)) return undefined;
       const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.status !== "archived");
+      const graph = this.businessGraph(businessSystemId);
+      const executionUnits = graph.nodes ? units.filter((unit) => graph.nodes!.has(unit.id)) : units;
       const timestamp = this.timestamp();
       const safeMetadata = redactStoredValue(metadata) as Record<string, unknown>;
-      const run: BusinessRun = { id: this.uuid(), businessSystemId, status: units.length ? "queued" : "failed", trigger, metadata: safeMetadata, createdAt: timestamp, updatedAt: timestamp };
+      const run: BusinessRun = { id: this.uuid(), businessSystemId, status: executionUnits.length ? "queued" : "failed", trigger, metadata: safeMetadata, createdAt: timestamp, updatedAt: timestamp };
       this.db.query("INSERT INTO business_runs (id,business_system_id,status,trigger,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
         .run(run.id, businessSystemId, run.status, trigger, json(safeMetadata), timestamp, timestamp);
       if (dispatch && run.status === "queued") this.authorizeBusinessRunDispatch(run.id);
-      const edges = this.businessGraph(businessSystemId).edges;
-      this.db.query("INSERT INTO business_run_graphs (run_id, edges) VALUES (?,?)").run(run.id, json(edges));
+      const edges = graph.edges;
+      this.db.query("INSERT INTO business_run_graphs (run_id, edges, nodes) VALUES (?,?,?)")
+        .run(run.id, json(edges), graph.nodes ? json([...graph.nodes]) : null);
       this.indexRunEdges(run.id, edges);
       const insert = this.db.query("INSERT INTO unit_runs (id,run_id,unit_id,status,session_id,inputs,outputs,error,created_at,updated_at) VALUES (?,?,?,'queued',NULL,?,'[]',NULL,?,?)");
       const serializedInputs = json(inputs);
-      for (const unit of units) insert.run(this.uuid(), run.id, unit.id, serializedInputs, timestamp, timestamp);
+      for (const unit of executionUnits) insert.run(this.uuid(), run.id, unit.id, serializedInputs, timestamp, timestamp);
       return run;
     }).immediate();
   }
@@ -745,7 +754,8 @@ export class SqliteStore {
     const updateUnit = this.db.query("UPDATE business_units SET status=?, updated_at=? WHERE id=?");
     const kernel = run.metadata.kernel;
     const legacy = Boolean(kernel && typeof kernel === "object" && !Array.isArray(kernel) && (kernel as Record<string, unknown>).execution === "legacy");
-    const graphUnits = new Set(this.businessGraph(run.businessSystemId).edges.flatMap(({ source, target }) => [source, target]));
+    const graph = this.runGraph(run);
+    const graphUnits = graph.nodes ?? new Set(graph.edges.flatMap(({ source, target }) => [source, target]));
     for (const item of unitRuns) {
       if (item.status !== "queued") continue;
       const unit = this.getBusinessUnit(item.unitId);
@@ -852,11 +862,7 @@ export class SqliteStore {
   }
 
   private runEdges(run: BusinessRun): BusinessRunEdge[] {
-    const stored = this.db.query<{ edges: string; edges_indexed: number }>("SELECT edges, edges_indexed FROM business_run_graphs WHERE run_id=?").get(run.id);
-    const edges: BusinessRunEdge[] = stored ? JSON.parse(stored.edges) : this.businessGraph(run.businessSystemId).edges;
-    if (!stored) this.db.query("INSERT INTO business_run_graphs (run_id,edges) VALUES (?,?)").run(run.id, json(edges));
-    if (!stored?.edges_indexed) this.indexRunEdges(run.id, edges);
-    return edges;
+    return this.runGraph(run).edges;
   }
 
   private indexRunEdges(runId: string, edges: BusinessRunEdge[]): void {
@@ -947,10 +953,10 @@ export class SqliteStore {
     return unit;
   }
 
-  private businessGraph(businessSystemId: string): { edges: BusinessRunEdge[] } {
+  private businessGraph(businessSystemId: string): { edges: BusinessRunEdge[]; nodes?: Set<string> } {
     const row = this.db.query("SELECT metadata FROM business_systems WHERE id=?").get(businessSystemId) as { metadata?: string } | undefined;
     const metadata = parseJson(row?.metadata);
-    const graph = metadata.graph && typeof metadata.graph === "object" ? metadata.graph as { edges?: unknown } : {};
+    const graph = metadata.graph && typeof metadata.graph === "object" ? metadata.graph as { nodes?: unknown; edges?: unknown } : {};
     const units = this.listBusinessUnits(businessSystemId).filter((unit) => unit.status !== "archived");
     const unitIds = new Set(units.map((unit) => unit.id));
     const aliases = new Map<string, string>();
@@ -961,12 +967,29 @@ export class SqliteStore {
       const target = aliases.get((edge as any).target) ?? (edge as any).target;
       return unitIds.has(source) && unitIds.has(target) ? [{ source, target }] : [];
     }) : [];
-    if (Array.isArray(graph.edges)) return { edges: authored };
+    const authoredNodes = Array.isArray(graph.nodes)
+      ? new Set(graph.nodes.flatMap((node): string[] => {
+        if (!node || typeof node !== "object" || typeof (node as any).id !== "string") return [];
+        const id = aliases.get((node as any).id) ?? (node as any).id;
+        return unitIds.has(id) ? [id] : [];
+      }))
+      : undefined;
+    if (Array.isArray(graph.edges)) return { edges: authored, ...(authoredNodes ? { nodes: authoredNodes } : {}) };
     const fallback = units.filter((unit) => unit.kind === "operator").flatMap((operator) => {
       const machine = units.find((candidate) => candidate.kind === "machine" && candidate.projectId === operator.projectId);
       return machine ? [{ source: machine.id, target: operator.id }] : [];
     });
     return { edges: fallback };
+  }
+
+  private runGraph(run: BusinessRun): { edges: BusinessRunEdge[]; nodes?: Set<string> } {
+    const stored = this.db.query<{ edges: string; nodes: string | null; edges_indexed: number }>("SELECT edges, nodes, edges_indexed FROM business_run_graphs WHERE run_id=?").get(run.id);
+    const graph = stored
+      ? { edges: JSON.parse(stored.edges) as BusinessRunEdge[], ...(stored.nodes ? { nodes: new Set(parseList(stored.nodes)) } : {}) }
+      : this.businessGraph(run.businessSystemId);
+    if (!stored) this.db.query("INSERT INTO business_run_graphs (run_id,edges,nodes) VALUES (?,?,?)").run(run.id, json(graph.edges), graph.nodes ? json([...graph.nodes]) : null);
+    if (!stored?.edges_indexed) this.indexRunEdges(run.id, graph.edges);
+    return graph;
   }
 
   private businessUnitFromRow(row: any): BusinessUnit {
@@ -1002,7 +1025,7 @@ export class SqliteStore {
       repoUrl: item.repo_url ?? undefined,
       fileRef: item.file_ref ?? undefined,
       localFolder: item.local_folder ?? undefined,
-      metadata: parseJson(item.metadata),
+      metadata: redactStoredValue(parseJson(item.metadata)) as Record<string, unknown>,
       createdAt: item.created_at,
     }));
     const secretRequests = (secretRows ?? this.db.query("SELECT * FROM secret_requests WHERE project_id = ? ORDER BY created_at, id").all(row.id)).map((item: any) => ({
@@ -1011,7 +1034,7 @@ export class SqliteStore {
       name: item.name,
       vaultRef: item.vault_ref,
       status: item.status,
-      metadata: parseJson(item.metadata),
+      metadata: redactStoredValue(parseJson(item.metadata)) as Record<string, unknown>,
       createdAt: item.created_at,
       updatedAt: item.updated_at,
     }));
@@ -1019,7 +1042,7 @@ export class SqliteStore {
       id: row.id,
       businessSystemId: row.business_system_id ?? undefined,
       name: row.name,
-      metadata: parseJson(row.metadata),
+      metadata: redactStoredValue(parseJson(row.metadata)) as Record<string, unknown>,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       sources,
@@ -1174,12 +1197,19 @@ export class SqliteStore {
         WHERE business_system_id=? AND kind=? AND summary=? AND inputs=? AND outputs=?
         ORDER BY created_at DESC, id DESC LIMIT 1
       `).get(input.businessSystemId, input.kind, input.summary, inputJson, outputJson);
-      if (existing) return {
-        id: existing.id, businessSystemId: existing.business_system_id, kind: existing.kind,
-        summary: existing.summary, status: existing.status, inputs: parseList(existing.inputs),
-        outputs: parseList(existing.outputs), producer: existing.producer ? parseJson(existing.producer) as BusinessConversion["producer"] : undefined,
-        metadata: parseJson(existing.metadata), createdAt: existing.created_at, updatedAt: existing.updated_at,
-      };
+      if (existing) {
+        const status = mergedConversionStatus(existing.status, safe.status);
+        const producer = safe.producer ?? (existing.producer ? parseJson(existing.producer) as BusinessConversion["producer"] : undefined);
+        const metadata = { ...parseJson(existing.metadata), ...(safe.metadata ?? {}) };
+        const updatedAt = this.timestamp();
+        this.db.query("UPDATE business_conversions SET status=?, producer=?, metadata=?, updated_at=? WHERE id=?")
+          .run(status, producer ? json(producer) : null, json(metadata), updatedAt, existing.id);
+        return {
+          id: existing.id, businessSystemId: existing.business_system_id, kind: existing.kind,
+          summary: existing.summary, status, inputs: parseList(existing.inputs), outputs: parseList(existing.outputs),
+          producer, metadata, createdAt: existing.created_at, updatedAt,
+        };
+      }
       const timestamp = this.timestamp();
       const value: BusinessConversion = { ...safe, id: this.uuid(), createdAt: timestamp, updatedAt: timestamp };
       this.db.query("INSERT INTO business_conversions (id,business_system_id,kind,summary,status,inputs,outputs,producer,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
@@ -1244,8 +1274,9 @@ export class SqliteStore {
         .get(input.projectId, input.name);
       if (existing) return this.getSecretRequest(existing.id)!;
       const timestamp = this.timestamp();
+      const metadata = redactStoredValue(input.metadata ?? {}) as Record<string, unknown>;
       const value: SecretRequest = { id: this.uuid(), projectId: input.projectId, name: input.name, vaultRef: input.vaultRef,
-        status: input.status ?? "requested", metadata: input.metadata ?? {}, createdAt: timestamp, updatedAt: timestamp };
+        status: input.status ?? "requested", metadata, createdAt: timestamp, updatedAt: timestamp };
       this.db.query("INSERT INTO secret_requests (id,project_id,name,vault_ref,status,metadata,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
         .run(value.id, value.projectId, value.name, value.vaultRef, value.status, json(value.metadata), timestamp, timestamp);
       this.recordSecretAudit(value.id, "requested", "control", undefined, { name: value.name });
@@ -1475,7 +1506,7 @@ export class SqliteStore {
     return this.db.query(`SELECT request.*, project.name AS project_name FROM secret_requests AS request
       LEFT JOIN projects AS project ON project.id = request.project_id ORDER BY request.created_at, request.id`).all().map((row: any) => ({
       id: row.id, projectId: row.project_id, name: row.name, vaultRef: row.vault_ref, status: row.status,
-      projectName: row.project_name ?? undefined, metadata: parseJson(row.metadata), createdAt: row.created_at, updatedAt: row.updated_at,
+      projectName: row.project_name ?? undefined, metadata: redactStoredValue(parseJson(row.metadata)) as Record<string, unknown>, createdAt: row.created_at, updatedAt: row.updated_at,
     }));
   }
 
@@ -1488,7 +1519,7 @@ export class SqliteStore {
       name: row.name,
       vaultRef: row.vault_ref,
       status: row.status,
-      metadata: parseJson(row.metadata),
+      metadata: redactStoredValue(parseJson(row.metadata)) as Record<string, unknown>,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -1513,14 +1544,15 @@ export class SqliteStore {
   }
 
   recordSecretAudit(requestId: string, action: string, actor: string, unitRunId?: string, detail: Record<string, unknown> = {}): void {
+    const safeDetail = redactStoredValue(detail) as Record<string, unknown>;
     this.db.query("INSERT INTO secret_audit (id,request_id,action,unit_run_id,actor,detail,created_at) VALUES (?,?,?,?,?,?,?)")
-      .run(this.uuid(), requestId, action, unitRunId ?? null, actor, json(detail), this.timestamp());
+      .run(this.uuid(), requestId, action, unitRunId ?? null, actor, json(safeDetail), this.timestamp());
   }
 
   listSecretAudit(requestId: string): Array<{ id: string; requestId: string; action: string; unitRunId?: string; actor: string; detail: Record<string, unknown>; createdAt: string }> {
     return this.db.query("SELECT * FROM secret_audit WHERE request_id=? ORDER BY created_at,id").all(requestId).map((row: any) => ({
       id: row.id, requestId: row.request_id, action: row.action, unitRunId: row.unit_run_id ?? undefined,
-      actor: row.actor, detail: parseJson(row.detail), createdAt: row.created_at,
+      actor: row.actor, detail: redactStoredValue(parseJson(row.detail)) as Record<string, unknown>, createdAt: row.created_at,
     }));
   }
 

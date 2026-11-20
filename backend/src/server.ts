@@ -112,6 +112,39 @@ function canMutate(principal: AuthPrincipal, role: "foreman" | "operator" = "ope
   return !principal.scoped || principal.role === "admin" || principal.role === role || principal.role === "foreman";
 }
 
+function talkScopeMetadata(body: Record<string, unknown>, principal: AuthPrincipal | undefined, store: SqliteStore): {
+  metadata?: Record<string, unknown>;
+  error?: Record<string, unknown>;
+  status?: number;
+} {
+  const requestedSystem = typeof body.business_system_id === "string" && body.business_system_id.length > 0 ? body.business_system_id : undefined;
+  const requestedProject = typeof body.project_id === "string" && body.project_id.length > 0 ? body.project_id : undefined;
+  const project = requestedProject ? store.getProject(requestedProject) : undefined;
+  if (requestedProject && !project) return { error: { error: "project was not found" }, status: 404 };
+  if (requestedSystem && !store.getBusinessSystem(requestedSystem)) return { error: { error: "business system was not found" }, status: 404 };
+  if (requestedSystem && project?.businessSystemId && project.businessSystemId !== requestedSystem) {
+    return { error: { code: "SCOPE_INVALID", message: "项目不属于指定业务系统" }, status: 400 };
+  }
+  const systemId = requestedSystem ?? project?.businessSystemId;
+  if (principal?.scoped) {
+    if (systemId && !canAccessSystem(principal, systemId)) return { error: { code: "FORBIDDEN_SCOPE", message: "当前凭据没有该业务系统权限" }, status: 403 };
+    if (requestedProject && !canAccessProject(principal, store, requestedProject)) return { error: { code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, status: 403 };
+    if (principal.role !== "admin" && !systemId && !requestedProject) {
+      return { error: { code: "SCOPE_REQUIRED", message: "范围凭据的厂长消息需要业务系统或项目上下文" }, status: 400 };
+    }
+  }
+  return { metadata: { ...(systemId ? { business_system_id: systemId } : {}), ...(requestedProject ? { project_id: requestedProject } : {}) } };
+}
+
+function talkEnvelopeVisible(principal: AuthPrincipal, store: SqliteStore, envelope: { messageId: string }): boolean {
+  if (!principal.scoped || principal.role === "admin") return true;
+  const metadata = store.talkMessageMetadata(envelope.messageId);
+  const projectId = typeof metadata.project_id === "string" ? metadata.project_id : undefined;
+  if (projectId) return canAccessProject(principal, store, projectId);
+  const systemId = typeof metadata.business_system_id === "string" ? metadata.business_system_id : undefined;
+  return Boolean(systemId && canAccessSystem(principal, systemId));
+}
+
 function corsHeaders(request: Request): Record<string, string> {
   const configured = process.env.MAO_CORS_ORIGIN?.trim();
   const origin = request.headers.get("origin");
@@ -586,6 +619,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if ((url.pathname.startsWith("/api/v1/foreman/") || url.pathname.startsWith("/api/v1/talk") || url.pathname === "/api/web/talk") && !canMutate(principal, "foreman")) {
         return response({ code: "FORBIDDEN_ROLE", message: "当前凭据没有厂长控制权限" }, 403);
       }
+      if (principal.role === "foreman" && (url.pathname === "/api/v1/talk" || url.pathname === "/api/v1/foreman/inbox" || url.pathname === "/api/web/talk") && request.method === "GET") {
+        return response({ code: "FORBIDDEN_SCOPE", message: "范围厂长需要通过具体业务系统上下文读取对话" }, 403);
+      }
     }
     if (url.pathname === "/healthz" && request.method === "GET") return response({ ok: true, service: "mao-control-plane" });
     if (url.pathname === "/readyz" && request.method === "GET") {
@@ -931,7 +967,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const body = await readJson(request);
       const text = typeof body.body === "string" ? body.body : body.text;
       if (typeof text !== "string" || text.length === 0) return response({ error: "body is required" }, 400);
-      const { message, envelope, events: committed } = store.enqueueForemanTalk({ ...body, body: redactText(text) });
+      const scope = talkScopeMetadata(body, principal, store);
+      if (scope.error) return response(scope.error, scope.status);
+      const { message, envelope, events: committed } = store.enqueueForemanTalk({ body: redactText(text), metadata: scope.metadata });
       for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
       return response({ state: hasForeman() ? "accepted" : "waiting_foreman", setup_required: !hasForeman(), message, foremanTurn: foreman.turnState(envelope) }, 201);
@@ -941,6 +979,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const body = await readJson(request);
       const text = typeof body.text === "string" ? body.text : body.body;
       if (typeof text !== "string" || text.length === 0 || typeof body.turn_id !== "string") return response({ error: "text and turn_id are required" }, 400);
+      const envelope = store.getForemanMessage(body.turn_id);
+      if (principal?.scoped && (!envelope || !talkEnvelopeVisible(principal, store, envelope))) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该厂长轮次权限" }, 403);
       const message = store.addTalkMessage({ role: "foreman", body: redactText(text), metadata: { turn_id: body.turn_id, by: typeof body.by === "string" ? body.by : "foreman" } });
       events.publish("talk.foreman.replied", message);
       return response({ state: "accepted", message }, 201);
@@ -951,6 +991,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     const foremanAck = url.pathname.match(/^\/api\/v1\/foreman\/inbox\/([^/]+)\/(claim|done)$/);
     if (foremanAck && request.method === "POST") {
+      const current = store.getForemanMessage(foremanAck[1]);
+      if (!current) return response({ error: "foreman message was not found" }, 404);
+      if (principal?.scoped && !talkEnvelopeVisible(principal, store, current)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该厂长轮次权限" }, 403);
       const envelope = foremanAck[2] === "claim" ? store.claimForemanMessage(foremanAck[1]) : store.completeForemanMessage(foremanAck[1]);
       if (!envelope) return response({ error: "foreman message was not found" }, 404);
       if (foremanAck[2] === "done" && envelope.status !== "done") {
@@ -961,6 +1004,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     const foremanCancel = url.pathname.match(/^\/api\/v1\/foreman\/inbox\/([^/]+)\/cancel$/);
     if (foremanCancel && request.method === "POST") {
+      const current = store.getForemanMessage(foremanCancel[1]);
+      if (!current) return response({ error: "厂长轮次不存在" }, 404);
+      if (principal?.scoped && !talkEnvelopeVisible(principal, store, current)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该厂长轮次权限" }, 403);
       const { cancelled, foremanTurn } = foreman.cancel(foremanCancel[1]);
       if (!foremanTurn) return response({ error: "厂长轮次不存在" }, 404);
       if (cancelled) return response({ foremanTurn });
@@ -969,6 +1015,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     const foremanDispatch = url.pathname.match(/^\/api\/v1\/foreman\/inbox\/([^/]+)\/dispatch$/);
     if (foremanDispatch && request.method === "POST") {
+      const current = store.getForemanMessage(foremanDispatch[1]);
+      if (!current) return response({ error: "厂长轮次不存在" }, 404);
+      if (principal?.scoped && !talkEnvelopeVisible(principal, store, current)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该厂长轮次权限" }, 403);
       runInBackground(foreman.dispatch(foremanDispatch[1]));
       return response({ state: "dispatching", inbox_id: foremanDispatch[1] }, 202);
     }
@@ -1145,7 +1194,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const body = await readJson(request);
       const text = typeof body.text === "string" ? body.text : body.body;
       if (typeof text !== "string" || text.length === 0) return response({ error: "text is required" }, 400);
-      const { message, envelope, events: committed } = store.enqueueForemanTalk({ body: redactText(text) });
+      const scope = talkScopeMetadata(body, principal, store);
+      if (scope.error) return response(scope.error, scope.status);
+      const { message, envelope, events: committed } = store.enqueueForemanTalk({ body: redactText(text), metadata: scope.metadata });
       for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
       return response({ state: hasForeman() ? "accepted" : "waiting_foreman", setup_required: !hasForeman(), message, eventCursor: store.latestEventSequence(), foremanTurn: foreman.turnState(envelope) }, 201);
@@ -1255,7 +1306,12 @@ function publicUnit(unit: any) {
 }
 
 function publicUnitRun(run: any) {
-  return { ...run, error: typeof run.error === "string" ? redactText(run.error) : run.error };
+  return {
+    ...run,
+    inputs: publicReferences(run.inputs),
+    outputs: publicReferences(run.outputs),
+    error: typeof run.error === "string" ? redactText(run.error) : run.error,
+  };
 }
 
 function publicBusinessRun(run: any) {
@@ -1267,7 +1323,13 @@ function publicBusinessSystem(system: any) {
 }
 
 function publicConversion(conversion: any) {
-  return { ...conversion, metadata: portableValue(conversion.metadata ?? {}), producer: portableValue(conversion.producer ?? {}) };
+  return {
+    ...conversion,
+    inputs: publicReferences(conversion.inputs),
+    outputs: publicReferences(conversion.outputs),
+    metadata: portableValue(conversion.metadata ?? {}),
+    producer: portableValue(conversion.producer ?? {}),
+  };
 }
 
 function publicProject(project: any) {
@@ -1276,8 +1338,13 @@ function publicProject(project: any) {
     metadata: portableValue(project.metadata ?? {}),
     sources: Array.isArray(project.sources)
       ? project.sources.map((source: any) => {
-        const { localFolder: _localFolder, ...portableSource } = source;
-        return { ...portableSource, repoUrl: repositoryReference(source.repoUrl), metadata: portableValue(source.metadata ?? {}) };
+        const { localFolder: _localFolder, fileRef, ...portableSource } = source;
+        return {
+          ...portableSource,
+          ...(fileRef === undefined ? {} : { fileRef: publicReference(fileRef) }),
+          repoUrl: repositoryReference(source.repoUrl),
+          metadata: portableValue(source.metadata ?? {}),
+        };
       })
       : [],
     secretRequests: Array.isArray(project.secretRequests)
@@ -1294,9 +1361,9 @@ function publicArtifact(record: any) {
     ...record,
     metadata: portableValue(record.metadata ?? {}),
     files: Array.isArray(record.files) ? record.files.map(publicArtifactFile) : record.files,
-    inputs: portableValue(record.inputs ?? []),
-    outputs: portableValue(record.outputs ?? []),
-    lineage: portableValue(record.lineage ?? []),
+    inputs: publicReferences(record.inputs),
+    outputs: publicReferences(record.outputs),
+    lineage: publicReferences(record.lineage),
     project_id: record.projectId,
     source_id: record.sourceId,
     record_type: record.recordType,
@@ -1311,8 +1378,20 @@ function publicArtifactFile(file: unknown): Record<string, unknown> {
   const ref = typeof value.ref === "string" ? value.ref : undefined;
   if (ref?.startsWith("file://")) value.ref = "[REDACTED]";
   const path = typeof value.path === "string" ? value.path : undefined;
-  if (path && /^(?:[A-Za-z]:[\\/]|[\\/]{1,2})/.test(path)) delete value.path;
+  if (path === "[REDACTED]" || (path && /^(?:[A-Za-z]:[\\/]|[\\/]{1,2})/.test(path))) delete value.path;
   return value;
+}
+
+function publicReference(value: unknown): unknown {
+  const portable = portableValue(value);
+  if (typeof portable !== "string") return portable;
+  if (/^(?:file|data|blob|javascript):/i.test(portable)
+    || /^(?:[A-Za-z]:[\\/]|[\\/]{1,2})/.test(portable)) return "[REDACTED]";
+  return portable;
+}
+
+function publicReferences(value: unknown): unknown[] {
+  return Array.isArray(value) ? value.map(publicReference) : [];
 }
 
 function assetPageLimit(raw: string): number | undefined {
@@ -1363,9 +1442,9 @@ function projectWebAssets(store: SqliteStore, records: Artifact[], archived: Art
       purpose: typeof document.purpose === "string" ? document.purpose : undefined,
       status: typeof document.status === "string" ? document.status : undefined,
       files: Array.isArray(document.files) ? document.files.map(publicArtifactFile) : [],
-      inputs: Array.isArray(document.inputs) ? document.inputs.filter((item): item is string => typeof item === "string") : [],
-      outputs: Array.isArray(document.outputs) ? document.outputs.filter((item): item is string => typeof item === "string") : [],
-      lineage: Array.isArray(document.lineage) ? document.lineage.filter((item): item is string => typeof item === "string") : [],
+      inputs: publicReferences(document.inputs),
+      outputs: publicReferences(document.outputs),
+      lineage: publicReferences(document.lineage),
       sealed: true,
       expired: false,
       created_at: record.createdAt,
@@ -1393,9 +1472,9 @@ function projectWebAssets(store: SqliteStore, records: Artifact[], archived: Art
         : undefined;
       return [{ ...publicArtifactFile({ ref, path, mediaType, digest }), download }];
     }),
-    inputs: record.inputs ?? [],
-    outputs: record.outputs ?? [],
-    lineage: record.lineage ?? [],
+    inputs: publicReferences(record.inputs),
+    outputs: publicReferences(record.outputs),
+    lineage: publicReferences(record.lineage),
     sealed: ["sealed", "produced", "completed"].includes(record.status ?? ""),
     expired: false,
     created_at: record.createdAt,
@@ -1406,7 +1485,11 @@ function projectWebAssets(store: SqliteStore, records: Artifact[], archived: Art
 
 function portableValue(value: unknown, key = ""): any {
   if (/(secret|token|password|api[_-]?key|authorization|cookie|local[_-]?folder|host[_-]?path)/i.test(key)) return "[REDACTED]";
-  if (typeof value === "string") return redactText(value);
+  if (typeof value === "string") {
+    if (/(?:^|[_-])path$/i.test(key) && /^(?:[A-Za-z]:[\\/]|[\\/]{1,2})/.test(value)) return "[REDACTED]";
+    if (/^file:/i.test(value)) return "[REDACTED]";
+    return redactText(value);
+  }
   if (Array.isArray(value)) return value.map((item) => portableValue(item));
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, portableValue(item, name)]));
   return value;
@@ -1825,12 +1908,19 @@ async function constitutionProjection(root: string) {
 
 function scopedEventVisible(principal: AuthPrincipal, store: SqliteStore, event: Event): boolean {
   if (!principal.scoped || principal.role === "admin") return true;
-  if (principal.role === "foreman" && (event.type.startsWith("foreman.") || event.type.startsWith("talk.foreman."))) return true;
   const data = event.data && typeof event.data === "object" && !Array.isArray(event.data) ? event.data as Record<string, unknown> : {};
+  if (principal.role === "foreman" && (event.type.startsWith("foreman.") || event.type.startsWith("talk.foreman."))) {
+    const envelopeId = typeof data.inboxId === "string" ? data.inboxId : typeof data.inbox_id === "string" ? data.inbox_id : event.type === "foreman.message.queued" || event.type === "foreman.message.claimed" || event.type === "foreman.message.done" ? typeof data.id === "string" ? data.id : undefined : undefined;
+    const envelope = envelopeId ? store.getForemanMessage(envelopeId) : undefined;
+    return Boolean(envelope && talkEnvelopeVisible(principal, store, envelope));
+  }
+  const messageMetadata = data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata) ? data.metadata as Record<string, unknown> : {};
   const systemId = ["businessSystemId", "business_system_id", "systemId", "system_id"].find((key) => typeof data[key] === "string") as string | undefined;
   const projectId = ["projectId", "project_id"].find((key) => typeof data[key] === "string") as string | undefined;
-  if (systemId) return canAccessSystem(principal, systemId);
-  if (projectId) return canAccessProject(principal, store, projectId);
+  const scopedSystemId = systemId ?? (typeof messageMetadata.business_system_id === "string" ? messageMetadata.business_system_id : undefined);
+  const scopedProjectId = projectId ?? (typeof messageMetadata.project_id === "string" ? messageMetadata.project_id : undefined);
+  if (scopedSystemId) return canAccessSystem(principal, scopedSystemId);
+  if (scopedProjectId) return canAccessProject(principal, store, scopedProjectId);
   const runId = ["runId", "run_id"].find((key) => typeof data[key] === "string") as string | undefined;
   if (runId) {
     const run = store.getBusinessRun(runId);

@@ -586,6 +586,7 @@ describe("Foreman official Harness dispatch", () => {
       expect(foremanCredential(codex)).toBeUndefined();
       expect(foremanCredential({ ...codex, baseUrl: "https://approved.example/other" })).toBeUndefined();
       expect(foremanCredential({ ...codex, baseUrl: "https://approved.example/v1/" })).toEqual({ variable: "CODEX_API_KEY", value: "codex-fixture", baseUrl: "https://approved.example/v1/" });
+      expect(foremanCredential({ ...codex, baseUrl: "https://approved.example/v1?api_key=secret" })).toBeUndefined();
     } finally {
       keys.forEach((key, index) => {
         if (previous[index] === undefined) delete process.env[key];

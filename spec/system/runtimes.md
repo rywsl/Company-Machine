@@ -187,7 +187,11 @@ DeepSeek Harness 和 ZCode 的参考文件不猜测未公开的 CLI 子命令。
 
 控制面启动官方 Harness 时保留最多 16 KiB 的 stderr 诊断。诊断进入会话失败元数据前替换 profile 环境值及常见 `api_key`、`token`、`secret`、`password` 和 `authorization` 字段，不能把原始凭据写入事件、日志或响应。
 
+Claude Code 与 Codex 的 Base URL 必须是无用户名、密码、片段和敏感查询参数的 HTTP(S) 地址。`api_key`、`token`、`secret`、`password`、`authorization` 和 `credential` 查询参数会被拒绝，凭据只能通过部署环境或 Vault 注入。
+
 Linux Kiri 的 `ensure-ready` 复用在线 Unix socket。标准 `/run/kiri/docker.sock` 与自动发现的 `/var/lib/kiri-daemon/.kiri/run/docker.sock` 都可以请求 systemd 启动 `kiri.service`。Linux Podman readiness 必须确认 rootless 能力，rootful 或未知状态返回 MAO 用户和 `systemctl --user enable --now podman.socket` 的恢复诊断。
+
+完整业务部署中，Bun 控制面与 rootless Podman 或 headless Kiri 运行在同一个用户和宿主路径命名空间。这样项目来源、Material 文件和 Foreman mailbox 的 bind mount 对控制面和容器引擎保持同一绝对路径。容器化控制面通过远程 Podman socket 连接时，需要显式宿主路径映射来启用完整挂载能力。仓库提供 `deploy/mao-control-plane.service` 作为生产 systemd user service，`deploy/mao-control-plane.Containerfile` 用于便携镜像构建。
 
 ### 4.2 `serve.json` 的增补（`daemon.md` 4.2）
 
@@ -298,6 +302,13 @@ Linux Kiri 的 `ensure-ready` 复用在线 Unix socket。标准 `/run/kiri/docke
 - `secret_names` 不变：仍然不注入模型类秘密，`none` 策略也不因此获得任何秘密。
 
 不引用 `${MODEL_PROXY}` 的 runtime（例如测试用的 fake agent）与脚本工位不受影响，M1、M2 的行为不变。判断只看 runtime 文档里有没有这个变量，不看 runtime 的名字。
+
+### 5.7 Docker Hub 镜像的 GeoIP 选择
+
+1. `MAO_GEOIP_COUNTRY` 有效时直接使用其两位国家代码，不发起 GeoIP 请求。
+2. `MAO_GEOIP_URL` 保持单端点兼容，并优先于 `MAO_GEOIP_URLS`。`MAO_GEOIP_URLS` 使用逗号分隔的端点列表，代码调用方也可以通过 `geoIpUrl` 或 `geoIpUrls` 传入同样的配置。
+3. 未配置端点时并行查询内置 GeoIP 端点，结果按配置顺序选择第一个可解析的国家代码。单个端点无效、超时、网络异常、非成功响应或无法解析国家代码时继续使用其他端点，最多读取八个端点。
+4. 任一端点返回 `CN` 后才进入中国大陆镜像探测，所有镜像并行请求目标 manifest，并按 manifest 的有效字节吞吐量选择最快者。未检测到 `CN` 或所有端点均失败时保留原始 Docker Hub 引用，不把失败的镜像源当作可用源。
 
 ---
 

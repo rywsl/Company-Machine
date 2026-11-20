@@ -137,6 +137,8 @@ describe("business record and DAG boundaries", () => {
       expect(materials[0].files[0].path).toBe("storyboard.md");
       const conversion = await body(await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/conversions`, { method: "POST", headers, body: JSON.stringify({ kind: "review-to-material", summary: "审核脚本转换为可执行物料", inputs: [created.ref], outputs: ["cas://approved-script"] }) })));
       expect(conversion.status).toBe("planned");
+      const completed = await body(await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/conversions`, { method: "POST", headers, body: JSON.stringify({ kind: "review-to-material", summary: "审核脚本转换为可执行物料", status: "completed", inputs: [created.ref], outputs: ["cas://approved-script"], producer: { operator: "operator-1" }, metadata: { resolved_by: "foreman" } }) })));
+      expect(completed).toMatchObject({ id: conversion.id, status: "completed", producer: { operator: "operator-1" }, metadata: { resolved_by: "foreman" } });
       const exported = await body(await app.fetch(new Request(`http://localhost/api/v1/business-systems/${system.id}/export`)));
       expect(exported.schema).toBe("mao.business-system/1");
       expect(exported.conversions).toHaveLength(1);

@@ -128,8 +128,8 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 |---|---|
 | `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱与资源恢复、资产限量与归档排序、对话入队及取消、SSE 分页回放与跨进程写入 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
-| `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
-| `backend/tests/business-runtime.test.ts` | 业务 DAG、Operator 来源只读交接、暂存物料的成功登记和下游挂载、文件下载授权、超时清理、启动前的运行时就绪和容器 Operator 的 ACP 能力边界 |
+| `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验，以及同一 Conversion 从 planned/running 幂等升级为 completed 的状态合并 |
+| `backend/tests/business-runtime.test.ts` | 业务 DAG 节点集合限定执行范围、Operator 来源只读交接、暂存物料的成功登记和下游挂载、文件下载授权、超时清理、启动前的运行时就绪和容器 Operator 的 ACP 能力边界 |
 | `backend/tests/material-files.test.ts` | 验证暂存普通文件、按摘要复用输入挂载、跨读取边界的密钥检测及临时文件清理 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、登记仓库与读取厂区 DAG、只读 Registry 检查与用法、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
@@ -178,7 +178,7 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 | `backend/tests/runtime.test.ts` | 运行时状态缓存、就绪去重与失败诊断 |
 | `backend/runtime/kiri.test.ts` | Linux 套接字、标准和 headless 私有 socket 的服务就绪与受限容器参数 |
 | `backend/runtime/podman.test.ts` | 沙箱参数、受管出网配置、rootless 探测、Linux 服务恢复诊断和命令日志 |
-| `backend/runtime/dockerhub-mirror.test.ts` | Docker Hub 镜像引用解析、GeoIP 区域判断、manifest 吞吐排序和失败回退 |
+| `backend/runtime/dockerhub-mirror.test.ts` | Docker Hub 镜像引用解析、GeoIP 多端点回退、区域判断、manifest 吞吐排序和失败回退 |
 | `backend/mrl/checker.test.ts` | MRL 表达式静态类型和模板 |
 | `backend/mrl/cli.test.ts` | MRL 命令行输出和用法 |
 | `backend/mrl/factory.test.ts` | Registry YAML、布局和 schema |

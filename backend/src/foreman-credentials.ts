@@ -2,6 +2,7 @@ import { resolveOfficialHarness } from "./harness";
 import type { HarnessProfile } from "./models";
 
 type ExplicitCredential = { variable: string; source?: string; base_url?: string };
+const SENSITIVE_ENDPOINT_QUERY = /(?:api[_-]?key|secret|token|password|authorization|credential)/i;
 
 const deploymentCredentials = {
   "claude-code": {
@@ -17,7 +18,8 @@ const deploymentCredentials = {
 function url(value: string): URL | undefined {
   try {
     const parsed = new URL(value);
-    if (/^https?:$/.test(parsed.protocol) && !parsed.username && !parsed.password && !parsed.hash) return parsed;
+    if (/^https?:$/.test(parsed.protocol) && !parsed.username && !parsed.password && !parsed.hash
+      && ![...parsed.searchParams.keys()].some((key) => SENSITIVE_ENDPOINT_QUERY.test(key))) return parsed;
   } catch { return undefined; }
 }
 

@@ -1,6 +1,10 @@
 import { SystemClock, type Clock } from "../src/legacy/foundation";
 
-const DEFAULT_GEOIP_URL = "https://ipapi.co/json/";
+const DEFAULT_GEOIP_URLS = [
+  "https://ipapi.co/json/",
+  "https://ipinfo.io/json",
+  "https://api.country.is/",
+];
 const DEFAULT_MIRRORS = [
   "docker.m.daocloud.io",
   "dockerproxy.net",
@@ -38,6 +42,7 @@ export type DockerHubMirrorOptions = {
   fetcher?: DockerHubMirrorFetcher;
   clock?: Pick<Clock, "monotonic">;
   geoIpUrl?: string;
+  geoIpUrls?: string[];
   mirrors?: string[];
   timeoutMs?: number;
 };
@@ -124,6 +129,16 @@ function timeoutValue(value: number | string | undefined, fallback: number): num
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function configuredGeoIpUrls(options: Pick<DockerHubMirrorOptions, "geoIpUrl" | "geoIpUrls">): string[] {
+  const source = options.geoIpUrl
+    ? [options.geoIpUrl]
+    : options.geoIpUrls?.length
+      ? options.geoIpUrls
+      : (env().MAO_GEOIP_URL ?? env().MAO_GEOIP_URLS)?.split(",") ?? DEFAULT_GEOIP_URLS;
+  const configured = [...new Set(source.map((value) => value.trim()).filter(Boolean))].slice(0, 8);
+  return configured.length ? configured : DEFAULT_GEOIP_URLS;
+}
+
 async function fetchWithTimeout(fetcher: DockerHubMirrorFetcher, input: RequestInfo | URL, init: RequestInit, timeoutMs: number): Promise<Response | undefined> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -137,20 +152,28 @@ async function fetchWithTimeout(fetcher: DockerHubMirrorFetcher, input: RequestI
   }
 }
 
-export async function detectGeoIpCountry(options: Pick<DockerHubMirrorOptions, "fetcher" | "geoIpUrl" | "timeoutMs"> = {}): Promise<string | undefined> {
-  const configured = countryCode(env().MAO_GEOIP_COUNTRY);
-  if (configured) return configured;
-  const fetcher = options.fetcher ?? fetch;
-  const endpoint = options.geoIpUrl ?? env().MAO_GEOIP_URL ?? DEFAULT_GEOIP_URL;
+async function queryGeoIpCountry(endpoint: string, fetcher: DockerHubMirrorFetcher, timeoutMs: number): Promise<string | undefined> {
   let url: URL;
   try { url = validHttpUrl(endpoint, "GeoIP URL"); } catch { return undefined; }
-  const response = await fetchWithTimeout(fetcher, url, { headers: { accept: "application/json, text/plain" } }, timeoutValue(options.timeoutMs ?? env().MAO_GEOIP_TIMEOUT_MS, 3_000));
+  let response: Response | undefined;
+  try {
+    response = await fetchWithTimeout(fetcher, url, { headers: { accept: "application/json, text/plain" } }, timeoutMs);
+  } catch { return undefined; }
   if (!response || !response.ok) return undefined;
   try {
     const text = (await response.text()).trim();
     if (/^[A-Za-z]{2}$/.test(text)) return text.toUpperCase();
     return countryCode(JSON.parse(text));
   } catch { return undefined; }
+}
+
+export async function detectGeoIpCountry(options: Pick<DockerHubMirrorOptions, "fetcher" | "geoIpUrl" | "geoIpUrls" | "timeoutMs"> = {}): Promise<string | undefined> {
+  const configured = countryCode(env().MAO_GEOIP_COUNTRY);
+  if (configured) return configured;
+  const fetcher = options.fetcher ?? fetch;
+  const timeoutMs = timeoutValue(options.timeoutMs ?? env().MAO_GEOIP_TIMEOUT_MS, 3_000);
+  const results = await Promise.all(configuredGeoIpUrls(options).map((endpoint) => queryGeoIpCountry(endpoint, fetcher, timeoutMs)));
+  return results.find((value): value is string => Boolean(value));
 }
 
 function score(probe: DockerHubMirrorProbe): number {

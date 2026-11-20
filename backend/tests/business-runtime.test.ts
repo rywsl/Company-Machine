@@ -401,6 +401,20 @@ describe("Bun business execution loop", () => {
     }
   });
 
+  test("executes only units declared by an authored graph node set", () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    try {
+      const system = app.store.createBusinessSystem({ name: "DAG node scope" });
+      const first = app.store.createIntake({ business_system_id: system.id, name: "First", repo_url: "https://example.test/first.git" });
+      app.store.createIntake({ business_system_id: system.id, name: "Second", repo_url: "https://example.test/second.git" });
+      const selected = `${first.id}:operator`;
+      app.store.updateBusinessSystemMetadata(system.id, { graph: { nodes: [{ id: selected, type: "operator" }], edges: [] } });
+      const run = app.store.createBusinessRun(system.id)!;
+      expect(app.store.listUnitRuns(run.id).map(({ unitId }) => unitId)).toEqual([selected]);
+      expect(app.store.listReadyUnitRuns(run.id).map(({ unitId }) => unitId)).toEqual([selected]);
+    } finally { app.stop(); }
+  });
+
   test("dispatches a join once all predecessors complete in a historical frozen graph", () => {
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
     const { store } = app;
