@@ -141,7 +141,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `backend/tests/registry-epochs.test.ts` | Git 提交冻结、解析表保留、active 指针与引用、回滚、保留判定及签名边界 |
 | `backend/tests/legacy-gate.test.ts` | 来料检查、空产物工位、列表产物、元数据、validator 结果及封存边界 |
 | `backend/tests/legacy-harvest.test.ts` | 工位产物采集、路径边界、匹配顺序和异常结果 |
-| `backend/tests/legacy-connectors.test.ts` | Source 摄入与检验、Sink 幂等发布与核验、回执血缘和沙箱命令 |
+| `backend/tests/legacy-connectors.test.ts` | Source 摄入与检验、Sink 幂等发布与核验、超时及拒绝的回执状态、回执血缘和沙箱命令 |
 | `backend/tests/legacy-egress.test.ts` | Registry 出网策略编译、授权等级、域名与方法匹配、CONNECT 和非法配置 |
 | `backend/tests/legacy-egress-forwarder.test.ts` | 本地代理认证、域名和方法拒绝、地址固定、本地 HTTP 和 CONNECT 转发、Unix 套接字权限与清理 |
 | `backend/tests/legacy-mailbox.test.ts` | 异步文件邮箱、并发请求、审批响应与异常路径 |
@@ -176,16 +176,18 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | 历史验收 | Bun 文件 | Bun 用例 | 验证 |
 |---|---|---|---|
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_canonical_json_sorting_and_separators` | `backend/tests/legacy-core.test.ts` | `serializes sorted compact UTF-8 JSON and hashes the known empty payload` | 字段排序、紧凑分隔符、序列与非 ASCII 内容 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_canonical_json_rejects_invalid` | `backend/tests/legacy-core.test.ts` | `rejects unsupported canonical JSON values without changing valid encodings` | 拒绝非有限数字、非法字段类型与非 JSON 值 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_canonical_bytes_is_utf8` | `backend/tests/legacy-core.test.ts` | `serializes sorted compact UTF-8 JSON and hashes the known empty payload` | 规范 JSON 的 UTF-8 字节 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_digest_bytes_known_vector` | `backend/tests/legacy-core.test.ts` | `serializes sorted compact UTF-8 JSON and hashes the known empty payload` | 空字节串的 SHA-256 已知向量 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_digest_file_matches_bytes_and_streams` | `backend/tests/legacy-core.test.ts` | `streams file digests and keeps one empty blob at its exact CAS path` | 大于 1 MiB 的文件摘要匹配字节摘要 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_utc_iso_formats_and_truncates` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 毫秒精度及 UTC 偏移转换 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_parse_duration_table` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 毫秒、分钟、天和前导零 |
-| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_parse_duration_invalid` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 八种非法时长的 `DURATION_INVALID` |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_parse_duration_invalid` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 非法格式、非字符串与溢出的 `DURATION_INVALID` |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_fake_clock` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 起点、读取、推进、睡眠和负数拒绝 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_system_clock_is_aware_utc` | `backend/tests/legacy-core.test.ts` | `requires a valid instant and finite clock movements` | 系统时钟返回有效瞬时点并按 UTC 序列化 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_counter_ids` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 按前缀独立编号 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_id_prefix_validation` | `backend/tests/legacy-core.test.ts` | `checks duration parsing, UTC formatting, fake time and independent counters` | 拒绝大写前缀 |
-| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_database_pragmas_and_rows` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | WAL 模式和提交后的行查询 |
+| `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_database_pragmas_and_rows` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | WAL 模式、5 秒忙等待和提交后的行查询 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_tx_commit_and_rollback` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | 外层异常撤销插入 |
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_epoch_is_tree_hash` | `backend/tests/legacy-snapshot.test.ts` | `matches an independent tree hash across directories and includes non-Spec files` | 格式和独立算出的 SHA-256 树摘要一致 |
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_epoch_ignores_absolute_path_and_changes_with_content` | `backend/tests/legacy-snapshot.test.ts` | `matches an independent tree hash across directories and includes non-Spec files` | 复制到其他目录得到相同 epoch，添加非规范文件后摘要改变 |
@@ -199,6 +201,8 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `removed/python/tests/acceptance/m1/test_m1_02_snapshot.py::test_facts_validators_properties_always` | `backend/tests/legacy-snapshot.test.ts` | `indexes the kernel type closure and resolves current non-retired minors` | 校验继承事实、validator 参数与副本、必然属性及继承谓词的真假结果 |
 | `removed/python/tests/acceptance/m1/test_m1_01_foundation.py::test_nested_tx_uses_savepoints` | `backend/tests/legacy-core.test.ts` | `uses SQLite WAL, commits rows and rolls back outer and nested transactions` | 内层回滚保留外层事务 |
 | `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_put_file_cas_layout_and_idempotent` | `backend/tests/legacy-core.test.ts` | `streams file digests and keeps one empty blob at its exact CAS path` | 空 Blob 的摘要、仓库层级与重复写入 |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_context_open_layout` | `backend/tests/legacy-core.test.ts` | `initializes a portable factory layout and installs the bundled factoryctl idempotently` | 工厂数据目录和工具初始化可重复执行 |
+| `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_install_factoryctl_normalizes_newlines` | `backend/tests/legacy-core.test.ts` | `initializes a portable factory layout and installs the bundled factoryctl idempotently` | 已安装的 Bun factoryctl 使用 LF，并保留可重复安装的字节 |
 | `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_bean_id_and_add_get` | `backend/tests/legacy-core.test.ts` | `preserves Bean identity and rejects invalid paths, types, digests and IDs` | Bean 身份、元数据副本、媒介类型及首次创建时间 |
 | `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_bean_id_and_add_get` | `backend/tests/legacy-core.test.ts` | `hashes Unicode-ordered Bean payloads and reuses earlier Bun identities` | Unicode 码点顺序和现存 Bun 摘要兼容 |
 | `removed/python/tests/acceptance/m1/test_m1_03_warehouse.py::test_payload_path_and_type_rejected` | `backend/tests/legacy-core.test.ts` | `preserves Bean identity and rejects invalid paths, types, digests and IDs` | 拒绝非法路径、类型、摘要和未知 ID |
@@ -380,6 +384,17 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_machine_needs_do_not_expand_policy` | `backend/tests/legacy-egress.test.ts` | `leaves none isolated and expands only explicitly delegated Machine tiers` | Machine 声明只在策略显式委托的等级生效 |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_connect_without_ca_rejected_when_methods_limited` | `backend/tests/legacy-egress-forwarder.test.ts` | `rejects a CONNECT if the HTTPS method is opaque or a monitor must authorize it` | 方法受限时以 403 拒绝不透明 CONNECT |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_unproxied_still_denied` | `backend/runtime/podman.test.ts` | `rejects Registry egress before querying an engine with only a configured bridge` | 缺少隔离代理时在访问容器引擎前拒绝 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_sink_publishes_and_verifies` | `backend/tests/legacy-connectors.test.ts` | `Sink verifies once, suppresses duplicate jobs and can be reaudited or voided` | 真实发布后核验回执并封存作业 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_duplicate_publish_is_suppressed` | `backend/tests/legacy-connectors.test.ts` | `Sink verifies once, suppresses duplicate jobs and can be reaudited or voided` | 已核验回执抑制重复发布 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_line_rerun_succeeds` | `backend/tests/legacy-connectors.test.ts` | `reruns a Line successfully without executing the already verified Sink again` | 两次 Run 都完成，作业事件记录第二次跳过发布 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_receipt_from_recipe_template` | `backend/tests/legacy-connectors.test.ts` | `publishes a templated receipt when the Sink leaves no receipt file` | 发布程序未写回执时使用配方模板并核验 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_receipt_missing_is_dead` | `backend/tests/legacy-connectors.test.ts` | `retains the claim after missing and malformed Sink receipts` | 缺少回执时停止重发并保留认领 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_receipt_invalid_is_dead` | `backend/tests/legacy-connectors.test.ts` | `retains the claim after missing and malformed Sink receipts` | 非法 JSON 或无效字段保留认领，作业记录具体错误 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_unverified_receipt_is_dead` | `backend/tests/legacy-connectors.test.ts` | `records verification refusal while preserving published evidence on facility failure` | 核验拒绝时记录失败及具体原因 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_verify_facility_error_keeps_published` | `backend/tests/legacy-connectors.test.ts` | `records verification refusal while preserving published evidence on facility failure` | 核验设施故障时保留已发布证据 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_sink_timeout_and_refusal_are_outcome_unknown` | `backend/tests/legacy-connectors.test.ts` | `keeps a Sink claim unverified on timeout or an explicit factoryctl refusal` | 超时与明确拒绝保留认领并记录原因 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_factoryctl_receipt` | `backend/tests/legacy-connectors.test.ts` | `publishes and verifies a Sink receipt written by installed factoryctl` | 通过安装的 factoryctl 交付回执并核验 |
+| `removed/python/tests/acceptance/m10/test_m10_01_sink_receipts.py::test_factoryctl_receipt` | `backend/tests/legacy-connectors.test.ts` | `factoryctl receipt writes a validated payload that preserves locator URLs and digests` | 校验参数并保留回执地址和摘要 |
 
 归档 M11 的出网验收同时要求持久化主体令牌、审计事件、按需审批及核验主体的秘密分类。Bun 已有本地协议证据和发布与核验分开创建监听器的证据，这些用例仍保留在历史差异中。M2 中依赖模型代理、计量与预算的用例也保留在历史差异中。
 

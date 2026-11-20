@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { Context, CounterIds, FakeClock, canonicalBytes, canonicalJson, digestBytes, digestFile, loadSnapshot, mediaTypeOf, paramsValue, parseDuration, runtimeEnv, utcIso, type Bean } from "../src/legacy";
+import { dirname, join, resolve } from "node:path";
+import { Context, CounterIds, FakeClock, RandomIds, SystemClock, canonicalBytes, canonicalJson, digestBytes, digestFile, installFactoryctl, loadSnapshot, mediaTypeOf, paramsValue, parseDuration, runtimeEnv, utcIso, type Bean } from "../src/legacy";
 import { JobStore } from "../src/legacy/jobs";
 import { RunStore } from "../src/legacy/runs";
 
@@ -11,9 +11,9 @@ function tempRoot(label: string): string {
   return root;
 }
 
-function expectErrorCode(run: () => unknown, code: string): void {
+function expectErrorCode(run: () => unknown, code: string, detail?: Record<string, unknown>): void {
   try { run(); }
-  catch (error) { expect(error).toMatchObject({ code }); return; }
+  catch (error) { expect(error).toMatchObject(detail ? { code, detail } : { code }); return; }
   throw new Error(`Expected ${code}`);
 }
 
@@ -51,11 +51,31 @@ describe("Bun M1 core boundaries", () => {
     expect(digestBytes(new Uint8Array())).toBe("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
   });
 
+  test("rejects unsupported canonical JSON values without changing valid encodings", () => {
+    const sparse = new Array(2);
+    sparse[1] = "second";
+    const cycle: { child?: unknown } = {};
+    cycle.child = cycle;
+    const invalid: Array<[unknown, string]> = [
+      [{ a: [0, Number.NaN] }, "$.a[1]"], [{ a: Infinity }, "$.a"], [{ a: -Infinity }, "$.a"],
+      [{ a: new Set(["value"]) }, "$.a"], [{ a: new Map([[1, "value"]]) }, "$.a"],
+      [{ a: new Date("2026-01-01T00:00:00Z") }, "$.a"], [{ a: new (class { field = "value"; })() }, "$.a"],
+      [{ a: { [Symbol("key")]: "value" } }, "$.a"], [sparse, "$[0]"], [cycle, "$.child"],
+    ];
+    for (const [value, path] of invalid) {
+      expectErrorCode(() => canonicalJson(value), "JSON_INVALID", { path });
+    }
+    const shared = Object.assign(Object.create(null), { y: "中", z: -0 });
+    const encoded = '{"2":2,"10":10,"both":[{"y":"中","z":0},{"y":"中","z":0}],"𐀀":1,"\uE000":2}';
+    const value = { "10": 10, "2": 2, both: [shared, shared], "\uE000": 2, "𐀀": 1 };
+    expect(canonicalBytes(value)).toEqual(new TextEncoder().encode(encoded));
+  });
+
   test("checks duration parsing, UTC formatting, fake time and independent counters", async () => {
     for (const [text, seconds] of [["250ms", 0.25], ["90m", 5400], ["7d", 604800], ["007s", 7]] as const) {
       expect(parseDuration(text)).toBe(seconds);
     }
-    for (const text of ["", "5", "5x", "-5s", "1.5h", " 5s", "5S", 5]) {
+    for (const text of ["", "5", "5x", "-5s", "1.5h", " 5s", "5s\n", "5S", 5, ["5s"], { toString: () => "5s" }, "9".repeat(400) + "d"]) {
       expectErrorCode(() => parseDuration(text as string), "DURATION_INVALID");
     }
     expect(utcIso(new Date("2026-01-02T03:04:05.123999Z"))).toBe("2026-01-02T03:04:05.123Z");
@@ -74,12 +94,44 @@ describe("Bun M1 core boundaries", () => {
     expect(() => ids.new("Job")).toThrow("ID prefix is invalid");
   });
 
+  test("requires a valid instant and finite clock movements", async () => {
+    const invalid = new Date(Number.NaN);
+    expect(() => utcIso(invalid)).toThrow(RangeError);
+    expect(() => new FakeClock(invalid)).toThrow(RangeError);
+    expect(() => utcIso({ toISOString: () => "2026-01-01T00:00:00.000Z" } as Date)).toThrow(TypeError);
+    const start = new Date("2026-01-01T00:00:00Z");
+    const clock = new FakeClock(start);
+    start.setTime(0);
+    for (const seconds of [-1, Infinity, -Infinity, Number.NaN, Number.MAX_VALUE]) {
+      expect(() => clock.advance(seconds)).toThrow(RangeError);
+    }
+    await expect(clock.sleep(Number.NaN)).rejects.toThrow(RangeError);
+    expect(clock.monotonic()).toBe(0);
+    expect(clock.now().toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    const system = new SystemClock();
+    const before = Date.now();
+    const instant = system.now();
+    const after = Date.now();
+    expect(instant.getTime()).toBeGreaterThanOrEqual(before);
+    expect(instant.getTime()).toBeLessThanOrEqual(after);
+    expect(utcIso(instant)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  });
+
+  test("generates unique IDs in the Bun format and validates prefixes", () => {
+    const ids = new RandomIds();
+    const values = new Set(Array.from({ length: 8 }, () => ids.new("j")));
+    expect(values.size).toBe(8);
+    for (const value of values) expect(value).toMatch(/^j-[a-f0-9]{16}$/);
+    for (const prefix of ["", "Job", "a123", "prefixlong"]) expect(() => ids.new(prefix)).toThrow("ID prefix is invalid");
+  });
+
   test("uses SQLite WAL, commits rows and rolls back outer and nested transactions", () => {
     const root = tempRoot("sqlite-wal");
     const context = Context.open(root);
     try {
       const db = context.db;
       expect(db.query("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+      expect(db.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
       db.exec("CREATE TABLE t (n INTEGER)");
       const insert = db.query("INSERT INTO t VALUES (?)");
       expect(() => db.transaction(() => { insert.run(3); throw new Error("outer"); }).immediate()).toThrow("outer");
@@ -89,6 +141,36 @@ describe("Bun M1 core boundaries", () => {
         expect(() => db.transaction(() => { insert.run(2); throw new Error("inner"); })()).toThrow("inner");
       }).immediate();
       expect(db.query("SELECT n FROM t").all()).toEqual([{ n: 1 }]);
+    } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("initializes a portable factory layout and installs the bundled factoryctl idempotently", async () => {
+    const root = tempRoot("factory-layout");
+    const provider = { open() { throw new Error("Context.open must not launch a sandbox"); } };
+    const clock = new FakeClock();
+    const ids = new CounterIds();
+    const context = Context.open(root, { provider, clock, ids });
+    try {
+      expect(context.root).toBe(resolve(root));
+      expect(context.provider).toBe(provider);
+      expect(context.clock).toBe(clock);
+      expect(context.ids).toBe(ids);
+      expect(lstatSync(join(context.root, "factory.db")).isFile()).toBe(true);
+      for (const directory of ["cas", "jobs", "tmp", "tools/factory/bin"]) {
+        expect(lstatSync(join(context.root, directory)).isDirectory()).toBe(true);
+      }
+      expect(context.warehouse.list()).toEqual([]);
+      const installed = await installFactoryctl(context.root);
+      expect(installed).toBe(join(context.root, "tools", "factory", "bin", "factoryctl"));
+      const bytes = readFileSync(installed, "utf8");
+      expect(bytes.startsWith("#!/usr/bin/env bun\n")).toBe(true);
+      expect(bytes).not.toContain("\r\n");
+      const original = lstatSync(installed);
+      if (process.platform !== "win32") expect(original.mode & 0o111).toBe(0o111);
+      expect(await installFactoryctl(context.root)).toBe(installed);
+      const after = lstatSync(installed);
+      expect([after.ino, after.mtimeMs]).toEqual([original.ino, original.mtimeMs]);
+      expect(readdirSync(dirname(installed))).toEqual(["factoryctl"]);
     } finally { context.close(); rmSync(root, { recursive: true, force: true }); }
   });
 

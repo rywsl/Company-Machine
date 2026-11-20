@@ -322,8 +322,9 @@ function mailboxError(id: string, code: string, message: string): CtlResponse {
   return { id, ok: false, result: null, error: { code, message } };
 }
 
-function readMailboxJson(path: string): unknown {
+export function readMailboxJson(path: string, allowMissing = false): unknown {
   const before = entry(path);
+  if (!before && allowMissing) return undefined;
   if (!before?.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > MAX_MAILBOX_BYTES) {
     throw new FactoryError("CTL_REQUEST_INVALID", "邮箱文件必须为大小合规的普通文件");
   }

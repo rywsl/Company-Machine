@@ -153,6 +153,8 @@ FACTORYCTL_SOURCE: Path                  # = Path(mao 包目录) / "ctl" / "fact
 
 ### 5.1 `canonical_json` / `canonical_bytes`
 
+活动 Bun 接口 `canonicalJson` 和 `canonicalBytes` 接收有限数字、字符串、布尔值、空值、密集数组和普通对象。普通对象包括空原型对象，键使用字符串。非 JSON 对象、符号键、稀疏数组和循环引用返回带路径的 `JSON_INVALID`。合法值沿用 Bun 当前的 JSON 字节格式，包括整数索引属性和 UTF-16 字符串键的既有顺序，供已保存的内容摘要继续校验。
+
 1. 先递归检查 `obj`：
    - 允许的值：`None`、`bool`、`int`、`float`、`str`、`list`、`tuple`、`dict`；
    - `dict` 的键必须全是 `str`；
@@ -174,6 +176,8 @@ FACTORYCTL_SOURCE: Path                  # = Path(mao 包目录) / "ctl" / "fact
 
 ### 5.3 `utc_iso`
 
+活动 Bun 接口 `utcIso` 接收 JavaScript `Date` 时间点，输出 UTC 毫秒格式。无效日期会抛出异常。
+
 1. `dt.tzinfo is None` 或 `dt.utcoffset() is None` 时抛出 `ValueError`（编程错误，不登记错误码）。
 2. 转换为 UTC：`d = dt.astimezone(UTC)`。
 3. 返回 `f"{d.year:04d}-{d.month:02d}-{d.day:02d}T{d.hour:02d}:{d.minute:02d}:{d.second:02d}.{d.microsecond // 1000:03d}Z"`。
@@ -181,6 +185,8 @@ FACTORYCTL_SOURCE: Path                  # = Path(mao 包目录) / "ctl" / "fact
    - **禁止**用 `strftime("%Y")`，它在不同平台上对小年份的补零行为不同。
 
 ### 5.4 `parse_duration`
+
+活动 Bun 接口 `parseDuration` 要求原始值为字符串，解析结果须为有限秒数。类型不符、格式不符和换算溢出都返回 `DURATION_INVALID`。
 
 - 输入必须是 `str`，并且**完整**匹配 `^([0-9]+)(ms|s|m|h|d)$`：不允许空白、符号、小数、大写单位。
 - 换算：`ms` → n/1000，`s` → n，`m` → 60n，`h` → 3600n，`d` → 86400n。返回 `float`。
@@ -196,6 +202,8 @@ FACTORYCTL_SOURCE: Path                  # = Path(mao 包目录) / "ctl" / "fact
 
 ### 5.5 时钟
 
+活动 Bun 的 `FakeClock` 保存起始时间点的毫秒值，推进量须为有限的非负数。推进后必须仍能表示为 JavaScript `Date`。拒绝推进时保持当前时间和单调计时值。
+
 - `SystemClock`：`now()` = `datetime.now(UTC)`；`monotonic()` = `time.monotonic()`；`sleep(s)` = `time.sleep(s)`。
 - `FakeClock(start)`：
   - `start` 必须带时区，否则 `ValueError`。
@@ -206,6 +214,8 @@ FACTORYCTL_SOURCE: Path                  # = Path(mao 包目录) / "ctl" / "fact
   - 线程安全：`advance`/`sleep` 在锁内更新。
 
 ### 5.6 ID 源
+
+活动 Bun 的 `RandomIds` 使用相同的前缀约束，后缀由 8 个随机字节编码为 16 个小写十六进制字符。
 
 前缀必须匹配 `^[a-z]{1,8}$`，否则 `ValueError`。
 
@@ -279,6 +289,8 @@ FACTORYCTL_SOURCE: Path                  # = Path(mao 包目录) / "ctl" / "fact
 ### 5.11 `Context.open` 与 `install_factoryctl`（M1-03）
 
 Bun 工位首次运行时，`installFactoryctl` 打包当前 `factoryctl.ts`，在 `$FACTORY_ROOT/tools/factory/bin/` 内以独占临时文件写入，再原子改名。进程复用相同的打包结果，目标内容相同时复用现有文件。Runner 把可执行文件只读挂载到 `/opt/factory/bin/factoryctl`。
+
+Bun 的 `Context.open` 解析工厂路径，创建工厂数据库、CAS、作业目录、临时目录和工具目录，并绑定注入的运行时、时钟和 ID 源。打开目录和数据库时无需启动容器。
 
 以下 Python 接口和步骤对应归档实现。
 

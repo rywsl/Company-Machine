@@ -21,7 +21,11 @@
 - **凭据边界**（I6 的运行时部分）：工位的网络与秘密只按它的策略和角色注入。发布类秘密只给 Sink，摄入类秘密只给 Source，在 `Runner` 中二次检查（纵深防御）。
 - 为上述功能扩展 `factoryctl`（`receipt` 命令）、机器配方（`receipt` 模板）和 MRL profile（核验配方的静态检查）。
 
-Bun 的脚本型 Source 和 Sink 使用现有工位执行器及已选容器运行时。当前部署路径按 `network: none` 执行发布和核验，测试使用 `LocalProvider` 接入本机夹具目录。受控出网和连接器的凭据注入仍见 `egress.md`。
+Bun 的脚本型 Source 和 Sink 使用现有工位执行器及已选容器运行时。发布和核验使用各自的沙箱，按同一工位策略配置出网。测试使用 `LocalProvider` 接入本机夹具目录。 [出网规则](egress.md)
+
+Sink 的操作工超时或通过 `factoryctl fail` 声明失败时，Job 以 `SINK_OUTCOME_UNKNOWN` 终止。回执保持 `claimed`，同键后续 Job 继续受占键约束。错误的 `cause` 保存实际超时秒数或声明的原因。操作工成功退出后，Runner 优先读取 `receipt.json`。该文件须满足邮箱的普通文件和大小约束，并包含 UTF-8 JSON 对象。文件缺失时可使用冻结配方的回执模板。回执格式错误保留占键，并记录问题字段。
+
+核验退出码为 1 时，回执进入 `failed`，Job 的 `RECEIPT_UNVERIFIED` 保存核验说明。核验设施故障时回执保持 `published`，可通过 `factory receipt verify` 重新核验。重复运行同一产线时，已有 `verified` 回执的发布节点直接完成。可用 `factory job events JOB --kind sink.` 查看发布和去重证据。
 
 **不做什么**
 
@@ -313,7 +317,7 @@ Bun 创建 Source Job 时，显式提供的 Run 上下文须包含 `id`、`epoch
 
 ## 7. 验收测试
 
-活动验收 `backend/tests/legacy-connectors.test.ts` 随 `bun run verify:bun` 运行，覆盖 Source 收货、检验、内容寻址和执行边界。Sink 验收覆盖回执占键、已核验回执跨版本去重、结果未知、独立核验、作废重发与下游血缘查询。
+活动验收 `backend/tests/legacy-connectors.test.ts` 随 `bun run verify:bun` 运行，覆盖 Source 收货、检验、内容寻址和执行边界。Sink 验收覆盖真实产线重跑去重、安装后的 `factoryctl receipt`、模板回执回退、缺失或错误回执、明确拒绝与超时、核验拒绝与设施故障、作废重发和下游血缘查询。
 
 夹具：`tests/fixtures/registry-m2/`（受保护）在 M1 夹具的基础上增加：
 

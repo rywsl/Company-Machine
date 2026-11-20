@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { EvalEnvironment } from "../../mrl/evaluator";
 import { compileTemplate } from "../../mrl/template";
@@ -6,6 +6,7 @@ import { DYN } from "../../mrl/types";
 import type { ContainerProvider } from "../../runtime/podman";
 import type { Context } from "./context";
 import { FactoryError } from "./errors";
+import { readMailboxJson } from "./factoryctl";
 import { canonicalJson, parseDuration, randomUuid, utcIso } from "./foundation";
 import { JobStore, type Job } from "./jobs";
 import { sandboxResources } from "./sandbox";
@@ -225,13 +226,13 @@ export async function readReceiptPayload(ctlDir: string, jobId?: string): Promis
   const path = join(ctlDir, "receipt.json");
   let value: unknown;
   try {
-    const stat = lstatSync(path);
-    if (!stat.isFile()) throw new Error("invalid receipt file");
-    value = JSON.parse(await Bun.file(path).text());
+    value = readMailboxJson(path, true);
   } catch (error) {
-    if ((error as { code?: unknown }).code === "ENOENT") return undefined;
-    throw new FactoryError("RECEIPT_INVALID", "receipt.json 无法读取", { ...(jobId ? { job: jobId } : {}), problems: ["receipt.json"] });
+    const problem = error instanceof SyntaxError || error instanceof TypeError ? "json" : "receipt.json";
+    throw new FactoryError("RECEIPT_INVALID", "receipt.json 无法读取", { ...(jobId ? { job: jobId } : {}), problems: [problem] });
   }
+  if (value === undefined) return undefined;
+  if (!object(value)) throw new FactoryError("RECEIPT_INVALID", "receipt.json 必须是 JSON 对象", { ...(jobId ? { job: jobId } : {}), problems: ["json"] });
   return validatePayload(value, jobId);
 }
 

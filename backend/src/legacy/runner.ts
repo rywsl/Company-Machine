@@ -9,7 +9,7 @@ import { readReceiptPayload, ReceiptStore, recordSourceProvenance, renderReceipt
 import { installFactoryctl, type Context } from "./context";
 import { compilePlan, exceedsPlanBudget, planCost } from "./dynamic-plan";
 import { FactoryError } from "./errors";
-import { CtlServer, harvest, type CtlRequest, type CtlResponse, type HarvestRequest } from "./factoryctl";
+import { CtlServer, harvest, readMailboxJson, type CtlRequest, type CtlResponse, type HarvestRequest } from "./factoryctl";
 import { parseDuration } from "./foundation";
 import { Gate } from "./gate";
 import { JobStore, terminalStates, type Job, type JobPhase } from "./jobs";
@@ -65,6 +65,14 @@ function visit(path) {
 }
 for (const path of ["/workspace", "/factory/out"]) visit(path);
 `;
+
+function readFailureReason(path: string): string {
+  try {
+    const body = readMailboxJson(path) as { reason?: unknown } | null;
+    if (typeof body?.reason === "string") return body.reason;
+  } catch { /* A malformed marker still signals failure. */ }
+  return "";
+}
 
 export class Runner {
   readonly jobs: JobStore;
@@ -359,10 +367,11 @@ export class Runner {
     try {
       if (job.state === "PROVISIONING") this.jobs.transition(job.id, "RUNNING");
       mailbox.start();
+      const timeoutMs = Math.min(invocation.timeoutS * 1000, job.timeoutMs ?? Infinity);
       let result: Awaited<ReturnType<Sandbox["exec"]>>;
       try {
         result = await sandbox.exec(invocation.argv, {
-          timeoutMs: Math.min(invocation.timeoutS * 1000, job.timeoutMs ?? Infinity),
+          timeoutMs,
           stdout,
           stderr: join(logs, "stderr"),
           env: { ...invocation.env, ...control },
@@ -397,7 +406,13 @@ export class Runner {
         : invocation.transcript && !summary?.hasResult ? "AGENT_ERROR"
         : result.exitCode !== 0 ? "OPERATOR_FAILED" : undefined;
       if (code) {
-        if (!proposing && station.role === "sink") return this.failSink(job, { code, exit_code: result.exitCode }, costUsd);
+        if (!proposing && station.role === "sink") {
+          const cause: Record<string, unknown> = { code, exit_code: result.exitCode };
+          if (result.timedOut) cause.timeout_s = timeoutMs / 1000;
+          else if (declaredFailure) cause.reason = readFailureReason(failPath);
+          else if (summary?.isError) cause.result = summary.result ?? "";
+          return this.failSink(job, cause, costUsd);
+        }
         return this.jobs.transition(job.id, "FAILED", { costUsd, error: { code, detail: { exit_code: result.exitCode } } });
       }
       if (proposing) {
@@ -592,7 +607,7 @@ export class Runner {
         if (!payload) throw new FactoryError("RECEIPT_MISSING", "发布工位没有留下回执", { job: job.id });
         receipt = this.receipts.publish(receipt.id, payload);
       } catch (error) {
-        if (error instanceof FactoryError && error.code === "RECEIPT_INVALID") this.receipts.noteFormatError(receipt.id, String(error.detail?.problems ?? "receipt.json"));
+        if (error instanceof FactoryError && error.code === "RECEIPT_INVALID") this.receipts.noteFormatError(receipt.id, error.detail.problems ?? "receipt.json");
         throw error;
       }
     }
@@ -602,7 +617,7 @@ export class Runner {
     return this.context.db.transaction(() => {
       this.receipts.settle(receiptId, result);
       return result.ok ? this.jobs.transition(job.id, "SEALED") : this.jobs.transition(job.id, "DEAD", {
-        error: { code: "RECEIPT_UNVERIFIED", detail: { job: job.id, receipt: receiptId } },
+        error: { code: "RECEIPT_UNVERIFIED", detail: { job: job.id, receipt: receiptId, detail: result.detail } },
       });
     }).immediate();
   }
