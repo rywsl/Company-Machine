@@ -10,6 +10,7 @@ spec:
     mount: /opt/operator
   invoke:
     argv: [/opt/operator/bin/deepseek-harness]
+    resume: [/opt/operator/bin/deepseek-harness]
   env:
     HOME: /workspace/.home
   transcript: {format: acp-events, from: stdout}

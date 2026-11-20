@@ -10,6 +10,7 @@ spec:
     mount: /opt/operator
   invoke:
     argv: [/opt/operator/bin/zcode]
+    resume: [/opt/operator/bin/zcode]
   env:
     HOME: /workspace/.home
   transcript: {format: acp-events, from: stdout}
