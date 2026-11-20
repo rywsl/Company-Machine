@@ -396,6 +396,8 @@ Bun 的 `EpochStore` 从 `factory.json` 的 `governance.registry` 或显式路�
 
 `timeout_s` 是本次所有 git 调用的总时限的上限：每次调用用 `min(timeout_s, git_timeout_s)`。
 
+Bun 的 `ChangeSetStore` 在 SQLite 持久化草案，供 `changeset show ID` 和 `changeset ls [--state STATE]` 读取。`changeset propose FILE --commit COMMIT --by ACTOR` 读取单份 YAML 或 JSON 文档。受理时用同一时限解析和比较 Git 提交。登记草案前再次核对 active、封版窗口和推广频率，避免并发下受理过期基线。若数据库写入失败，尝试按候选提交 ID 清理本次写入的引用。
+
 ### 5.5 提出者的 runtime
 
 - `by` 以 `human:` 开头：`proposer_runtime = None`。人没有特权：复核条数照常要求，任何 runtime 的复核都计入。
@@ -411,6 +413,8 @@ Bun 的 `EpochStore` 从 `factory.json` 的 `governance.registry` 或显式路�
   2. `risk` 为空 → `RISK_UNSCORED`，`detail.changes = []`。
   3. `tier = "T" + str(risk)`；`reviews_required` 取 `reviews(risk, n)`；`stages` 取 `needs_stage(risk, _)`；`multiplier` 取 `stage_multiplier(risk, _)`。缺任何一个 → `RISK_UNSCORED`（规则文件不完整也是“没有等级”）。
 - 文档里提出者写的 `risk_tier` 被忽略（受理时已删除）。
+
+Bun 的 `diffChangeFacts` 按 Spec 身份和版本排序，返回风险事实及原地修改、删除产生的不可变性冲突。`scoreChangeRisk` 直接求值 `risk.mrl`，读取风险等级、复核数量和阶段要求。风险计算独立于草案受理，草案的 `risk_tier` 保持为空，直到验证阶段写入等级。
 
 ### 5.7 验证 `draft → verifying → verified`（M3-02）
 

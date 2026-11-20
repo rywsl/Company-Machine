@@ -116,6 +116,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG、同业务物料说明与文件引用传递、启动前的运行时就绪 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、Registry 检查、从冻结快照恢复审批和调度运行 |
+| `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选提交、拒绝路径和 MRL 风险事实 |
 | `backend/tests/foreman.test.ts` | 厂长队列和官方 Harness 回复事件 |
 | `backend/tests/harness.test.ts` | 官方 CLI、ACP 会话和事件流 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
@@ -220,6 +221,11 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_adopt_requires_constitution_only_signed_commit` | `backend/tests/registry-epochs.test.ts` | `rejects mixed and unsigned constitution adoptions` | 拒绝含非宪法路径或未经签名的提交 |
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_retain_rules` | `backend/tests/registry-epochs.test.ts` | `retains activation pointers and unfinished Run, Job and ChangeSet dependencies` | 指针和未完成依赖决定 retain，未保留的目录仍存在 |
 | `removed/python/tests/acceptance/m3/test_m3_01_epochs.py::test_registry_not_configured` | `backend/tests/registry-epochs.test.ts` | `reports an unconfigured Registry before creating any epochs` | 未配置时打开 Git epoch 返回 `REGISTRY_NOT_CONFIGURED` |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_propose_creates_control_plane_commit` | `backend/tests/changesets.test.ts` | `proposes a distinct control-plane commit and persists draft history` | 核对草案、候选提交、树、父提交、专用引用和主分支 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_constitution_change_forbidden` | `backend/tests/changesets.test.ts` | `rejects constitution edits and a stale base before publishing a draft` | 拒绝宪法路径，数据库和候选引用均无草案 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_stale_base_rejected` | `backend/tests/changesets.test.ts` | `rejects constitution edits and a stale base before publishing a draft` | 基线与 active 不一致时拒绝写入草案 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_freeze_and_rate_limit` | `backend/tests/changesets.test.ts` | `rejects frozen, rate-limited, empty and malformed proposals` | 固定时间下封版和 24 小时推广次数限制分别拒绝 |
+| `removed/python/tests/acceptance/m3/test_m3_02_changesets.py::test_unscored_is_not_low` | `backend/tests/changesets.test.ts` | `classifies MRL risk without defaulting unscored facts to a low tier` | 未知字段和结构无法评级，Machine 镜像字段风险为 T2 |
 | `removed/python/tests/acceptance/m2/test_m2_05_cache.py::test_not_cacheable_roles` | `backend/tests/legacy-cache.test.ts` | `uses result-affecting inputs without depending on epoch or descriptive metadata` | Sink 的缓存键请求返回 `CACHE_NOT_CACHEABLE` |
 | `removed/python/tests/acceptance/m7/test_m7_04_backup.py::test_restore_refuses` | `backend/tests/backup.test.ts` | `reports corrupt and missing blobs, extra files, and unsafe paths before restore` | 拒绝损坏备份和非空恢复目录，原 CAS 保留 |
 

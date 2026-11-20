@@ -7,6 +7,7 @@ import { ContractRunner, type ContractKind, type ContractResult } from "./legacy
 import { ReceiptStore } from "./legacy/connectors";
 import { Scheduler } from "./legacy/scheduler";
 import { connectorCommands, runConnectorCli } from "./connector-cli";
+import { changesetCommands, runChangeSetCli } from "./changeset-cli";
 import { epochCommands, runEpochCli } from "./epoch-cli";
 import { hasGovernedRegistry, RegistrySelection } from "./registry-selection";
 import { createBackup, restoreBackup, verifyBackup } from "./backup";
@@ -24,6 +25,7 @@ type Options = {
 
 const commands = {
   ...connectorCommands,
+  ...changesetCommands,
   ...epochCommands,
   bean: ["import --type TYPE --file PATH=HOST", "lineage BEAN --direction up|down"],
   job: ["run STATION [--input PORT=BEAN] [--param NAME=JSON]", "show JOB", "exec JOB"],
@@ -152,6 +154,7 @@ export async function runStationCli(argv: string[]): Promise<number> {
   try {
     if (isPlanning) return printPlan(await snapshots.current(), args[0]);
     if (scope === "epoch") return await runEpochCli(context, operation, args, { registry: options.registry ?? process.env.FACTORY_REGISTRY });
+    if (scope === "changeset") return await runChangeSetCli(context, operation, args, { registry: options.registry ?? process.env.FACTORY_REGISTRY });
     if (scope === "source" || scope === "receipt") return await runConnectorCli(context, {
       scope, operation, args, snapshots, json: options.json, provider: () => provider(options),
     });
