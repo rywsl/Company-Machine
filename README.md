@@ -11,7 +11,6 @@
 <p align="center">
   <img alt="Bun + TypeScript" src="https://img.shields.io/badge/Bun%20%2B%20TypeScript-active-f97316?style=flat-square&logo=bun&logoColor=white">
   <img alt="Podman or Kiri" src="https://img.shields.io/badge/runtime-Podman%20%7C%20Kiri-0f172a?style=flat-square">
-  <img alt="43 Bun tests passed" src="https://img.shields.io/badge/Bun%20tests-43%20passed-22c55e?style=flat-square">
   <img alt="Bundled agents: 0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
 
@@ -61,7 +60,7 @@ The walkthrough in [docs/en/getting-started.md](docs/en/getting-started.md) show
 
 ### Prerequisites
 
-- **Bun** for the business control plane and **Podman** or **Kiri** for managed sandboxes. Set `MAO_CONTAINER_RUNTIME=kiri` to use the official headless Kiri service on Linux.
+- **Bun** for the business control plane and **Podman** or **Kiri** for managed sandboxes. The Kiri backend uses the official Linux headless service and its Unix socket. [Linux setup](docs/en/getting-started.md#use-headless-kiri-on-linux)
 - **An agent CLI** (optional): Claude Code or Codex for real stations. The tests use a scripted fake agent instead.
 
 ### Install and verify

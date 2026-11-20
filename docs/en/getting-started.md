@@ -39,8 +39,10 @@ Set `MAO_PODMAN_EXECUTABLE` when the desktop process has an old PATH snapshot.
 Download the official `kiri-lite` package for your Linux distribution and CPU architecture, and install a Docker-compatible CLI. On Debian or Ubuntu, use `sudo apt install ./KIRI_PACKAGE.deb`. On Fedora, use `sudo dnf install ./KIRI_PACKAGE.rpm`. Substitute the downloaded filename, then grant access to the account that runs MAO. [Kiri releases](https://runkiri.com/releases/)
 
 ```bash
+sudo systemctl enable --now kiri.service
 sudo kiri host-access "$USER"
-# Start a new login session before running these commands.
+# If host-access reports unavailable filesystem ACLs, sign in again first.
+export FACTORY_ROOT="$HOME/.local/share/mao"
 MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
@@ -49,15 +51,20 @@ MAO connects through `/run/kiri/docker.sock`. Set `MAO_KIRI_SOCKET` for a custom
 
 For station jobs inside WSL, point `FACTORY_ROOT` to a Linux filesystem such as `$HOME/.local/share/mao`. The mailbox uses Linux directory permissions to protect host responses.
 
-Build the fixture images and verify a station job using Kiri.
+Build the fixture images and verify a station job and the Foreman mailbox using Kiri.
 
 ```bash
 export MAO_CONTAINER_RUNTIME=kiri
 bun run build:test-images
 bun run tools/verify-runtime.ts
+bun run tools/verify-runtime.ts --foreman
 ```
 
 If Kiri's image build request times out, run `bun run build:test-images --save-to /tmp/mao-test-images` on a Podman host with the same CPU architecture. Copy the directory to the Kiri host, run `MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --load-from /tmp/mao-test-images`, then run the same station verification command.
+
+For a containerized Foreman, select `egress` in the Web App and configure an image pinned by digest that contains the official Claude Code or Codex CLI. Set `MAO_EGRESS_RELAY_IMAGE` to a trusted, digest-pinned local image with Bun. The relay allows the configured provider host and any additional hosts listed in `MAO_HARNESS_EGRESS_HOSTS`.
+
+Set the selected provider's deployment credential as `MAO_FOREMAN_ANTHROPIC_API_KEY` or `MAO_FOREMAN_CODEX_API_KEY`. For a custom endpoint, set the matching `MAO_FOREMAN_ANTHROPIC_BASE_URL` or `MAO_FOREMAN_CODEX_BASE_URL` and save the same URL in the Foreman profile. Users enter project credentials through the corresponding resource requests.
 
 ## Hand a project to Foreman
 

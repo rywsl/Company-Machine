@@ -77,13 +77,14 @@ const checkedReply = "已登记仓库、更新业务图并验证只读来源";
 const folderText = "selected project folder";
 const upload = [0, 1, 13, 255];
 const repoUrl = "https://code.example/team/runtime-fixture.git";
+const companionRepo = "https://code.example/team/companion-fixture.git";
 const projectKey = "PROJECT_FIXTURE_KEY";
 const graph = { nodes: [{ id: "operator" }, { id: "machine" }], edges: [{ source: "operator", target: "machine" }] };
 
 const foremanFixture = `
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-const { reply, folderText, upload, repoUrl, graph, projectKey } = ${JSON.stringify({ reply: checkedReply, folderText, upload, repoUrl, graph, projectKey })};
+const { reply, folderText, upload, repoUrl, companionRepo, graph, projectKey } = ${JSON.stringify({ reply: checkedReply, folderText, upload, repoUrl, companionRepo, graph, projectKey })};
 const mailbox = "/mao/foreman";
 const mountInfo = readFileSync("/proc/self/mountinfo", "utf8").split("\\n").map((line) => line.split(" "));
 const mode = (path) => mountInfo.find((fields) => fields[4] === path)?.[5].split(",")[0];
@@ -132,6 +133,11 @@ try {
     assert.equal(typeof requested.result.id, "string");
     assert.deepEqual(Object.keys(requested.result).sort(), ["id", "status"]);
     assert.deepEqual((await ask(5, "project.secret.request", secret)).result, requested.result);
+    const attached = await ask(6, "project.register", { systemId, repoUrl: companionRepo });
+    assert.equal(attached.ok, true, JSON.stringify(attached.error));
+    assert.equal(attached.result.systemId, systemId);
+    assert.notEqual(attached.result.projectId, projectId);
+    assert.equal((await ask(7, "business.units", { systemId })).result.length, 4);
   }
   console.log(JSON.stringify({ type: "result", text: reply }));
 } catch (error) {
@@ -184,9 +190,13 @@ async function verifyForeman(provider: string): Promise<void> {
     }));
     assert.equal(talk.status, 201);
     await dispatch(app.store.listForemanInbox()[0].id);
-    const [project] = app.store.listProjects();
+    const projects = app.store.listProjects();
+    const project = projects.find(({ sources }) => sources[0]?.repoUrl === repoUrl);
+    const companion = projects.find(({ sources }) => sources[0]?.repoUrl === companionRepo);
+    assert.equal(projects.length, 2);
     assert.ok(project?.businessSystemId);
-    assert.equal(project.sources[0].repoUrl, repoUrl);
+    assert.ok(companion);
+    assert.equal(companion.businessSystemId, project.businessSystemId);
     assert.deepEqual(app.store.getBusinessSystem(project.businessSystemId)?.metadata.graph, graph);
     const requests = app.store.listSecretRequests();
     assert.equal(requests.length, 1);

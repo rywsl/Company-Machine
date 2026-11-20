@@ -92,7 +92,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --only operator
 MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts --foreman
 ```
 
-设置 `MAO_CONTAINER_RUNTIME=podman` 可复用这套验收。容器内的 Bun 夹具通过厂长邮箱登记仓库、查询 Operator 和 Machine、保存 DAG，并为登记的项目申请一个必需密钥。重复申请应复用同一记录。随后通过项目接收入口提交文件夹和私有 CAS 上传文件，验证两项来源的挂载只读、交付字节正确、该轮无法登记其他仓库，以及会话结束时邮箱和暂存文件已清理。夹具通过官方 CLI 的 JSONL 适配器返回回复，运行时无需模型凭证。
+设置 `MAO_CONTAINER_RUNTIME=podman` 可复用这套验收。容器内的 Bun 夹具通过厂长邮箱登记仓库、查询 Operator 和 Machine、保存 DAG，并为登记的项目申请一个必需密钥。重复申请应复用同一记录。夹具再把第二个仓库加入同一业务系统并读取四个基础单元。随后通过项目接收入口提交文件夹和私有 CAS 上传文件，验证两项来源的挂载只读、交付字节正确、该轮无法登记其他仓库，以及会话结束时邮箱和暂存文件已清理。夹具通过官方 CLI 的 JSONL 适配器返回回复，运行时无需模型凭证。
 
 ### 5.2 端到端
 

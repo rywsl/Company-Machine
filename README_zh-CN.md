@@ -10,8 +10,7 @@
 
 <p align="center">
   <img alt="Bun + TypeScript" src="https://img.shields.io/badge/Bun%20%2B%20TypeScript-active-f97316?style=flat-square&logo=bun&logoColor=white">
-  <img alt="Bun 内置运行时" src="https://img.shields.io/badge/runtime-Bun%20built--ins-0f172a?style=flat-square&logo=bun&logoColor=white">
-  <img alt="43 个 Bun 测试通过" src="https://img.shields.io/badge/Bun%20tests-43%20passed-22c55e?style=flat-square">
+  <img alt="Podman 或 Kiri" src="https://img.shields.io/badge/runtime-Podman%20%7C%20Kiri-0f172a?style=flat-square">
   <img alt="内置 agent：0" src="https://img.shields.io/badge/bundled%20agents-0-f43f5e?style=flat-square">
 </p>
 

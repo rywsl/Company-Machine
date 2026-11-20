@@ -287,6 +287,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `GET /api/v1/business-systems/<id>` 返回业务系统、项目和 Artifact 摘要
 - `GET /api/v1/business-systems/<id>/artifacts` 与 `/materials` 返回该业务系统闭包内的语义化记录。`/materials` 只返回 `record_type=material` 的来料或中间物料
 - `GET/POST /api/v1/business-systems/<id>/conversions` 维护产物到物料的语义化转换记录。转换只引用记录或文件，不嵌入内容
+- 厂区的物料转换面板打开时读取该业务系统的记录，以输入引用、转换说明和状态、输出引用构成流程图。当前厂区收到转换事件时重新读取该面板。资产列表首选记录标题，其次使用业务摘要，记录标识可在详情中查看。
 - `GET /api/v1/business-systems/<id>/export` 导出可迁移的业务系统文档。输出保留仓库、内容寻址文件及其他可移植引用。本机路径、仓库凭据、项目密钥值和 Harness 会话号在导出时剥离或脱敏。本地文件夹保留待接入引用
 - `POST /api/v1/business-systems/import` 在一个事务中重建项目、来源、运行单元、物料记录、转换和 DAG，并重写相关 ID 与来源引用。导入前后复用图写入的节点唯一、边引用和无环校验。密钥按项目所需资源重新创建为待配置请求。历史运行作为归档来源保留，导入后的新运行使用重建的 DAG
 - `GET /api/v1/business-systems/<id>/units` 返回由 Operator 与 Machine 组成的业务基础单元。项目来源的宿主路径只用于内部执行，公共投影只返回来源种类
