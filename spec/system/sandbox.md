@@ -188,6 +188,8 @@ class DockerProvider:
 
 `exec` 的 `timeout_s` 必须 `> 0`，否则 `SANDBOX_SPEC_INVALID`。超时后终止进程，返回 `ExecResult(exit_code=None, timed_out=True, duration_s=...)`，**禁止**把 `subprocess.TimeoutExpired` 冒泡（README 3.7）。`duration_s` 是 `clock.monotonic()` 的差值，`>= 0`。stdout/stderr 以二进制写入给定路径（父目录不存在则创建）。调用方用 UTF-8、`errors="replace"` 读文本。
 
+Bun 后端在 `exec` 启动时将子进程 stdout 和 stderr 分别重定向到调用方指定的日志文件。Podman、Kiri 和 LocalProvider 的日志在进程返回前即可读取，控制面不需要在内存里保存完整输出。超时终止子进程后保留已写入内容，容器运行时的超时诊断追加到 stderr。`backend/runtime/podman.test.ts` 验证运行中可读取日志并在超时后保留。
+
 `exec` 在 `close` 之后调用：`SANDBOX_CLOSED`。
 
 ### 5.2 `build_run_argv`（验收测试锁定这一列表）
@@ -302,6 +304,8 @@ Docker 的命名卷在**第一次**挂到镜像里已有内容的路径时，会
 4. 退出码不是 0：`DOCKER_FAILED`。
 5. 调用方随后在 job 的 `SandboxSpec.mounts` 里放 `Mount(source="volume:"+volume, target=inject.mount, readonly=True)`。job 容器因此在 `/opt/operator` 上只读。
 
+Bun Runner 在工位沙箱关闭后清理当前尝试的操作工注入卷。中断恢复清理同名容器、网络与注入卷，工作区卷的生命周期独立。
+
 `LocalProvider.prepare_inject_volume` 什么都不做。测试靠 `commands` 把 `/opt/operator/bin/fake-agent` 映射到 `tests/fakes/fake_agent.py`（见 `testing.md`）。
 
 ### 5.6 `LocalProvider` 的路径映射
@@ -363,11 +367,15 @@ Podman 缺失、machine 未初始化、服务不可连接和镜像不可用都�
 
 ### 5.11 Kiri 嵌入式运行时
 
-`KiriProvider` 是第二个业务运行时实现。默认通过官方 `kiri` CLI 执行受限容器命令，保持与 `PodmanProvider` 相同的 `SandboxSpec`、非 root、只读根文件系统、能力降级、网络和资源约束。需要兼容 Kiri 创建的 Docker context 时，可以使用 `mode="docker-context"`，命令形如 `[docker, "--context", "kiri", ...]`。
+`KiriProvider` 沿用 `SandboxSpec` 的非 root、只读根文件系统、能力降级、网络和资源约束。业务容器、官方 Harness、ACP 和测试镜像工具读取同一份 Kiri 客户端配置。
 
-Linux 使用 Kiri 的原生 headless 方案，官方 `kiri` 包直接在宿主 Linux 内核上运行，`kiri daemon` 提供 Docker Engine API socket。控制面在直接 CLI 模式下探测 `kiri ps`，Linux 上不可用时由 `ensure-ready` 尝试启动 `kiri daemon`，发行版已通过 systemd 启动的 daemon 由探测直接复用。Kiri 自己管理 Windows/Linux 容器后端，控制面不打开 UI。
+设置 `MAO_CONTAINER_RUNTIME=kiri` 后，Linux 默认使用 `linux-socket` 模式，通过 `docker --host unix:///run/kiri/docker.sock` 访问 Kiri 官方 headless 服务。`kiri.service` 管理 `kiri daemon`、套接字权限和 daemon 的状态目录。运行 MAO 的账户需要有权访问该套接字。健康探针通过 `info` 确认服务端标识为 Kiri，运行时状态显示 `linux-host`。默认仍由 Podman 执行业务沙箱。
 
-控制面只调用 Kiri CLI，不挂载 docker.sock，不使用 `--network host`，不把 Kiri 的虚拟机状态伪装成 Podman machine。Linux systemd 服务使用的 `/run/kiri/docker.sock` 和状态目录可以通过 `MAO_KIRI_SOCKET`、`MAO_KIRI_DATA_DIR` 传给 CLI 与 daemon。`MAO_CONTAINER_RUNTIME=kiri` 选择 Kiri，`MAO_KIRI_EXECUTABLE`、`MAO_KIRI_CONTEXT` 和 `MAO_KIRI_MODE` 分别覆盖 CLI、context 和兼容模式。直接 CLI 模式的 Linux host 将 `machine` 标记为 `linux-host`，不伪装成 Podman machine 名称。未配置时，业务默认仍使用 Podman。
+`ensure-ready` 先探测并复用已运行的服务。官方套接字不可用时，通过 `systemctl --no-ask-password start kiri.service` 请求就绪，并在有限时间内复查。同一 provider 的并发请求共享一次启动。服务启动失败时返回探测和启动诊断。自定义套接字和显式 context 的生命周期由部署方管理。
+
+测试镜像构建和工位 Operator 注入卷初始化会先确认引擎就绪，因此可以从服务停止状态启动。Kiri 官方 `kiri-lite` 包只提供引擎。部署使用独立 Docker 兼容 CLI，MAO 用 `--host` 固定请求目标。
+
+`MAO_KIRI_SOCKET` 覆盖 Linux 客户端的绝对套接字路径，`MAO_DOCKER_EXECUTABLE` 可选择 Docker 兼容 CLI。`MAO_KIRI_MODE=kiri` 使用官方 `kiri` CLI，`MAO_KIRI_EXECUTABLE` 可覆盖其路径。`MAO_KIRI_MODE=docker-context` 使用 `MAO_KIRI_CONTEXT` 指定的 context，默认为 `kiri`。套接字归宿主控制面使用，容器保持无宿主引擎套接字和无宿主网络约束。
 
 ## 6. 错误
 
@@ -402,7 +410,7 @@ Linux 使用 Kiri 的原生 headless 方案，官方 `kiri` 包直接在宿主 L
 
 活动 Bun runtime 还覆盖 `test_requires_a_rootless_podman_service_on_linux`，锁定 Linux Podman 健康检查拒绝 rootful 或无法确认 rootless 的服务。
 
-活动 Bun runtime 测试位于 `backend/runtime/kiri.test.ts`。`routes hardened container argv through the embedded Kiri CLI` 锁定直接 `kiri run` 的安全参数，`supports Kiri installations exposed as a Docker context` 锁定 `docker --context` 兼容路径，`probes the embedded Kiri CLI directly` 锁定 headless 健康探测，`reports the Kiri context while using the Docker Engine API` 锁定 context 的健康结果，`rejects malformed context names` 锁定输入校验。Linux daemon 的实际启动由运行环境的 `POST /api/v1/runtime/ensure-ready` 探针验证，测试替身通过注入 `CommandRunner` 保持离线。
+活动 Bun 验收 `backend/runtime/kiri.test.ts` 覆盖官方 Linux 套接字的健康检查、镜像解析和受限启动参数，并验证 systemd 启动合并、自定义套接字的服务归属、Kiri 身份检查和 CLI/context 兼容模式。真实 Linux 服务通过 `factory runtime status` 和 `factory runtime ensure-ready` 验收。
 
 业务启动前的运行时 readiness 由 `backend/tests/business-runtime.test.ts` 的 `ensures the selected container runtime before a containerized Operator starts` 覆盖。测试确认带镜像的 Operator 先完成 runtime readiness，再启动官方 Harness。
 

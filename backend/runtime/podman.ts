@@ -5,8 +5,9 @@
  * This module never invokes a shell and never talks to a model provider.
  */
 
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { spawnLoggedProcess, type LogPaths } from "./process-logs";
 
 export type NetworkMode = "none" | "egress";
 
@@ -43,11 +44,13 @@ export type CommandResult = {
   exitCode: number;
   stdout: Uint8Array;
   stderr: Uint8Array;
+  logsWritten?: true;
 };
 
 export type CommandOptions = {
   timeoutMs?: number;
   env?: Record<string, string>;
+  logs?: LogPaths;
 };
 
 export type CommandRunner = (
@@ -146,27 +149,43 @@ export function resolvePodmanExecutable(configured?: string): string {
 export async function runCommand(argv: string[], options: CommandOptions = {}): Promise<CommandResult> {
   const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
   if (!bun) throw new PodmanError("RUNTIME_UNAVAILABLE", "Bun runtime is required");
-  const inherited = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
-  const spawnOptions: Record<string, unknown> = { stdout: "pipe", stderr: "pipe" };
-  if (options.env) {
-    const childEnv = Object.fromEntries(Object.entries(inherited).filter(([, value]) => typeof value === "string")) as Record<string, string>;
-    Object.assign(childEnv, options.env);
-    spawnOptions.env = childEnv;
-  }
-  const process = bun.spawn(argv, spawnOptions);
+  const env = options.env === undefined ? undefined : {
+    ...Object.fromEntries(Object.entries(environment()).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+    ...options.env,
+  };
   const timeoutMs = options.timeoutMs ?? 60_000;
+  if (options.logs) {
+    const child = spawnLoggedProcess(argv, options.logs, env === undefined ? {} : { env });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill(9);
+    }, timeoutMs);
+    try {
+      const exitCode = await child.exited;
+      if (timedOut) throw new PodmanError("PODMAN_TIMEOUT", "Container runtime command timed out", { executable: argv[0], logsWritten: true });
+      return { exitCode, stdout: new Uint8Array(), stderr: new Uint8Array(), logsWritten: true };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  const process = bun.spawn(argv, { stdout: "pipe", stderr: "pipe", ...(env === undefined ? {} : { env }) });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
-      process.exited.then(async (exitCode: number) => ({
+      Promise.all([
+        process.exited as Promise<number>,
+        new Response(process.stdout).arrayBuffer(),
+        new Response(process.stderr).arrayBuffer(),
+      ]).then(([exitCode, stdout, stderr]) => ({
         exitCode,
-        stdout: new Uint8Array(await new Response(process.stdout).arrayBuffer()),
-        stderr: new Uint8Array(await new Response(process.stderr).arrayBuffer()),
+        stdout: new Uint8Array(stdout),
+        stderr: new Uint8Array(stderr),
       })),
       new Promise<CommandResult>((_, reject) => {
         timer = setTimeout(() => {
           process.kill();
-          reject(new PodmanError("PODMAN_TIMEOUT", "Podman command timed out", { argv }));
+          reject(new PodmanError("PODMAN_TIMEOUT", "Container runtime command timed out", { executable: argv[0] }));
         }, timeoutMs);
       }),
     ]);
@@ -178,6 +197,11 @@ export async function runCommand(argv: string[], options: CommandOptions = {}): 
 
 function text(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes).trim();
+}
+
+export function parseImageId(output: string): string | undefined {
+  const matched = /^(?:sha256:)?([0-9a-f]{64})$/.exec(output.trim());
+  return matched ? `sha256:${matched[1]}` : undefined;
 }
 
 function assertAbsolutePath(value: string, field: string): void {
@@ -258,12 +282,16 @@ export class PodmanProvider implements ContainerProvider {
         throw new PodmanError("SANDBOX_SPEC_INVALID", "Only managed proxy environment variables may be configured", { field: `egressEnv.${key}` });
       }
     }
-    if (this.egressNetwork !== null && !NETWORK.test(this.egressNetwork)) {
+    if (this.egressNetwork !== null && (!NETWORK.test(this.egressNetwork) || this.egressNetwork === "host")) {
       throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid managed egress network", { field: "egressNetwork" });
     }
     this.machine = options.machine ?? null;
     this.platformOverride = options.platform;
     this.run = options.runner ?? runCommand;
+  }
+
+  protected command(...args: string[]): string[] {
+    return [this.executable, ...args];
   }
 
   buildRunArgv(spec: SandboxSpec): string[] {
@@ -272,7 +300,7 @@ export class PodmanProvider implements ContainerProvider {
     const network = spec.network === "egress" ? (this.egressNetwork ?? "bridge") : "none";
     const tmpMb = spec.tmpMb ?? 256;
     const argv = [
-      this.executable, "run", "--name", spec.name, "--detach", "--init", "--user", "10001:10001",
+      ...this.command("run"), "--name", spec.name, "--detach", "--init", "--user", "10001:10001",
       "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--pids-limit", String(spec.pids ?? 256),
       "--network", network, "--tmpfs", `/tmp:rw,nosuid,size=${tmpMb}m`,
     ];
@@ -344,82 +372,99 @@ export class PodmanProvider implements ContainerProvider {
 
   async resolveImage(image: string): Promise<string> {
     if (!IMAGE_REF.test(image)) throw new PodmanError("IMAGE_REF_INVALID", "Invalid image reference", { image });
-    const direct = await this.run([this.executable, "image", "inspect", "--format", "{{.Id}}", image], { timeoutMs: 60_000 });
-    if (direct.exitCode === 0 && /^sha256:[0-9a-f]{64}$/.test(text(direct.stdout))) return image;
+    const direct = await this.run(this.command("image", "inspect", "--format", "{{.Id}}", image), { timeoutMs: 60_000 });
+    if (direct.exitCode === 0 && parseImageId(text(direct.stdout))) return image;
     if (image.includes("@")) {
       const digest = image.slice(image.indexOf("@") + 1);
-      const fallback = await this.run([this.executable, "image", "inspect", "--format", "{{.Id}}", digest], { timeoutMs: 60_000 });
-      if (fallback.exitCode === 0 && /^sha256:[0-9a-f]{64}$/.test(text(fallback.stdout))) return text(fallback.stdout);
+      const fallback = await this.run(this.command("image", "inspect", "--format", "{{.Id}}", digest), { timeoutMs: 60_000 });
+      const id = parseImageId(text(fallback.stdout));
+      if (fallback.exitCode === 0 && id) return id;
     }
-    throw new PodmanError("IMAGE_NOT_FOUND", "Podman image was not found", { image });
+    throw new PodmanError("IMAGE_NOT_FOUND", `Image was not found in ${this.name}`, { image });
   }
 
   async prepareInjectVolume(image: string, volume: string): Promise<void> {
     if (!VOLUME.test(volume)) throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid injection volume", { field: "volume" });
+    await this.requireReady();
     const resolved = await this.resolveImage(image);
-    const created = await this.run([this.executable, "volume", "create", volume], { timeoutMs: 60_000 });
-    if (created.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", "Podman volume create failed", { stderr: text(created.stderr) });
+    const created = await this.run(this.command("volume", "create", volume), { timeoutMs: 60_000 });
+    if (created.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", `${this.name} volume create failed`, { stderr: text(created.stderr) });
     const init = await this.run([
-      this.executable, "run", "--rm", "--network", "none", "--user", "10001:10001", "--cap-drop", "ALL",
+      ...this.command("run"), "--rm", "--network", "none", "--user", "10001:10001", "--cap-drop", "ALL",
       "--security-opt", "no-new-privileges", "--mount", `type=volume,source=${volume},target=/opt/operator`, resolved, "/bin/true",
     ], { timeoutMs: 120_000 });
-    if (init.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", "Podman injection volume initialization failed", { stderr: text(init.stderr) });
+    if (init.exitCode !== 0) {
+      await this.removeVolume(volume).catch(() => {});
+      throw new PodmanError("PODMAN_FAILED", `${this.name} injection volume initialization failed`, { stderr: text(init.stderr) });
+    }
   }
 
   async open(spec: SandboxSpec): Promise<Sandbox> {
-    const ready = await this.ensureReady();
-    if (!ready.available) throw new PodmanError("PODMAN_UNAVAILABLE", "Podman runtime is unavailable", { reason: ready.reason });
+    await this.requireReady();
     const resolved = await this.resolveImage(spec.image);
     if (spec.workspaceVolume) {
-      const volume = await this.run([this.executable, "volume", "create", spec.workspaceVolume], { timeoutMs: 60_000 });
-      if (volume.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", "Podman workspace volume creation failed", { stderr: text(volume.stderr) });
+      const volume = await this.run(this.command("volume", "create", spec.workspaceVolume), { timeoutMs: 60_000 });
+      if (volume.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", `${this.name} workspace volume creation failed`, { stderr: text(volume.stderr) });
     }
-    await this.run([this.executable, "rm", "-f", spec.name], { timeoutMs: 60_000 });
+    await this.run(this.command("rm", "-f", spec.name), { timeoutMs: 60_000 });
     const result = await this.run(this.buildRunArgv({ ...spec, image: resolved }), { timeoutMs: 120_000 });
-    if (result.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", "Podman run failed", { stderr: text(result.stderr) });
+    if (result.exitCode !== 0) throw new PodmanError("PODMAN_FAILED", `${this.name} run failed`, { stderr: text(result.stderr) });
     return new PodmanSandbox(this, spec.name);
   }
 
+  private async requireReady(): Promise<void> {
+    const ready = await this.ensureReady();
+    if (!ready.available) throw new PodmanError("PODMAN_UNAVAILABLE", `${this.name} runtime is unavailable`, { reason: ready.reason });
+  }
+
   async close(name: string): Promise<void> {
-    const result = await this.run([this.executable, "rm", "-f", name], { timeoutMs: 60_000 });
+    const result = await this.run(this.command("rm", "-f", name), { timeoutMs: 60_000 });
     if (result.exitCode !== 0 && !text(result.stderr).toLowerCase().includes("no such container")) {
-      throw new PodmanError("PODMAN_FAILED", "Podman container removal failed", { name, stderr: text(result.stderr) });
+      throw new PodmanError("PODMAN_FAILED", `${this.name} container removal failed`, { name, stderr: text(result.stderr) });
     }
   }
 
   async removeVolume(name: string): Promise<boolean> {
     if (!VOLUME.test(name)) throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid volume name", { name });
-    const result = await this.run([this.executable, "volume", "rm", name], { timeoutMs: 60_000 });
+    const result = await this.run(this.command("volume", "rm", name), { timeoutMs: 60_000 });
     if (result.exitCode === 0) return true;
     if (text(result.stderr).toLowerCase().includes("no such volume")) return false;
-    throw new PodmanError("PODMAN_FAILED", "Podman volume removal failed", { name, stderr: text(result.stderr) });
+    throw new PodmanError("PODMAN_FAILED", `${this.name} volume removal failed`, { name, stderr: text(result.stderr) });
   }
 
   async reap(jobId: string, attempt: number): Promise<number> {
     const name = `mao-${jobId}-${attempt}`;
     let removed = 0;
-    for (const argv of [[this.executable, "rm", "-f", name], [this.executable, "network", "rm", name]]) {
+    for (const argv of [this.command("rm", "-f", name), this.command("network", "rm", name)]) {
       const result = await this.run(argv, { timeoutMs: 60_000 });
       if (result.exitCode === 0) removed += 1;
     }
+    if (await this.removeVolume(`${name}-operator`)) removed += 1;
     return removed;
   }
 
   async exec(name: string, argv: string[], options: { timeoutMs: number; stdout: string; stderr: string; env?: Record<string, string>; workdir?: string }): Promise<ExecResult> {
     if (!argv.length || options.timeoutMs <= 0) throw new PodmanError("SANDBOX_SPEC_INVALID", "Invalid exec request");
-    const command = [this.executable, "exec"];
+    const command = this.command("exec");
     if (options.workdir) command.push("--workdir", options.workdir);
     for (const [key, value] of Object.entries(options.env ?? {})) command.push("--env", `${key}=${value}`);
     command.push(name, ...argv);
     const started = Date.now();
     try {
-      const result = await this.run(command, { timeoutMs: options.timeoutMs });
-      await writeBytes(options.stdout, result.stdout);
-      await writeBytes(options.stderr, result.stderr);
+      const result = await this.run(command, { timeoutMs: options.timeoutMs, logs: { stdout: options.stdout, stderr: options.stderr } });
+      if (!result.logsWritten) {
+        await writeBytes(options.stdout, result.stdout);
+        await writeBytes(options.stderr, result.stderr);
+      }
       return { exitCode: result.exitCode, timedOut: false, durationMs: Math.max(0, Date.now() - started) };
     } catch (error) {
-      await writeBytes(options.stdout, new Uint8Array());
-      await writeBytes(options.stderr, new TextEncoder().encode(error instanceof Error ? error.message : "podman exec failed"));
+      const diagnostic = error instanceof Error ? error.message : `${this.name} exec failed`;
+      if (error instanceof PodmanError && error.detail.logsWritten === true) {
+        appendFileSync(options.stderr, `\n${diagnostic}\n`);
+      } else {
+        await writeBytes(options.stdout, new Uint8Array());
+        await writeBytes(options.stderr, new TextEncoder().encode(diagnostic));
+      }
       if (error instanceof PodmanError && error.code === "PODMAN_TIMEOUT") return { exitCode: null, timedOut: true, durationMs: Math.max(0, Date.now() - started) };
       throw error;
     }

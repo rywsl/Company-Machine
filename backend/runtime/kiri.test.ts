@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { KiriProvider, buildKiriHarnessArgv, resolveKiriEnvironment } from "./kiri";
+import { KiriProvider, buildKiriHarnessCommand, resolveKiriClient } from "./kiri";
 import type { CommandResult, SandboxSpec } from "./podman";
 
-const ok = (stdout = "", stderr = ""): CommandResult => ({
-  exitCode: 0,
-  stdout: new TextEncoder().encode(stdout),
-  stderr: new TextEncoder().encode(stderr),
-});
+function result(stdout = "", stderr = "", exitCode = 0): CommandResult {
+  const encoder = new TextEncoder();
+  return { exitCode, stdout: encoder.encode(stdout), stderr: encoder.encode(stderr) };
+}
 
 const spec: SandboxSpec = {
   name: "mao-kiri-1",
@@ -16,116 +15,101 @@ const spec: SandboxSpec = {
 };
 
 describe("KiriProvider", () => {
-  test("routes hardened container argv through the embedded Kiri CLI", () => {
-    const provider = new KiriProvider({ kiriExecutable: "kiri-test" });
-    const argv = provider.buildRunArgv(spec);
-    expect(argv.slice(0, 2)).toEqual(["kiri-test", "run"]);
-    expect(argv).toContain("--cap-drop");
-    expect(argv).toContain("ALL");
-    expect(argv).toContain("--init");
-    expect(argv).toContain("--pids-limit");
-    expect(argv[argv.indexOf("--pids-limit") + 1]).toBe("256");
-    expect(argv).toContain("--tmpfs");
-    expect(argv[argv.indexOf("--tmpfs") + 1]).toBe("/tmp:rw,nosuid,size=256m");
-    expect(argv[argv.indexOf("--network") + 1]).toBe("none");
-    expect(argv.join(" ")).not.toContain("docker.sock");
+  test("defaults to the packaged service socket on Linux", () => {
+    const keys = ["MAO_KIRI_MODE", "MAO_KIRI_SOCKET", "KIRI_SOCKET"];
+    const saved = keys.map((key) => process.env[key]);
+    try {
+      for (const key of keys) delete process.env[key];
+      const client = resolveKiriClient({ platform: "linux", dockerExecutable: "docker-test" });
+      expect(client.argv).toEqual(["docker-test", "--host", "unix:///run/kiri/docker.sock"]);
+      expect(client.managedService).toBe(true);
+    } finally {
+      keys.forEach((key, index) => {
+        const value = saved[index];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      });
+    }
   });
 
-  test("supports Kiri installations exposed as a Docker context", () => {
-    const provider = new KiriProvider({ dockerExecutable: "docker-test", context: "kiri-test", mode: "docker-context" });
-    expect(provider.buildRunArgv(spec).slice(0, 4)).toEqual(["docker-test", "--context", "kiri-test", "run"]);
-  });
-
-  test("probes the embedded Kiri CLI directly", async () => {
+  test("routes Linux sandbox and Harness commands to the official Unix socket", async () => {
+    const options = { platform: "linux", mode: "linux-socket", socket: "/run/kiri/docker.sock", dockerExecutable: "docker-test" } as const;
+    const prefix = ["docker-test", "--host", "unix:///run/kiri/docker.sock"];
     const calls: string[][] = [];
-    const provider = new KiriProvider({
-      kiriExecutable: "kiri-test",
-      runner: async (argv) => { calls.push(argv); return ok("[]"); },
-    });
-    const health = await provider.health();
-    expect(health.available).toBe(true);
-    expect(calls[0]).toEqual(["kiri-test", "ps", "--format", "json"]);
-  });
-
-  test("passes the Linux headless socket and daemon HOME separately", async () => {
-    let commandOptions: { env?: Record<string, string> } | undefined;
-    const provider = new KiriProvider({
-      kiriExecutable: "kiri-test",
-      socket: "/run/kiri/docker.sock",
-      dataDir: "/var/lib/kiri-daemon",
-      runner: async (_argv, options) => { commandOptions = options; return ok("[]"); },
-    });
-    await provider.health();
-    expect(commandOptions?.env).toEqual({ KIRI_SOCKET: "/run/kiri/docker.sock" });
-    expect(provider.daemonHome).toBe("/var/lib/kiri-daemon");
-    expect(provider.kiriEnvironment).toEqual(commandOptions?.env);
-  });
-
-  test("uses the official Linux socket and Docker context by default", async () => {
-    const provider = new KiriProvider({ platform: "linux", dockerExecutable: "docker-test", runner: async (argv) => {
-      expect(argv).toEqual(["docker-test", "--context", "kiri", "info", "--format", "json"]);
-      return ok(JSON.stringify({ ServerVersion: "kiri-test" }));
+    const provider = new KiriProvider({ ...options, runner: async (argv) => {
+      calls.push(argv);
+      return argv[3] === "info" ? result("Kiri\n") : result(`sha256:${"a".repeat(64)}`);
     } });
-    expect(provider.mode).toBe("docker-context");
-    expect(provider.kiriEnvironment.KIRI_SOCKET).toBe("/run/kiri/docker.sock");
-    expect(provider.kiriEnvironment.KIRI_SOCKET_GROUP).toBe("kiri");
-    expect((await provider.health()).available).toBe(true);
-    expect(buildKiriHarnessArgv("image", ["echo", "ok"], "none", { platform: "linux", dockerExecutable: "docker-test" }).slice(0, 4)).toEqual(["docker-test", "--context", "kiri", "run"]);
+
+    expect(await provider.health()).toMatchObject({ available: true, platform: "linux", machine: "linux-host" });
+    expect(calls[0]).toEqual([...prefix, "info", "--format", "{{.OperatingSystem}}"]);
+    expect(await provider.resolveImage(spec.image)).toBe(spec.image);
+    expect(calls[1]).toEqual([...prefix, "image", "inspect", "--format", "{{.Id}}", spec.image]);
+
+    const run = provider.buildRunArgv(spec);
+    const harness = buildKiriHarnessCommand(spec.image, ["codex"], "none", options);
+    for (const argv of [run, harness.argv]) {
+      expect(argv.slice(0, 4)).toEqual([...prefix, "run"]);
+      expect(argv[argv.indexOf("--user") + 1]).toBe("10001:10001");
+      expect(argv[argv.indexOf("--cap-drop") + 1]).toBe("ALL");
+      expect(argv[argv.indexOf("--pids-limit") + 1]).toBe("256");
+      expect(argv[argv.indexOf("--network") + 1]).toBe("none");
+      expect(argv).toContain("--init");
+      expect(argv).toContain("--read-only");
+      expect(argv).not.toContain("--mount");
+    }
+    expect(harness.env.DOCKER_CONTEXT).toBe("");
   });
 
-  test("starts the packaged Linux service before an optional root fallback", async () => {
+  test("reuses the running service and shares one systemd start for concurrent readiness", async () => {
     const calls: string[][] = [];
     let healthy = false;
     const provider = new KiriProvider({
       platform: "linux",
+      mode: "linux-socket",
+      socket: "/run/kiri/docker.sock",
       dockerExecutable: "docker-test",
-      systemctlExecutable: "systemctl-test",
-      systemdService: "kiri.service",
       runner: async (argv) => {
         calls.push(argv);
-        if (argv[0] === "systemctl-test") { healthy = true; return ok(); }
-        return healthy ? ok(JSON.stringify({ ServerVersion: "kiri-test" })) : { ...ok(), exitCode: 1, stderr: new TextEncoder().encode("offline") };
+        if (argv[0] === "systemctl") { healthy = true; return result(); }
+        return healthy ? result("Kiri") : result("", "offline", 1);
       },
     });
-    const ready = await provider.ensureReady();
-    expect(ready.available).toBe(true);
-    expect(calls[0]).toEqual(["docker-test", "--context", "kiri", "info", "--format", "json"]);
-    expect(calls[1]).toEqual(["systemctl-test", "start", "kiri.service"]);
+    const probes = await Promise.all([provider.ensureReady(), provider.ensureReady()]);
+    expect(probes.every((health) => health.available)).toBe(true);
+    expect((await provider.ensureReady()).available).toBe(true);
+    expect(calls.filter((argv) => argv[0] === "systemctl")).toEqual([
+      ["systemctl", "--no-ask-password", "start", "kiri.service"],
+    ]);
   });
 
-  test("treats dataDir as explicit daemon HOME and keeps image-store env separate", () => {
-    const provider = new KiriProvider({ platform: "linux", dataDir: "/srv/kiri-daemon", dockerExecutable: "docker-test" });
-    expect(provider.daemonHome).toBe("/srv/kiri-daemon");
-    expect(provider.kiriEnvironment.KIRI_DATA_DIR).toBeUndefined();
-    expect(provider.kiriEnvironment.KIRI_SOCKET).toBe("/run/kiri/docker.sock");
-  });
-
-  test("rejects empty or nul-containing headless paths", () => {
-    expect(() => resolveKiriEnvironment({ socket: "" })).toThrow("Invalid Kiri socket");
-    expect(() => resolveKiriEnvironment({ dataDir: "bad\u0000path" })).toThrow("Invalid Kiri data directory");
-    expect(() => resolveKiriEnvironment({ socketGroup: "" })).toThrow("Invalid Kiri socket group");
-  });
-
-  test("reports the Kiri context while using the Docker Engine API", async () => {
+  test("reports systemd failures and leaves custom sockets to their supervisor", async () => {
     const calls: string[][] = [];
-    const provider = new KiriProvider({
-      dockerExecutable: "docker-test",
-      context: "kiri-test",
-      mode: "docker-context",
-      runner: async (argv) => {
-        calls.push(argv);
-        return ok(JSON.stringify({ ServerVersion: "kiri-test", SecurityOptions: [] }));
-      },
-    });
-    const health = await provider.health();
-    expect(health.available).toBe(true);
-    expect(health.machine).toBe("kiri-test");
-    expect(health.executable).toBe("docker-test --context kiri-test");
-    expect(calls[0]).toEqual(["docker-test", "--context", "kiri-test", "info", "--format", "json"]);
+    const runner = async (argv: string[]) => {
+      calls.push(argv);
+      return argv[0] === "systemctl" ? result("", "Interactive authentication required", 1) : result("", "permission denied", 1);
+    };
+    const managed = new KiriProvider({ platform: "linux", mode: "linux-socket", socket: "/run/kiri/docker.sock", runner });
+    expect((await managed.ensureReady()).reason).toBe("permission denied. Interactive authentication required");
+    const custom = new KiriProvider({ platform: "linux", mode: "linux-socket", socket: "/tmp/kiri.sock", runner });
+    expect((await custom.ensureReady()).reason).toBe("permission denied");
+    expect(calls.filter((argv) => argv[0] === "systemctl")).toHaveLength(1);
+    expect(calls.at(-1)?.slice(1, 3)).toEqual(["--host", "unix:///tmp/kiri.sock"]);
   });
 
-  test("rejects malformed context names", () => {
-    expect(() => new KiriProvider({ context: "kiri;host" })).toThrow("Invalid Kiri Docker context");
+  test("retains the official CLI and named-context modes", async () => {
+    const cli = resolveKiriClient({ platform: "linux", mode: "kiri", kiriExecutable: "kiri-test", socket: "/tmp/kiri.sock" });
+    expect(cli.argv).toEqual(["kiri-test"]);
+    expect(cli.env.KIRI_SOCKET).toBe("/tmp/kiri.sock");
+    const provider = new KiriProvider({ mode: "docker-context", context: "kiri-test", dockerExecutable: "docker-test", runner: async () => result("Docker Desktop") });
+    expect(provider.buildRunArgv(spec).slice(0, 4)).toEqual(["docker-test", "--context", "kiri-test", "run"]);
+    expect((await provider.health()).available).toBe(false);
+  });
+
+  test("rejects invalid endpoints and the host network", () => {
+    expect(() => resolveKiriClient({ platform: "linux", mode: "linux-socket", socket: "relative.sock" })).toThrow("Invalid Kiri socket");
+    expect(() => resolveKiriClient({ mode: "docker-context", context: "kiri;host" })).toThrow("Invalid Kiri Docker context");
+    expect(() => buildKiriHarnessCommand(spec.image, ["codex"], "egress", { egressNetwork: "host" })).toThrow("Managed Kiri egress network");
+    expect(() => new KiriProvider({ egressNetwork: "host" })).toThrow("Invalid managed egress network");
   });
 });
-

@@ -1,272 +1,161 @@
-/**
- * Kiri container runtime adapter.
- *
- * Kiri's official CLI speaks to its Docker Engine API without opening the UI.
- * On Linux it runs directly on the host kernel, while the optional
- * docker-context mode targets a named context. The sandbox contract stays
- * identical to Podman and never mounts a host socket.
- */
+/** Kiri's Linux engine runs as a headless service on the host kernel. */
 
-import {
-  PodmanProvider,
-  runCommand,
-  type CommandRunner,
-  type RuntimeHealth,
-  type SandboxSpec,
-} from "./podman";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-export type KiriProviderOptions = {
+import { PodmanProvider, runCommand, type CommandRunner, type RuntimeHealth, type SandboxSpec } from "./podman";
+
+type KiriMode = "linux-socket" | "kiri" | "docker-context";
+type KiriClientOptions = {
   dockerExecutable?: string;
   kiriExecutable?: string;
   context?: string;
-  mode?: "kiri" | "docker-context";
-  /** Runtime platform override used by tests and cross-platform bootstrap. */
+  mode?: KiriMode;
   platform?: string;
-  autoStart?: boolean;
-  /** Unix socket or named pipe used by the headless Kiri daemon. */
   socket?: string;
-  /** Compatibility alias for daemonHome when the adapter starts a daemon. */
-  dataDir?: string;
-  /** Linux socket group used by the official systemd service. */
-  socketGroup?: string;
-  /** HOME used only when this adapter starts the official Linux daemon. */
-  daemonHome?: string;
-  /** systemd unit used by the official Linux package. */
-  systemdService?: string;
-  systemctlExecutable?: string;
+};
+
+export type KiriProviderOptions = KiriClientOptions & {
+  autoStart?: boolean;
   runner?: CommandRunner;
   egressNetwork?: string;
   egressEnv?: Record<string, string>;
 };
 
-const CONTEXT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
-const SERVICE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/;
-
-function processPlatform(): string {
-  return ((globalThis as { process?: { platform?: string } }).process?.platform ?? "unknown");
-}
-
-function resolveMode(configured: "kiri" | "docker-context" | undefined, env: Record<string, string | undefined>, platform: string): "kiri" | "docker-context" {
-  if (configured) return configured;
-  if (env.MAO_KIRI_MODE === "kiri" || env.MAO_KIRI_MODE === "docker-context") return env.MAO_KIRI_MODE;
-  // The official Linux package owns a systemd daemon and creates the `kiri`
-  // Docker context. Prefer that boundary over the CLI's nested docker exec.
-  return platform === "linux" ? "docker-context" : "kiri";
-}
-
-export function resolveKiriEnvironment(options: { socket?: string; dataDir?: string; socketGroup?: string; platform?: string } = {}): Record<string, string> {
-  const env = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
-  const platform = options.platform ?? processPlatform();
-  const values: Record<string, string> = {};
-  const socket = options.socket ?? env.MAO_KIRI_SOCKET ?? env.KIRI_SOCKET ?? (platform === "linux" ? "/run/kiri/docker.sock" : undefined);
-  const dataDir = options.dataDir ?? env.MAO_KIRI_DATA_DIR ?? env.KIRI_DATA_DIR;
-  const socketGroup = options.socketGroup ?? env.MAO_KIRI_SOCKET_GROUP ?? env.KIRI_SOCKET_GROUP ?? (platform === "linux" ? "kiri" : undefined);
-  if (socket !== undefined) {
-    if (socket.length === 0 || socket.includes("\u0000")) throw new Error("Invalid Kiri socket");
-    values.KIRI_SOCKET = socket;
-  }
-  if (dataDir !== undefined) {
-    if (dataDir.length === 0 || dataDir.includes("\u0000")) throw new Error("Invalid Kiri data directory");
-    values.KIRI_DATA_DIR = dataDir;
-  }
-  if (socketGroup !== undefined) {
-    if (socketGroup.length === 0 || socketGroup.includes("\u0000")) throw new Error("Invalid Kiri socket group");
-    values.KIRI_SOCKET_GROUP = socketGroup;
-  }
-  return values;
-}
+const SERVICE_SOCKET = "/run/kiri/docker.sock";
+const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 
 export function resolveKiriExecutable(configured?: string): string {
   if (configured) return configured;
-  const env = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
-  if (env.MAO_KIRI_EXECUTABLE) return env.MAO_KIRI_EXECUTABLE;
-  const localAppData = env.LOCALAPPDATA;
-  const programFiles = env.ProgramFiles;
+  const { MAO_KIRI_EXECUTABLE, LOCALAPPDATA, ProgramFiles } = process.env;
+  if (MAO_KIRI_EXECUTABLE) return MAO_KIRI_EXECUTABLE;
   const candidates = [
-    localAppData ? join(localAppData, "Kiri", "bin", "kiri.exe") : "",
-    programFiles ? join(programFiles, "Kiri", "bin", "kiri.exe") : "",
+    LOCALAPPDATA ? join(LOCALAPPDATA, "Kiri", "bin", "kiri.exe") : "",
+    ProgramFiles ? join(ProgramFiles, "Kiri", "bin", "kiri.exe") : "",
   ].filter(Boolean);
   return candidates.find((candidate) => existsSync(candidate)) ?? "kiri";
 }
 
-export function buildKiriHarnessArgv(
+export function resolveKiriClient(options: KiriClientOptions = {}) {
+  const platform = options.platform ?? process.platform;
+  const mode = options.mode ?? process.env.MAO_KIRI_MODE ?? (platform === "linux" ? "linux-socket" : "kiri");
+  if (mode !== "linux-socket" && mode !== "kiri" && mode !== "docker-context") {
+    throw new Error("Invalid Kiri client mode");
+  }
+  const socket = options.socket ?? process.env.MAO_KIRI_SOCKET ?? process.env.KIRI_SOCKET ?? (platform === "linux" ? SERVICE_SOCKET : undefined);
+  const docker = options.dockerExecutable ?? process.env.MAO_DOCKER_EXECUTABLE
+    ?? (platform === "linux" && existsSync("/usr/libexec/kiri/docker") ? "/usr/libexec/kiri/docker" : "docker");
+  const env: Record<string, string> = {};
+  if (mode === "docker-context") {
+    const context = options.context ?? process.env.MAO_KIRI_CONTEXT ?? "kiri";
+    if (!NAME.test(context)) throw new Error("Invalid Kiri Docker context");
+    return { mode, platform, machine: context, argv: [docker, "--context", context], env, managedService: false };
+  }
+  if (socket !== undefined && (!socket || socket.includes("\u0000") || (platform === "linux" && !socket.startsWith("/")))) {
+    throw new Error("Invalid Kiri socket path");
+  }
+  const machine = platform === "linux" ? "linux-host" : null;
+  const managedService = platform === "linux" && socket === SERVICE_SOCKET;
+  if (mode === "linux-socket") {
+    if (platform !== "linux" || !socket) throw new Error("Kiri Linux socket mode requires a Linux host and an absolute socket path");
+    env.DOCKER_CONTEXT = "";
+    env.DOCKER_TLS_VERIFY = "";
+    env.DOCKER_TLS = "";
+    return { mode, platform, machine, argv: [docker, "--host", `unix://${socket}`], env, managedService };
+  }
+  if (socket) env.KIRI_SOCKET = socket;
+  return { mode, platform, machine, argv: [resolveKiriExecutable(options.kiriExecutable)], env, managedService };
+}
+
+export function buildKiriHarnessCommand(
   image: string,
   argv: string[],
   network: "none" | "egress" = "none",
-  options: { dockerExecutable?: string; kiriExecutable?: string; context?: string; mode?: "kiri" | "docker-context"; egressNetwork?: string; platform?: string } = {},
-): string[] {
-  const mode = resolveMode(options.mode, ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {}), options.platform ?? processPlatform());
-  const context = options.context ?? "kiri";
-  if (!CONTEXT.test(context)) throw new Error("Invalid Kiri Docker context");
-  const egressNetwork = options.egressNetwork ?? "";
-  if (network === "egress" && !CONTEXT.test(egressNetwork)) throw new Error("Managed Kiri egress network is unavailable");
-  const podmanNetwork = network === "egress" ? egressNetwork : "none";
-  const security = ["--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only"];
-  if (mode === "kiri") return [resolveKiriExecutable(options.kiriExecutable), "run", "--rm", "-i", ...security, image, ...argv];
-  return [options.dockerExecutable ?? "docker", "--context", context, "run", "--rm", "-i", ...security, image, ...argv];
-}
-
-function commandFor(argv: string[], executable: string, context: string): string[] {
-  if (argv[0] === executable && argv[1] === "--context" && argv[2] === context) return argv;
-  return [executable, "--context", context, ...argv.slice(1)];
+  options: KiriClientOptions & { egressNetwork?: string; envNames?: string[] } = {},
+) {
+  const client = resolveKiriClient(options);
+  const networkName = network === "none" ? "none" : options.egressNetwork;
+  if (!networkName || !NAME.test(networkName) || networkName === "host") throw new Error("Managed Kiri egress network is unavailable");
+  return {
+    argv: [
+      ...client.argv, "run", "--rm", "-i", "--init", "--pids-limit", "256",
+      "--tmpfs", "/tmp:rw,nosuid,size=256m", "--network", networkName,
+      "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+      ...(options.envNames ?? []).flatMap((name) => ["--env", name]),
+      image, ...argv,
+    ],
+    env: client.env,
+  };
 }
 
 export class KiriProvider extends PodmanProvider {
   readonly name = "kiri";
-  readonly context: string;
-  readonly kiriExecutable: string;
-  private readonly dockerExecutable: string;
+  private readonly client: ReturnType<typeof resolveKiriClient>;
   private readonly commandRunner: CommandRunner;
-  readonly mode: "kiri" | "docker-context";
-  readonly autoStart: boolean;
-  readonly kiriEnvironment: Record<string, string>;
-  readonly platform: string;
-  readonly daemonHome: string;
-  readonly systemdService: string;
-  readonly systemctlExecutable: string;
+  private readonly autoStart: boolean;
+  private readiness?: Promise<RuntimeHealth>;
 
   constructor(options: KiriProviderOptions = {}) {
-    const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
-    const platform = options.platform ?? processPlatform();
-    // Kiri's Docker-context mode must use the Docker-compatible client. Do
-    // not run Podman's Windows path resolver against this executable.
-    const dockerExecutable = options.dockerExecutable ?? hostEnv.MAO_DOCKER_EXECUTABLE ?? "docker";
-    const context = options.context ?? hostEnv.MAO_KIRI_CONTEXT ?? "kiri";
-    const mode = resolveMode(options.mode, hostEnv, platform);
-    if (!CONTEXT.test(context)) throw new Error("Invalid Kiri Docker context");
+    const client = resolveKiriClient(options);
     const runner = options.runner ?? runCommand;
-    const kiriExecutable = resolveKiriExecutable(options.kiriExecutable ?? hostEnv.MAO_KIRI_EXECUTABLE);
-    // `dataDir` is retained as a compatibility alias for daemon HOME. It is
-    // deliberately not sent as KIRI_DATA_DIR, which selects Kiri's image
-    // store and is not the state directory used by the Linux service.
-    const kiriEnvironment = resolveKiriEnvironment({ socket: options.socket, socketGroup: options.socketGroup, platform });
-    const executable = mode === "kiri" ? kiriExecutable : dockerExecutable;
     super({
-      executable,
-      runner: async (argv, commandOptions) => {
-        const mergedOptions = Object.keys(kiriEnvironment).length === 0
-          ? commandOptions
-          : { ...(commandOptions ?? {}), env: { ...kiriEnvironment, ...(commandOptions?.env ?? {}) } };
-        return mode === "kiri"
-          ? runner(argv, mergedOptions)
-          : runner(commandFor(argv, dockerExecutable, context), mergedOptions);
-      },
+      executable: client.argv[0],
+      runner: (argv, commandOptions) => runner(argv, {
+        ...commandOptions,
+        env: { ...commandOptions?.env, ...client.env },
+      }),
       egressNetwork: options.egressNetwork,
       egressEnv: options.egressEnv,
-      platform,
     });
-    this.dockerExecutable = dockerExecutable;
-    this.context = context;
-    this.kiriExecutable = kiriExecutable;
-    this.mode = mode;
-    this.autoStart = options.autoStart ?? true;
+    this.client = client;
     this.commandRunner = runner;
-    this.kiriEnvironment = kiriEnvironment;
-    this.platform = platform;
-    this.daemonHome = options.daemonHome ?? options.dataDir ?? hostEnv.MAO_KIRI_DAEMON_HOME ?? "/var/lib/kiri-daemon";
-    if (this.daemonHome.length === 0 || this.daemonHome.includes("\u0000")) throw new Error("Invalid Kiri daemon home");
-    this.systemdService = options.systemdService ?? hostEnv.MAO_KIRI_SYSTEMD_SERVICE ?? "kiri.service";
-    this.systemctlExecutable = options.systemctlExecutable ?? hostEnv.MAO_KIRI_SYSTEMCTL ?? "systemctl";
-    if (!SERVICE.test(this.systemdService)) throw new Error("Invalid Kiri systemd service");
+    this.autoStart = options.autoStart ?? true;
   }
 
-  buildRunArgv(spec: SandboxSpec): string[] {
-    const argv = super.buildRunArgv(spec);
-    return this.mode === "kiri" ? argv : commandFor(argv, this.dockerExecutable, this.context);
+  protected command(...args: string[]): string[] {
+    return [...this.client.argv, ...args];
   }
 
-  async health(): Promise<RuntimeHealth> {
-    if (this.mode === "kiri") {
-      try {
-        const commandOptions = Object.keys(this.kiriEnvironment).length > 0
-          ? { timeoutMs: 10_000, env: this.kiriEnvironment }
-          : { timeoutMs: 10_000 };
-        const result = await this.commandRunner([this.kiriExecutable, "ps", "--format", "json"], commandOptions);
-        return {
-          available: result.exitCode === 0,
-          platform: this.platform,
-          executable: this.kiriExecutable,
-          machine: this.platform === "linux" ? "linux-host" : null,
-          rootless: null,
-          reason: result.exitCode === 0 ? undefined : new TextDecoder().decode(result.stderr).trim() || "kiri-unavailable",
-        };
-      } catch (error) {
-        return {
-          available: false,
-          platform: this.platform,
-          executable: this.kiriExecutable,
-          machine: this.platform === "linux" ? "linux-host" : null,
-          rootless: null,
-          reason: error instanceof Error ? error.message : "kiri-unavailable",
-        };
-      }
-    }
+  async health(timeoutMs = 5_000): Promise<RuntimeHealth> {
+    const { platform, machine, env } = this.client;
+    const status = { available: false, platform, machine, executable: this.client.argv.join(" "), rootless: null };
     try {
-      const commandOptions = Object.keys(this.kiriEnvironment).length > 0
-        ? { timeoutMs: 10_000, env: this.kiriEnvironment }
-        : { timeoutMs: 10_000 };
-      const result = await this.commandRunner(commandFor([this.dockerExecutable, "info", "--format", "json"], this.dockerExecutable, this.context), commandOptions);
-      return {
-        available: result.exitCode === 0,
-        platform: this.platform,
-        executable: `${this.dockerExecutable} --context ${this.context}`,
-        machine: this.context,
-        rootless: null,
-        reason: result.exitCode === 0 ? undefined : new TextDecoder().decode(result.stderr).trim() || "kiri-unavailable",
-      };
+      const result = await this.commandRunner(this.command("info", "--format", "{{.OperatingSystem}}"), { timeoutMs, env });
+      if (result.exitCode === 0) {
+        if (new TextDecoder().decode(result.stdout).trim() === "Kiri") return { ...status, available: true };
+        return { ...status, reason: "The configured endpoint did not identify itself as Kiri" };
+      }
+      return { ...status, reason: new TextDecoder().decode(result.stderr).trim() || "Kiri is unavailable" };
     } catch (error) {
-      return {
-        available: false,
-        platform: this.platform,
-        executable: `${this.dockerExecutable} --context ${this.context}`,
-        machine: this.context,
-        rootless: null,
-        reason: error instanceof Error ? error.message : "kiri-unavailable",
-      };
+      return { ...status, reason: error instanceof Error ? error.message : "Kiri is unavailable" };
     }
   }
 
   async ensureReady(): Promise<RuntimeHealth> {
-    const current = await this.health();
-    if (current.available || !this.autoStart || this.platform !== "linux") return current;
-    // The packaged Linux daemon is a root-owned systemd service. Starting it
-    // through systemd lets the distribution apply Delegate, RuntimeDirectory,
-    // socket ACL and state-directory policy instead of spawning an unprivileged
-    // daemon from the Bun process.
+    this.readiness ??= this.startService().finally(() => { this.readiness = undefined; });
+    return this.readiness;
+  }
+
+  private async startService(): Promise<RuntimeHealth> {
+    let health = await this.health();
+    if (health.available || !this.autoStart || !this.client.managedService) return health;
     try {
-      const started = await this.commandRunner([this.systemctlExecutable, "start", this.systemdService], { timeoutMs: 30_000 });
-      if (started.exitCode === 0) {
-        for (let attempt = 0; attempt < 50; attempt += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          const ready = await this.health();
-          if (ready.available) return ready;
-        }
+      const started = await this.commandRunner(["systemctl", "--no-ask-password", "start", "kiri.service"], { timeoutMs: 15_000 });
+      if (started.exitCode !== 0) {
+        const reason = new TextDecoder().decode(started.stderr).trim();
+        return { ...health, reason: [health.reason, reason || "Could not start kiri.service"].filter(Boolean).join(". ") };
       }
-    } catch {
-      // A user service or a container image may not have systemd. Continue to
-      // the explicitly permitted root fallback below.
+    } catch (error) {
+      return { ...health, reason: [health.reason, error instanceof Error ? error.message : "Could not start kiri.service"].filter(Boolean).join(". ") };
     }
-    const bun = (globalThis as { Bun?: { spawn: (argv: string[], options: Record<string, unknown>) => any } }).Bun;
-    const processLike = (globalThis as { process?: { getuid?: () => number } }).process;
-    if (!bun || processLike?.getuid?.() !== 0) return current;
-    try {
-      const hostEnv = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {});
-      const daemonEnv = Object.fromEntries(Object.entries(hostEnv).filter(([, value]) => typeof value === "string")) as Record<string, string>;
-      Object.assign(daemonEnv, this.kiriEnvironment);
-      daemonEnv.HOME = this.daemonHome;
-      const daemon = bun.spawn([this.kiriExecutable, "daemon"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true, env: daemonEnv });
-      daemon.unref?.();
-    } catch {
-      return current;
+
+    // The packaged service is Type=simple and can report started before the API binds.
+    const deadline = performance.now() + 5_000;
+    while (performance.now() < deadline) {
+      health = await this.health(Math.max(1, Math.ceil(deadline - performance.now())));
+      if (health.available) return health;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(200, Math.max(0, deadline - performance.now()))));
     }
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const ready = await this.health();
-      if (ready.available) return ready;
-    }
-    return this.health();
+    return health;
   }
 }
-

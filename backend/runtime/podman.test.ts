@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
-import { PodmanError, PodmanProvider, type CommandResult, type SandboxSpec } from "./podman";
+import { PodmanError, PodmanProvider, runCommand, type CommandResult, type SandboxSpec } from "./podman";
 
 const ok = (stdout = "", stderr = ""): CommandResult => ({
   exitCode: 0,
@@ -18,6 +19,12 @@ const spec: SandboxSpec = {
   cpus: 1,
   memoryMb: 512,
 };
+
+function expectPodmanError(run: () => unknown, code: string, detail?: Record<string, unknown>): void {
+  try { run(); }
+  catch (error) { expect(error).toMatchObject({ code, ...(detail ? { detail } : {}) }); return; }
+  throw new Error(`Expected ${code}`);
+}
 
 describe("PodmanProvider", () => {
   test("builds a deterministic hardened argv", () => {
@@ -37,7 +44,20 @@ describe("PodmanProvider", () => {
 
   test("rejects egress until the managed proxy is enabled", () => {
     const provider = new PodmanProvider();
-    expect(() => provider.buildRunArgv({ ...spec, network: "egress" })).toThrow(PodmanError);
+    expectPodmanError(() => provider.buildRunArgv({ ...spec, network: "egress" }), "EGRESS_UNSUPPORTED", { network: "egress" });
+  });
+
+  test("rejects mounted engine sockets, invalid names and mutable image tags", async () => {
+    const provider = new PodmanProvider({ executable: "nonexistent-podman-fixture" });
+    for (const [source, target] of [["/var/run/docker.sock", "/var/run/docker.sock"], ["/tmp/Docker.Sock", "/x"], ["/tmp/in", "/run/docker.sock"]]) {
+      expectPodmanError(() => provider.buildRunArgv({ ...spec, mounts: [{ source, target, readonly: true }] }), "SANDBOX_SPEC_INVALID");
+    }
+    expectPodmanError(() => provider.buildRunArgv({ ...spec, name: "bad name" }), "SANDBOX_SPEC_INVALID", { field: "name" });
+    for (const image of ["python:latest", "mao-test/tool:dev", `repo@sha256:${"AB".repeat(32)}`]) {
+      expectPodmanError(() => provider.buildRunArgv({ ...spec, image }), "IMAGE_REF_INVALID", { image });
+    }
+    await expect(provider.resolveImage("python:latest")).rejects.toMatchObject({ code: "IMAGE_REF_INVALID" });
+    expect(provider.buildRunArgv({ ...spec, image: `sha256:${"cd".repeat(32)}` })).toContain(`sha256:${"cd".repeat(32)}`);
   });
 
   test("uses the managed egress network and proxy environment", () => {
@@ -99,5 +119,35 @@ describe("PodmanProvider", () => {
     expect(calls.some((argv) => argv.includes("run"))).toBe(true);
     await sandbox.close();
     await rm(root, { recursive: true, force: true });
+  });
+
+  test("real subprocess logs are readable during exec and survive a timeout", { timeout: 30_000 }, async () => {
+    const root = `tmp/podman-stream-${randomUUID()}`;
+    const paths = { stdout: `${root}/logs/stdout`, stderr: `${root}/logs/stderr` };
+    await mkdir(`${root}/logs`, { recursive: true });
+    await Bun.write(paths.stdout, "previous run output that must be truncated");
+    const provider = new PodmanProvider({
+      runner: (_argv, options) => runCommand([Bun.argv[0], "-e", "console.log('stdout ready'); console.error('stderr ready'); setInterval(() => {}, 1000)"], options),
+    });
+    let completed = false;
+    const execution = provider.exec("test-sandbox", ["test"], { ...paths, timeoutMs: 12_000 })
+      .finally(() => { completed = true; });
+    try {
+      const errorLog = Bun.file(paths.stderr);
+      const deadline = performance.now() + 10_000;
+      while (performance.now() < deadline && !(await errorLog.text()).includes("stderr ready")) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(completed).toBe(false);
+      expect((await Bun.file(paths.stdout).text()).trim()).toBe("stdout ready");
+      expect((await errorLog.text()).trim()).toBe("stderr ready");
+      expect(await execution).toMatchObject({ exitCode: null, timedOut: true });
+      expect((await Bun.file(paths.stdout).text()).trim()).toBe("stdout ready");
+      expect(await errorLog.text()).toContain("stderr ready");
+      expect(await errorLog.text()).toContain("Container runtime command timed out");
+    } finally {
+      await Promise.allSettled([execution]);
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
