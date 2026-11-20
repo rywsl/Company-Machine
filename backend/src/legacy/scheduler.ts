@@ -182,7 +182,7 @@ export class Scheduler {
     if (!nonnegative(cpu)) throw invalid("cpus");
     const ram = declaration.memory;
     const match = typeof ram === "string" ? /^(\d+)(Mi|Gi)$/.exec(ram) : null;
-    if (ram !== undefined && !match) throw invalid("memory");
+    if (ram !== undefined && ram !== 0 && !match) throw invalid("memory");
     const memoryMb = match ? Number(match[1]) * (match[2] === "Gi" ? 1024 : 1) : 0;
     if (!nonnegative(memoryMb, true)) throw invalid("memory");
     const gpuValue = declaration.gpu ?? "none";
@@ -435,7 +435,10 @@ export class Scheduler {
       candidates.sort((a, b) => priority(b.need.pool) - priority(a.need.pool));
       for (const { row, need, snapshot } of candidates) {
         const inputs = JSON.parse(row.inputs) as Record<string, string[]>;
-        const rule = config.wip?.find(({ station }) => station === row.station || snapshot.key("Station", station) === row.station);
+        const rule = config.wip?.find(({ station }) => {
+          const key = snapshot.key("Station", station);
+          return key === row.station || key === row.station.split("@", 1)[0];
+        });
         if (rule && (counts.get(row.station) ?? 0) >= rule.max) continue;
         if (Object.values(inputs).some((items) => items.some((bean) => quarantine.get(bean)))) continue;
         const compartment = compartments.get(need.pool);
@@ -474,18 +477,29 @@ export class Scheduler {
     const error = redact(job.error ?? {}) as JsonObject;
     const code = typeof error.code === "string" ? error.code : "DEAD";
     db.query("INSERT INTO dead_letters (job_id, station, error_code, error, at) VALUES (?, ?, ?, ?, ?)")
-      .run(job.id, job.station, code, canonicalJson(error), this.now());
+      .run(job.id, job.station, code, canonicalJson(error), job.updatedAt);
     this.event("dlq.recorded", { job: job.id, error_code: code }, job.id);
   }
 
   private deadRows(id?: string): DeadLetter[] {
-    type Row = { job_id: string; station: string; error_code: string; error: string; at: string };
+    type Row = { job_id: string; station: string; error_code: string | null; error: string | null; at: string };
     const { db } = this.context;
-    const rows = id === undefined ? db.query<Row>("SELECT * FROM dead_letters ORDER BY job_id").all()
-      : db.query<Row>("SELECT * FROM dead_letters WHERE job_id = ?").all(id);
-    return rows.map((row) => ({
-      jobId: row.job_id, station: row.station, errorCode: row.error_code, error: JSON.parse(row.error), at: row.at,
-    }));
+    const query = db.query<Row>(`
+      SELECT * FROM (
+        SELECT job_id, station, error_code, error, at FROM dead_letters
+        UNION ALL
+        SELECT jobs.id, jobs.station, NULL, jobs.error, jobs.updated_at
+        FROM jobs LEFT JOIN dead_letters ON dead_letters.job_id = jobs.id
+        WHERE jobs.state = 'DEAD' AND dead_letters.job_id IS NULL
+      ) ${id === undefined ? "" : "WHERE job_id = ?"} ORDER BY job_id
+    `);
+    const rows = id === undefined ? query.all() : query.all(id);
+    return rows.map((row) => {
+      const payload: unknown = row.error === null ? {} : JSON.parse(row.error);
+      const error = object(payload) ? (row.error_code === null ? redact(payload) as JsonObject : payload) : {};
+      const errorCode = row.error_code ?? (typeof error.code === "string" ? error.code : "DEAD");
+      return { jobId: row.job_id, station: row.station, errorCode, error, at: row.at };
+    });
   }
 
   private invalidQuarantine(beanId: string, op: string): never {

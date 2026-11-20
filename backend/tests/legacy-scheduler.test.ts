@@ -2,14 +2,27 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { JobCache } from "../src/legacy/cache";
 import { Context } from "../src/legacy/context";
+import { FactoryError } from "../src/legacy/errors";
 import { CounterIds, FakeClock } from "../src/legacy/foundation";
+import { LineRunner } from "../src/legacy/line-runner";
 import { Runner } from "../src/legacy/runner";
 import { LocalProvider } from "../src/legacy/sandbox";
 import { ScheduledExecutor, Scheduler, type SchedulerConfig } from "../src/legacy/scheduler";
 import { loadSnapshot } from "../src/legacy/snapshot";
 
 const pools = { cpu: 1, memory_mb: 256, gpu: 0 };
+
+function expectCode(run: () => unknown, code: string): void {
+  try { run(); }
+  catch (error) {
+    expect(error).toBeInstanceOf(FactoryError);
+    expect((error as FactoryError).code).toBe(code);
+    return;
+  }
+  throw new Error("expected " + code);
+}
 
 async function fixture() {
   const root = join("tmp", "legacy-scheduler-" + randomUUID());
@@ -26,6 +39,86 @@ async function fixture() {
 }
 
 describe("Bun scheduler", () => {
+  test("drives a Line to completion through ScheduledExecutor dispatch and wait", async () => {
+    const { context, snapshot, close } = await fixture();
+    try {
+      const file = join(context.root, "scheduler-note.txt");
+      await Bun.write(file, "hello\n");
+      const bean = await context.warehouse.add({ type: "note.text@1.0", files: { "note.txt": file }, meta: {} });
+      context.warehouse.sealMany([[bean.id, { chars: 5 }]], null, "sha256:" + "a".repeat(64));
+      const tools = join(import.meta.dir, "../../tests/fakes/tools");
+      const runner = new Runner(context, snapshot, new LocalProvider({
+        "upper-text": [Bun.argv[0], join(tools, "upper_text.ts")],
+        "count-text": [Bun.argv[0], join(tools, "count_text.ts")],
+      }));
+      const scheduler = new Scheduler(context, snapshot, runner, { config: { pools } });
+      const executor = new ScheduledExecutor(scheduler);
+      const line = new LineRunner(runner);
+      const run = line.start("note-trigger@1", { inputs: { note: bean.id } });
+      const submitted = line.tick(run.id, (ids) => executor.dispatch(ids));
+      expect(submitted).toHaveLength(1);
+      expect(runner.jobs.get(submitted[0]).state).toBe("PENDING");
+      await executor.wait(1);
+      expect(line.tick(run.id, (ids) => executor.dispatch(ids))).toEqual([]);
+      expect(line.runs.get(run.id)).toMatchObject({ id: run.id, state: "SUCCEEDED" });
+      expect(line.runs.nodes(run.id)[0]).toMatchObject({ state: "DONE" });
+    } finally { close(); }
+  });
+
+  test("detects missing configuration and leaves jobs queued for absent capacity", async () => {
+    const { context, snapshot, runner, job, close } = await fixture();
+    try {
+      const scheduler = new Scheduler(context, snapshot, runner);
+      expectCode(() => scheduler.loadConfig(), "SCHEDULER_CONFIG_MISSING");
+      await Bun.write(join(context.root, "scheduler.json"), JSON.stringify({ pools: { memory_mb: 256 } }));
+      scheduler.loadConfig();
+      expectCode(() => scheduler.demand("upper@1"), "SCHEDULER_CAPACITY_UNSET");
+      const pending = job();
+      scheduler.enqueue([pending.id]);
+      expect(await scheduler.pump()).toEqual([]);
+      expect(scheduler.queued()).toEqual([pending.id]);
+      const queued = context.db.query<{ data: string }>("SELECT data FROM events WHERE kind = 'scheduler.queued' AND job_id = ?").get(pending.id);
+      expect(JSON.parse(queued!.data)).toMatchObject({ reason: "capacity", code: "SCHEDULER_CAPACITY_UNSET" });
+      await Bun.write(join(context.root, "scheduler.json"), JSON.stringify({ pools: { cpu: null, memory_mb: 256 } }));
+      scheduler.loadConfig();
+      runner.run = async (id) => runner.jobs.transition(id, "SEALED");
+      expect(await scheduler.pump()).toEqual([pending.id]);
+    } finally { close(); }
+  });
+
+  test("enforces a zero WIP limit by station name until it is removed", async () => {
+    const { context, snapshot, runner, job, close } = await fixture();
+    try {
+      const scheduler = new Scheduler(context, snapshot, runner, { config: { pools, wip: [{ station: "upper", max: 0 }] } });
+      const waiting = job();
+      scheduler.enqueue([waiting.id]);
+      runner.run = async (id) => runner.jobs.transition(id, "SEALED");
+      expect(await scheduler.pump()).toEqual([]);
+      expect(scheduler.queued()).toEqual([waiting.id]);
+      expect(runner.jobs.get(waiting.id).state).toBe("PENDING");
+      scheduler.configure({ pools });
+      expect(await scheduler.pump()).toEqual([waiting.id]);
+      expect(runner.jobs.get(waiting.id).state).toBe("SEALED");
+    } finally { close(); }
+  });
+
+  test("leaves breakers and automatic quarantine idle when these controls are unconfigured", async () => {
+    const { context, snapshot, runner, job, close } = await fixture();
+    try {
+      const bean = await context.warehouse.add({ type: "note.text@1.0", files: {}, meta: {} });
+      const withBean = () => job({ note: [bean.id] });
+      const scheduler = new Scheduler(context, snapshot, runner, { config: { pools, breakers: [], toxic_failures: null } });
+      for (let counter = 0; counter < 3; counter += 1) runner.jobs.transition(withBean().id, "DEAD");
+      const next = withBean();
+      scheduler.enqueue([next.id]);
+      runner.run = async (id) => runner.jobs.transition(id, "SEALED");
+      expect(await scheduler.pump()).toEqual([next.id]);
+      expect(scheduler.isQuarantined(bean.id)).toBe(false);
+      expect(context.db.query("SELECT subject FROM breaker_state").all()).toEqual([]);
+      expect(context.db.query("SELECT seq FROM scheduler_toxic_cursor").all()).toEqual([]);
+    } finally { close(); }
+  });
+
   test("persists the queue, reserves resources and dispatches jobs in ID order", async () => {
     const { context, snapshot, runner, job, close } = await fixture();
     let unblock: () => void = () => {};
@@ -101,6 +194,8 @@ describe("Bun scheduler", () => {
       expect(() => scheduler.configure({ ...config, pools })).toThrow(/调度器配置不合法/);
       expect(scheduler.demand("upper@1", snapshot, firstLine).pool).toBe("pipeline");
       expect(scheduler.demand("upper@1", snapshot, secondLine).pool).toBe("trigger");
+      expect(scheduler.demand("upper@1", snapshot, firstLine)).toMatchObject({ cpu: 1, pool: "pipeline" });
+      expect(scheduler.demand("idle@1", snapshot, secondLine)).toMatchObject({ cpu: 0, memoryMb: 0, pool: "trigger" });
       const globalJob = job();
       const lower = create(firstLine);
       const nextLower = create(firstLine);
@@ -141,8 +236,12 @@ describe("Bun scheduler", () => {
       const state = () => context.db.query<{ state: string }>("SELECT state FROM breaker_state WHERE subject = ?").get(subject)?.state;
       runner.jobs.transition(job().id, "SEALED");
       runner.jobs.transition(job().id, "DEAD");
-      expect(await scheduler.pump()).toEqual([]);
+      const tied = job();
+      scheduler.enqueue([tied.id]);
+      runner.run = async (id) => runner.jobs.transition(id, "SEALED");
+      expect(await scheduler.pump()).toEqual([tied.id]);
       expect(state()).toBeUndefined();
+      runner.jobs.transition(job().id, "DEAD");
       runner.jobs.transition(job().id, "DEAD");
       const first = job();
       const second = job();
@@ -229,13 +328,100 @@ describe("Bun scheduler", () => {
     } finally { close(); }
   });
 
+  test("reports dead jobs without writing history and never redispatches them", async () => {
+    const { context, snapshot, clock, runner, job, close } = await fixture();
+    try {
+      const scheduler = new Scheduler(context, snapshot, runner, { config: { pools } });
+      const first = runner.jobs.transition(job().id, "DEAD", { error: { code: "FIRST_FAILURE" } });
+      scheduler.enqueue([first.id]);
+      clock.advance(1);
+      const second = runner.jobs.transition(job().id, "DEAD", { error: { code: "ANOTHER_FAILURE", message: "token=fixture" } });
+      const current = scheduler.listDead();
+      expect(current.map(({ jobId }) => jobId)).toEqual([first.id, second.id]);
+      expect(scheduler.dead(second.id)).toMatchObject({ errorCode: "ANOTHER_FAILURE", error: { message: "token=[REDACTED]" }, at: second.updatedAt });
+      expect(context.db.query("SELECT job_id FROM dead_letters ORDER BY job_id").all()).toEqual([{ job_id: first.id }]);
+      expectCode(() => scheduler.dead("unknown"), "DLQ_NOT_FOUND");
+      runner.run = async () => { throw new Error("dead job was dispatched"); };
+      clock.advance(1);
+      scheduler.enqueue([second.id, first.id]);
+      expect(await scheduler.pump()).toEqual([]);
+      expect(runner.jobs.get(second.id).attempt).toBe(second.attempt);
+      expect(scheduler.listDead()).toEqual(current);
+    } finally { close(); }
+  });
+
+  test("shares scheduler quarantine with cache lookup and restores hits after release", async () => {
+    const { context, snapshot, runner, job, close } = await fixture();
+    try {
+      const scheduler = new Scheduler(context, snapshot, runner, { config: { pools } });
+      const cache = new JobCache(context, runner.jobs);
+      const input = await context.warehouse.add({ type: "note.text@1.0", files: {}, meta: { source: "cache test" } });
+      const output = await context.warehouse.add({ type: "note.text@1.0", files: {}, meta: { source: "scheduler test" } });
+      context.warehouse.sealMany([[input.id, { chars: 1 }], [output.id, { chars: 1 }]], null, "sha256:" + "a".repeat(64));
+      const material = cache.material(snapshot, "upper@1", { note: input.id }, {});
+      const result = job({ note: [input.id] });
+      cache.bind(result.id, material);
+      runner.jobs.transition(result.id, "SEALED", { outputs: { note: [output.id] } });
+      expect(scheduler.isQuarantined(output.id)).toBe(false);
+      expect(cache.lookup(material.key())?.id).toBe(result.id);
+      scheduler.quarantine(output.id, { by: "acceptance", reason: "toxic" });
+      expect(scheduler.isQuarantined(output.id)).toBe(true);
+      expect(cache.lookup(material.key())).toBeNull();
+      scheduler.release(output.id, { by: "acceptance" });
+      expect(cache.lookup(material.key())?.id).toBe(result.id);
+    } finally { close(); }
+  });
+
+  test("parses Gi memory demand in MiB and rejects nonzero unitless sizes", async () => {
+    const { context, snapshot, runner, close } = await fixture();
+    try {
+      const station = snapshot.spec("Station:upper@1");
+      const declaration = snapshot.docs[snapshot.key("Machine", station.machine)].spec.runtime.resources;
+      declaration.memory = "8Gi";
+      const scheduler = new Scheduler(context, snapshot, runner);
+      await Bun.write(join(context.root, "scheduler.json"), JSON.stringify({ pools: { cpu: 1, memory: 8192 } }));
+      scheduler.loadConfig();
+      expect(scheduler.demand("upper@1").memoryMb).toBe(8192);
+      for (const memory of [8, "8GiB"]) {
+        declaration.memory = memory;
+        scheduler.loadConfig();
+        expectCode(() => scheduler.demand("upper@1"), "SCHEDULER_RESOURCE_INVALID");
+      }
+    } finally { close(); }
+  });
+
+  test("fires a one-minute cron at its configured interval and diagnoses input-bound lines", async () => {
+    const { context, snapshot, clock, runner, close } = await fixture();
+    try {
+      const scheduler = new Scheduler(context, snapshot, runner, { config: { pools } });
+      expect((await scheduler.tick({ pump: false })).cron).toEqual([]);
+      const eventRows = context.db.query<{ data: string }>("SELECT data FROM events WHERE kind = 'scheduler.cron'").all();
+      expect(eventRows.map(({ data }) => JSON.parse(data))).toContainEqual({ line: "Line:note-cron@1", code: "CRON_INPUT_REQUIRED" });
+      scheduler.configure({ pools, cron: true });
+      const first = (await scheduler.tick({ pump: false })).cron;
+      expect(first).toHaveLength(1);
+      expect((await scheduler.tick({ pump: false })).cron).toEqual([]);
+      clock.advance(59);
+      expect((await scheduler.tick({ pump: false })).cron).toEqual([]);
+      clock.advance(1);
+      const next = (await scheduler.tick({ pump: false })).cron;
+      expect(next).toHaveLength(1);
+      expect(next[0]).not.toBe(first[0]);
+      const lines = new LineRunner(runner);
+      expect(lines.runs.get(next[0]).line).toBe("Line:note-every@1");
+    } finally { close(); }
+  });
+
   test("applies a common run cap across Bean and cron triggers", async () => {
     const { context, snapshot, runner, close } = await fixture();
     try {
       const bean = await context.warehouse.add({ type: "note.text@1.0", files: {}, meta: {} });
       context.warehouse.sealMany([[bean.id, { chars: 1 }]], null, "sha256:" + "a".repeat(64));
       context.warehouse.label(bean.id, "line", "note-trigger", "operator");
-      const scheduler = new Scheduler(context, snapshot, runner, { config: { run_cap: 1, cron: true } });
+      const scheduler = new Scheduler(context, snapshot, runner, { config: { run_cap: 0, cron: true } });
+      expect(await scheduler.tick({ pump: false })).toMatchObject({ triggered: [], cron: [] });
+      expect(new LineRunner(runner).runs.list()).toEqual([]);
+      scheduler.configure({ run_cap: 1, cron: true });
       const first = await scheduler.tick({ pump: false });
       expect(first.triggered).toHaveLength(1);
       expect(first.cron).toEqual([]);

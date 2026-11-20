@@ -261,7 +261,7 @@ CREATE TABLE rate_buckets (
 
 1. 读机器 `runtime.resources`，再用策略 `resources` 里**同名**的键覆盖。策略没写的键保持机器的值。
 2. `cpus`：缺省 0。必须是数，否则 `SCHEDULER_RESOURCE_INVALID`。
-3. `memory`：缺省 0。字符串必须匹配 `^([0-9]+)(Mi|Gi)$`。`Mi` → 该整数，`Gi` → 该整数 × 1024。无单位的数：`SCHEDULER_RESOURCE_INVALID`，不要猜成字节或 MB。示例里的 `8Gi` 即 8192。
+3. `memory` 缺省或为数字 `0` 时表示无内存需求。其他值须为匹配 `^([0-9]+)(Mi|Gi)$` 的字符串。`Mi` 取该整数，`Gi` 取该整数乘以 1024。`8Gi` 即 8192。非零的无单位数返回 `SCHEDULER_RESOURCE_INVALID`。
 4. `gpu`：缺省或 `none` → 0。整数 → 该整数。其他非空字符串 → 1（一块无名额，只占 `gpu` 计数）。
 5. `pool`：策略 `resources.pool` 若是字符串，则需求记在该隔舱名上；否则用第 5.3 节的匹配结果。
 6. 不读取策略里看不懂的其他键，也不因此报错（schema 允许自由对象）。
@@ -323,7 +323,7 @@ Bun 用 Job 所属快照的工位、机器和 `Policy.spec.egress.providers` 匹
 
 `process()` 接收剩余名额，每创建一个 run 就消耗一个名额。cron 使用 Bean 触发处理完成后的剩余名额。两类触发在同一事务内检查容量和创建运行。
 
-工位在制品见第 5.3 节第 5 步。未配置 `wip` 的工位不限队列长度。
+工位在制品见第 5.3 节第 5 步。`wip.station` 可用带版本的工位引用或裸名称。裸名称匹配该工位的所有版本。未配置 `wip` 的工位不限队列长度。
 
 ### 5.6 cron
 
@@ -359,6 +359,8 @@ job 状态变为 `DEAD` 时插入 `dead_letters`。已有行则不更新（第�
 
 `dispatch` 与 `pump` 都不调用死信 job 的 `runner.run`。本模块没有 `retry`。`list_dead` 只读。
 
+Bun 死信列表合并已持久化的死信和待记账的 `DEAD` Job，按 Job ID 排序。已有死信使用首次记录，待记账的死信使用终态时间和脱敏后的错误。`tick` 或队列操作可持久化待记账记录。
+
 ### 5.9 隔离
 
 `quarantine` 插入 `source=manual`。已隔离：`QUARANTINE_STATE_INVALID`。`release` 删除行。未隔离就 `release`：同一错误码。
@@ -393,6 +395,8 @@ Bun 将自动隔离扫描进度写入 SQLite。Job 对同一个 Bean 的多次�
 ## 7. 验收测试
 
 夹具：`tests/fixtures/registry-m2/` 的脚本工位（一个需求 `cpus: 1`，一个需求 `cpus: 0`）。`scheduler.json` 写在 `tmp_path`，每个测试自己给出数字。规范不检查这些数字等于多少，只检查“配置写了几，行为就按几”。`FakeClock`、`CounterIds`、`LocalProvider`。
+
+Bun 对应验收位于 `backend/tests/legacy-scheduler.test.ts`，逐项映射见 `testing.md`。隔舱验收使用 `match.line` 数组配置，并验证资源占用、优先级和隔舱上限。半开场景在探针执行期间检查状态和准入数量，成功结算后验证关闭状态。
 
 | 文件 | 测试 | 验证什么 |
 |---|---|---|
