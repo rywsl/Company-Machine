@@ -34,6 +34,8 @@ bun run factory status
 
 桌面进程继承旧 PATH 时设置 `MAO_PODMAN_EXECUTABLE`。
 
+`bun run build:test-images` 使用默认 `oven/bun` 基础镜像时会先读取配置的 GeoIP 端点。中国大陆网络会并行探测配置的 Docker Hub 镜像，并选择能返回目标 manifest 且下载速度最快的镜像。使用 `--base` 可以明确指定基础镜像。部署环境可以通过 `MAO_GEOIP_COUNTRY`、`MAO_GEOIP_URL` 或 `MAO_DOCKERHUB_MIRRORS` 指定区域、GeoIP 端点和镜像清单。
+
 ## 在 Linux 上使用 headless Kiri
 
 从官方发布页下载与 Linux 发行版和 CPU 架构对应的 `kiri-lite` 包，并安装 Docker 兼容 CLI。Debian 和 Ubuntu 使用 `sudo apt install ./KIRI_PACKAGE.deb`，Fedora 使用 `sudo dnf install ./KIRI_PACKAGE.rpm`。将示例文件名替换为下载的文件名，再给运行 MAO 的账户授予访问权限。 [Kiri 官方发布页](https://runkiri.com/releases/)

@@ -5,18 +5,24 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { KiriProvider, resolveKiriClient } from "../backend/runtime/kiri";
 import { parseImageId, resolvePodmanExecutable, runCommand } from "../backend/runtime/podman";
+import { resolveDockerHubImage } from "../backend/runtime/dockerhub-mirror";
 
 const repo = resolve(import.meta.dir, "..");
 const imagesRoot = join(repo, "tests", "fixtures", "images");
 const fakesRoot = join(repo, "tests", "fakes");
 const names = ["tool", "studio", "operator"] as const;
+const DEFAULT_BASE = "oven/bun:1.3-alpine";
 const textExtensions = new Set([".ts", ".sh", ".txt", ".json", ".yaml", ".yml", ".md", ".factory", ""]);
 
 type CommandResult = { code: number; stdout: string; stderr: string };
 
 function usage(): void {
   console.log(`bun run build:test-images [--only NAME]... [--base IMAGE] [--executable PATH]
-  [--save-to DIRECTORY | --load-from DIRECTORY] [--build-timeout SECONDS]`);
+  [--save-to DIRECTORY | --load-from DIRECTORY] [--build-timeout SECONDS]
+
+Without --base, mainland-China GeoIP selects the fastest reachable Docker Hub mirror
+for the default oven/bun base image. MAO_GEOIP_COUNTRY, MAO_GEOIP_URL and
+MAO_DOCKERHUB_MIRRORS override discovery.`);
 }
 
 function values(args: string[], flag: string): string[] {
@@ -116,6 +122,8 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
       if (health.code !== 0) throw new Error(`${commandPrefix.join(" ")} 不可用\n${health.stderr}`);
     }
     if (save) await mkdir(resolve(save), { recursive: true });
+    const selectedBase = base ?? (load ? DEFAULT_BASE : await resolveDockerHubImage(DEFAULT_BASE));
+    if (!base && selectedBase !== DEFAULT_BASE) console.error(`中国大陆网络已选择 Docker Hub 镜像源：${selectedBase}`);
     for (const name of targets) {
       const tag = `mao-test/${name}:dev`;
       if (load) {
@@ -128,7 +136,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
       } else {
         console.error(`正在构建 ${tag}`);
         try {
-          await build(name, commandPrefix, base, buildTimeoutMs, env);
+          await build(name, commandPrefix, selectedBase, buildTimeoutMs, env);
         } catch (error) {
           if (kiri?.mode === "linux-socket") {
             throw new Error(`构建 ${tag} 失败。可用 --load-from DIR 导入已构建的测试镜像。\n${error instanceof Error ? error.message : String(error)}`);

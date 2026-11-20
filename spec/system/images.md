@@ -204,6 +204,14 @@ CREATE INDEX images_context ON images(context_digest, state);
 
 构建本身不改变任何 epoch。构建出的镜像没被 Spec 引用之前，对工厂没有影响。
 
+### 5.6 Docker Hub 基础镜像的区域选择
+
+活动 Bun 构建工具 `tools/build_test_images.ts` 在没有 `--base` 时对默认基础镜像执行一次区域选择。控制面优先读取 `MAO_GEOIP_COUNTRY`，否则读取 `MAO_GEOIP_URL` 指向的 GeoIP 服务，只有国家代码为 `CN` 时进入中国大陆镜像探测。探测对同一基础镜像的 Docker Registry manifest 并行发起受限时请求，记录响应字节数和耗时，选择成功返回 manifest 且吞吐最高的候选。候选由 `MAO_DOCKERHUB_MIRRORS` 提供，未配置时使用内置公共候选清单。
+
+GeoIP 请求失败、国家代码未知、候选全部失败或基础镜像不是 Docker Hub 镜像时沿用原始引用。`--base` 始终优先于自动选择。镜像源只用于宿主构建步骤的基础镜像下载，最终产物仍通过本地引擎摘要校验。运行中的 Podman 和 Kiri 不会因为 GeoIP 结果改写 Registry 中已声明的 digest，也不会向业务容器注入镜像源凭据。
+
+测速结果只存在当前构建过程。GeoIP 地址、镜像源和探测结果不写入 Registry、业务包或产物物料记录。
+
 ---
 
 ## 6. 错误

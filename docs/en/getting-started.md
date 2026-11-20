@@ -34,6 +34,8 @@ bun run factory status
 
 Set `MAO_PODMAN_EXECUTABLE` when the desktop process has an old PATH snapshot.
 
+When `bun run build:test-images` builds its default `oven/bun` base, MAO checks the configured GeoIP endpoint. Mainland-China hosts probe the configured Docker Hub mirrors concurrently and use the fastest mirror that serves the requested manifest. Pass `--base` to select an exact base explicitly. Set `MAO_GEOIP_COUNTRY`, `MAO_GEOIP_URL` or `MAO_DOCKERHUB_MIRRORS` for a deployment-specific region, endpoint or mirror list.
+
 ## Use headless Kiri on Linux
 
 Download the official `kiri-lite` package for your Linux distribution and CPU architecture, and install a Docker-compatible CLI. On Debian or Ubuntu, use `sudo apt install ./KIRI_PACKAGE.deb`. On Fedora, use `sudo dnf install ./KIRI_PACKAGE.rpm`. Substitute the downloaded filename, then grant access to the account that runs MAO. [Kiri releases](https://runkiri.com/releases/)
