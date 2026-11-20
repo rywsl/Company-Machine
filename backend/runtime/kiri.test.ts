@@ -22,6 +22,11 @@ describe("KiriProvider", () => {
     expect(argv.slice(0, 2)).toEqual(["kiri-test", "run"]);
     expect(argv).toContain("--cap-drop");
     expect(argv).toContain("ALL");
+    expect(argv).toContain("--init");
+    expect(argv).toContain("--pids-limit");
+    expect(argv[argv.indexOf("--pids-limit") + 1]).toBe("256");
+    expect(argv).toContain("--tmpfs");
+    expect(argv[argv.indexOf("--tmpfs") + 1]).toBe("/tmp:rw,nosuid,size=256m");
     expect(argv[argv.indexOf("--network") + 1]).toBe("none");
     expect(argv.join(" ")).not.toContain("docker.sock");
   });

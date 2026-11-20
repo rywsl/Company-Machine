@@ -76,8 +76,9 @@ export function buildKiriHarnessArgv(
   const egressNetwork = options.egressNetwork ?? "";
   if (network === "egress" && !CONTEXT.test(egressNetwork)) throw new Error("Managed Kiri egress network is unavailable");
   const podmanNetwork = network === "egress" ? egressNetwork : "none";
-  if (mode === "kiri") return [resolveKiriExecutable(options.kiriExecutable), "run", "--rm", "-i", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv];
-  return [options.dockerExecutable ?? "docker", "--context", context, "run", "--rm", "-i", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv];
+  const security = ["--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only"];
+  if (mode === "kiri") return [resolveKiriExecutable(options.kiriExecutable), "run", "--rm", "-i", ...security, image, ...argv];
+  return [options.dockerExecutable ?? "docker", "--context", context, "run", "--rm", "-i", ...security, image, ...argv];
 }
 
 function commandFor(argv: string[], executable: string, context: string): string[] {

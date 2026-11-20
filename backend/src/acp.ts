@@ -193,7 +193,7 @@ export function defaultAcpSpawn(argv: string[], options: { cwd: string; env: Rec
   const command = image
     ? hostEnv.MAO_CONTAINER_RUNTIME?.toLowerCase() === "kiri"
       ? buildKiriHarnessArgv(image, argv, network, { kiriExecutable: hostEnv.MAO_KIRI_EXECUTABLE, dockerExecutable: hostEnv.MAO_DOCKER_EXECUTABLE, context: hostEnv.MAO_KIRI_CONTEXT, mode: hostEnv.MAO_KIRI_MODE === "docker-context" ? "docker-context" : "kiri", egressNetwork: env.MAO_EGRESS_NETWORK })
-      : [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE), "run", "--rm", "-i", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv]
+      : [resolvePodmanExecutable(hostEnv.MAO_PODMAN_EXECUTABLE), "run", "--rm", "-i", "--init", "--pids-limit", "256", "--tmpfs", "/tmp:rw,nosuid,size=256m", "--network", podmanNetwork, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", image, ...argv]
     : argv;
   const process = bun.spawn(command, { cwd: options.cwd, env, stdout: options.stdout, stdin: options.stdin, stderr: "pipe" });
   const stdin = process.stdin && typeof process.stdin.write === "function" ? {
