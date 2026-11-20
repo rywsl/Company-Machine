@@ -141,7 +141,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/dynamic-map.test.ts` | Map 列表展开、保序聚合、溢出与单轮提交数量限制 |
 | `backend/tests/dynamic-map-literal.test.ts` | 字面 Map 编译、实例转换、预算预留、持久化执行、分支跳过与存量计划恢复 |
 | `backend/tests/dynamic-plan.test.ts` | Plan schema、展开限额和当前 Run 预算，Planner 退回重试、封存、附加子节点和重启恢复 |
-| `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案，厂长 CLI 状态筛选 |
+| `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |
 | `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
 | `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |

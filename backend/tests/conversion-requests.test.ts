@@ -6,7 +6,7 @@ import { main } from "../src/cli";
 import { Context } from "../src/legacy/context";
 import { ConversionStore } from "../src/legacy/conversion-requests";
 import { FactoryError } from "../src/legacy/errors";
-import { loadSnapshot } from "../src/legacy/snapshot";
+import { loadSnapshot, Snapshot } from "../src/legacy/snapshot";
 
 const rootOf = () => mkdtempSync(join(tmpdir(), "mao-conversion-"));
 
@@ -70,4 +70,30 @@ test("lists conversion requests through the Foreman CLI as portable records", as
       spec: { from: { type: "note.raw@1", guarantees: ["non_empty"] }, to: { type: "note.text@1", requires: ["non_empty"] }, found_at: [{ line: "notes" }], samples: [], blocked_runs: [], status: "open" },
     }]);
   } finally { console.log = log; context.close(); rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
+test("reopens unsatisfied requests during rollback and merges repeated reports", async () => {
+  const root = rootOf();
+  const context = Context.open(root);
+  try {
+    const requests = new ConversionStore(context);
+    const candidate = await loadSnapshot("tests/fixtures/registry-m2");
+    const converter = candidate.doc("Station:note-to-text@1");
+    converter.metadata.lifecycle = "retired";
+    const restored = new Snapshot(candidate.root, "e-restored", { ...candidate.docs, "Station:note-to-text@1": converter }, candidate.result);
+    const contract = { from: "note.raw@1", to: "note.text@1", guarantees: ["non_empty"], requires: ["non_empty"] };
+    const reopened = requests.openOrMerge(contract, { foundAt: { step: "first" } });
+    const again = requests.openOrMerge({ ...contract, requires: [] }, { foundAt: { step: "earlier" }, sample: "sample-1", runId: "run-1" });
+    const stillSatisfied = requests.openOrMerge({ ...contract, from: "note.text@1" }, { foundAt: { step: "same-type" } });
+    expect(new Set(requests.resolveMatching("cs-rollback", candidate))).toEqual(new Set([reopened.id, again.id, stillSatisfied.id]));
+    const pending = requests.openOrMerge({ ...contract, requires: [] }, { foundAt: { step: "later" }, sample: "sample-2", runId: "run-2" });
+    requests.restoreAfterRollback("cs-rollback", restored);
+    requests.restoreAfterRollback("cs-rollback", restored);
+    expect(requests.get(reopened.id)).toMatchObject({ status: "open", changeset_id: null });
+    expect(requests.get(stillSatisfied.id).status).toBe("resolved");
+    expect(requests.get(pending.id)).toMatchObject({
+      status: "open", found_at: [{ step: "later" }, { step: "earlier" }], samples: ["sample-2", "sample-1"], blocked_runs: ["run-2", "run-1"],
+    });
+    expect(requests.list("open")).toHaveLength(2);
+  } finally { context.close(); rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
 });

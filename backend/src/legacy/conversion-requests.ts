@@ -34,6 +34,12 @@ function decode(row: ConversionRow) {
 }
 
 type ConversionRequest = ReturnType<typeof decode>;
+type Sightings = Pick<ConversionRequest, "found_at" | "samples" | "blocked_runs">;
+
+function fulfilled(resolve: ReturnType<typeof contractResolver>, request: ConversionRequest): boolean {
+  const status = resolve({ from: request.from_type, to: request.to_type, guarantees: request.guarantees, requires: request.requires });
+  return status === "direct" || status === "convert";
+}
 
 export class ConversionStore {
   constructor(private readonly context: Pick<Context, "db" | "clock" | "ids">) {
@@ -67,28 +73,20 @@ export class ConversionStore {
     const properties = (values: readonly string[]) => canonicalJson([...new Set(values)].sort());
     const key = [contract.from, properties(contract.guarantees), contract.to, properties(contract.requires)] as const;
     return db.transaction(() => {
-      const row = db.query<ConversionRow>(`
-        SELECT * FROM conversion_requests WHERE from_type = ? AND guarantees = ? AND to_type = ? AND requires = ?
-          AND status IN ('open', 'in_progress')
-      `).get(...key);
+      const row = this.pending(...key);
       const at = utcIso(clock.now());
+      const sightings = {
+        found_at: [origin.foundAt], samples: origin.sample ? [origin.sample] : [], blocked_runs: origin.runId ? [origin.runId] : [],
+      };
       if (!row) {
         const id = ids.new("cr");
         db.query(`
           INSERT INTO conversion_requests (id, from_type, guarantees, to_type, requires, found_at, samples, blocked_runs, status, at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
-        `).run(id, ...key, canonicalJson([origin.foundAt]), canonicalJson(origin.sample ? [origin.sample] : []), canonicalJson(origin.runId ? [origin.runId] : []), at, at);
+        `).run(id, ...key, canonicalJson(sightings.found_at), canonicalJson(sightings.samples), canonicalJson(sightings.blocked_runs), at, at);
         return this.get(id);
       }
-      const current = decode(row);
-      const location = canonicalJson(origin.foundAt);
-      const found = current.found_at.some((item) => canonicalJson(item) === location) ? row.found_at : canonicalJson([...current.found_at, origin.foundAt]);
-      const samples = origin.sample && !current.samples.includes(origin.sample) ? canonicalJson([...current.samples, origin.sample]) : row.samples;
-      const blocked = origin.runId && !current.blocked_runs.includes(origin.runId) ? canonicalJson([...current.blocked_runs, origin.runId]) : row.blocked_runs;
-      if (found === row.found_at && samples === row.samples && blocked === row.blocked_runs) return current;
-      db.query("UPDATE conversion_requests SET found_at = ?, samples = ?, blocked_runs = ?, updated_at = ? WHERE id = ?")
-        .run(found, samples, blocked, at, row.id);
-      return this.get(row.id);
+      return this.merge(row, sightings, at);
     }).immediate();
   }
 
@@ -114,12 +112,51 @@ export class ConversionStore {
       const at = utcIso(clock.now());
       const update = db.query("UPDATE conversion_requests SET status = 'resolved', changeset_id = ?, updated_at = ? WHERE id = ?");
       return open.flatMap((request) => {
-        const status = resolve({ from: request.from_type, to: request.to_type, guarantees: request.guarantees, requires: request.requires });
-        if (status !== "direct" && status !== "convert") return [];
+        if (!fulfilled(resolve, request)) return [];
         update.run(changesetId, at, request.id);
         return [request.id];
       });
     }).immediate();
+  }
+
+  restoreAfterRollback(changesetId: string, snapshot: Snapshot): void {
+    const { db, clock } = this.context;
+    db.transaction(() => {
+      const resolved = db.query<ConversionRow>(`
+        SELECT * FROM conversion_requests WHERE status = 'resolved' AND changeset_id = ? ORDER BY id
+      `).all(changesetId);
+      if (!resolved.length) return;
+      const resolve = contractResolver(snapshot);
+      const at = utcIso(clock.now());
+      const reopen = db.query("UPDATE conversion_requests SET status = 'open', changeset_id = NULL, updated_at = ? WHERE id = ?");
+      for (const row of resolved) {
+        const request = decode(row);
+        if (fulfilled(resolve, request)) continue;
+        const pending = this.pending(row.from_type, row.guarantees, row.to_type, row.requires);
+        if (pending) this.merge(pending, request, at);
+        else reopen.run(at, row.id);
+      }
+    }).immediate();
+  }
+
+  private pending(from: string, guarantees: string, to: string, requires: string): ConversionRow | null {
+    return this.context.db.query<ConversionRow>(`
+      SELECT * FROM conversion_requests WHERE from_type = ? AND guarantees = ? AND to_type = ? AND requires = ?
+        AND status IN ('open', 'in_progress')
+    `).get(from, guarantees, to, requires);
+  }
+
+  private merge(row: ConversionRow, extra: Sightings, at: string): ConversionRequest {
+    const current = decode(row);
+    const locations = new Map(current.found_at.map((location) => [canonicalJson(location), location]));
+    for (const location of extra.found_at) locations.set(canonicalJson(location), location);
+    const found = canonicalJson([...locations.values()]);
+    const samples = canonicalJson([...new Set([...current.samples, ...extra.samples])]);
+    const blocked = canonicalJson([...new Set([...current.blocked_runs, ...extra.blocked_runs])]);
+    if (found === row.found_at && samples === row.samples && blocked === row.blocked_runs) return current;
+    this.context.db.query("UPDATE conversion_requests SET found_at = ?, samples = ?, blocked_runs = ?, updated_at = ? WHERE id = ?")
+      .run(found, samples, blocked, at, row.id);
+    return this.get(row.id);
   }
 }
 

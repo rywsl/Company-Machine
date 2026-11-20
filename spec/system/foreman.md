@@ -152,6 +152,8 @@ class ConversionStore:
 
 Bun 的 Planner 将缺失转换写入 `ConversionStore`。来源类型、目标类型及排序后的属性构成合并键。重复发现位置、样本和阻塞 Run 去重。`factory foreman conversion ls [--status open|in_progress|resolved]` 从工厂数据库输出 `ConversionRequest` 文档。ChangeSet 晋升时，在更新 active 的同一事务中按冻结 Registry 重新解析需求。类型和属性均满足时记录 `resolved` 和对应 ChangeSet，保留发现位置和样本以供追溯。
 
+观察期回滚时，按恢复的冻结 Registry 重新判断这次晋升结案的需求。恢复后仍满足的需求保持结案。失去可用转换时重新打开需求，或把原发现位置、样本与阻塞 Run 合并到同一契约已有的待处理记录。该操作与 epoch 指针回滚在同一 SQLite 事务中执行。
+
 ### 3.5 自举
 
 ```python

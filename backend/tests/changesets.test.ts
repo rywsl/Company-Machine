@@ -11,6 +11,7 @@ import { ChangeSetStages } from "../src/legacy/change-stages";
 import type { VerificationContracts } from "../src/legacy/change-verification";
 import { ContractRunner } from "../src/legacy/contract";
 import { Context } from "../src/legacy/context";
+import { ConversionStore } from "../src/legacy/conversion-requests";
 import { CounterIds, FakeClock, canonicalJson, utcIso } from "../src/legacy/foundation";
 import { EpochStore } from "../src/legacy/registry-epochs";
 import { Runner } from "../src/legacy/runner";
@@ -300,6 +301,10 @@ test("records independent reviews and uses canary SLO samples before promotion",
     const canary = await stage.advance(draft.id);
     expect(canary).toMatchObject({ state: "canary", stage_started_at: utcIso(w.context.clock.now()) });
     expect(w.epochs.current()).toBe(w.base);
+    const conversions = new ConversionStore(w.context);
+    const request = conversions.openOrMerge({
+      from: "note.raw@1", guarantees: ["non_empty"], to: "note.text@1", requires: ["non_empty"],
+    }, { foundAt: { step: "canary" } });
     const router = new RegistrySelection(w.context, w.registry);
     const line = "Line:note-pipeline@1";
     const picks = Object.fromEntries([w.base, draft.commit].map((commit) => [commit, 0]));
@@ -318,11 +323,13 @@ test("records independent reviews and uses canary SLO samples before promotion",
     recordSample(w.context, { id: "shadow-good", epoch: draft.commit, state: "SUCCEEDED", dryRun: true });
     recordSample(w.context, { id: "canary-first", epoch: draft.commit, state: "SUCCEEDED" });
     expect(await stage.advance(draft.id)).toMatchObject({ state: "canary", report: { reason: "samples" } });
+    expect(conversions.get(request.id).status).toBe("open");
     recordSample(w.context, { id: "canary-second", epoch: draft.commit, state: "SUCCEEDED" });
     expect(runMetrics(w.context, draft.commit, canary.stage_started_at!)).toEqual({
       runs: 2, jobs: 0, success_rate: 1, gate_reject_rate: null, cost_per_run_usd: 1,
     });
     expect(await stage.advance(draft.id)).toMatchObject({ state: "active" });
+    expect(conversions.get(request.id)).toMatchObject({ status: "resolved", changeset_id: draft.id });
     expect(w.epochs.pointers()).toEqual({ active: draft.commit, candidate: null, previous: w.base });
     expect(await git(w.registry, "rev-parse", "refs/factory/active")).toBe(draft.commit);
   } finally { w.close(); }

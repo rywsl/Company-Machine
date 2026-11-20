@@ -213,6 +213,7 @@ export class ChangeSetStages {
   private async completeRollout(change: ChangeSet, outcome: "promote" | "discard" | "rollback", violation?: Data): Promise<ChangeSet> {
     const { epochs, context } = this.store;
     const candidate = outcome === "promote" ? await epochs.materialize(change.commit) : undefined;
+    const restored = outcome === "rollback" ? await epochs.materialize(change.base_epoch) : undefined;
     const completed = context.db.transaction(() => {
       if (outcome === "promote" && this.safeModeHolds(change)) return this.wait(change, "safe-mode");
       if (!epochs.updateRolloutPointers(change.base_epoch, change.commit, outcome)) return this.rejectStale(change);
@@ -220,6 +221,7 @@ export class ChangeSetStages {
         new ConversionStore(context).resolveMatching(change.id, candidate);
         return this.transition(change, "active", { ...change.report, stage: "active", ok: true, code: null, detail: {} }, undefined, "active");
       }
+      if (restored) new ConversionStore(context).restoreAfterRollback(change.id, restored);
       return this.transition(change, "rolled-back", { ...change.report, ok: false, code: "SLO_ROLLBACK", detail: violation ?? {} });
     }).immediate();
     await epochs.syncRefs();
