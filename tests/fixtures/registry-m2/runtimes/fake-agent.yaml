@@ -1,4 +1,4 @@
-# 测试用 agent CLI（tests/fakes/fake_agent.py）。命令行形状模仿 Claude Code 无头模式。
+# 测试用 agent CLI（tests/fakes/fake_agent.ts）。命令行形状模仿 Claude Code 无头模式。
 apiVersion: mao/v1
 kind: OperatorRuntime
 metadata: {name: fake-agent, version: 1}

@@ -53,7 +53,7 @@ declare module "bun:test" {
 
 declare const Bun: {
   argv: string[];
-  YAML: { parse(source: string): unknown };
+  YAML: { parse(source: string): unknown; stringify(value: unknown): string };
   serve(options: { port: number; hostname?: string; fetch: (request: Request) => Response | Promise<Response> }): { url: URL; stop(): void };
   file(path: string): Blob;
   write(path: string, source: unknown): Promise<number>;

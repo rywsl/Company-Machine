@@ -31,9 +31,11 @@ const suites: Record<string, Step[]> = {
     { label: "Bun business acceptance", argv: ["bun", "test", "backend/tests"] },
     { label: "Bun runtime acceptance", argv: ["bun", "test", "backend/runtime"] },
     { label: "Bun MRL acceptance", argv: ["bun", "test", "backend/mrl"] },
+    { label: "Bun Harness fixture acceptance", argv: ["bun", "test", "tests/fakes"] },
   ],
   verify: [
     { label: "Bun backend acceptance", argv: ["bun", "test", "backend"] },
+    { label: "Bun Harness fixture acceptance", argv: ["bun", "test", "tests/fakes"] },
     { label: "Backend strict TypeScript check", argv: ["pnpm", "--filter", "@mao/web", "exec", "tsc", "--noEmit", "-p", "../backend/tsconfig.json", "--pretty", "false"] },
     { label: "Web TypeScript check", argv: ["pnpm", "check:web"] },
   ],
