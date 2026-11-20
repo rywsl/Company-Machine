@@ -4,7 +4,7 @@
 
 ## 运行时入口
 
-`backend/mrl/index.ts` 导出词法分析、表达式解析、静态检查、求值、模板、MRL-R 规则程序和关系查询。业务侧通过 `compileExpr(source, options)` 编译一次，再调用返回对象的 `evaluate(environment)` 重复求值。需要一次性求值时使用 `evaluate(source, environment, options)`。模板使用 `compileTemplate(text, options)`，插值只允许 string、数值、bool 或 dyn。规则程序通过 `buildRuleProgram([{name, source}])` 构建，再用 `evaluate(facts)` 固定点求值并从 `RuleModel.rowsOf(name)` 查询关系。
+`backend/mrl/index.ts` 导出词法分析、表达式解析、静态检查、求值、模板、MRL-R 规则程序和关系查询。业务侧通过 `compileExpr(source, options)` 编译一次，再调用返回对象的 `evaluate(environment)` 重复求值。需要一次性求值时使用 `evaluate(source, environment, options)`。模板使用 `compileTemplate(text, options)`，插值只允许 string、数值、bool 或 dyn。规则程序通过 `buildRuleProgram([{name, source}])` 构建，再用 `evaluate(facts)` 固定点求值并从 `RuleModel.rowsOf(name)` 查询关系。`backend/mrl/cli.ts` 提供 `bun run mrl eval|template|check|run`，CLI 的映射输入使用 JSON 或 `@FILE` 引用。
 
 环境值只能是 JSON 可表示的 MRL 值，包括 `null`、布尔、有限数字、字符串、数组和字符串键对象。未绑定的名字产生 `MRL-UNDEFINED`。求值预算通过 `EvaluateOptions.budget` 注入，超过预算产生 `MRL-COST`，避免不受控的宏展开阻塞 Bun 事件循环。
 
@@ -24,4 +24,4 @@
 
 ## 验证
 
-TypeScript 单元测试位于 `backend/mrl/mrl.test.ts`、`backend/mrl/checker.test.ts` 与 `backend/mrl/rules.test.ts`。每次变更应运行 `bun test backend/mrl`，活动提交前运行 `bun run verify:bun`。历史 Python 参考实现和旧映射位于 `removed/python/`。
+TypeScript 单元测试位于 `backend/mrl/mrl.test.ts`、`backend/mrl/checker.test.ts` 与 `backend/mrl/rules.test.ts`。CLI 可用 `bun run mrl --help`、`bun run mrl eval`、`bun run mrl template`、`bun run mrl check` 和 `bun run mrl run` 验证。每次变更应运行 `bun test backend/mrl`，活动提交前运行 `bun run verify:bun`。历史 Python 参考实现和旧映射位于 `removed/python/`。
