@@ -1,6 +1,8 @@
 import { basename } from "node:path";
 import { createApp, startServer } from "./server";
 import { checkRegistry } from "../mrl/factory";
+import { Context } from "./legacy/context";
+import { ConversionStore, conversionDocument } from "./legacy/conversion-requests";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
 export { CliUsageError } from "./station-cli";
 
@@ -19,7 +21,7 @@ export function usage(scope?: string): string {
   if (scope && isStationScope(scope)) return stationUsage(scope);
   if (scope === "project") return `factory project commands\n  intake --name NAME [--repo URL | --folder PATH | --file PATH | --file-ref REF]\n  fetch PROJECT SHA256 --output PATH`;
   if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID\n  graph ID --file PATH\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
-  if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID`;
+  if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID\n  conversion ls [--status open|in_progress|resolved] [--root PATH]`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready`;
   return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID --file PATH\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
@@ -41,6 +43,9 @@ async function requestJson(app: ReturnType<typeof createApp>, path: string, init
 
 async function runCommand(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
+  if (command === "foreman" && args[0] === "conversion") {
+    return listConversions(args.slice(1));
+  }
   if (isStationScope(command) || ["--root", "--registry", "--provider", "--local-commands", "--epoch", "--json"].includes(command)) {
     return runStationCli(argv);
   }
@@ -219,6 +224,30 @@ async function runCommand(argv: string[]): Promise<number> {
   } finally {
     app.stop();
   }
+}
+
+function listConversions(args: string[]): number {
+  const [operation, ...flags] = args;
+  if (operation !== "ls") throw new CliUsageError("foreman conversion expects ls");
+  const options = new Map<string, string>();
+  for (let index = 0; index < flags.length; index++) {
+    const key = flags[index];
+    if (key === "--json") continue;
+    const argument = flags[++index];
+    if ((key !== "--status" && key !== "--root") || !argument || argument.startsWith("--") || options.has(key)) {
+      throw new CliUsageError("expected --status or --root with one value");
+    }
+    options.set(key, argument);
+  }
+  const status = options.get("--status");
+  if (status !== undefined && status !== "open" && status !== "in_progress" && status !== "resolved") {
+    throw new CliUsageError("expected status open, in_progress, or resolved");
+  }
+  const context = Context.open(options.get("--root") ?? process.env.FACTORY_ROOT ?? ".factory");
+  try {
+    console.log(JSON.stringify(new ConversionStore(context).list(status).map(conversionDocument), null, 2));
+    return 0;
+  } finally { context.close(); }
 }
 
 export async function main(argv = Bun.argv.slice(2)): Promise<number> {

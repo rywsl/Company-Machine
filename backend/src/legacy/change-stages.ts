@@ -6,6 +6,7 @@ import { runShadowWith, type ShadowExecution } from "./change-shadow";
 import { verificationReject, verifyChangeSet, type VerificationContracts, type VerificationOutcome } from "./change-verification";
 import type { ChangeSet, ChangeSetStore } from "./changesets";
 import { ContractRunner } from "./contract";
+import { ConversionStore } from "./conversion-requests";
 import { FactoryError } from "./errors";
 import { canonicalJson, parseDuration, utcIso } from "./foundation";
 import { Runner } from "./runner";
@@ -211,10 +212,12 @@ export class ChangeSetStages {
 
   private async completeRollout(change: ChangeSet, outcome: "promote" | "discard" | "rollback", violation?: Data): Promise<ChangeSet> {
     const { epochs, context } = this.store;
+    const candidate = outcome === "promote" ? await epochs.materialize(change.commit) : undefined;
     const completed = context.db.transaction(() => {
       if (outcome === "promote" && this.safeModeHolds(change)) return this.wait(change, "safe-mode");
       if (!epochs.updateRolloutPointers(change.base_epoch, change.commit, outcome)) return this.rejectStale(change);
-      if (outcome === "promote") {
+      if (candidate) {
+        new ConversionStore(context).resolveMatching(change.id, candidate);
         return this.transition(change, "active", { ...change.report, stage: "active", ok: true, code: null, detail: {} }, undefined, "active");
       }
       return this.transition(change, "rolled-back", { ...change.report, ok: false, code: "SLO_ROLLBACK", detail: violation ?? {} });

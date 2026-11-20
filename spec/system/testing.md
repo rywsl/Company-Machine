@@ -141,6 +141,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `backend/tests/dynamic-map.test.ts` | Map 列表展开、保序聚合、溢出与单轮提交数量限制 |
 | `backend/tests/dynamic-map-literal.test.ts` | 字面 Map 编译、实例转换、预算预留、持久化执行、分支跳过与存量计划恢复 |
 | `backend/tests/dynamic-plan.test.ts` | Plan schema、展开限额和当前 Run 预算，Planner 退回重试、封存、附加子节点和重启恢复 |
+| `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案，厂长 CLI 状态筛选 |
 | `backend/tests/legacy-runner.test.ts` | 工位执行、单元素列表物化和封存 |
 | `backend/tests/legacy-two-phase.test.ts` | 方案审批、Job 持久化恢复及 Sink 回执时序 |
 | `backend/tests/legacy-runs.test.ts` | 运行恢复、事务回滚、预算和节点重试 |
@@ -351,6 +352,9 @@ MAO_CONTAINER_RUNTIME=kiri bun run tools/verify-runtime.ts
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_machine_needs_do_not_expand_policy` | `backend/tests/legacy-egress.test.ts` | `leaves none isolated and expands only explicitly delegated Machine tiers` | Machine 声明只在策略显式委托的等级生效 |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_connect_without_ca_rejected_when_methods_limited` | `backend/tests/legacy-egress-forwarder.test.ts` | `rejects a CONNECT if the HTTPS method is opaque or a monitor must authorize it` | 方法受限时以 403 拒绝不透明 CONNECT |
 | `removed/python/tests/acceptance/m2/test_m2_07_egress.py::test_unproxied_still_denied` | `backend/runtime/podman.test.ts` | `rejects Registry egress before querying an engine with only a configured bridge` | 缺少隔离代理时在访问容器引擎前拒绝 |
+
+| `removed/python/tests/acceptance/m3/test_m3_05_foreman.py::test_conversion_merged` | `backend/tests/conversion-requests.test.ts` | `merges conversion sightings, samples and blocked Runs into one durable request` | 相同规范化契约保留两个发现位置和阻塞 Run，重新打开数据库仍只有一条记录 |
+| `removed/python/tests/acceptance/m3/test_m3_05_foreman.py::test_cannot_self_resolve` | `backend/tests/conversion-requests.test.ts` | `resolves only contracts satisfied by the activated snapshot and refuses self-resolution` | 直接结案报 `CONVERSION_STATE_INVALID`，冻结转换不能满足必要属性的记录继续待处理 |
 
 归档 M11 的出网验收同时要求持久化主体令牌、审计事件、按需审批及核验主体的秘密分类。Bun 已有本地协议证据和发布与核验分开创建监听器的证据，这些用例仍保留在历史差异中。M2 中依赖模型代理、计量与预算的用例也保留在历史差异中。
 

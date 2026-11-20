@@ -708,6 +708,24 @@ function reconcileBudget(
   return items;
 }
 
+export function contractResolver(snapshot: Snapshot) {
+  const line = "conversion-request";
+  const types = new LineTypes(snapshot, line);
+  const converters = converterLibrary(snapshot, types, line);
+  return (contract: { from: string; to: string; guarantees: readonly string[]; requires: readonly string[] }): ResolutionStatus | undefined => {
+    let from: string;
+    let to: string;
+    try {
+      from = types.normalize(contract.from);
+      to = types.normalize(contract.to);
+    } catch (error) {
+      if (error instanceof FactoryError && error.code === "RUN_PLAN_INVALID" && typeof error.detail.type === "string") return;
+      throw error;
+    }
+    return resolveEdge(types, converters, { line, step: "", port: "", from, to, guarantees: [...contract.guarantees], requires: [...contract.requires] }).status;
+  };
+}
+
 export function compileRunPlan(snapshot: Snapshot, lineRef: string): RunPlan {
   return compileWiredRunPlan(snapshot, lineRef);
 }

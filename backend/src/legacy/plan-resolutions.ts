@@ -3,8 +3,9 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import type { FactoryResolution } from "../../mrl/factory/references";
 import type { Context } from "./context";
+import { ConversionStore } from "./conversion-requests";
 import { FactoryError } from "./errors";
-import { canonicalJson, utcIso } from "./foundation";
+import { canonicalJson } from "./foundation";
 import type { Snapshot } from "./snapshot";
 
 type Contract = { from: string; guarantees: string[]; to: string; requires: string[] };
@@ -60,12 +61,13 @@ export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows
       known.set(key, canonicalJson(chain));
     }
     const fresh: RuntimeResolution[] = [];
+    let requests: ConversionStore | undefined;
     for (const row of rows) {
       const typed = contract(row);
       const chain = names(row.chain);
       if (!typed || !chain) continue;
       if (row.status === "no-converter") {
-        openConversionRequest(context, typed, { epoch, step: row.step, port: row.port });
+        (requests ??= new ConversionStore(context)).openOrMerge(typed, { foundAt: { epoch, step: row.step, port: row.port } });
         continue;
       }
       if (row.status !== "direct" && row.status !== "convert") continue;
@@ -87,34 +89,4 @@ export function recordPlanResolutions(context: Context, snapshot: Snapshot, rows
       renameSync(temporary, path);
     } finally { rmSync(temporary, { force: true }); }
   }).immediate();
-}
-
-function openConversionRequest(context: Context, typed: Contract, location: Record<string, string>): void {
-  context.db.exec(`
-    CREATE TABLE IF NOT EXISTS conversion_requests (
-      id TEXT PRIMARY KEY, from_type TEXT NOT NULL, guarantees TEXT NOT NULL, to_type TEXT NOT NULL,
-      requires TEXT NOT NULL, found_at TEXT NOT NULL, samples TEXT NOT NULL, blocked_runs TEXT NOT NULL,
-      status TEXT NOT NULL, changeset_id TEXT, at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS conversion_key ON conversion_requests(from_type, guarantees, to_type, requires)
-      WHERE status IN ('open', 'in_progress');
-  `);
-  const key = [typed.from, canonicalJson(typed.guarantees), typed.to, canonicalJson(typed.requires)] as const;
-  const existing = context.db.query<{ id: string; found_at: string }>(`
-    SELECT id, found_at FROM conversion_requests
-    WHERE from_type = ? AND guarantees = ? AND to_type = ? AND requires = ? AND status IN ('open', 'in_progress')
-  `).get(...key);
-  const now = utcIso(context.clock.now());
-  if (existing) {
-    const found: unknown[] = JSON.parse(existing.found_at);
-    if (!found.some((item) => canonicalJson(item) === canonicalJson(location))) {
-      context.db.query("UPDATE conversion_requests SET found_at = ?, updated_at = ? WHERE id = ?")
-        .run(canonicalJson([...found, location]), now, existing.id);
-    }
-    return;
-  }
-  context.db.query(`
-    INSERT INTO conversion_requests (id, from_type, guarantees, to_type, requires, found_at, samples, blocked_runs, status, at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', 'open', ?, ?)
-  `).run(context.ids.new("cr"), ...key, canonicalJson([location]), now, now);
 }
