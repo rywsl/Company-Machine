@@ -251,3 +251,16 @@ test("accepts legacy business package manifests without protection metadata", as
     expect((await readBusinessPackage(packageRoot)).protection).toEqual({ mode: "plaintext", envelope: "portable" });
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
+
+test("rejects an unsupported encrypted package envelope instead of treating it as plaintext", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-protection-"));
+  try {
+    const packageRoot = join(root, "package");
+    await createBusinessPackage(packageRoot, { schema: "mao.business-system/1", system: { name: "Protected package" } }, root, []);
+    const manifestPath = join(packageRoot, "manifest.json");
+    const manifest = JSON.parse(await Bun.file(manifestPath).text());
+    manifest.protection = { mode: "public-key", envelope: "future" };
+    await Bun.write(manifestPath, `${JSON.stringify(manifest)}\n`);
+    await expect(readBusinessPackage(packageRoot)).rejects.toMatchObject({ code: "PACKAGE_CORRUPT", detail: { reason: "manifest" } });
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
