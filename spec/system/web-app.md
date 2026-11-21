@@ -398,7 +398,7 @@ Operator 完成时，SQLite 在同一个事务里保存运行输出、用状态�
 
 配置厂长或 Operator 时，首屏只要求三类连接信息。用户可以填写或选择 `Base URL`、项目资源中的 `API key` 和 `Model`。每个字段都提供已保存配置的可选项。选择已保存项只引用其保险箱引用或脱敏值，页面和 API 永远不返回 API key 明文。Harness 适配器、运行时和连接方式由所选官方 Harness 能力解析，页面不能要求用户填写 CLI 参数或内部协议细节。
 
-运行参数归入“设置”的共享高级配置，厂长和 Operator 默认读取同一份配置。共享配置包括 `thinking_effort`、`context`、`image`、`network`、`mode`、`max_turns`、`session_timeout_s`、`session_budget_usd`、`daily_budget_usd`、`max_attempts` 和 `backoff_s`。页面应使用可读标签显示这些值，不把高级参数堆叠在基础连接表单中。除非用户明确保存角色覆盖值，Foreman 与 Operator 使用共享值。Foreman 的 `thinking_effort` 默认值为 `max`，历史配置缺少该字段时也按 `max` 读取并在下一次保存时补齐。
+运行参数归入“设置”的高级配置。`image`、`network`、`mode`、`max_turns`、`session_timeout_s`、`session_budget_usd`、`daily_budget_usd`、`max_attempts` 和 `backoff_s` 由厂长与 Operator 共用。`thinking_effort` 与 `context` 必须按 Harness profile 分别保存和读取，允许每个 Agent 根据任务选择适配值。页面应使用可读标签显示这些值，不把高级参数堆叠在基础连接表单中。Foreman 的 `thinking_effort` 默认值为 `max`、`context` 默认值为 `500000`，Operator 默认值为 `medium`、`context` 默认值为 `256000`，历史配置缺少字段时按各自角色默认值读取并在下一次保存时补齐。
 
 Foreman profile 的 `execution_mode` 默认为 `trusted_container`，并且要求 digest 固定的官方 Harness 镜像。镜像尚未配置或运行时未就绪时，bootstrap 和对话轮次分别报告 `waiting_configuration` 或 `blocked_environment`，消息保持可恢复的 `queued` 状态，业务结果不能标记为已应用。显式选择 `native_host` 才允许使用本机官方 Harness。可信容器以 root、bridge 和项目独立工作区运行，前端显示该运行模式和阻塞原因，但不把容器内工具安装细节拆成额外的用户配置项。
 
@@ -424,7 +424,7 @@ Foreman profile 的 `execution_mode` 默认为 `trusted_container`，并且要�
 - Intake 创建的项目会进入 BusinessSystem 图并通过事件流刷新
 - Foreman 回复可以通过外部 Harness 回写同一 talk 线程
 - Harness 基础配置只要求 Base URL、API key 和 Model，并为每个字段提供已保存配置的可选项，页面不显示 API key 明文
-- Foreman 与 Operator 读取同一份设置页高级运行参数，Foreman 默认 `thinking_effort=max`
+- Foreman 与 Operator 共享容器、会话和预算等运行参数，`thinking_effort` 与 `context` 按各自 profile 独立配置，Foreman 默认 `thinking_effort=max`
 - Foreman 对话在页面显示入队、处理、等待、完成或失败状态及持续时间，刷新或 SSE 重连后计时连续
 - 官方 Harness 超时或退出会在 `session_timeout_s` 内进入带原因的失败终态，页面不会无限显示处理中
 - 带镜像的 Operator 启动前会等待运行时 readiness，运行时不可用时不启动 Harness。镜像内声明的官方 ACP 能力不依赖宿主 PATH

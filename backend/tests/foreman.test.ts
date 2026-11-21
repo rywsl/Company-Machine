@@ -978,6 +978,51 @@ describe("Foreman official Harness dispatch", () => {
     }
   });
 
+  test("keeps thinking effort and context independent for Foreman and Operator profiles", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    const configure = async (role: "foreman" | "operator", thinking_effort: string | undefined, context: number) => {
+      const response = await app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtime: role === "foreman" ? "claude-code" : "codex", role, model: role + "-fixture", thinking_effort, context, execution_mode: role === "foreman" ? "native_host" : undefined }),
+      }));
+      expect(response.status).toBe(200);
+    };
+    try {
+      await configure("operator", "low", 64_000);
+      await configure("foreman", "max", 256_000);
+      let profiles = app.store.listHarnessProfiles();
+      expect(profiles.some(({ role, thinkingEffort, contextTokens }) => role === "operator" && thinkingEffort === "low" && contextTokens === 64_000)).toBe(true);
+      expect(profiles.some(({ role, thinkingEffort, contextTokens }) => role === "foreman" && thinkingEffort === "max" && contextTokens === 256_000)).toBe(true);
+
+      await configure("operator", "high", 32_000);
+      profiles = app.store.listHarnessProfiles();
+      expect(profiles.some(({ role, thinkingEffort, contextTokens }) => role === "operator" && thinkingEffort === "high" && contextTokens === 32_000)).toBe(true);
+      expect(profiles.some(({ role, thinkingEffort, contextTokens }) => role === "foreman" && thinkingEffort === "max" && contextTokens === 256_000)).toBe(true);
+    } finally {
+      app.stop();
+    }
+  });
+
+  test("defaults a newly configured Foreman thinking effort to max", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    try {
+      const response = await app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtime: "claude-code", role: "foreman", model: "fixture", execution_mode: "native_host" }),
+      }));
+      expect(response.status).toBe(200);
+      expect(app.store.listHarnessProfiles().find(({ role }) => role === "foreman")).toMatchObject({ thinkingEffort: "max", contextTokens: 500_000 });
+      const operator = await app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtime: "codex", role: "operator", model: "fixture" }),
+      }));
+      expect(operator.status).toBe(200);
+      expect(app.store.listHarnessProfiles().find(({ role }) => role === "operator")).toMatchObject({ thinkingEffort: "medium", contextTokens: 256_000 });
+    } finally {
+      app.stop();
+    }
+  });
+
   test("blocks trusted Foreman work until a digest-pinned image is configured", async () => {
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
     try {

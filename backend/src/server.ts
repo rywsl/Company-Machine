@@ -1280,12 +1280,11 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         verification: { state: "pending", checkedAt: store.timestamp() },
       });
       const persistedProfile = store.listHarnessProfiles().find((item) => item.id === profile.id) ?? profile;
-      if (body.role === "foreman" && [sessionTimeoutSeconds, contextTokens, sessionBudgetUsd, dailyBudgetUsd, maxTurns, maxAttempts, backoffSeconds].some((value) => value !== undefined)) {
+      if (body.role === "foreman" && [sessionTimeoutSeconds, sessionBudgetUsd, dailyBudgetUsd, maxTurns, maxAttempts, backoffSeconds].some((value) => value !== undefined)) {
         const operatorProfile = store.listHarnessProfiles().find((item) => item.role === "operator");
         if (operatorProfile) store.saveHarnessProfile({
           ...operatorProfile,
           sessionTimeoutSeconds: persistedProfile.sessionTimeoutSeconds,
-          contextTokens: persistedProfile.contextTokens,
           sessionBudgetUsd: persistedProfile.sessionBudgetUsd,
           dailyBudgetUsd: persistedProfile.dailyBudgetUsd,
           maxTurns: persistedProfile.maxTurns,
@@ -1478,7 +1477,7 @@ function publicProfile(profile?: HarnessProfile, readSecret?: (ref: string) => s
     base_url: profile.baseUrl,
     session_timeout_s: profile.sessionTimeoutSeconds,
     thinking_effort: profile.thinkingEffort ?? (profile.role === "foreman" ? "max" : "medium"),
-    context: profile.contextTokens ?? 128000,
+    context: profile.contextTokens ?? (profile.role === "foreman" ? 500000 : 256000),
     session_budget_usd: profile.sessionBudgetUsd ?? 1,
     daily_budget_usd: profile.dailyBudgetUsd ?? 10,
     max_turns: profile.maxTurns ?? 20,

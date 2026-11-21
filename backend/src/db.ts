@@ -27,6 +27,7 @@ import type {
 export const BUSINESS_RECORD_SCHEMA = "mao.business-record/1";
 
 const defaultFactoryDatabase = () => process.env.FACTORY_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db");
+const defaultContextTokens = (role: string): number => role === "foreman" ? 500_000 : 256_000;
 const json = (value: unknown) => JSON.stringify(value ?? {});
 const secretField = /(secret|token|password|api[_-]?key|authorization|cookie|local[_-]?folder|host[_-]?path)/i;
 const secretText = /(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi;
@@ -160,7 +161,7 @@ export class SqliteStore {
         model TEXT NOT NULL, mode TEXT NOT NULL, execution_mode TEXT, image TEXT, network TEXT, secret_ref TEXT,
         verification TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL,
         session_timeout_s INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds},
-        thinking_effort TEXT NOT NULL DEFAULT 'medium', context_tokens INTEGER NOT NULL DEFAULT 128000,
+        thinking_effort TEXT NOT NULL DEFAULT 'medium', context_tokens INTEGER NOT NULL DEFAULT 256000,
         session_budget_usd REAL NOT NULL DEFAULT 1, daily_budget_usd REAL NOT NULL DEFAULT 10,
         max_turns INTEGER NOT NULL DEFAULT 20, max_attempts INTEGER NOT NULL DEFAULT 2,
         backoff_s INTEGER NOT NULL DEFAULT 60
@@ -271,7 +272,9 @@ export class SqliteStore {
     }).immediate();
     this.addColumnIfMissing("harness_profiles", "session_timeout_s", `INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}`);
     this.addColumnIfMissing("harness_profiles", "thinking_effort", "TEXT NOT NULL DEFAULT 'medium'");
-    this.addColumnIfMissing("harness_profiles", "context_tokens", "INTEGER NOT NULL DEFAULT 128000");
+    const hadContextTokens = this.db.query<{ name: string }>("PRAGMA table_info(harness_profiles)").all().some(({ name }) => name === "context_tokens");
+    this.addColumnIfMissing("harness_profiles", "context_tokens", "INTEGER NOT NULL DEFAULT 256000");
+    if (!hadContextTokens) this.db.query("UPDATE harness_profiles SET context_tokens=500000 WHERE role='foreman'").run();
     this.addColumnIfMissing("harness_profiles", "session_budget_usd", "REAL NOT NULL DEFAULT 1");
     this.addColumnIfMissing("harness_profiles", "daily_budget_usd", "REAL NOT NULL DEFAULT 10");
     this.addColumnIfMissing("harness_profiles", "max_turns", "INTEGER NOT NULL DEFAULT 20");
@@ -406,7 +409,7 @@ export class SqliteStore {
       executionMode: row.execution_mode === "native_host" ? "native_host" : row.role === "foreman" ? "trusted_container" : "native_host",
       sessionTimeoutSeconds: row.session_timeout_s,
       thinkingEffort: row.thinking_effort ?? (row.role === "foreman" ? "max" : "medium"),
-      contextTokens: row.context_tokens ?? 128000,
+      contextTokens: row.context_tokens ?? defaultContextTokens(row.role),
       sessionBudgetUsd: row.session_budget_usd ?? 1,
       dailyBudgetUsd: row.daily_budget_usd ?? 10,
       maxTurns: row.max_turns ?? 20,
@@ -443,13 +446,13 @@ export class SqliteStore {
       RETURNING session_timeout_s`)
       .get(value.id, value.runtime, value.role, value.baseUrl, value.model, value.mode, value.executionMode ?? "native_host", value.image ?? null, value.network ?? null,
         value.secretRef ?? null, json(value.verification ?? {}), updatedAt, timeout ?? defaultSessionTimeoutSeconds,
-        value.thinkingEffort ?? (value.role === "foreman" ? "max" : "medium"), value.contextTokens ?? 128000,
+        value.thinkingEffort ?? (value.role === "foreman" ? "max" : "medium"), value.contextTokens ?? defaultContextTokens(value.role),
         value.sessionBudgetUsd ?? 1, value.dailyBudgetUsd ?? 10, value.maxTurns ?? 20, value.maxAttempts ?? 2,
         value.backoffSeconds ?? 60, timeout ?? null, value.thinkingEffort ?? null, value.contextTokens ?? null,
         value.sessionBudgetUsd ?? null, value.dailyBudgetUsd ?? null, value.maxTurns ?? null, value.maxAttempts ?? null,
         value.backoffSeconds ?? null)!;
     return { ...value, sessionTimeoutSeconds: row.session_timeout_s,
-      thinkingEffort: value.thinkingEffort ?? (value.role === "foreman" ? "max" : "medium"), contextTokens: value.contextTokens ?? 128000,
+      thinkingEffort: value.thinkingEffort ?? (value.role === "foreman" ? "max" : "medium"), contextTokens: value.contextTokens ?? defaultContextTokens(value.role),
       sessionBudgetUsd: value.sessionBudgetUsd ?? 1, dailyBudgetUsd: value.dailyBudgetUsd ?? 10,
       maxTurns: value.maxTurns ?? 20, maxAttempts: value.maxAttempts ?? 2, backoffSeconds: value.backoffSeconds ?? 60 };
   }
