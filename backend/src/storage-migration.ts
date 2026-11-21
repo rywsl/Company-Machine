@@ -112,8 +112,8 @@ export async function migrateStorage(options: StorageMigrationOptions): Promise<
   const lockPath = join(root, "storage-migration.lock");
   let lockHandle: number | undefined;
   try {
-    lockHandle = openSync(lockPath, "wx", 0o600);
-    writeFileSync(lockHandle, `${process.pid}\n`, "utf8");
+    lockHandle = openSync(lockPath, "wx");
+    writeFileSync(lockHandle, Buffer.from(`${process.pid}\n`, "utf8"));
   } catch (error) {
     if ((error as { code?: string }).code === "EEXIST") {
       throw new ProviderError("MIGRATE_IN_PROGRESS", "storage migration is already in progress");
