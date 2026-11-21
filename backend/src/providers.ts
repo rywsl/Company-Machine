@@ -66,6 +66,10 @@ export interface EncryptedValue {
   iv: string;
   tag: string;
   ciphertext: string;
+  /** Opaque provider audit reference. It never contains key material. */
+  auditRef?: string;
+  /** Non-sensitive provider audit correlation returned by remote KMS calls. */
+  auditRef?: string;
 }
 
 export interface KmsProvider {
@@ -155,7 +159,7 @@ export class LocalBlobProvider implements BlobProvider {
     const path = this.blobPath(digest);
     try {
       const data = new Uint8Array(await readFile(path));
-      if (digestBytes(data) !== digest) throw new ProviderError("CAS_CONFLICT", "blob digest verification failed", { digest });
+      if (digestBytes(data) !== digest) throw new ProviderError("CAS_INTEGRITY_FAILED", "blob digest verification failed", { digest });
       return data;
     } catch (error) {
       if (error instanceof ProviderError) throw error;
@@ -274,9 +278,13 @@ export class LocalKmsProvider implements KmsProvider {
   }
   async decrypt(value: EncryptedValue): Promise<Uint8Array> {
     if (value.algorithm !== "aes-256-gcm") throw new ProviderError("PROVIDER_CONFIG_INVALID", "unsupported KMS algorithm");
-    const cipher = createDecipheriv("aes-256-gcm", this.key(value.keyId), Buffer.from(value.iv, "base64"));
-    cipher.setAuthTag(Buffer.from(value.tag, "base64"));
-    return new Uint8Array(Buffer.concat([cipher.update(Buffer.from(value.ciphertext, "base64")), cipher.final()]));
+    try {
+      const cipher = createDecipheriv("aes-256-gcm", this.key(value.keyId), Buffer.from(value.iv, "base64"));
+      cipher.setAuthTag(Buffer.from(value.tag, "base64"));
+      return new Uint8Array(Buffer.concat([cipher.update(Buffer.from(value.ciphertext, "base64")), cipher.final()]));
+    } catch (error) {
+      throw new ProviderError("KMS_OPERATION_FAILED", "local KMS decryption failed", { reason: error instanceof Error ? error.message : String(error) });
+    }
   }
   async sign(value: Uint8Array | string, keyId = "default"): Promise<string> { return this.hmac(value, keyId); }
   async hmac(value: Uint8Array | string, keyId = "default"): Promise<string> {
@@ -288,7 +296,10 @@ export class LocalKmsProvider implements KmsProvider {
     this.vault.put(`vault://kms/key/${next}`, vaultRandomBytes(32).toString("base64"));
     return next;
   }
-  auditRef(operation: string, keyId = "default"): string { return `kms-audit://${this.kind}/${encodeURIComponent(keyId)}/${encodeURIComponent(operation)}`; }
+  auditRef(operation: string, keyId = "default"): string {
+    const material = `${this.kind}\u0000${keyId}\u0000${operation}`;
+    return `kms-audit://${digestBytes(new TextEncoder().encode(material))}/${randomUuid()}`;
+  }
   status(): ProviderStatus { return { kind: this.kind, mode: "local", available: true }; }
 }
 

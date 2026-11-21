@@ -114,7 +114,7 @@ OpenBao provider 通过 `fetch` 调用 OpenBao HTTP API。Bun 进程不嵌入 Op
 
 provider 至少实现 KV Secret、Transit 加密和解密、签名、HMAC、轮换和审计引用。审计引用是不可逆的随机 ID 或 OpenBao 返回的审计 ID，不能包含密钥值。
 
-OpenBao 返回非成功 HTTP 状态、超时、证书错误或响应格式错误时，provider 返回 `PROVIDER_UNAVAILABLE`。生产模式不得创建本地 Vault 作为回退。OpenBao 的明文只在调用边界短暂存在，响应 DTO 和事件只能携带 secret reference、状态和审计引用。
+OpenBao 返回非成功 HTTP 状态、超时或证书错误时，provider 返回 `PROVIDER_UNAVAILABLE`。成功响应缺少 ciphertext、signature、HMAC 或明文字段时返回 `KMS_OPERATION_FAILED`。生产模式不得创建本地 Vault 作为回退。OpenBao 的明文只在调用边界短暂存在，响应 DTO 和事件只能携带 secret reference、状态和审计引用。
 
 ## 4. 数据格式
 
@@ -165,7 +165,7 @@ S3 凭据只在签名请求时从环境读取。请求头、签名字符串、�
 - `migrate` 在目标 provider 会话适配器可用后复制状态行、对象和密钥引用。密钥明文不能进入迁移报告，OpenBao 迁移只复制引用或通过 provider 内部轮换复制密文。
 - 迁移完成后计算状态行数、规范摘要、对象数量和对象摘要。所有摘要一致后才写入活动 provider 指针。
 - `verify` 对当前活动 provider 重算上述摘要并报告差异。校验失败退出失败状态，不修改数据和活动指针。
-- 迁移失败保留本地 provider、原数据和旧指针。目标 provider 的部分数据可以保留用于诊断，但不能自动切换。
+- 迁移失败保留本地 provider、原数据和旧指针。目标 provider 的部分数据可以保留用于诊断，但不能自动切换。迁移使用 `${FACTORY_ROOT}/storage-migration.lock` 做互斥，已有锁时返回 `MIGRATE_IN_PROGRESS`。
 - 默认本地模式不会读取迁移配置，也不会执行迁移代码中的外部连接。
 
 活动 provider 指针只包含 provider 名称、模式、规范配置摘要和切换时间。不得包含 DSN、访问密钥、OpenBao token 或签名 URL。

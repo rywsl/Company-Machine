@@ -115,7 +115,7 @@ export class S3BlobProvider implements BlobProvider {
     } catch { /* cache miss */ }
     const response = await this.request("GET", digest);
     const bytes = Buffer.from(await response.arrayBuffer());
-    if (`sha256:${sha256(bytes)}` !== digest) throw new ProviderError("CAS_CONFLICT", "remote object digest mismatch", { digest });
+    if (`sha256:${sha256(bytes)}` !== digest) throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object digest mismatch", { digest });
     mkdirSync(dirname(cached), { recursive: true });
     const temporary = `${cached}.${randomUuid()}.part`;
     writeFileSync(temporary, bytes, { mode: 0o600 });

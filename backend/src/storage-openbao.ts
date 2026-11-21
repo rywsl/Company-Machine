@@ -74,7 +74,7 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
     if (!response) return undefined;
     const value = response.data?.data?.value;
     if (value === undefined) return undefined;
-    if (typeof value !== "string") throw new ProviderError("KMS_ERROR", "OpenBao secret value is invalid");
+    if (typeof value !== "string") throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao secret value is invalid");
     return value;
   }
 
@@ -88,26 +88,32 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
   async transitEncrypt(key: string, plaintext: Uint8Array | string): Promise<{ ciphertext: string; auditRef: string }> {
     const input = typeof plaintext === "string" ? Buffer.from(plaintext) : Buffer.from(plaintext);
     const response = await this.request("POST", `${this.transitMount}/encrypt/${encodeURIComponent(key)}`, { plaintext: input.toString("base64") });
-    return { ciphertext: String(response?.data?.ciphertext ?? ""), auditRef: this.responseAuditRef(response) };
+    const ciphertext = response?.data?.ciphertext;
+    if (typeof ciphertext !== "string" || ciphertext.length === 0) throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao encrypt response is invalid");
+    return { ciphertext, auditRef: this.responseAuditRef(response) };
   }
 
   async transitDecrypt(key: string, ciphertext: string): Promise<{ plaintext: Uint8Array; auditRef: string }> {
     const response = await this.request("POST", `${this.transitMount}/decrypt/${encodeURIComponent(key)}`, { ciphertext });
     const encoded = response?.data?.plaintext;
-    if (typeof encoded !== "string") throw new ProviderError("KMS_ERROR", "OpenBao decrypt response is invalid");
+    if (typeof encoded !== "string") throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao decrypt response is invalid");
     return { plaintext: Buffer.from(encoded, "base64"), auditRef: this.responseAuditRef(response) };
   }
 
   async transitSign(key: string, input: Uint8Array | string, hashAlgorithm = "sha2-256"): Promise<{ signature: string; auditRef: string }> {
     const bytes = typeof input === "string" ? Buffer.from(input) : Buffer.from(input);
     const response = await this.request("POST", `${this.transitMount}/sign/${encodeURIComponent(key)}`, { input: bytes.toString("base64"), hash_algorithm: hashAlgorithm });
-    return { signature: String(response?.data?.signature ?? ""), auditRef: this.responseAuditRef(response) };
+    const signature = response?.data?.signature;
+    if (typeof signature !== "string" || signature.length === 0) throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao sign response is invalid");
+    return { signature, auditRef: this.responseAuditRef(response) };
   }
 
   async transitHmac(key: string, input: Uint8Array | string, hashAlgorithm = "sha2-256"): Promise<{ hmac: string; auditRef: string }> {
     const bytes = typeof input === "string" ? Buffer.from(input) : Buffer.from(input);
     const response = await this.request("POST", `${this.transitMount}/hmac/${encodeURIComponent(key)}`, { input: bytes.toString("base64"), hash_algorithm: hashAlgorithm });
-    return { hmac: String(response?.data?.hmac ?? ""), auditRef: this.responseAuditRef(response) };
+    const hmac = response?.data?.hmac;
+    if (typeof hmac !== "string" || hmac.length === 0) throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao HMAC response is invalid");
+    return { hmac, auditRef: this.responseAuditRef(response) };
   }
 
   async transitRotate(key: string): Promise<{ version?: number; auditRef: string }> {
@@ -144,6 +150,9 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
   }
 
   async decrypt(value: any): Promise<Uint8Array> {
+    if (!value || value.algorithm !== "openbao-transit" || typeof value.ciphertext !== "string") {
+      throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao encrypted value is invalid");
+    }
     return (await this.transitDecrypt(value.keyId ?? "default", value.ciphertext)).plaintext;
   }
 
@@ -221,7 +230,7 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
     if (response.status === 404 && allowNotFound) return undefined;
     if (!response.ok || parsed.errors?.length) {
       if (response.status === 404 && allowNotFound) return undefined;
-      throw new ProviderError(response.status >= 500 ? "PROVIDER_UNAVAILABLE" : "KMS_ERROR", `OpenBao request failed (${response.status})`, { operation: path, status: response.status, error_count: parsed.errors?.length ?? 0 });
+      throw new ProviderError("PROVIDER_UNAVAILABLE", `OpenBao request failed (${response.status})`, { operation: path, status: response.status, error_count: parsed.errors?.length ?? 0 });
     }
     return parsed;
   }

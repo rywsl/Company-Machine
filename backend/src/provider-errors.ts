@@ -1,4 +1,14 @@
-export type ProviderErrorCode = "PROVIDER_UNAVAILABLE" | "PROVIDER_CONFIG_INVALID" | "CAS_CONFLICT" | "CAS_MISSING" | "SECRET_NOT_FOUND" | "KMS_ERROR";
+export type ProviderErrorCode =
+  | "PROVIDER_UNAVAILABLE"
+  | "PROVIDER_CONFIG_INVALID"
+  | "CAS_CONFLICT"
+  | "CAS_MISSING"
+  | "CAS_INTEGRITY_FAILED"
+  | "SECRET_NOT_FOUND"
+  | "KMS_ERROR"
+  | "KMS_OPERATION_FAILED"
+  | "MIGRATE_VERIFY_FAILED"
+  | "MIGRATE_IN_PROGRESS";
 
 /** Stable, redacted error boundary for external storage and KMS providers. */
 export class ProviderError extends Error {
