@@ -5,21 +5,15 @@ import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 import { ManagedDatabase } from "./sqlite";
 import { VaultStore } from "./vault";
+import { ProviderError } from "./provider-errors";
 
 export type StorageMode = "local" | "production";
 export type StateProviderKind = "sqlite" | "postgres" | "mysql";
 export type BlobProviderKind = "local" | "s3";
 export type SecretProviderKind = "local" | "openbao";
 
-export type ProviderErrorCode = "PROVIDER_UNAVAILABLE" | "PROVIDER_CONFIG_INVALID" | "CAS_CONFLICT" | "CAS_MISSING";
-
-/** A stable error boundary for provider failures. Secret values are never copied into details. */
-export class ProviderError extends Error {
-  readonly name = "ProviderError";
-  constructor(readonly code: ProviderErrorCode, message: string, readonly details: Record<string, unknown> = {}) {
-    super(message);
-  }
-}
+export { ProviderError } from "./provider-errors";
+export type { ProviderErrorCode } from "./provider-errors";
 
 export interface ProviderStatus {
   kind: string;
@@ -44,7 +38,7 @@ export type BlobInput = string | Uint8Array | ArrayBuffer;
 export interface BlobHead { digest: string; size: number; }
 export interface BlobProvider {
   readonly kind: BlobProviderKind;
-  put(input: BlobInput): Promise<string>;
+  put(input: BlobInput, expectedDigest?: string): Promise<string>;
   putFile(path: string): Promise<string>;
   get(digest: string): Promise<Uint8Array>;
   getFile(digest: string, destination: string): Promise<void>;
@@ -100,8 +94,8 @@ export function resolveStorageProviderConfig(env: NodeJS.ProcessEnv = process.en
   if (modeValue !== "local" && modeValue !== "production") {
     throw new ProviderError("PROVIDER_CONFIG_INVALID", "MAO_STORAGE_MODE must be local or production", { name: "MAO_STORAGE_MODE" });
   }
-  const state = envValue(env, "MAO_STATE_PROVIDER") ?? "sqlite";
-  const blob = envValue(env, "MAO_BLOB_PROVIDER") ?? "local";
+  const state = envValue(env, "MAO_STATE_PROVIDER") ?? (modeValue === "production" ? "postgres" : "sqlite");
+  const blob = envValue(env, "MAO_BLOB_PROVIDER") ?? (modeValue === "production" ? "s3" : "local");
   const secret = envValue(env, "MAO_SECRET_PROVIDER") ?? (modeValue === "production" ? "openbao" : "local");
   if (!["sqlite", "postgres", "mysql"].includes(state)) throw new ProviderError("PROVIDER_CONFIG_INVALID", "MAO_STATE_PROVIDER is invalid", { name: "MAO_STATE_PROVIDER" });
   if (!["local", "s3"].includes(blob)) throw new ProviderError("PROVIDER_CONFIG_INVALID", "MAO_BLOB_PROVIDER is invalid", { name: "MAO_BLOB_PROVIDER" });
@@ -133,9 +127,10 @@ export class LocalBlobProvider implements BlobProvider {
     const hex = checkDigest(digest);
     return join(this.root, "sha256", hex.slice(0, 2), hex.slice(2));
   }
-  async put(input: BlobInput): Promise<string> {
+  async put(input: BlobInput, expectedDigest?: string): Promise<string> {
     const data = bytes(input);
     const digest = digestBytes(data);
+    if (expectedDigest && expectedDigest !== digest) throw new ProviderError("CAS_CONFLICT", "blob digest does not match expected digest", { digest: expectedDigest });
     const destination = this.blobPath(digest);
     if (statSync(destination, { throwIfNoEntry: false })?.isFile()) {
       const existing = new Uint8Array(await readFile(destination));
@@ -293,7 +288,9 @@ export interface ProviderFactoryOptions {
 
 export function createLocalProviders(options: ProviderFactoryOptions = {}): { state: StateProvider; blob: BlobProvider; secret: SecretProvider; kms: KmsProvider; config: StorageProviderConfig } {
   const root = resolve(options.root ?? process.env.FACTORY_ROOT ?? ".factory");
-  const config = resolveStorageProviderConfig({ ...process.env, MAO_STORAGE_MODE: "local", MAO_SECRET_PROVIDER: "local" });
+  // This constructor is deliberately local-only. It never interprets cloud
+  // provider variables, which keeps the default startup path offline.
+  const config: StorageProviderConfig = { mode: "local", state: "sqlite", blob: "local", secret: "local" };
   const state = options.state ?? options.createState?.("sqlite", root) ?? new SqliteStateProvider(join(root, "factory.db"));
   const blob = options.blob ?? options.createBlob?.("local", root) ?? new LocalBlobProvider(join(root, "cas"));
   const secret = options.secret ?? options.createSecret?.("local", root) ?? new LocalSecretProvider();
