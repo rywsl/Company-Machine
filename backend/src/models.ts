@@ -168,10 +168,17 @@ export interface ForemanEnvelope {
   text: string;
   status: "queued" | "claimed" | "done" | "failed" | "cancelled";
   createdAt: string;
+  queuedAt?: string;
   claimedAt?: string;
+  startedAt?: string;
+  lastEventAt?: string;
+  completedAt?: string;
+  elapsedMs?: number;
+  businessStatus?: "not_started" | "in_progress" | "applied" | "no_change" | "blocked_environment" | "blocked_input" | "failed";
+  businessReason?: string;
 }
 
-export type ForemanTurnState = Pick<ForemanEnvelope, "id" | "messageId" | "status"> & { cancellable: boolean };
+export type ForemanTurnState = Pick<ForemanEnvelope, "id" | "messageId" | "status" | "createdAt" | "queuedAt" | "claimedAt" | "startedAt" | "lastEventAt" | "completedAt" | "elapsedMs" | "businessStatus" | "businessReason"> & { cancellable: boolean; error?: string };
 
 export interface HarnessProfile {
   id: string;
@@ -180,6 +187,7 @@ export interface HarnessProfile {
   baseUrl: string;
   model: string;
   mode: string;
+  executionMode?: "trusted_container" | "native_host";
   sessionTimeoutSeconds: number;
   thinkingEffort?: string;
   contextTokens?: number;

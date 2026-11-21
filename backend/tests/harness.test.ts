@@ -318,6 +318,7 @@ describe("official Harness boundary", () => {
 
   test("maps official JSONL assistant records into realtime text events", () => {
     expect(decodeOfficialLine('{"type":"assistant","message":{"content":[{"type":"text","text":"已完成"}]}}')).toMatchObject({ type: "text.delta", text: "已完成" });
+    expect(decodeOfficialLine('{"type":"item.completed","item":{"type":"reasoning","text":"Planning repository inspection"}}')).toMatchObject({ type: "record", text: "Planning repository inspection" });
     expect(decodeOfficialLine('{"type":"result","text":"done"}')).toMatchObject({ type: "session.finished", text: "done" });
     expect(decodeOfficialLine('{"type":"mao.secret_request","name":"VIDEO_API_KEY"}')).toMatchObject({ type: "secret.request" });
     expect(decodeOfficialLine('{"type":"assistant","session_id":"q-1","message":{"content":[{"type":"text","text":"Qwen 完成"}]},"is_error":false}')).toMatchObject({ type: "text.delta", sessionId: "q-1", text: "Qwen 完成" });

@@ -317,7 +317,7 @@ Web App 不新增 Factory 或 Workarea 数据表。后端适配层从当前 Epoc
 - `GET/POST /api/v1/business-systems/<id>/graph` 读取或接收外部 Foreman 维护的 DAG 快照。写入时节点标识唯一。带有节点类型的活动图必须引用当前业务系统的 Operator 或 Machine，声明的节点类型必须与基础单元一致，边必须引用图中存在的节点且不能形成自环，图必须无环。未带节点类型的历史快照可以继续使用 `operator` 和 `machine` 两个兼容别名，服务端会映射到当前基础单元，其他未知节点和边端点拒绝写入。
 
 Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现。运行在领用单元时解析绑定，并记录官方 Harness ID 和生效的模型 ID。官方 CLI 接收模型参数。ACP 使用 `session/new` 或 `session/load` 提供的 `model` 配置选项，并在 `session/prompt` 前确认选择。Kimi Code 通过 `--model MODEL acp` 接收模型，Pi 通过 `--model MODEL` 接收模型，Qwen Code 通过 `--model MODEL` 接收模型。无法使用明确绑定的模型时，执行会报告原因。
-- `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复
+- `POST /api/v1/talk` 写入人的意图，`POST /api/v1/talk/reply` 接收外部 Foreman 的回复。没有厂长 profile 时返回 `waiting_foreman`，可信容器 profile 尚未配置 digest 镜像时返回 `waiting_foreman_runtime`，两种状态都保留可恢复的 `queued` 轮次，不能把未启动的业务报告为 `accepted`。
 - scoped Foreman 的对话写入必须带 `business_system_id` 或 `project_id`，邮箱操作和 SSE 事件按该业务上下文过滤。全局对话读取保留给管理员。
 - 业务系统、DAG、运行、基础单元和 Conversion 的公开响应统一经过字段级脱敏。平台 scoped viewer 不能读取平台机器、可执行文件和运行时连接细节，只有管理员可以读取或启动全局运行时。
 - 项目来源的 `fileRef`、运行输入输出、Conversion 输入输出和 Lineage 只公开可移植业务引用。绝对宿主路径、`file://`、`data:` 和其他本地定位在公开投影中替换为脱敏占位值。
@@ -325,8 +325,8 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
 - 保存厂长 Harness 配置后，控制面立即重新扫描此前已入队的厂长消息并派发，不要求重启服务或用户再次点击 dispatch。服务启动和恢复周期会按 `claimed_at` 回收超过 `MAO_FOREMAN_CLAIM_TIMEOUT_S` 的失联轮次，默认超时为 900 秒，并记录 `foreman.message.requeued` 事件。
 - 容器厂长轮次按隔离邮箱并发派发。使用本机可恢复会话的厂长轮次只在同一 Harness profile 内保持顺序，避免共享官方 session，同时不让一个 profile 的轮次阻塞其他 profile 或容器轮次。
-- 项目来源准备由平台拥有的 SourceFetcher 负责，不要求 Foreman 镜像预装 Git。SourceFetcher 使用持久化 `FACTORY_ROOT/source-cache`，优先使用无交互 Git 浅克隆，宿主缺少 Git 时对 GitHub HTTP(S) 来源使用官方仓库元数据和 codeload 归档，并校验归档路径、大小和摘要。来源 facts 记录工具、来源摘要和 revision，缓存目录不随 Harness 轮次清理。非 GitHub 来源缺少 Git 时产生 `SOURCE_TOOL_UNAVAILABLE`，Operator 将运行持久化为 `waiting_resources`，为项目创建 kind 为 `source-tool` 的资源请求并保留来源与工具名称。管理员或厂长在宿主准备工具后调用资源就绪入口，平台把请求标记为可用、重新排队原 UnitRun 并自动恢复 Operator。该请求不要求写入密钥值，也不改变可信 Foreman 容器的自由工具模式。
-- 可信容器 Foreman 的仓库链接继续作为来源数据交给官方 Harness。Foreman 启动后可以在 `/workspace` 私有工作区内自行安装 Git、Scion 或项目需要的其他工具并下载、检验和切换源码。平台只准备已登记的上传文件和本地目录挂载，不在 Foreman 启动前替它决定项目内部工具和执行时序。
+- `native_host` Operator 或显式要求平台预取的来源使用平台拥有的 SourceFetcher。SourceFetcher 使用持久化 `FACTORY_ROOT/source-cache`，优先使用无交互 Git 浅克隆，宿主缺少 Git 时对 GitHub HTTP(S) 来源使用官方仓库元数据和 codeload 归档，并校验归档路径、大小和摘要。来源 facts 记录工具、来源摘要和 revision，缓存目录不随 Harness 轮次清理。非 GitHub 来源缺少 Git 时产生 `SOURCE_TOOL_UNAVAILABLE`，Operator 将运行持久化为 `waiting_resources`，为项目创建 kind 为 `source-tool` 的资源请求并保留来源与工具名称。管理员或厂长在宿主准备工具后调用资源就绪入口，平台把请求标记为可用、重新排队原 UnitRun 并自动恢复 Operator。该请求不要求写入密钥值。
+- `trusted_container` Foreman 不依赖 SourceFetcher 预先下载仓库。仓库链接、上传文件和本地目录作为项目来源数据交给官方 Harness。Foreman 启动后可以在容器内以 root 使用 bridge 网络，自行安装 Git、Scion、ffmpeg、音频工具和项目自定义依赖，执行脚本、下载、检验和切换源码，并把需要多个工具协作的内部时序交给 Operator。平台只准备已登记的上传文件和本地目录挂载，工作区限制在该项目的容器目录内，不能访问宿主引擎套接字、宿主网络或工作区之外的宿主路径。平台不得在 Foreman 启动前替它决定项目内部工具和执行时序。
 - Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，每个新领用的 Operator 单元在 SQLite 保存执行进程归属。Linux 服务启动时在同一内核启动和 PID 命名空间内检查归属，只有系统确认原 PID 已退出才将其置为 `failed` 并记录 `CONTROL_PLANE_RESTART`，保留已登记产物与会话编号。外部执行结果由用户核对后决定后续动作。活跃、无法核实以及历史没有归属记录的 `running` 单元保留原状态。等待资源的单元继续通过现有资源请求流程恢复。容器化 Operator 在领取单元前检查运行时。检查失败、超时或服务停止时，单元保留 `queued` 状态。成功执行 `POST /api/v1/runtime/ensure-ready` 后，通过正常 DAG 就绪规则恢复已授权的排队工作。服务在五秒内复用确认在线的运行时状态。
 - kernel 绑定的 Machine 运行在 `unit_run.session_id=legacy:<unit-run-id>` 下，并在 BusinessRun metadata 保存 legacy Run ID。控制面重启后按该 Run ID 调用既有 `LineRunner` 恢复，避免重新提交 Job；若崩溃发生在 Run ID 持久化之前，则启动一个新的 legacy Run 并把旧的 Machine 运行标为失败或由用户重试。
 - Operator Harness 可以输出 `mao.secret_request` 事件。控制面只创建项目资源请求和脱敏状态，用户在 UI 中补充所需资源，密钥值进入保险箱
@@ -344,7 +344,8 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - 原生厂长通过 `factory project secret request <project-id> --name <KEY> --purpose <用途>` 提交同样的项目资源请求。每次指定一个实际缺少的配置，返回请求 ID 和状态。
 - 在普通厂长对话中，`project.register` 使用 `repoUrl` 和可选的 `name`、`systemId` 登记仓库，返回 `projectId` 和 `systemId`。提供 `systemId` 时，该系统必须在当前轮范围内，包含本轮新建的系统。省略 `systemId` 时创建业务系统。可在同一轮使用返回的 ID 配置 Operator、DAG 和运行。省略名称时使用仓库路径最后一段并去除 `.git`。链接须为 HTTP(S)、SSH 或 Git URL，且不携带用户信息、查询参数或片段。登记后发布项目事件，当前厂长继续处理本轮。
 - Harness 配置的 `session_timeout_s` 为单轮会话的超时秒数，适用于 Foreman 与 Operator 启动官方 CLI、建立 ACP 会话和读取回复。现有配置与新建时省略此值的配置默认 600 秒。接口接受 1 至 2147483 的整数，更新时省略该项保留已保存值。超时记录 `SESSION_TIMEOUT` 并取消本轮子进程，后续已排队的工作继续处理。配置页的连通性验证有独立超时。
-- 容器厂长的通用对话从 SQLite 读取当前来信之前已完成的最近四轮通用对话，按入队顺序作为上下文数据传入。每条消息最多读取一千个字符，并沿用厂长回复的脱敏规则。项目接入轮次只携带本次项目上下文，本机官方 Harness 继续使用原生会话 ID 恢复对话。
+- 同一 Foreman profile 的对话共享一条全局 transcript。容器厂长和没有可恢复官方会话的本机厂长从 SQLite 读取当前来信之前已完成的最近四轮对话，项目接入轮次也包含在其中，按入队顺序作为上下文数据传入。每条用户消息和回复最多读取一千个字符，并沿用厂长回复的脱敏规则。失败、取消和未完成轮次不进入历史。
+- 本机官方 Harness 优先使用官方协议确认的会话 ID 恢复对话。控制面生成的内部临时 ID 只能用于当前轮诊断，禁止保存到恢复游标或回复元数据。已保存会话恢复失败且尚未产生工具副作用时，控制面清除无效游标并自动以有限 transcript 重试当前轮一次。已经产生工具、记录、密钥请求或其他业务副作用的轮次保留失败终态，避免重复执行。
 - 本机厂长在普通对话中使用 `factory project register` 将仓库登记到指定业务系统或新建系统，并在同一轮继续搭建。修改 DAG 前，厂长可通过 `factory business graph <id>` 读取已有节点与边。接入已登记项目时，提示提供项目 ID、所属业务系统 ID 和来源说明。
 - 启动官方 Harness 时只继承运行所需的基础环境和显式声明的变量。宿主环境中的其他密钥不会被批量转发
 - 无桌面部署可为厂长的 Claude Code 提供 `MAO_FOREMAN_ANTHROPIC_API_KEY`，并为 `codex exec` 提供 `MAO_FOREMAN_CODEX_API_KEY`。MAO 将其分别传给对应的 `ANTHROPIC_API_KEY` 或 `CODEX_API_KEY`，同样用于厂长的连通性验证。缺省匹配官方 HTTPS 服务。自定义 Base URL 须与部署方设置的 `MAO_FOREMAN_ANTHROPIC_BASE_URL` 或 `MAO_FOREMAN_CODEX_BASE_URL` 匹配。页面仅显示部署凭证是否可用于当前配置。厂长的实时回复、事件和会话标识会屏蔽已传入的凭证值。
@@ -399,9 +400,11 @@ Operator 完成时，SQLite 在同一个事务里保存运行输出、用状态�
 
 运行参数归入“设置”的共享高级配置，厂长和 Operator 默认读取同一份配置。共享配置包括 `thinking_effort`、`context`、`image`、`network`、`mode`、`max_turns`、`session_timeout_s`、`session_budget_usd`、`daily_budget_usd`、`max_attempts` 和 `backoff_s`。页面应使用可读标签显示这些值，不把高级参数堆叠在基础连接表单中。除非用户明确保存角色覆盖值，Foreman 与 Operator 使用共享值。Foreman 的 `thinking_effort` 默认值为 `max`，历史配置缺少该字段时也按 `max` 读取并在下一次保存时补齐。
 
+Foreman profile 的 `execution_mode` 默认为 `trusted_container`，并且要求 digest 固定的官方 Harness 镜像。镜像尚未配置或运行时未就绪时，bootstrap 和对话轮次分别报告 `waiting_configuration` 或 `blocked_environment`，消息保持可恢复的 `queued` 状态，业务结果不能标记为已应用。显式选择 `native_host` 才允许使用本机官方 Harness。可信容器以 root、bridge 和项目独立工作区运行，前端显示该运行模式和阻塞原因，但不把容器内工具安装细节拆成额外的用户配置项。
+
 项目主动申请的密钥在 UI 中标记为“项目需要配置的资源”或等价文案，显示项目、用途、范围和状态。不得把资源请求显示成 Agent 向用户索取私人密钥，也不得要求用户预先配置未被当前项目触及的密钥。
 
-每一轮 Foreman 对话必须持久化 `queued_at`、`started_at`、`last_event_at`、`completed_at`、`elapsed_ms` 和 `status`。`status` 至少支持 `queued`、`processing`、`waiting_foreman`、`completed`、`failed`、`cancelled`。前端在 `queued` 或 `processing` 状态显示从 `queued_at` 或 `started_at` 起算的实时计时，在重连时使用服务端时间戳恢复计时，不因刷新归零。收到 `foreman.reply.delta` 时更新 `last_event_at`，完成事件到达后用持久化回复替换临时增量。
+每一轮 Foreman 对话必须持久化 `queued_at`、`started_at`、`last_event_at`、`completed_at`、`elapsed_ms` 和 `status`，并通过 `inbox_id` 把用户消息、流式回复、最终回复和终态绑定到同一轮。`status` 至少支持 `queued`、`processing`、`waiting_foreman`、`completed`、`failed`、`cancelled`。业务写入结果另存为 `business_status` 和脱敏的 `business_reason`，至少区分 `not_started`、`in_progress`、`applied`、`no_change`、`blocked_environment`、`blocked_input` 和 `failed`。前端在 `queued` 或 `processing` 状态显示从 `queued_at` 或 `started_at` 起算的实时计时，在重连时使用服务端时间戳恢复计时，不因刷新归零。收到 `foreman.reply.delta` 时更新 `last_event_at`，完成事件到达后用持久化回复替换临时增量，并在对话列表中紧跟对应的用户消息显示。
 
 若超过 `session_timeout_s` 仍未完成，控制面必须取消本轮官方 Harness 子进程，将状态写为 `failed`，错误原因为 `SESSION_TIMEOUT`，并通过 SSE 或下一次游标读取把终态推送给页面。Foreman 未配置时使用 `waiting_foreman`，页面显示配置入口和已等待时长。任何不可恢复的启动、协议、退出或持久化错误都必须在本轮内写入 `failed` 和脱敏原因，禁止让用户看到无限期的“处理中”。
 

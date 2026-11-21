@@ -77,6 +77,8 @@ button:disabled { cursor: default; opacity: .55; }
 .foreman-resource > div { min-width: 0; }
 .foreman-resource small { display: block; margin-top: 4px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .foreman-resource button { flex-shrink: 0; }
+.foreman-runtime-state { margin: 10px 20px 0; }
+.foreman-runtime-state small { display: block; margin-top: 5px; color: var(--muted); line-height: 1.5; }
 .compose-actions { flex-wrap: wrap; }
 .conversion-flows, .conversion-references ul { padding: 0; margin: 0; list-style: none; }
 .conversion-flows { display: grid; gap: 14px; }
@@ -142,3 +144,4 @@ button:disabled { cursor: default; opacity: .55; }
 .config-advanced .config-field:last-child { margin-bottom: 12px; }
 .harness-config-panel .context-note { margin: 14px 0 0; }
 .harness-config-panel .config-actions { margin-top: 16px; }
+.talk-message.historical { border-style: dashed; color: var(--faint); background: #f7f8f8; }

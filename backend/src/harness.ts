@@ -171,6 +171,15 @@ export function decodeOfficialLine(line: string): HarnessEvent | null {
       : typeof assistantMessageEvent?.delta === "string" ? assistantMessageEvent.delta
         : typeof item?.text === "string" ? item.text : typeof record.result === "string" ? record.result : contentText;
   const assistantEventType = typeof assistantMessageEvent?.type === "string" ? assistantMessageEvent.type : "";
+  if (type === "item.completed" && item?.type !== "agent_message") {
+    const itemType = typeof item?.type === "string" ? item.type : "";
+    return {
+      type: itemType.includes("tool") || itemType.includes("command") ? "tool.finished" : "record",
+      sessionId,
+      text,
+      metadata: record,
+    };
+  }
   const eventType: HarnessEvent["type"] = type.includes("error") || type.includes("fail") || record.is_error === true ? "session.failed"
     : type === "item.completed" && item?.type === "agent_message" ? "text.delta"
     : type === "message_update" && assistantEventType === "text_delta" ? "text.delta"

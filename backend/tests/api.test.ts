@@ -161,13 +161,28 @@ describe("Bun business backend", () => {
     const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:" });
     try {
       app.store.db.exec(`CREATE TABLE talk_messages (id TEXT, role TEXT, body TEXT, card TEXT, created_at TEXT);
-        INSERT INTO talk_messages VALUES ('a', 'user', 'earlier', '{}', '2025-01-01'), ('b', 'foreman', 'latest archived', '{}', '2025-01-02');
-        INSERT INTO business_talk_messages VALUES ('c', 'user', 'active', '{}', '2026-01-01'), ('d', 'foreman', 'latest active', '{}', '2026-01-02');`);
+        INSERT INTO talk_messages VALUES ('a', 'user', 'earlier', '{}', '2025-01-01'), ('b', 'foreman', 'later archived', '{}', '2026-03-01');
+        INSERT INTO business_talk_messages VALUES ('c', 'user', 'active', '{}', '2026-01-01'), ('d', 'foreman', 'latest active', '{}', '2026-04-01');`);
       const fetchIds = async (path: string) => (await (await app.fetch(new Request(`http://localhost${path}`))).json() as Array<{ id: string }>).map(({ id }) => id);
-      expect(await fetchIds("/api/web/talk?limit=3")).toEqual(["b", "c", "d"]);
+      expect(await fetchIds("/api/web/talk?limit=3")).toEqual(["c", "b", "d"]);
       expect(await fetchIds("/api/web/talk?limit=1")).toEqual(["d"]);
-      expect(await fetchIds("/api/v1/talk")).toEqual(["a", "b", "c", "d"]);
+      expect(await fetchIds("/api/v1/talk")).toEqual(["a", "c", "b", "d"]);
     } finally { app.stop(); }
+  });
+
+  test("marks project intake messages without a Foreman outbox as historical orphans", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mao-orphan-intake-"));
+    const dbPath = join(root, "factory.db");
+    const first = new SqliteStore(dbPath, dbPath);
+    const message = first.addTalkMessage({ role: "user", body: "旧项目接入", metadata: { source: "project-intake", project_id: "missing-project" } });
+    first.close();
+    const reopened = new SqliteStore(dbPath, dbPath);
+    try {
+      expect(reopened.talkMessageMetadata(message.id)).toMatchObject({ historical_orphan: 1, historical_reason: "missing_foreman_outbox" });
+    } finally {
+      reopened.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("limits asset summaries before projection and preserves active and archived order", async () => {

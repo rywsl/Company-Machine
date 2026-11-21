@@ -110,6 +110,7 @@ test("applies a container Foreman mailbox request within its intake scope", asyn
     expect(app.store.listBusinessRuns(project.businessSystemId!)).toHaveLength(1);
     expect(app.store.getBusinessSystem(project.businessSystemId!)?.metadata.graph).toEqual(graph);
     expect(app.store.getBusinessSystem(other.id)?.metadata.graph).toBeUndefined();
+    expect(app.store.getForemanMessage(body.foreman_inbox_id)?.businessStatus).toBe("applied");
     expect(sourcePrompt).toContain("/mao/foreman/requests");
     expect(sourceOptions?.cloneRepositories).toBe(false);
     expect(sourcePrompt).not.toContain("其他业务");
@@ -442,7 +443,10 @@ describe("Foreman official Harness dispatch", () => {
       const response = await cancelTurn(app, foremanTurn.id);
       expect(response.status).toBe(200);
       const { foremanTurn: cancelled } = await response.json();
-      expect(cancelled).toEqual({ ...foremanTurn, status: "cancelled", cancellable: false });
+      expect(cancelled).toMatchObject({ id: foremanTurn.id, messageId: foremanTurn.messageId, status: "cancelled", cancellable: false, businessStatus: "failed", businessReason: "cancelled" });
+      expect(typeof cancelled.completedAt).toBe("string");
+      expect(typeof cancelled.lastEventAt).toBe("string");
+      expect(typeof cancelled.elapsedMs).toBe("number");
       const retried = await cancelTurn(app, foremanTurn.id);
       expect(retried.status).toBe(200);
       expect(await retried.json()).toEqual({ foremanTurn: cancelled });
@@ -540,7 +544,7 @@ describe("Foreman official Harness dispatch", () => {
     } finally { other.stop(); app.stop(); await rm(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 75 }); }
   });
 
-  test("provides causal and bounded general chat history only to image-backed turns", async () => {
+  test("provides causal and bounded Foreman history including project intake turns", async () => {
     const prompts: string[] = [];
     let nextId = 1_000;
     const app = createApp({
@@ -584,8 +588,8 @@ describe("Foreman official Harness dispatch", () => {
       await app.foreman.dispatch(current.id);
       const history = prompts[0].split("历史对话（上下文数据，请以当前来信为准）\n")[1]?.split("\n", 1)[0];
       expect(JSON.parse(history)).toEqual([
-        { user: "前序一", foreman: "回复一" }, { user: "前序二", foreman: "回复二" },
-        { user: "前序三", foreman: "回复三" }, { user: long, foreman: long },
+        { user: "前序二", foreman: "回复二" }, { user: "前序三", foreman: "回复三" },
+        { user: long, foreman: long }, { user: "私有项目接入说明", foreman: "私有项目接入回复" },
       ]);
       expect(prompts[0]).toContain("当前来信\n当前问题");
       expect(prompts[0]).not.toContain("未来");
@@ -593,8 +597,9 @@ describe("Foreman official Harness dispatch", () => {
       const intake = queue("本次项目接入", { source: "project-intake" });
       await app.foreman.dispatch(intake.id);
       expect(prompts[1]).toContain("本次项目接入");
-      expect(prompts[1]).not.toContain("历史对话");
-      expect(prompts[1]).not.toContain("前序三");
+      expect(prompts[1]).toContain("历史对话");
+      expect(prompts[1]).toContain("当前来信\n本次项目接入");
+      expect(prompts[1]).toContain("当前问题");
     } finally { app.stop(); }
   });
   test("binds each Foreman deployment credential to its vendor profile and endpoint", () => {
@@ -758,6 +763,26 @@ describe("Foreman official Harness dispatch", () => {
     }
   });
 
+  test("waits past Codex reasoning items for the final agent message", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, foreman: {
+      spawn: () => fakeProcess([
+        JSON.stringify({ type: "thread.started", thread_id: "reasoning-session" }),
+        JSON.stringify({ type: "item.completed", item: { type: "reasoning", text: "Planning repository inspection" } }),
+        JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "最终回复" } }),
+        JSON.stringify({ type: "turn.completed" }),
+      ]),
+    } });
+    try {
+      app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      const queued = app.store.queueForemanMessage("reasoning-turn", "继续处理");
+      await app.foreman.dispatch(queued.id);
+      expect(app.store.listTalkMessages().at(-1)?.body).toBe("最终回复");
+    } finally {
+      await app.foreman.close();
+      app.stop();
+    }
+  });
+
   test("resumes the official session ID on the next native turn", async () => {
     const calls: string[][] = [];
     const sessionId = "a9919900-0000-4111-9111-100000000000";
@@ -780,6 +805,94 @@ describe("Foreman official Harness dispatch", () => {
       expect(calls[1]).toContain(sessionId);
       expect(calls[1].at(-1)).not.toContain("历史对话");
       expect(app.store.listTalkMessages().map(({ body }) => body)).toEqual(["进度已更新。", "进度已更新。"]);
+    } finally {
+      await app.foreman.close();
+      app.stop();
+    }
+  });
+
+  test("does not persist a synthetic CLI session ID and replays the prior turn", async () => {
+    const calls: string[][] = [];
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, foreman: { spawn: (argv) => {
+      calls.push(argv);
+      return fakeProcess([JSON.stringify({ type: "result", text: calls.length === 1 ? "第一轮完成" : "第二轮完成" })]);
+    } } });
+    try {
+      const profile = app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      const first = app.store.addTalkMessage({ body: "先处理这个项目" });
+      const firstTurn = app.store.queueForemanMessage(first.id, first.body);
+      await app.foreman.dispatch(firstTurn.id);
+      expect(app.store.foremanSession(profile.id)).toBeUndefined();
+      expect(app.store.listTalkMessages().at(-1)?.metadata.turn_id).toBe(firstTurn.id);
+
+      const second = app.store.addTalkMessage({ body: "继续刚才的工作" });
+      const secondTurn = app.store.queueForemanMessage(second.id, second.body);
+      await app.foreman.dispatch(secondTurn.id);
+      expect(calls[1]).not.toContain("resume");
+      expect(calls[1].at(-1)).toContain("第一轮完成");
+      expect(app.store.getForemanMessage(secondTurn.id)?.status).toBe("done");
+    } finally {
+      await app.foreman.close();
+      app.stop();
+    }
+  });
+
+  test("falls back to bounded history when an official resume cursor is rejected", async () => {
+    const calls: string[][] = [];
+    const sessionId = "resume-session-1";
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, foreman: { spawn: (argv) => {
+      calls.push(argv);
+      if (calls.length === 2) return fakeProcess([JSON.stringify({ type: "error", message: "session not found" })]);
+      return fakeProcess([
+        JSON.stringify({ type: "thread.started", thread_id: calls.length === 1 ? sessionId : "fresh-session" }),
+        JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: calls.length === 1 ? "首轮完成" : "回退后完成" } }),
+        JSON.stringify({ type: "turn.completed" }),
+      ]);
+    } } });
+    try {
+      const profile = app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      const queue = (body: string) => {
+        const message = app.store.addTalkMessage({ body });
+        return app.store.queueForemanMessage(message.id, body);
+      };
+      const first = queue("建立初始上下文");
+      await app.foreman.dispatch(first.id);
+      expect(app.store.foremanSession(profile.id)).toBe(sessionId);
+
+      const second = queue("继续初始上下文");
+      await app.foreman.dispatch(second.id);
+      expect(calls).toHaveLength(3);
+      expect(calls[1].slice(0, 3)).toEqual(["codex", "exec", "resume"]);
+      expect(calls[1]).toContain(sessionId);
+      expect(calls[2]).not.toContain("resume");
+      expect(calls[2].at(-1)).toContain("建立初始上下文");
+      expect(app.store.foremanSession(profile.id)).toBe("fresh-session");
+      expect(app.store.getForemanMessage(second.id)?.status).toBe("done");
+    } finally {
+      await app.foreman.close();
+      app.stop();
+    }
+  });
+
+  test("persists Foreman turn timing and causal inbox metadata", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, foreman: {
+      spawn: () => fakeProcess([JSON.stringify({ type: "result", text: "已完成" })]),
+    } });
+    try {
+      app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      const posted = await app.fetch(new Request("http://localhost/api/web/talk", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "计时并关联这一轮" }),
+      }));
+      const body = await posted.json() as { message: { id: string; metadata: Record<string, unknown> }; foremanTurn: { id: string } };
+      expect(body.message.metadata.inbox_id).toBe(body.foremanTurn.id);
+      await app.foreman.dispatch(body.foremanTurn.id);
+      const turn = app.store.getForemanMessage(body.foremanTurn.id);
+      expect(turn?.status).toBe("done");
+      expect(typeof turn?.startedAt).toBe("string");
+      expect(typeof turn?.lastEventAt).toBe("string");
+      expect(typeof turn?.completedAt).toBe("string");
+      expect(typeof turn?.elapsedMs).toBe("number");
+      expect(app.store.listTalkMessages().at(-1)?.metadata.inbox_id).toBe(body.foremanTurn.id);
     } finally {
       await app.foreman.close();
       app.stop();
@@ -851,7 +964,7 @@ describe("Foreman official Harness dispatch", () => {
       const queued = app.store.queueForemanMessage("before-profile", "接管项目");
       const response = await app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ runtime: "claude-code", role: "foreman", model: "fixture" }),
+        body: JSON.stringify({ runtime: "claude-code", role: "foreman", model: "fixture", execution_mode: "native_host" }),
       }));
       expect(response.status).toBe(200);
       for (let attempt = 0; attempt < 40 && app.store.getForemanMessage(queued.id)?.status !== "done"; attempt++) {
@@ -861,6 +974,72 @@ describe("Foreman official Harness dispatch", () => {
       expect(app.store.listTalkMessages()).toMatchObject([{ role: "foreman", body: "已接管项目。" }]);
     } finally {
       await app.foreman.close();
+      app.stop();
+    }
+  });
+
+  test("blocks trusted Foreman work until a digest-pinned image is configured", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    try {
+      const queued = app.store.queueForemanMessage("trusted-before-image", "配置可信厂长");
+      const response = await app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtime: "claude-code", role: "foreman", model: "fixture" }),
+      }));
+      expect(response.status).toBe(200);
+      await app.foreman.dispatch(queued.id);
+      expect(app.store.getForemanMessage(queued.id)).toMatchObject({ status: "queued", businessStatus: "blocked_environment" });
+      expect(app.events.after().some(({ type, data }) => type === "foreman.runtime.blocked" && (data as { inboxId: string }).inboxId === queued.id)).toBe(true);
+    } finally {
+      await app.foreman.close();
+      app.stop();
+    }
+  });
+
+  test("reports a trusted Foreman without an image as waiting for runtime", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    try {
+      const configured = await app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtime: "codex", role: "foreman", model: "fixture" }),
+      }));
+      expect(configured.status).toBe(200);
+      const response = await app.fetch(new Request("http://localhost/api/v1/talk", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "等待可信运行环境" }),
+      }));
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject({ state: "waiting_foreman_runtime", setup_required: false, foremanTurn: { status: "queued", businessStatus: "not_started" } });
+    } finally {
+      app.stop();
+    }
+  });
+
+  test("defaults a configured trusted Foreman to bridge networking", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    try {
+      const response = await app.fetch(new Request("http://localhost/api/web/harnesses/configure", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtime: "claude-code", role: "foreman", model: "fixture", image: "registry.example/foreman@sha256:" + "a".repeat(64) }),
+      }));
+      expect(response.status).toBe(200);
+      expect(app.store.listHarnessProfiles().find(({ role }) => role === "foreman")?.network).toBe("bridge");
+    } finally {
+      app.stop();
+    }
+  });
+
+  test("keeps a trusted Foreman queued and marks the environment blocked when runtime readiness fails", async () => {
+    const app = createApp({
+      dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false,
+      runtime: { health: async () => ({ available: false, platform: "linux", executable: "fixture", reason: "runtime offline", machine: null, rootless: null }), ensureReady: async () => ({ available: false, platform: "linux", executable: "fixture", reason: "runtime offline", machine: null, rootless: null }) },
+    });
+    try {
+      app.store.saveHarnessProfile({ runtime: "claude-code", role: "foreman", baseUrl: "", model: "fixture", mode: "session", executionMode: "trusted_container", image: "registry.example/foreman@sha256:" + "a".repeat(64), network: "bridge" });
+      const queued = app.store.queueForemanMessage("runtime-blocked", "继续执行");
+      await app.foreman.dispatch(queued.id);
+      expect(app.store.getForemanMessage(queued.id)).toMatchObject({ status: "queued", businessStatus: "blocked_environment", businessReason: "podman runtime unavailable: runtime offline" });
+      expect(app.events.after().some(({ type, data }) => type === "foreman.runtime.blocked" && (data as { inboxId: string }).inboxId === queued.id)).toBe(true);
+    } finally {
       app.stop();
     }
   });

@@ -139,6 +139,7 @@ type HarnessForm = {
   max_attempts: string;
   backoff_s: string;
   mode: string;
+  execution_mode: string;
 };
 
 function emptyHarnessForm(role: string, runtime: string, profile?: HarnessProfile | null, sharedProfile?: HarnessProfile | null): HarnessForm {
@@ -159,6 +160,7 @@ function emptyHarnessForm(role: string, runtime: string, profile?: HarnessProfil
     max_attempts: String(profile?.max_attempts ?? shared?.max_attempts ?? 2),
     backoff_s: String(profile?.backoff_s ?? shared?.backoff_s ?? 60),
     mode: profile?.mode ?? (role === "foreman" ? "session" : "session"),
+    execution_mode: profile?.execution_mode ?? (role === "foreman" ? "trusted_container" : "native_host"),
   };
 }
 
@@ -231,7 +233,7 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
   };
   const baseUrls = Array.from(new Set(profiles.map((item) => item.base_url).filter(Boolean)));
   const models = Array.from(new Set(profiles.map((item) => item.model).filter(Boolean)));
-  return <aside className="detail-panel harness-config-panel"><button className="icon-button" onClick={onClose} aria-label="关闭 Harness 配置">×</button><span className="eyebrow">HARNESS CONFIGURATION</span><h2>{role === "foreman" ? "配置厂长 Harness" : "配置 Operator Harness"}</h2><p className="config-intro">先选择 Harness、Base URL、API key 来源和模型。其他运行参数收纳在高级设置中，由厂长与 Operator 共用。</p>{profiles.length > 0 && <label className="config-field"><span>已保存配置</span><select value={selectedProfile} onChange={(event) => loadProfile(event.target.value)}><option value="">新建配置</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.runtime} · {item.model}</option>)}</select></label>}<form onSubmit={save}><label className="config-field"><span>Harness Runtime</span><select value={form.runtime} onChange={(event) => update("runtime", event.target.value)} required><option value="">选择 agent-cli runtime</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.name}{item.version ? ` · ${item.version}` : ""}</option>)}</select></label><label className="config-field"><span>Base URL</span><input list="harness-base-urls" value={form.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="留空使用官方 Harness 默认地址" /><datalist id="harness-base-urls">{baseUrls.map((item) => <option key={item} value={item} />)}</datalist></label><label className="config-field"><span>API key</span><select value={apiKeySource} onChange={(event) => setApiKeySource(event.target.value)}><option value="">由项目资源请求提供</option>{profiles.filter((item) => item.api_key_configured).map((item) => <option key={item.id} value={item.id}>已配置 · {item.runtime} · {item.model}</option>)}</select><small className="field-hint">密钥值保存在项目资源保险箱，不会进入 Harness 配置表单。</small></label><label className="config-field"><span>Model</span><input list="harness-models" value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="例如 claude-sonnet-5-5" required /><datalist id="harness-models">{models.map((item) => <option key={item} value={item} />)}</datalist></label><div className="context-note">项目缺少密钥时，Foreman 会创建项目资源请求并在此处显示状态。</div><details className="config-advanced"><summary>高级运行参数 <span>厂长与 Operator 共用</span></summary><div className="config-grid"><label className="config-field"><span>Thinking effort</span><select value={form.thinking_effort} onChange={(event) => update("thinking_effort", event.target.value)}>{["minimal", "low", "medium", "high", "max"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="config-field"><span>Context</span><input type="number" min="1" value={form.context} onChange={(event) => update("context", event.target.value)} /></label></div><label className="config-field"><span>Harness image</span><input value={form.image} onChange={(event) => update("image", event.target.value)} placeholder="留空使用本机官方 Harness" /></label><div className="config-grid"><label className="config-field"><span>Network</span><select value={form.network} onChange={(event) => update("network", event.target.value)}>{role === "foreman" && <option value="bridge">bridge（可信厂长，可下载项目依赖）</option>}<option value="egress">egress</option><option value="none">none</option></select></label><label className="config-field"><span>Mode</span><select value={form.mode} onChange={(event) => update("mode", event.target.value)}><option value="session">session</option><option value="resident">resident</option></select></label></div><div className="config-grid"><label className="config-field"><span>Max turns</span><input type="number" min="1" value={form.max_turns} onChange={(event) => update("max_turns", event.target.value)} /></label><label className="config-field"><span>Timeout seconds</span><input type="number" min="1" value={form.session_timeout_s} onChange={(event) => update("session_timeout_s", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Session budget</span><input type="number" min="0" step="0.01" value={form.session_budget_usd} onChange={(event) => update("session_budget_usd", event.target.value)} /></label><label className="config-field"><span>Daily budget</span><input type="number" min="0" step="0.01" value={form.daily_budget_usd} onChange={(event) => update("daily_budget_usd", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Max attempts</span><input type="number" min="1" value={form.max_attempts} onChange={(event) => update("max_attempts", event.target.value)} /></label><label className="config-field"><span>Backoff seconds</span><input type="number" min="0" value={form.backoff_s} onChange={(event) => update("backoff_s", event.target.value)} /></label></div></details><div className="config-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存配置"}</button><button className="secondary-button" type="button" onClick={() => void verify()} disabled={checking || !savedProfile}>{checking ? "请求中…" : "验证连通性"}</button></div></form>{message && <div className="context-note">{message}</div>}{verification && <div className="context-line"><span>验证状态</span><strong>{display(verification.reason ?? verification.state, "待验证")}</strong></div>}</aside>;
+  return <aside className="detail-panel harness-config-panel"><button className="icon-button" onClick={onClose} aria-label="关闭 Harness 配置">×</button><span className="eyebrow">HARNESS CONFIGURATION</span><h2>{role === "foreman" ? "配置厂长 Harness" : "配置 Operator Harness"}</h2><p className="config-intro">先选择 Harness、Base URL、API key 来源和模型。其他运行参数收纳在高级设置中，由厂长与 Operator 共用。</p>{profiles.length > 0 && <label className="config-field"><span>已保存配置</span><select value={selectedProfile} onChange={(event) => loadProfile(event.target.value)}><option value="">新建配置</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.runtime} · {item.model}</option>)}</select></label>}<form onSubmit={save}><label className="config-field"><span>Harness Runtime</span><select value={form.runtime} onChange={(event) => update("runtime", event.target.value)} required><option value="">选择 agent-cli runtime</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.name}{item.version ? ` · ${item.version}` : ""}</option>)}</select></label><label className="config-field"><span>Base URL</span><input list="harness-base-urls" value={form.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="留空使用官方 Harness 默认地址" /><datalist id="harness-base-urls">{baseUrls.map((item) => <option key={item} value={item} />)}</datalist></label><label className="config-field"><span>API key</span><select value={apiKeySource} onChange={(event) => setApiKeySource(event.target.value)}><option value="">由项目资源请求提供</option>{profiles.filter((item) => item.api_key_configured).map((item) => <option key={item.id} value={item.id}>已配置 · {item.runtime} · {item.model}</option>)}</select><small className="field-hint">密钥值保存在项目资源保险箱，不会进入 Harness 配置表单。</small></label><label className="config-field"><span>Model</span><input list="harness-models" value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="例如 claude-sonnet-5-5" required /><datalist id="harness-models">{models.map((item) => <option key={item} value={item} />)}</datalist></label><div className="context-note">项目缺少密钥时，Foreman 会创建项目资源请求并在此处显示状态。</div><details className="config-advanced"><summary>高级运行参数 <span>厂长与 Operator 共用</span></summary>{role === "foreman" && <label className="config-field"><span>Foreman 执行环境</span><select value={form.execution_mode} onChange={(event) => update("execution_mode", event.target.value)}><option value="trusted_container">可信容器（root、bridge、可安装项目依赖）</option><option value="native_host">本机官方 Harness（需通过能力探针）</option></select></label>}<div className="config-grid"><label className="config-field"><span>Thinking effort</span><select value={form.thinking_effort} onChange={(event) => update("thinking_effort", event.target.value)}>{["minimal", "low", "medium", "high", "max"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="config-field"><span>Context</span><input type="number" min="1" value={form.context} onChange={(event) => update("context", event.target.value)} /></label></div><label className="config-field"><span>Harness image</span><input value={form.image} onChange={(event) => update("image", event.target.value)} placeholder="可信容器需要 digest 固定镜像" /></label><div className="config-grid"><label className="config-field"><span>Network</span><select value={form.network} onChange={(event) => update("network", event.target.value)}>{role === "foreman" && <option value="bridge">bridge（可信厂长，可下载项目依赖）</option>}<option value="egress">egress</option><option value="none">none</option></select></label><label className="config-field"><span>Mode</span><select value={form.mode} onChange={(event) => update("mode", event.target.value)}><option value="session">session</option><option value="resident">resident</option></select></label></div><div className="config-grid"><label className="config-field"><span>Max turns</span><input type="number" min="1" value={form.max_turns} onChange={(event) => update("max_turns", event.target.value)} /></label><label className="config-field"><span>Timeout seconds</span><input type="number" min="1" value={form.session_timeout_s} onChange={(event) => update("session_timeout_s", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Session budget</span><input type="number" min="0" step="0.01" value={form.session_budget_usd} onChange={(event) => update("session_budget_usd", event.target.value)} /></label><label className="config-field"><span>Daily budget</span><input type="number" min="0" step="0.01" value={form.daily_budget_usd} onChange={(event) => update("daily_budget_usd", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Max attempts</span><input type="number" min="1" value={form.max_attempts} onChange={(event) => update("max_attempts", event.target.value)} /></label><label className="config-field"><span>Backoff seconds</span><input type="number" min="0" value={form.backoff_s} onChange={(event) => update("backoff_s", event.target.value)} /></label></div></details><div className="config-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存配置"}</button><button className="secondary-button" type="button" onClick={() => void verify()} disabled={checking || !savedProfile}>{checking ? "请求中…" : "验证连通性"}</button></div></form>{message && <div className="context-note">{message}</div>}{verification && <div className="context-line"><span>验证状态</span><strong>{display(verification.reason ?? verification.state, "待验证")}</strong></div>}</aside>;
 }
 
 const foremanTurnStatus = {
@@ -240,13 +242,82 @@ const foremanTurnStatus = {
   done: { rank: 2, label: "已完成" },
   failed: { rank: 2, label: "会话失败" },
   cancelled: { rank: 2, label: "已取消" },
+  blocked: { rank: 2, label: "环境阻塞" },
+  waiting_foreman_runtime: { rank: 0, label: "等待 Foreman 运行环境" },
 } satisfies Record<ForemanTurn["status"], { rank: number; label: string }>;
+
+const businessOutcomeLabels: Record<string, string> = {
+  not_started: "业务尚未执行",
+  in_progress: "业务执行中",
+  applied: "业务已落库",
+  no_change: "对话完成，未产生业务变更",
+  blocked_environment: "环境阻塞，业务未执行",
+  blocked_input: "等待业务输入",
+  failed: "业务执行失败",
+};
+
+function businessOutcomeLabel(status?: string): string {
+  return status ? businessOutcomeLabels[status] ?? status : "";
+}
 
 function readForemanTurn(input: unknown): ForemanTurn | undefined {
   if (!input || typeof input !== "object") return;
-  const { id, messageId, status, cancellable } = input as Record<string, unknown>;
+  const value = input as Record<string, unknown>;
+  const { id, messageId, status, cancellable } = value;
   if (typeof id !== "string" || typeof messageId !== "string" || typeof status !== "string" || !Object.hasOwn(foremanTurnStatus, status)) return;
-  return { id, messageId, status: status as ForemanTurn["status"], cancellable: cancellable === true || (cancellable === undefined && status === "queued") };
+  const timestamp = (camel: string, snake: string) => {
+    const candidate = value[camel] ?? value[snake];
+    return typeof candidate === "string" ? candidate : undefined;
+  };
+  const elapsed = value.elapsedMs ?? value.elapsed_ms;
+  return {
+    id,
+    messageId,
+    status: status as ForemanTurn["status"],
+    cancellable: cancellable === true || (cancellable === undefined && status === "queued"),
+    queuedAt: timestamp("queuedAt", "queued_at"),
+    startedAt: timestamp("startedAt", "started_at"),
+    lastEventAt: timestamp("lastEventAt", "last_event_at"),
+    completedAt: timestamp("completedAt", "completed_at"),
+    elapsedMs: typeof elapsed === "number" && Number.isFinite(elapsed) ? elapsed : undefined,
+    error: typeof value.error === "string" ? value.error : undefined,
+    businessStatus: typeof value.businessStatus === "string" ? value.businessStatus : typeof value.business_status === "string" ? value.business_status : undefined,
+    businessReason: typeof value.businessReason === "string" ? value.businessReason : typeof value.business_reason === "string" ? value.business_reason : undefined,
+  };
+}
+
+function talkInboxId(message: TalkMessage, turns: Record<string, ForemanTurn>): string | undefined {
+  const metadata = message.metadata;
+  if (metadata && typeof metadata.inbox_id === "string") return metadata.inbox_id;
+  if ((message.role === "user" || message.role === "human") && message.id) return turns[message.id]?.id;
+  return undefined;
+}
+
+function orderTalkMessages(messages: TalkMessage[], turns: Record<string, ForemanTurn>): TalkMessage[] {
+  const groups = new Map<string, { first: number; messages: TalkMessage[] }>();
+  const unbound: Array<{ index: number; message: TalkMessage }> = [];
+  messages.forEach((message, index) => {
+    const inboxId = talkInboxId(message, turns);
+    if (!inboxId) {
+      unbound.push({ index, message });
+      return;
+    }
+    const group = groups.get(inboxId);
+    if (group) group.messages.push(message);
+    else groups.set(inboxId, { first: index, messages: [message] });
+  });
+  const ordered = [...groups.values()].sort((left, right) => {
+    const leftHuman = left.messages.find((message) => message.role === "user" || message.role === "human");
+    const rightHuman = right.messages.find((message) => message.role === "user" || message.role === "human");
+    const leftTime = Date.parse(leftHuman?.createdAt ?? "");
+    const rightTime = Date.parse(rightHuman?.createdAt ?? "");
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) return leftTime - rightTime;
+    return left.first - right.first;
+  });
+  return ordered.flatMap(({ messages: group }) => [
+    ...group.filter((message) => message.role === "user" || message.role === "human"),
+    ...group.filter((message) => message.role !== "user" && message.role !== "human"),
+  ]).concat(unbound.sort((left, right) => left.index - right.index).map(({ message }) => message));
 }
 
 function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForeman, onOpenSecret, onClose, onSend, onCancel }: {
@@ -273,6 +344,14 @@ function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForem
   if (!open) return null;
   const foreman = bootstrap.foreman;
   const profile = foreman.profile;
+  const runtimeState = foreman.runtime_state ?? profile?.runtime_state;
+  const runtimeReason = foreman.runtime_reason ?? profile?.runtime_reason;
+  const chatReady = Boolean(foreman.configured && profile?.api_key_configured && runtimeState !== "waiting_configuration" && runtimeState !== "blocked_environment" && runtimeState !== "native_unverified");
+  const chatStatus = runtimeState === "waiting_configuration" ? "等待可信运行环境"
+    : runtimeState === "blocked_environment" ? "环境阻塞"
+      : runtimeState === "native_unverified" ? "等待能力验证"
+        : profile && !profile.api_key_configured ? "等待项目资源"
+          : chatReady ? "可对话" : "待配置";
   const pending = bootstrap.secrets.filter((item) => item.request?.id && !item.configured);
   const firstRequest = pending[0];
   const cancel = async (id: string) => {
@@ -299,6 +378,18 @@ function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForem
     const minutes = Math.floor(seconds / 60);
     return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
   };
+  const turnElapsed = (turn: ForemanTurn | undefined, message: TalkMessage) => {
+    if (!turn) return "";
+    if (typeof turn.elapsedMs === "number") return elapsed(new Date(Date.now() - turn.elapsedMs).toISOString());
+    const start = turn.startedAt ?? turn.queuedAt ?? message.at ?? message.createdAt;
+    if (turn.status === "queued" || turn.status === "claimed") return elapsed(start);
+    if (turn.completedAt && start) {
+      const duration = Date.parse(turn.completedAt) - Date.parse(start);
+      if (Number.isFinite(duration) && duration >= 0) return elapsed(new Date(Date.now() - duration).toISOString());
+    }
+    return elapsed(start);
+  };
+  const orderedTalk = useMemo(() => orderTalkMessages(talk, turns), [talk, turns]);
   return <aside className="foreman-panel">
     <div className="panel-head">
       <div><span className="eyebrow">FOREMAN CONSOLE</span><h2>厂长</h2></div>
@@ -308,10 +399,11 @@ function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForem
       <div>
         <span>Harness CLI</span>
         <strong>{foreman.configured ? `${display(foreman.runtime)} · ${display(foreman.model)}` : "未配置"}</strong>
-        {profile && <small>{profile.image ? (profile.api_key_configured ? "部署凭证已配置" : "部署凭证未配置") : (profile.api_key_configured ? "本机官方 Harness 可用" : "本机官方 Harness 未发现")}</small>}
+        {profile && <small>{runtimeState === "waiting_configuration" ? "需要 digest 固定的可信 Harness 镜像" : profile.image ? (profile.api_key_configured ? "可信容器凭证已配置" : "可信容器凭证未配置") : (profile.api_key_configured ? "本机官方 Harness 待能力验证" : "本机官方 Harness 未发现")}</small>}
       </div>
-      <div className="foreman-harness-actions"><span className={`connection-pill ${foreman.configured ? "good" : "warn"}`}><span className="status-dot" />{foreman.configured ? "可对话" : "待配置"}</span><button className="text-button" onClick={onConfigureForeman}>{foreman.configured ? "编辑配置" : "配置厂长"}</button></div>
+      <div className="foreman-harness-actions"><span className={`connection-pill ${chatReady ? "good" : "warn"}`}><span className="status-dot" />{chatStatus}</span><button className="text-button" onClick={onConfigureForeman}>{foreman.configured ? "编辑配置" : "配置厂长"}</button></div>
     </div>
+    {runtimeState && runtimeState !== "ready" && <div className="context-note foreman-runtime-state" role="status"><strong>{runtimeState === "blocked_environment" ? "Foreman 环境阻塞" : runtimeState === "waiting_configuration" ? "等待配置可信 Foreman" : `Foreman 环境 ${runtimeState}`}</strong>{runtimeReason && <small>{runtimeReason}</small>}</div>}
     {foreman.setup_required && <div className="context-note">项目已启动，但厂长 Harness 尚未配置。先完成配置，Foreman 才能接管缺失依赖和运行验证。</div>}
     {firstRequest && <div className="foreman-resource">
       <div aria-live="polite">
@@ -322,13 +414,15 @@ function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForem
     </div>}
     {activity && <div className="context-note" role="status">{activity}</div>}
     <div className="talk-list">
-      {talk.length ? talk.map((item, index) => {
+      {orderedTalk.length ? orderedTalk.map((item, index) => {
         const human = item.role === "human" || item.role === "user";
-        const turn = human && item.id ? turns[item.id] : undefined;
-        return <div className={`talk-message ${human ? "human" : "agent"}`} key={item.id ?? `${item.at}-${index}`}>
+        const historicalOrphan = item.metadata?.historical_orphan === true || item.metadata?.historicalOrphan === true;
+        const inboxId = talkInboxId(item, turns);
+        const turn = human && item.id ? turns[item.id] : inboxId ? Object.values(turns).find((candidate) => candidate.id === inboxId) : undefined;
+        return <div className={`talk-message ${human ? "human" : "agent"}${historicalOrphan ? " historical" : ""}`} key={item.id ?? `${item.at}-${index}`}>
           <span className="talk-role">{human ? "你" : "Foreman"}</span>
           <p>{display(item.body)}</p>
-          <small>{turn ? `${foremanTurnStatus[turn.status].label}${turn.status === "queued" || turn.status === "claimed" ? ` · 已用时 ${elapsed(item.at ?? item.createdAt)}` : ""}` : display(item.state, "已接收")}</small>
+          <small>{historicalOrphan ? "历史孤立记录 · 不参与当前业务" : turn ? `${foremanTurnStatus[turn.status].label} · 已用时 ${turnElapsed(turn, item)}${turn.businessStatus ? ` · ${businessOutcomeLabel(turn.businessStatus)}` : ""}${turn.businessReason ? ` · ${turn.businessReason}` : ""}${turn.status === "failed" && turn.error ? ` · ${turn.error}` : ""}` : display(item.state, "已接收")}</small>
           {turn?.cancellable && foremanTurnStatus[turn.status].rank < 2 && <button type="button" className="text-button"
             disabled={Boolean(cancelling)} onClick={() => void cancel(turn.id)}>
             {cancelling === turn.id ? "取消中…" : "取消本轮"}
@@ -694,7 +788,7 @@ export function App(): ReactElement {
       for (const turn of next.foremanTurns ?? []) rememberTurn(turn);
       if (!startedEvents.current) {
         setLiveReplies(Object.fromEntries(Object.entries(next.pendingForemanReplies ?? {}).filter(([id]) => !cancelledTurns.current.has(id)).map(([id, body]) => [id, {
-          id: `live-${id}`, role: "foreman", body, state: "回复中",
+          id: `live-${id}`, role: "foreman", body, state: "回复中", metadata: { inbox_id: id },
         }])));
         setEventCursor(String(next.eventCursor ?? 0));
         startedEvents.current = true;
@@ -720,13 +814,22 @@ export function App(): ReactElement {
       if (turn) rememberTurn(turn);
       return;
     }
+    if (type === "foreman.runtime.blocked" && typeof inboxId === "string") {
+      const reason = typeof eventData?.reason === "string" ? eventData.reason : "可信 Foreman 运行环境不可用";
+      setForemanActivity((current) => ({ ...current, [inboxId]: reason }));
+      setForemanTurns((current) => {
+        const previous = current[inboxId];
+        return previous ? { ...current, [inboxId]: { ...previous, businessStatus: "blocked_environment", businessReason: reason } } : current;
+      });
+      return;
+    }
     if (type === "foreman.session.failed" && typeof inboxId === "string") {
       const turn = readForemanTurn(eventData);
       if (turn) rememberTurn(turn);
       if (!cancelledTurns.current.has(inboxId)) {
         const reason = typeof eventData?.reason === "string" ? eventData.reason : "厂长会话中断";
         setLiveReplies((current) => ({ ...current, [inboxId]: {
-          id: `live-${inboxId}`, role: "foreman", body: current[inboxId]?.body || reason, state: "会话失败",
+          id: `live-${inboxId}`, role: "foreman", body: current[inboxId]?.body || reason, state: "会话失败", metadata: { inbox_id: inboxId },
         } }));
       }
       setForemanActivity((current) => ({ ...current, [inboxId]: "厂长本轮处理失败" }));
@@ -766,7 +869,8 @@ export function App(): ReactElement {
       return;
     }
     if ((type === "talk.foreman.replied" || type === "talk.message.created") && typeof eventData?.id === "string" && typeof eventData.body === "string") {
-      const message = { id: eventData.id, body: eventData.body, role: typeof eventData.role === "string" ? eventData.role : "foreman" };
+      const messageMetadata = eventData.metadata && typeof eventData.metadata === "object" ? eventData.metadata as Record<string, unknown> : {};
+      const message = { id: eventData.id, body: eventData.body, role: typeof eventData.role === "string" ? eventData.role : "foreman", metadata: typeof eventData.inboxId === "string" ? { ...messageMetadata, inbox_id: eventData.inboxId } : messageMetadata };
       setTalk((current) => [...current.filter((item) => item.id !== message.id), message]);
       if (typeof inboxId === "string") setLiveReplies((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== inboxId)));
       return;
@@ -775,7 +879,7 @@ export function App(): ReactElement {
       if (cancelledTurns.current.has(inboxId)) return;
       const text = eventData.text;
       setLiveReplies((current) => ({ ...current, [inboxId]: {
-        id: `live-${inboxId}`, role: "foreman", body: (current[inboxId]?.body ?? "") + text, state: "回复中",
+        id: `live-${inboxId}`, role: "foreman", body: (current[inboxId]?.body ?? "") + text, state: "回复中", metadata: { inbox_id: inboxId },
       } }));
       return;
     }

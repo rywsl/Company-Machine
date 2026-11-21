@@ -43,7 +43,10 @@ function requireValue(args: string[], name: string): string {
 }
 
 async function requestJson(app: ReturnType<typeof createApp>, path: string, init?: RequestInit): Promise<any> {
-  const result = await app.fetch(new Request(`http://localhost${path}`, init));
+  const headers = new Headers(init?.headers);
+  const turnId = process.env.MAO_FOREMAN_TURN_ID;
+  if (turnId) headers.set("x-mao-foreman-turn", turnId);
+  const result = await app.fetch(new Request(`http://localhost${path}`, { ...init, headers }));
   const body = await result.text();
   let parsed: unknown;
   try { parsed = body ? JSON.parse(body) : {}; } catch { parsed = { error: body }; }

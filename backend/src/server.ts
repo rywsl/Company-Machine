@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { RandomIds, canonicalBytes, digestBytes, type Clock } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
-import type { Artifact, BusinessConversion, BusinessSystem, Event, HarnessProfile } from "./models";
+import type { Artifact, BusinessConversion, BusinessSystem, Event, HarnessProfile, TalkMessage } from "./models";
 import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
 import { ForemanCoordinator } from "./foreman";
@@ -369,6 +369,13 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     prepareSources: options.operator?.prepareSources ?? (async (project) => supportsLocalProjectMounts() ? prepareSources(project) : undefined),
   });
   const hasForeman = () => store.listHarnessProfiles().some((profile) => profile.role === "foreman");
+  const foremanQueueState = (): { state: "accepted" | "waiting_foreman" | "waiting_foreman_runtime"; setup_required: boolean } => {
+    const profile = store.listHarnessProfiles().find((item) => item.role === "foreman");
+    if (!profile) return { state: "waiting_foreman", setup_required: true };
+    const executionMode = profile.executionMode ?? (profile.image ? "trusted_container" : "native_host");
+    if (executionMode === "trusted_container" && !profile.image) return { state: "waiting_foreman_runtime", setup_required: false };
+    return { state: "accepted", setup_required: false };
+  };
   const dispatchForemanIfConfigured = (id: string) => {
     if (options.dispatchWork !== false && hasForeman()) runInBackground(foreman.dispatch(id));
   };
@@ -942,6 +949,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         const intakeMessage = store.addTalkMessage({ role: "user", body: text, metadata: { source: "project-intake", project_id: project.id } });
         store.bridgeHumanTalk(intakeMessage.id, intakeMessage.body);
         const intakeEnvelope = store.queueForemanMessage(intakeMessage.id, intakeMessage.body);
+        intakeMessage.metadata = { ...intakeMessage.metadata, inbox_id: intakeEnvelope.id };
+        store.db.query("UPDATE business_talk_messages SET metadata=? WHERE id=?").run(JSON.stringify(intakeMessage.metadata), intakeMessage.id);
         const visibleProject = publicProject(project);
         const committed = [
           ...(createdSystem ? [store.appendEvent("business-system.created", createdSystem)] : []),
@@ -955,7 +964,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const { projectId, visibleProject, intakeEnvelope, committed } = recorded;
       for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(intakeEnvelope.id);
-      return response({ ...visibleProject, project_id: projectId, state: hasForeman() ? "accepted" : "waiting_foreman", foreman_setup_required: !hasForeman(), foreman_inbox_id: intakeEnvelope.id }, 201);
+      const queueState = foremanQueueState();
+      return response({ ...visibleProject, project_id: projectId, ...queueState, foreman_setup_required: queueState.setup_required, foreman_inbox_id: intakeEnvelope.id }, 201);
     }
     const projectFile = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)\/files\/(sha256:[0-9a-f]{64})$/);
     if (projectFile && request.method === "GET") {
@@ -1038,9 +1048,14 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const { message, envelope, events: committed } = store.enqueueForemanTalk({ body: redactText(text), metadata: scope.metadata });
       for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
-      return response({ state: hasForeman() ? "accepted" : "waiting_foreman", setup_required: !hasForeman(), message, foremanTurn: foreman.turnState(envelope) }, 201);
+      return response({ ...foremanQueueState(), message, foremanTurn: foreman.turnState(envelope) }, 201);
     }
-    if (url.pathname === "/api/v1/talk" && request.method === "GET") return response([...store.legacyTalk(), ...store.listTalkMessages()]);
+    if (url.pathname === "/api/v1/talk" && request.method === "GET") {
+      const messages = new Map<string, TalkMessage>();
+      for (const message of store.legacyTalk()) messages.set(message.id, message);
+      for (const message of store.listTalkMessages()) messages.set(message.id, message);
+      return response([...messages.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)));
+    }
     if (url.pathname === "/api/v1/talk/reply" && request.method === "POST") {
       const body = await readJson(request);
       const text = typeof body.text === "string" ? body.text : body.body;
@@ -1221,6 +1236,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       catch { return response({ error: "invalid Harness base URL" }, 400); }
       const image = typeof body.image === "string" ? body.image.trim() : "";
       if (image && !/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(image)) return response({ error: "Harness image must be pinned by digest" }, 400);
+      const executionMode = body.role === "foreman"
+        ? body.execution_mode === "native_host" ? "native_host" : "trusted_container"
+        : "native_host";
       const currentProfile = store.listHarnessProfiles().find((item) => item.id === `${body.role}:${definition.id}`);
       const sourceProfileId = typeof body.api_key_profile_id === "string" && body.api_key_profile_id.length > 0 ? body.api_key_profile_id : undefined;
       const sourceProfile = sourceProfileId ? store.listHarnessProfiles().find((item) => item.id === sourceProfileId && item.role === body.role) : undefined;
@@ -1252,12 +1270,12 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         return response({ error: "max_turns and max_attempts must be positive whole numbers, backoff_s must be non-negative" }, 400);
       }
       const profile = store.saveHarnessProfile({
-        runtime: definition.id, role: body.role, baseUrl, model: body.model.trim(), mode: typeof body.mode === "string" ? body.mode : "session",
+        runtime: definition.id, role: body.role, baseUrl, model: body.model.trim(), mode: typeof body.mode === "string" ? body.mode : "session", executionMode,
         sessionTimeoutSeconds, thinkingEffort, contextTokens, sessionBudgetUsd, dailyBudgetUsd, maxTurns, maxAttempts, backoffSeconds,
         secretRef: sourceProfile?.secretRef ?? currentProfile?.secretRef,
         image: image || undefined,
         network: image
-          ? body.network === "bridge" ? "bridge" : body.network === "egress" ? "egress" : "none"
+          ? body.network === "egress" ? "egress" : body.network === "none" ? "none" : body.role === "foreman" && executionMode === "trusted_container" ? "bridge" : "none"
           : undefined,
         verification: { state: "pending", checkedAt: store.timestamp() },
       });
@@ -1283,7 +1301,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       // require a restart or a manual dispatch request.
       if (profile.role === "foreman") recoverQueuedWork();
       const foremanProfile = persistedProfile.role === "foreman" ? persistedProfile : store.listHarnessProfiles().find((item) => item.role === "foreman");
-      return response({ profile: publicProfile(persistedProfile, (ref) => vault.get(ref)), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) } }, 200);
+      const foremanPublic = publicProfile(foremanProfile, (ref) => vault.get(ref));
+      return response({ profile: publicProfile(persistedProfile, (ref) => vault.get(ref)), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, runtime_state: foremanPublic?.foreman_runtime?.state, runtime_reason: foremanPublic?.foreman_runtime?.reason, profile: foremanPublic } }, 200);
     }
     if (url.pathname === "/api/web/harnesses/verify" && request.method === "POST") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以验证 Harness" }, 403);
@@ -1339,7 +1358,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const { message, envelope, events: committed } = store.enqueueForemanTalk({ body: redactText(text), metadata: scope.metadata });
       for (const event of committed) events.notifyCommitted(event);
       dispatchForemanIfConfigured(envelope.id);
-      return response({ state: hasForeman() ? "accepted" : "waiting_foreman", setup_required: !hasForeman(), message, eventCursor: store.latestEventSequence(), foremanTurn: foreman.turnState(envelope) }, 201);
+      return response({ ...foremanQueueState(), message, eventCursor: store.latestEventSequence(), foremanTurn: foreman.turnState(envelope) }, 201);
     }
     if (url.pathname === "/api/web/bootstrap" && request.method === "GET") {
       const assetLimit = url.searchParams.get("assetLimit");
@@ -1366,7 +1385,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: "olderCursor" in assetPage ? assetPage.olderCursor : assetPage.older ? Buffer.from(JSON.stringify({ v: 1, ...assetPage.older })).toString("base64url") : null }),
         harnesses: harnesses.map((item) => ({ ...item, configuration: systems ? null : publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: systems ? [] : store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: secrets.map(publicSecretRequest),
         dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses(store.listHarnessProfiles()).map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : item.container_configured ? "configured" : "unavailable" })) },
-        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: systems ? null : foremanProfile?.runtime ?? null, model: systems ? null : foremanProfile?.model ?? null, mode: systems ? null : foremanProfile?.mode ?? null, profile: systems ? null : publicProfile(foremanProfile, (ref) => vault.get(ref)) }, constitution: await constitutionProjection(storageRoot) });
+        foreman: (() => { const projected = systems ? null : publicProfile(foremanProfile, (ref) => vault.get(ref)); const runtime = projected?.foreman_runtime; return { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: systems ? null : foremanProfile?.runtime ?? null, model: systems ? null : foremanProfile?.model ?? null, mode: systems ? null : foremanProfile?.mode ?? null, runtime_state: runtime?.state, runtime_reason: runtime?.reason, runtime_provider: provider, profile: projected }; })(), constitution: await constitutionProjection(storageRoot) });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") {
       const signal = AbortSignal.any([request.signal, eventStreams.signal]);
@@ -1442,10 +1461,20 @@ function publicProfile(profile?: HarnessProfile, readSecret?: (ref: string) => s
   if (!profile) return null;
   const { secretRef, ...safeProfile } = profile;
   const configured = profile.role === "foreman"
-    ? Boolean(foremanCredential(profile, readSecret) || (!profile.image && resolveOfficialHarness(profile.runtime) && Bun.which(resolveOfficialHarness(profile.runtime)!.executable)))
+    ? (profile.executionMode === "trusted_container"
+      ? Boolean(profile.image && (foremanCredential(profile, readSecret) || profile.image))
+      : Boolean(foremanCredential(profile, readSecret) || (!profile.image && resolveOfficialHarness(profile.runtime) && Bun.which(resolveOfficialHarness(profile.runtime)!.executable))))
     : Boolean(secretRef && (!readSecret || readSecret(secretRef)));
+  const foremanRuntime = profile.role === "foreman"
+    ? profile.executionMode === "native_host"
+      ? { state: "native_unverified", reason: "本机官方 Harness 的仓库脚本执行能力尚未验证" }
+      : profile.image
+        ? { state: "trusted_container", reason: "Foreman 使用 digest 固定的受控容器" }
+        : { state: "waiting_configuration", reason: "可信 Foreman 需要配置 digest 固定的 Harness 镜像" }
+    : undefined;
   return {
     ...safeProfile,
+    execution_mode: profile.executionMode,
     base_url: profile.baseUrl,
     session_timeout_s: profile.sessionTimeoutSeconds,
     thinking_effort: profile.thinkingEffort ?? (profile.role === "foreman" ? "max" : "medium"),
@@ -1456,6 +1485,7 @@ function publicProfile(profile?: HarnessProfile, readSecret?: (ref: string) => s
     max_attempts: profile.maxAttempts ?? 2,
     backoff_s: profile.backoffSeconds ?? 60,
     api_key_configured: configured,
+    ...(foremanRuntime ? { foreman_runtime: foremanRuntime, runtime_state: foremanRuntime.state, runtime_reason: foremanRuntime.reason } : {}),
     updated_at: profile.updatedAt,
     verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined,
   };

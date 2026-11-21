@@ -56,6 +56,12 @@ const parseList = (value: unknown): string[] => {
   }
 };
 
+function elapsedMilliseconds(start: string, end: string): number {
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  return Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, endMs - startMs) : 0;
+}
+
 function mergedConversionStatus(current: BusinessConversion["status"], incoming: BusinessConversion["status"]): BusinessConversion["status"] {
   const rank: Record<BusinessConversion["status"], number> = { planned: 0, running: 1, failed: 2, completed: 3 };
   return rank[incoming] > rank[current] ? incoming : current;
@@ -151,7 +157,7 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS secret_audit_request ON secret_audit(request_id, created_at, id);
       CREATE TABLE IF NOT EXISTS harness_profiles (
         id TEXT PRIMARY KEY, runtime TEXT NOT NULL, role TEXT NOT NULL, base_url TEXT NOT NULL,
-        model TEXT NOT NULL, mode TEXT NOT NULL, image TEXT, network TEXT, secret_ref TEXT,
+        model TEXT NOT NULL, mode TEXT NOT NULL, execution_mode TEXT, image TEXT, network TEXT, secret_ref TEXT,
         verification TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL,
         session_timeout_s INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds},
         thinking_effort TEXT NOT NULL DEFAULT 'medium', context_tokens INTEGER NOT NULL DEFAULT 128000,
@@ -173,7 +179,9 @@ export class SqliteStore {
       );
       CREATE TABLE IF NOT EXISTS foreman_outbox (
         id TEXT PRIMARY KEY, message_id TEXT NOT NULL, text TEXT NOT NULL,
-        status TEXT NOT NULL, created_at TEXT NOT NULL, claimed_at TEXT
+        status TEXT NOT NULL, created_at TEXT NOT NULL, queued_at TEXT, claimed_at TEXT,
+        started_at TEXT, last_event_at TEXT, completed_at TEXT, elapsed_ms INTEGER,
+        business_status TEXT NOT NULL DEFAULT 'not_started', business_reason TEXT
       );
       -- The legacy factory database already owns foreman_sessions with a
       -- different schema. Keep that table available to the legacy status and
@@ -269,9 +277,30 @@ export class SqliteStore {
     this.addColumnIfMissing("harness_profiles", "max_turns", "INTEGER NOT NULL DEFAULT 20");
     this.addColumnIfMissing("harness_profiles", "max_attempts", "INTEGER NOT NULL DEFAULT 2");
     this.addColumnIfMissing("harness_profiles", "backoff_s", "INTEGER NOT NULL DEFAULT 60");
+    this.addColumnIfMissing("harness_profiles", "execution_mode", "TEXT");
+    this.db.query("UPDATE harness_profiles SET execution_mode=CASE WHEN role='foreman' THEN 'trusted_container' ELSE 'native_host' END WHERE execution_mode IS NULL").run();
     this.addColumnIfMissing("business_run_graphs", "edges_indexed", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("business_run_graphs", "nodes", "TEXT");
     this.addColumnIfMissing("machine_attempts", "owner_token", "TEXT");
+    this.addColumnIfMissing("foreman_outbox", "started_at", "TEXT");
+    this.addColumnIfMissing("foreman_outbox", "queued_at", "TEXT");
+    this.addColumnIfMissing("foreman_outbox", "last_event_at", "TEXT");
+    this.addColumnIfMissing("foreman_outbox", "completed_at", "TEXT");
+    this.addColumnIfMissing("foreman_outbox", "elapsed_ms", "INTEGER");
+    this.addColumnIfMissing("foreman_outbox", "business_status", "TEXT NOT NULL DEFAULT 'not_started'");
+    this.addColumnIfMissing("foreman_outbox", "business_reason", "TEXT");
+    this.db.query("UPDATE foreman_outbox SET queued_at=created_at WHERE queued_at IS NULL").run();
+    this.db.exec(`
+      UPDATE business_talk_messages
+      SET metadata=json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
+        '$.historical_orphan', 1,
+        '$.historical_reason', 'missing_foreman_outbox')
+      WHERE role IN ('user','human')
+        AND json_valid(metadata)
+        AND json_extract(metadata, '$.source')='project-intake'
+        AND NOT EXISTS (SELECT 1 FROM foreman_outbox WHERE foreman_outbox.message_id=business_talk_messages.id)
+        AND (json_extract(metadata, '$.historical_orphan') IS NULL OR json_extract(metadata, '$.historical_orphan') != 1)
+    `);
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -374,6 +403,7 @@ export class SqliteStore {
       baseUrl: row.base_url,
       model: row.model,
       mode: row.mode,
+      executionMode: row.execution_mode === "native_host" ? "native_host" : row.role === "foreman" ? "trusted_container" : "native_host",
       sessionTimeoutSeconds: row.session_timeout_s,
       thinkingEffort: row.thinking_effort ?? (row.role === "foreman" ? "max" : "medium"),
       contextTokens: row.context_tokens ?? 128000,
@@ -396,11 +426,11 @@ export class SqliteStore {
     const updatedAt = this.timestamp();
     const value = { ...input, id: input.id ?? `${input.role}:${input.runtime}`, updatedAt };
     const row = this.db.query<{ session_timeout_s: number }>(`INSERT INTO harness_profiles (
-      id,runtime,role,base_url,model,mode,image,network,secret_ref,verification,updated_at,session_timeout_s,
+      id,runtime,role,base_url,model,mode,execution_mode,image,network,secret_ref,verification,updated_at,session_timeout_s,
         thinking_effort,context_tokens,session_budget_usd,daily_budget_usd,max_turns,max_attempts,backoff_s
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
         runtime=excluded.runtime, role=excluded.role, base_url=excluded.base_url, model=excluded.model,
-        mode=excluded.mode, image=excluded.image, network=excluded.network, secret_ref=excluded.secret_ref,
+        mode=excluded.mode, execution_mode=excluded.execution_mode, image=excluded.image, network=excluded.network, secret_ref=excluded.secret_ref,
         verification=excluded.verification, updated_at=excluded.updated_at,
         session_timeout_s=COALESCE(?, harness_profiles.session_timeout_s),
         thinking_effort=COALESCE(?, harness_profiles.thinking_effort),
@@ -411,7 +441,7 @@ export class SqliteStore {
         max_attempts=COALESCE(?, harness_profiles.max_attempts),
         backoff_s=COALESCE(?, harness_profiles.backoff_s)
       RETURNING session_timeout_s`)
-      .get(value.id, value.runtime, value.role, value.baseUrl, value.model, value.mode, value.image ?? null, value.network ?? null,
+      .get(value.id, value.runtime, value.role, value.baseUrl, value.model, value.mode, value.executionMode ?? "native_host", value.image ?? null, value.network ?? null,
         value.secretRef ?? null, json(value.verification ?? {}), updatedAt, timeout ?? defaultSessionTimeoutSeconds,
         value.thinkingEffort ?? (value.role === "foreman" ? "max" : "medium"), value.contextTokens ?? 128000,
         value.sessionBudgetUsd ?? 1, value.dailyBudgetUsd ?? 10, value.maxTurns ?? 20, value.maxAttempts ?? 2,
@@ -1375,6 +1405,24 @@ export class SqliteStore {
     return [...new Set(rows.map(({ run_id }) => run_id))];
   }
 
+  private foremanEnvelopeFromRow(row: any): ForemanEnvelope {
+    return {
+      id: row.id,
+      messageId: row.message_id ?? row.messageId,
+      text: row.text,
+      status: row.status,
+      createdAt: row.created_at ?? row.createdAt,
+      queuedAt: row.queued_at ?? row.queuedAt ?? row.created_at ?? row.createdAt ?? undefined,
+      claimedAt: row.claimed_at ?? row.claimedAt ?? undefined,
+      startedAt: row.started_at ?? row.startedAt ?? undefined,
+      lastEventAt: row.last_event_at ?? row.lastEventAt ?? undefined,
+      completedAt: row.completed_at ?? row.completedAt ?? undefined,
+      elapsedMs: row.elapsed_ms ?? row.elapsedMs ?? undefined,
+      businessStatus: row.business_status ?? row.businessStatus ?? "not_started",
+      businessReason: row.business_reason ?? row.businessReason ?? undefined,
+    };
+  }
+
   addTalkMessage(input: { role?: string; body: string; metadata?: Record<string, unknown> }): TalkMessage {
     const value: TalkMessage = { id: this.uuid(), role: input.role ?? "user", body: input.body, metadata: input.metadata ?? {}, createdAt: this.timestamp() };
     this.db.query("INSERT INTO business_talk_messages (id,role,body,metadata,created_at) VALUES (?,?,?,?,?)").run(value.id, value.role, value.body, json(value.metadata), value.createdAt);
@@ -1386,6 +1434,8 @@ export class SqliteStore {
       const message = this.addTalkMessage(input);
       this.bridgeHumanTalk(message.id, message.body);
       const envelope = this.queueForemanMessage(message.id, message.body);
+      message.metadata = { ...message.metadata, inbox_id: envelope.id };
+      this.db.query("UPDATE business_talk_messages SET metadata=? WHERE id=?").run(json(message.metadata), message.id);
       const events = [
         this.appendEvent("talk.message.created", message),
         this.appendEvent("foreman.message.queued", envelope),
@@ -1415,7 +1465,6 @@ export class SqliteStore {
       JOIN business_talk_messages AS message ON message.id = prior.message_id
       WHERE prior.rowid < (SELECT rowid FROM foreman_outbox WHERE id = ?)
         AND prior.status = 'done' AND message.role IN ('user','human')
-        AND CASE WHEN json_valid(message.metadata) THEN json_extract(message.metadata,'$.source') IS NOT 'project-intake' ELSE 0 END
       ORDER BY prior.rowid DESC LIMIT 4
     `).all(inboxId);
     const reply = this.db.query<{ text: string }>(`
@@ -1427,8 +1476,9 @@ export class SqliteStore {
   }
 
   queueForemanMessage(messageId: string, text: string): ForemanEnvelope {
-    const value: ForemanEnvelope = { id: this.uuid(), messageId, text, status: "queued", createdAt: this.timestamp() };
-    this.db.query("INSERT INTO foreman_outbox (id,message_id,text,status,created_at,claimed_at) VALUES (?,?,?,?,?,NULL)").run(value.id, value.messageId, value.text, value.status, value.createdAt);
+    const queuedAt = this.timestamp();
+    const value: ForemanEnvelope = { id: this.uuid(), messageId, text, status: "queued", createdAt: queuedAt, queuedAt, businessStatus: "not_started" };
+    this.db.query("INSERT INTO foreman_outbox (id,message_id,text,status,created_at,queued_at,claimed_at,business_status) VALUES (?,?,?,?,?,?,NULL,?)").run(value.id, value.messageId, value.text, value.status, value.createdAt, value.queuedAt, value.businessStatus);
     return value;
   }
 
@@ -1456,14 +1506,7 @@ export class SqliteStore {
 
   listForemanInbox(limit = 50): ForemanEnvelope[] {
     const bounded = Math.max(1, Math.min(200, Math.trunc(limit)));
-    return this.db.query("SELECT * FROM foreman_outbox WHERE status IN ('queued','claimed') ORDER BY rowid LIMIT ?").all(bounded).map((row: any) => ({
-      id: row.id,
-      messageId: row.message_id,
-      text: row.text,
-      status: row.status,
-      createdAt: row.created_at,
-      claimedAt: row.claimed_at ?? undefined,
-    }));
+    return this.db.query("SELECT * FROM foreman_outbox WHERE status IN ('queued','claimed') ORDER BY rowid LIMIT ?").all(bounded).map((row: any) => this.foremanEnvelopeFromRow(row));
   }
 
   listQueuedForemanMessageIds(): string[] {
@@ -1473,25 +1516,32 @@ export class SqliteStore {
   }
 
   getForemanMessage(id: string): ForemanEnvelope | undefined {
-    const row = this.db.query<{ id: string; message_id: string; text: string; status: ForemanEnvelope["status"]; created_at: string; claimed_at: string | null }>(
-      "SELECT * FROM foreman_outbox WHERE id=?",
-    ).get(id);
-    return row && { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined } || undefined;
+    const row = this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id);
+    return row ? this.foremanEnvelopeFromRow(row) : undefined;
   }
 
-  listForemanTurns(messageIds: readonly string[]): Array<Pick<ForemanEnvelope, "id" | "messageId" | "status">> {
+  listForemanTurns(messageIds: readonly string[]): ForemanEnvelope[] {
     if (!messageIds.length) return [];
-    return this.db.query<Pick<ForemanEnvelope, "id" | "messageId" | "status">>(`
-      SELECT id, message_id AS messageId, status FROM foreman_outbox
+    return this.db.query<any>(`
+      SELECT id, message_id, text, status, created_at, queued_at, claimed_at, started_at, last_event_at, completed_at, elapsed_ms, business_status, business_reason
+      FROM foreman_outbox
       WHERE message_id IN (SELECT value FROM json_each(?)) ORDER BY rowid
-    `).all(json(messageIds));
+    `).all(json(messageIds)).map((row: any) => this.foremanEnvelopeFromRow(row));
   }
 
   claimForemanMessage(id: string): ForemanEnvelope | undefined {
     const claimedAt = this.timestamp();
-    const row = this.db.query("UPDATE foreman_outbox SET status='claimed', claimed_at=? WHERE id=? AND status='queued' RETURNING *").get(claimedAt, id) as any;
+    const row = this.db.query("UPDATE foreman_outbox SET status='claimed', claimed_at=?, started_at=COALESCE(started_at,?), last_event_at=?, business_status='in_progress', business_reason=NULL WHERE id=? AND status='queued' RETURNING *").get(claimedAt, claimedAt, claimedAt, id) as any;
     if (!row) return undefined;
-    return { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined };
+    return this.foremanEnvelopeFromRow(row);
+  }
+
+  touchForemanMessage(id: string): void {
+    this.db.query("UPDATE foreman_outbox SET last_event_at=? WHERE id=? AND status='claimed'").run(this.timestamp(), id);
+  }
+
+  setForemanBusinessStatus(id: string, status: ForemanEnvelope["businessStatus"], reason?: string): void {
+    this.db.query("UPDATE foreman_outbox SET business_status=?, business_reason=? WHERE id=?").run(status ?? "not_started", reason ?? null, id);
   }
 
   foremanSession(profileId: string): string | undefined {
@@ -1503,12 +1553,23 @@ export class SqliteStore {
       .run(profileId, sessionId);
   }
 
+  clearForemanSession(profileId: string, sessionId?: string): void {
+    if (sessionId === undefined) this.db.query("DELETE FROM business_foreman_sessions WHERE profile_id=?").run(profileId);
+    else this.db.query("DELETE FROM business_foreman_sessions WHERE profile_id=? AND session_id=?").run(profileId, sessionId);
+  }
+
   finishForemanTurn(id: string, result: {
     reply?: Pick<TalkMessage, "body" | "metadata">;
     session?: { profileId: string; sessionId: string };
+    businessStatus?: ForemanEnvelope["businessStatus"];
+    businessReason?: string;
   }): Event[] {
     return this.db.transaction(() => {
-      const completed = this.db.query("UPDATE foreman_outbox SET status='done' WHERE id=? AND status='claimed' RETURNING id").get(id);
+      const completedAt = this.timestamp();
+      const current = this.db.query<{ started_at: string | null; queued_at: string | null; created_at: string }>("SELECT started_at,queued_at,created_at FROM foreman_outbox WHERE id=? AND status='claimed'").get(id);
+      if (!current) return [];
+      const elapsedMs = elapsedMilliseconds(current.started_at ?? current.queued_at ?? current.created_at, completedAt);
+      const completed = this.db.query("UPDATE foreman_outbox SET status='done', completed_at=?, last_event_at=?, elapsed_ms=?, business_status=?, business_reason=? WHERE id=? AND status='claimed' RETURNING id").get(completedAt, completedAt, elapsedMs, result.businessStatus ?? "no_change", result.businessReason ?? null, id);
       if (!completed) return [];
       const events: Event[] = [];
       if (result.session) this.saveForemanSession(result.session.profileId, result.session.sessionId);
@@ -1523,31 +1584,37 @@ export class SqliteStore {
 
   cancelForemanTurn(id: string, expected: "queued" | "claimed", resume?: { profileId: string; sessionId: string }) {
     return this.db.transaction(() => {
+      const completedAt = this.timestamp();
       const row = this.db.query<Pick<ForemanEnvelope, "id" | "messageId" | "status">>(`
-        UPDATE foreman_outbox SET status='cancelled'
+        UPDATE foreman_outbox SET status='cancelled', completed_at=?, last_event_at=?, business_status='failed', business_reason='cancelled',
+          elapsed_ms=CAST((julianday(?) - julianday(COALESCE(started_at,queued_at,created_at))) * 86400000 AS INTEGER)
         WHERE id=? AND status=? RETURNING id, message_id AS messageId, status
-      `).get(id, expected);
+      `).get(completedAt, completedAt, completedAt, id, expected);
       if (!row) return undefined;
       if (resume) this.db.query("DELETE FROM business_foreman_sessions WHERE profile_id=? AND session_id=?").run(resume.profileId, resume.sessionId);
-      const foremanTurn = { ...row, cancellable: false };
+      const envelope = this.foremanEnvelopeFromRow(this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id));
+      const { text: _text, ...state } = envelope;
+      const foremanTurn = { ...state, cancellable: false };
       const event = this.appendEvent("foreman.message.cancelled", foremanTurn);
       return { foremanTurn, event };
     }).immediate();
   }
 
   completeForemanMessage(id: string): ForemanEnvelope | undefined {
-    this.db.query("UPDATE foreman_outbox SET status='done' WHERE id=? AND status IN ('queued','claimed')").run(id);
+    const completedAt = this.timestamp();
+    this.db.query("UPDATE foreman_outbox SET status='done', completed_at=?, last_event_at=?, elapsed_ms=CAST((julianday(?) - julianday(COALESCE(started_at,queued_at,created_at))) * 86400000 AS INTEGER), business_status='no_change' WHERE id=? AND status IN ('queued','claimed')").run(completedAt, completedAt, completedAt, id);
     const row = this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id) as any;
-    if (!row) return undefined;
-    return { id: row.id, messageId: row.message_id, text: row.text, status: row.status, createdAt: row.created_at, claimedAt: row.claimed_at ?? undefined };
+    return row ? this.foremanEnvelopeFromRow(row) : undefined;
   }
 
   failForemanMessage(id: string, failure?: { sessionId: string; harness: string; reason: string }): Event | undefined {
     return this.db.transaction(() => {
-      const row = this.db.query<{ message_id: string }>("UPDATE foreman_outbox SET status='failed' WHERE id=? AND status='claimed' RETURNING message_id").get(id);
+      const completedAt = this.timestamp();
+      const row = this.db.query<{ message_id: string }>("UPDATE foreman_outbox SET status='failed', completed_at=?, last_event_at=?, elapsed_ms=CAST((julianday(?) - julianday(COALESCE(started_at,queued_at,created_at))) * 86400000 AS INTEGER), business_status='failed', business_reason=? WHERE id=? AND status='claimed' RETURNING message_id").get(completedAt, completedAt, completedAt, failure?.reason ?? "official-harness-failed", id);
       if (!row || !failure) return undefined;
+      const envelope = this.foremanEnvelopeFromRow(this.db.query("SELECT * FROM foreman_outbox WHERE id=?").get(id));
       return this.appendEvent("foreman.session.failed", {
-        ...failure, inboxId: id, id, messageId: row.message_id, status: "failed", cancellable: false,
+        ...failure, ...envelope, inboxId: id, id, messageId: row.message_id, status: "failed", cancellable: false,
       });
     }).immediate();
   }
@@ -1719,12 +1786,13 @@ export class SqliteStore {
   }
 
   recentTalk(limit: number): TalkMessage[] {
-    const active = this.listTalkMessages(limit);
-    if (active.length >= limit) return active;
+    const bounded = Math.max(1, Math.min(200, Math.trunc(limit)));
     const merged = new Map<string, TalkMessage>();
-    for (const message of this.legacyTalk(limit - active.length)) merged.set(message.id, message);
-    for (const message of active) merged.set(message.id, message);
-    return [...merged.values()].slice(-limit);
+    for (const message of this.legacyTalk(bounded)) merged.set(message.id, message);
+    for (const message of this.listTalkMessages(bounded)) merged.set(message.id, message);
+    return [...merged.values()]
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+      .slice(-bounded);
   }
 
   private hasLegacyTable(name: string) {

@@ -154,6 +154,9 @@ export interface HarnessProfile {
   max_attempts?: number;
   backoff_s?: number;
   mode?: string;
+  execution_mode?: "trusted_container" | "native_host" | string;
+  runtime_state?: string;
+  runtime_reason?: string;
   verification?: { state?: string; reason?: string; checked_at?: string | null; request_id?: string };
   updated_at?: string;
 }
@@ -197,7 +200,17 @@ export interface Bootstrap {
   harnesses: HarnessRecord[];
   harness_profiles?: HarnessProfile[];
   dependencies?: { harnesses: DependencyStatus[]; podman?: DependencyStatus; kiri?: DependencyStatus; docker?: DependencyStatus };
-  foreman: { configured?: boolean; setup_required?: boolean; runtime?: string | null; model?: string | null; mode?: string | null; profile?: HarnessProfile | null };
+  foreman: {
+    configured?: boolean;
+    setup_required?: boolean;
+    runtime?: string | null;
+    model?: string | null;
+    mode?: string | null;
+    runtime_state?: string;
+    runtime_reason?: string;
+    runtime_provider?: string;
+    profile?: HarnessProfile | null;
+  };
   secrets: SecretRecord[];
   constitution: {
     available?: boolean;
@@ -214,6 +227,7 @@ export interface TalkMessage {
   state?: string;
   at?: string;
   createdAt?: string;
+  metadata?: Record<string, unknown>;
   card?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -221,8 +235,16 @@ export interface TalkMessage {
 export interface ForemanTurn {
   id: string;
   messageId: string;
-  status: "queued" | "claimed" | "done" | "failed" | "cancelled";
+  status: "queued" | "claimed" | "done" | "failed" | "cancelled" | "blocked" | "waiting_foreman_runtime";
   cancellable: boolean;
+  queuedAt?: string;
+  startedAt?: string;
+  lastEventAt?: string;
+  completedAt?: string;
+  elapsedMs?: number;
+  error?: string;
+  businessStatus?: string;
+  businessReason?: string;
 }
 
 export interface LayoutGraph {

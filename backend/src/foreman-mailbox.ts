@@ -150,6 +150,7 @@ export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, r
     const systems = new Set(scope.systems);
     const operations = { ...scope, systems };
     const registrations = new Map<string, NonNullable<ReturnType<RegisterRepository>>>();
+    let operationCount = 0;
     const server = new CtlServer(root, {
       async handle({ id, op, args }) {
         if (!active) return denied(id, "FOREMAN_MAILBOX_CLOSED", "厂长邮箱已关闭");
@@ -162,6 +163,7 @@ export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, r
           if (!result) return denied(id, "FOREMAN_OPERATION_FAILED", "目标业务系统已不存在");
           registrations.set(id, result);
           systems.add(result.systemId);
+          operationCount++;
           return { id, ok: true, result, error: null };
         }
         const request = operation(op, args, operations);
@@ -174,12 +176,14 @@ export function openForemanMailbox(scope: Scope, fetchBusiness: FetchBusiness, r
           return denied(id, "FOREMAN_OPERATION_INVALID", "项目密钥名称无效");
         }
         if (!response.ok) return denied(id, "FOREMAN_OPERATION_FAILED", "业务操作失败（HTTP " + response.status + "）");
+        operationCount++;
         return { id, ok: true, result: reported(op, await response.json()), error: null };
       },
     }, { responseMode: 0o644 });
     server.start();
     return {
       root,
+      get operationCount() { return operationCount; },
       flush: () => server.pollOnce(),
       stop: () => { active = false; return stopped ??= server.stop(); },
       remove: () => rmSync(root, { recursive: true, force: true, maxRetries: 3 }),
