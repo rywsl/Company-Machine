@@ -128,6 +128,8 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
   }
 
   async checkAvailability(): Promise<any> {
+    const configured = this.status();
+    if (!configured.available) return configured;
     try {
       await this.request("GET", "sys/health", undefined, { unauthenticated: true });
       return { kind: this.kind, mode: "production", available: true };
