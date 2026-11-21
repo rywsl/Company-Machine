@@ -9,7 +9,7 @@ declare module "bun:sqlite" {
     readonly isFinalized: boolean;
     all(...args: any[]): T[];
     get(...args: any[]): T | null;
-    run(...args: any[]): { lastInsertRowid?: number | bigint };
+    run(...args: any[]): { changes?: number; lastInsertRowid?: number | bigint };
     finalize(): void;
   }
 
@@ -34,6 +34,7 @@ declare module "node:util" {
 declare module "node:crypto" {
   export const randomUUID: () => string;
   export const randomBytes: (size: number) => any;
+  export const createHmac: (algorithm: string, key: unknown) => { update(value: unknown): any; digest(format?: string): any };
   export const timingSafeEqual: (left: Uint8Array, right: Uint8Array) => boolean;
   export const createHash: (algorithm: string) => { update(value: unknown): any; digest(format: "hex"): string };
   export const createCipheriv: (...args: any[]) => any;
@@ -96,7 +97,11 @@ declare module "node:fs/promises" {
   export const copyFile: (source: string, target: string, mode?: number) => Promise<void>;
   export const mkdir: (...args: any[]) => Promise<void>;
   export const rm: (...args: any[]) => Promise<void>;
-  export const readdir: (...args: any[]) => Promise<string[]>;
+  export const readdir: (...args: any[]) => Promise<any[]>;
+  export const readFile: (...args: any[]) => Promise<any>;
+  export const rename: (...args: any[]) => Promise<void>;
+  export const stat: (...args: any[]) => Promise<any>;
+  export const writeFile: (...args: any[]) => Promise<void>;
 }
 
 declare module "bun:test" {
@@ -111,7 +116,8 @@ declare const Bun: {
   build(options: { entrypoints: string[]; target: "bun" }): Promise<{ outputs: Blob[] }>;
   Glob: new (pattern: string) => { match(path: string): boolean };
   YAML: { parse(source: string): unknown; stringify(value: unknown): string };
-  serve(options: { port: number; hostname?: string; fetch: (request: Request, server: { timeout(request: Request, seconds: number): void }) => Response | Promise<Response> }): { url: URL; stop(): void };
+  spawnSync(argv: string[], options?: { stdout?: "pipe" | "inherit"; stderr?: "pipe" | "inherit"; env?: Record<string, string> }): { exitCode: number; stdout: Uint8Array; stderr: Uint8Array };
+  serve(options: { port: number; hostname?: string; fetch: (request: Request, server: { timeout(request: Request, seconds: number): void }) => Response | Promise<Response> }): { url: URL; port: number; stop(): void };
   file(path: string): Blob;
   write(path: string, source: unknown): Promise<number>;
 };
@@ -122,4 +128,6 @@ declare const Buffer: {
   byteLength(value: string | ArrayBuffer | ArrayBufferView, encoding?: string): number;
   concat(values: any[]): any;
 };
+type Buffer = any;
+declare namespace NodeJS { type ProcessEnv = Record<string, string | undefined>; }
 interface ImportMeta { main?: boolean; dir: string }

@@ -1,311 +1,193 @@
-# 可替换存储后端（backends.md）
+# 生产存储与 KMS provider 隔离
 
-> 规范性文档，M4。模块：`mao.backends`（S3/MinIO 的 CAS、Postgres 状态库、数据迁移）。
-> 依据：架构文档 5.5、14.1；README D2、D8。
-> M1–M3 的 `Warehouse` 与 `Database` 签名不改变。那些模块不得读取本文件的配置，也不得在未安装后端时访问 S3 或 Postgres。
-> 不新增第三方依赖（D2）。S3 用标准库 HTTP。Postgres 用 `psql` 命令行，与 Docker 用 `docker` 命令行同一原则。
-> SigV4 细节、`psql` 会话协议、迁移翻译的补充、命令按指针打开后端见 `closure.md` 4.4–4.6 与 5.4（M9），冲突时以 `closure.md` 为准。
+本规范定义 Bun 控制面使用的状态、对象、密钥和 KMS provider 边界。默认路径保持本地 SQLite、本地 CAS 和本地 AES-256-GCM Vault。生产 provider 只有在显式启用时才会被构造。
 
----
+实现约束如下。
 
-## 1. 目的与范围
+- provider 由 TypeScript 接口隔离，业务代码不包含 PostgreSQL、MySQL、S3 或 OpenBao 方言。
+- 不新增 Harness、KMS 或模型服务。OpenBao 通过 HTTP API 使用，不能嵌入 Bun 进程。
+- 未设置生产环境变量时不读取云端配置，不解析云端凭据，也不发起外部网络请求。
+- 密钥值只能在 provider 的运行时边界读取。日志、数据库、事件、错误、审计引用和 UI 中不得出现令牌、明文密钥、DSN 或签名 URL。
+- provider 不可用必须返回 `PROVIDER_UNAVAILABLE`。禁止静默退回另一种 provider。
 
-**做什么（M4）**
+## 1. 运行模式
 
-- 在现有仓库接口后面换上可替换的 Blob 存储：本地目录（M1 行为）或 S3/MinIO。
-- 在现有状态库接口后面换上 Postgres。SQLite 仍是 `Database(path)` 的行为。
-- 把已有工厂从本地 CAS + SQLite 迁到新后端，校验通过才切换指针。校验失败不切换。
+运行模式由环境变量选择。
 
-**不做什么**
+| 变量 | 允许值 | 默认值 | 作用 |
+| --- | --- | --- | --- |
+| `MAO_STORAGE_MODE` | `local`、`production` | `local` | 选择默认 provider 集合 |
+| `MAO_STATE_PROVIDER` | `sqlite`、`postgres`、`mysql` | 由模式决定 | 覆盖状态 provider |
+| `MAO_BLOB_PROVIDER` | `local`、`s3` | 由模式决定 | 覆盖对象 provider |
+| `MAO_SECRET_PROVIDER` | `local`、`openbao` | 由模式决定 | 覆盖密钥 provider |
 
-| 不做 | 归属 |
-|---|---|
-| 修改 `Warehouse.__init__`、`Database.__init__`、`Context.open` 的签名 | 禁止。远程后端走本文件的 `open_context` |
-| 让 M1–M3 代码 `import mao.backends` 才能启动 | 禁止（D8）。不配置后端时，那些路径与现在相同 |
-| `boto3`、`psycopg`、MinIO SDK、ORAS | 禁止。架构 5.5 的 OCI 制品不在本里程碑 |
-| 在异常或日志里写下访问密钥 | 禁止（D13） |
-| 规定“迁多少行算通过”以外的业务门槛 | 校验是字节与行数一致，不另设抽样比例 |
+`MAO_STORAGE_MODE` 只能取上述值。未知值和未知 provider 名称返回 `PROVIDER_CONFIG_INVALID`，进程不得启动半配置状态。
 
----
+`local` 模式的默认集合如下。
 
-## 2. 依赖
+- `StateProvider` 使用当前 Bun SQLite 实现和 `FACTORY_DB_PATH` 或 `FACTORY_ROOT` 路径。
+- `BlobProvider` 使用当前本地 CAS 布局 `cas/sha256/<前两位>/<其余摘要>`。
+- `SecretProvider` 与 `KmsProvider` 使用当前本地 AES-256-GCM Vault。
+- 本地模式只读取 `MAO_VAULT_PATH`、`MAO_VAULT_KEY_PATH` 和 `MAO_VAULT_KEY`。即使存在 `MAO_OPENBAO_*`、`MAO_S3_*`、`MAO_POSTGRES_*` 或 `MAO_MYSQL_*`，也不能读取和连接。
 
-| 依赖 | 用到的接口 |
-|---|---|
-| `Warehouse` | 全部现有方法的**行为**保持。本文件用委托实现它们，不改签名 |
-| `Database` | `migrate`、`tx`、`query`、`close` 的调用方式保持。SQLite 类本身不改 |
-| `mao.base` | `digest_bytes`、`digest_file`、`canonical_json`、`Clock` |
-| 标准库 | `urllib.request`、`hmac`、`hashlib`、`subprocess` |
-| 外部命令 | `psql`。不在 PATH 时 `BACKEND_UNAVAILABLE`，禁止静默退回 SQLite 并声称迁移成功 |
+`production` 模式的默认集合如下。
 
----
+- `StateProvider` 默认使用 PostgreSQL。
+- `BlobProvider` 默认使用 S3 或 MinIO。
+- `SecretProvider` 与 `KmsProvider` 默认使用 OpenBao。
+- 生产模式中 OpenBao、SQL 或 S3 配置缺失或不可用时，返回 `PROVIDER_UNAVAILABLE` 或 `PROVIDER_CONFIG_INVALID`。系统不能改用本地 Vault、SQLite 或 CAS 继续运行。
 
-## 3. 接口
+显式设置 `MAO_STATE_PROVIDER=sqlite`、`MAO_BLOB_PROVIDER=local` 或 `MAO_SECRET_PROVIDER=local` 可以在生产模式中覆盖对应 provider。`MAO_SECRET_PROVIDER=local` 只在用户明确配置时生效。
 
-```python
-class BlobStore(Protocol):
-    def put_file(self, path: Path) -> str          # 返回 "sha256:<hex>"；相同内容不重复写
-    def get_file(self, digest: str, dest: Path) -> None
-    def exists(self, digest: str) -> bool
-    def verify(self) -> list[dict[str, Any]]       # 空列表表示完好
+## 2. TypeScript 接口
 
-class LocalBlobStore:
-    def __init__(self, root: Path) -> None         # $FACTORY_ROOT/cas/sha256/<2>/<62>，与 M1 布局相同
+接口位于 `backend/src/storage.ts`、`backend/src/storage-openbao.ts`、`backend/src/storage-s3.ts` 和 SQL provider 模块。接口只暴露业务需要的操作，连接、事务、缓存、重试和方言实现放在 provider 内。
 
-class S3BlobStore:
-    def __init__(self, *, endpoint: str, bucket: str, region: str,
-                 access_key_env: str, secret_key_env: str,
-                 addressing: Literal["path", "virtual"] = "path",
-                 timeout_s: float) -> None
-        # 从环境变量读密钥。环境变量不存在 → BACKEND_CONFIG_INVALID。
-        # 不接受把密钥作为普通字符串参数传入（避免出现在构造调用的日志里）。
+```ts
+export interface StateProvider {
+  migrate(): Promise<number> | number;
+  transaction<T>(work: (tx: StateTransaction) => Promise<T> | T): Promise<T> | T;
+  query<T = unknown>(statement: StateStatement): Promise<T[]> | T[];
+  status(): Promise<ProviderStatus> | ProviderStatus;
+  verify(): Promise<VerificationReport> | VerificationReport;
+  close(): Promise<void> | void;
+}
 
-class StateStore(Protocol):
-    def migrate(self) -> int
-    def tx(self) -> ContextManager[Any]            # 连接支持 execute(sql, params)、commit、rollback
-    def query(self, sql: str, params: Sequence[Any] = ()) -> list[Any]
-        # 行支持按列名取值，与 sqlite3.Row 的调用方用法相同
-    def close(self) -> None
+export interface BlobProvider {
+  put(input: BlobInput): Promise<BlobRecord>;
+  get(digest: string): Promise<Uint8Array>;
+  head(digest: string): Promise<BlobRecord | undefined>;
+  exists(digest: string): Promise<boolean>;
+  verify(digests?: string[]): Promise<VerificationReport>;
+  status(): Promise<ProviderStatus> | ProviderStatus;
+}
 
-class PostgresStore:
-    def __init__(self, *, dsn_env: str, psql: str = "psql", timeout_s: float) -> None
-        # DSN 从环境变量读。psql 不在 PATH → BACKEND_UNAVAILABLE
+export interface SecretProvider {
+  put(ref: string, value: string): Promise<void> | void;
+  get(ref: string): Promise<string | undefined> | string | undefined;
+  delete(ref: string): Promise<boolean> | boolean;
+  has(ref: string): Promise<boolean> | boolean;
+  audit(ref: string, action: string): Promise<string> | string;
+  status(): Promise<ProviderStatus> | ProviderStatus;
+}
 
-def open_context(root: Path, *, provider: "SandboxProvider",
-                 clock: "Clock | None" = None, ids: "IdSource | None" = None,
-                 backend: Path | None = None) -> "Context"
-    # backend 为 None，或指向的文件不存在：调用 Context.open，不读任何云配置。
-    # 文件存在：按第 4.1 节构造 BlobStore / StateStore，再装配出满足 Context 字段的对象。
-    # Context.open 的签名不增加参数。
-```
-
-`Warehouse` 的方法仍由调用方按 README 4.4 使用。`open_context` 返回的 `ctx.warehouse` 在配置了 S3 时，`put_file` / `get` / `seal_many` 的可观察结果与本地实现相同：digest 算法不变，`blob_path` 仍返回本地 `Path`（缓存文件，见 5.2）。`ctx.db.tx()` 在 Postgres 上返回的对象不是 `sqlite3.Connection`，但支持现有调用方使用的 `execute` 与按列名取值。M1 的 `Database.tx` 注解仍然是 `sqlite3.Connection`；那是 SQLite 类的签名，本文件不改它。
-
-### 3.1 CLI
-
-```
-factory backend status [--json]
-factory backend migrate --from local --to FILE [--dry-run] [--json]
-factory backend verify [--json]
-```
-
-`--to` 是一份后端配置文件的路径，不是连接串。连接串放在环境变量里。`--dry-run` 做完复制与校验后不写指针。退出码：校验失败为 1，配置错误为 2，命令缺失为 4。
-
----
-
-## 4. 数据格式
-
-### 4.1 配置文件
-
-`$FACTORY_ROOT/backend.json`（或 `--to` 指向的文件）。不存在则整个工厂保持 M1 布局。`Context.open` 不读这个文件。
-
-```json
-{
-  "blobs": {
-    "kind": "s3",
-    "endpoint": "http://127.0.0.1:9000",
-    "bucket": "mao",
-    "region": "us-east-1",
-    "addressing": "path",
-    "access_key_env": "MAO_S3_ACCESS_KEY",
-    "secret_key_env": "MAO_S3_SECRET_KEY",
-    "timeout": "30s"
-  },
-  "state": {
-    "kind": "postgres",
-    "dsn_env": "MAO_PG_DSN",
-    "psql": "psql",
-    "timeout": "30s"
-  }
+export interface KmsProvider {
+  encrypt(key: string, plaintext: Uint8Array, context?: Record<string, string>): Promise<KmsCiphertext>;
+  decrypt(key: string, ciphertext: KmsCiphertext, context?: Record<string, string>): Promise<Uint8Array>;
+  sign(key: string, payload: Uint8Array, algorithm?: string): Promise<Uint8Array>;
+  hmac(key: string, payload: Uint8Array, algorithm?: string): Promise<Uint8Array>;
+  rotate(key: string): Promise<KmsKeyVersion>;
+  audit(key: string, action: string): Promise<string>;
+  status(): Promise<ProviderStatus> | ProviderStatus;
 }
 ```
 
-`kind` 省略或为 `local` / `sqlite` 时用现有实现。`timeout` 是时长字符串。缺任一必填键 → `BACKEND_CONFIG_INVALID`。文件里禁止出现密钥的值；出现形如密钥的字符串 → `BACKEND_CONFIG_INVALID`，不连接。
+`StateStatement` 只包含规范化 SQL、参数和业务操作名。业务层不能拼接方言 SQL。`ProviderStatus` 只返回 provider 名称、模式、可用状态、版本和非敏感原因。`VerificationReport` 只返回摘要、计数和不一致位置。
 
-指针文件 `$FACTORY_ROOT/backend-active.json` 只在迁移校验通过后写入，内容是配置文件的规范 JSON 摘要与 `switched_at`。`open_context` 读的是这个指针，不是人正在编辑的草稿。
+当前 `SqliteStore`、`Warehouse` 和 `VaultStore` 通过适配器实现这些接口。适配器必须保持已有调用方的行为和本地文件布局。
 
-### 4.2 对象键
+## 3. OpenBao provider
 
-S3 对象键与本地相对路径相同：`cas/sha256/<前 2 位>/<其余 62 位>`。值为原始字节，不是再包一层 JSON。`Content-Type` 为 `application/octet-stream`。用户元数据只放 `sha256`（hex，无前缀），便于核对。
+OpenBao provider 通过 `fetch` 调用 OpenBao HTTP API。Bun 进程不嵌入 OpenBao，也不启动 OpenBao 子进程。
 
-### 4.3 Postgres 会话
+地址和认证配置来自环境变量。
 
-`PostgresStore` 对每次 `tx()` 启动一个 `psql` 进程：
+- `MAO_OPENBAO_ADDR` 是 `http` 或 `https` 地址。
+- `MAO_OPENBAO_TOKEN` 可以直接提供运行时令牌。
+- 未提供令牌时，provider 可以使用 `MAO_OPENBAO_ROLE_ID` 与 `MAO_OPENBAO_SECRET_ID`，或 `MAO_OPENBAO_JWT` 与对应 role 环境变量完成登录。
+- 令牌只保存在内存，不能写入配置文件、数据库、事件、日志或异常文本。
 
-```
-psql -X -q -v ON_ERROR_STOP=1 -d <dsn> --no-password
-```
+provider 至少实现 KV Secret、Transit 加密和解密、签名、HMAC、轮换和审计引用。审计引用是不可逆的随机 ID 或 OpenBao 返回的审计 ID，不能包含密钥值。
 
-DSN 来自环境变量，不放在 argv 的可被 `ps` 看见的位置时仍可能泄漏。因此 DSN 通过 `PGPASSFILE` 指向一个仅当前用户可读的临时文件，argv 里只留主机与库名。临时文件在 `close` 时删除。禁止 `shell=True`。
+OpenBao 返回非成功 HTTP 状态、超时、证书错误或响应格式错误时，provider 返回 `PROVIDER_UNAVAILABLE`。生产模式不得创建本地 Vault 作为回退。OpenBao 的明文只在调用边界短暂存在，响应 DTO 和事件只能携带 secret reference、状态和审计引用。
 
-SQL 仍写 `?` 占位符（与现有调用方一致）。适配器在送出前把 `?` 换成 `$1`、`$2`…，并把参数作为 psql 的变量绑定，不拼进 SQL 字符串。做不到绑定时，只允许适配器按 5.4 的转义规则替换；转义失败 → `SQL_DIALECT`，不发送。
+## 4. SQL provider
 
-SQLite 迁移文件已发布的不得修改。Postgres 使用同编号的翻译结果，规则见 5.3。翻译是纯函数，输入是 `src/mao/migrations/*.sql` 的文本。
+SQLite、PostgreSQL 和 MySQL 都实现 `StateProvider`。事务、查询、迁移、连接池、占位符和错误边界对业务层保持一致。
 
-### 4.4 迁移报告
+- SQLite 使用 Bun `bun:sqlite` 和现有数据库文件。
+- PostgreSQL 通过标准 PostgreSQL 客户端协议或受控官方命令行连接，连接串只从 `MAO_POSTGRES_DSN` 或等价环境变量读取。
+- MySQL 通过标准 MySQL 客户端协议或受控官方命令行连接，连接串只从 `MAO_MYSQL_DSN` 或等价环境变量读取。
+- PostgreSQL 和 MySQL 的占位符、事务隔离、分页、布尔值和迁移方言只在 provider 内处理。
+- provider 不可用、连接池耗尽或迁移失败返回 `PROVIDER_UNAVAILABLE`，不能创建 SQLite 伪装成功。
 
-规范 JSON，写入 CAS（本地或目标 BlobStore）并打印：
+迁移器以规范迁移描述为输入，为每个 SQL provider 生成对应方言。迁移过程在单个 provider 事务边界内执行，失败时回滚。业务层只能调用 `migrate()`、`transaction()`、`query()` 和 `verify()`。
 
-```json
-{
-  "tables": [{"name": "beans", "rows": 0, "digest": "sha256:…"}],
-  "blobs": {"count": 0, "digest": "sha256:…"},
-  "ok": true
-}
-```
+## 5. S3 或 MinIO Blob provider
 
-表摘要：按主键升序，每行 `canonical_json` 之后串联，再 `digest_bytes`。Blob 摘要：按 digest 升序串联每个对象的 digest 与字节数。
+S3 provider 通过标准 HTTP 实现对象读写，不要求 `boto3`、MinIO SDK 或其他第三方依赖。MinIO 使用同一 provider，通过 endpoint 和 addressing 选择路径式或虚拟主机式 URL。
 
----
+环境变量如下。
 
-## 5. 行为
+- `MAO_S3_ENDPOINT`
+- `MAO_S3_BUCKET`
+- `MAO_S3_REGION`
+- `MAO_S3_ACCESS_KEY`
+- `MAO_S3_SECRET_KEY`
+- 可选 `MAO_S3_PREFIX`、`MAO_S3_ADDRESSING` 和超时配置
 
-### 5.1 装配
+对象键与本地 CAS 的摘要保持一致。写入前计算 SHA-256，使用 HEAD 检查幂等性。相同摘要和长度的对象不重复上传，摘要冲突返回 `CAS_CONFLICT`。读取后校验摘要和长度，失败返回 `CAS_MISSING` 或 `CAS_INTEGRITY_FAILED`。本地缓存只能作为只读缓存，不能成为数据真相。
 
-1. `open_context` 在 `backend is None` 或指针文件不存在时，调用 `Context.open` 并返回。不读取 `MAO_S3_*` 或 `MAO_PG_DSN`。这些变量存在也忽略。这是 D8：M1–M3 路径不假设后端存在。
-2. 指针存在时，构造对应的 store，再构建 Context。`ctx.db.migrate()` 在打开时仍要调用，与现在相同。
-3. `Warehouse.verify` 在 S3 实现上列出索引中的 digest，对每个做 `HEAD`，核对元数据里的 sha256 与对象大小。不一致列入返回值，不抛异常（与 M1 `verify` 的“返回问题清单”一致）。
+S3 凭据只在签名请求时从环境读取。请求头、签名字符串、异常、事件和数据库中不得持久化凭据。S3 不可用时返回 `PROVIDER_UNAVAILABLE`，不能回退到本地 CAS。
 
-### 5.2 S3
+## 6. 迁移、状态和校验
 
-1. `put_file`：流式计算 digest（1 MiB 块，与 `digest_file` 相同）。`HEAD` 已存在且元数据 sha256 一致 → 不上传，返回原 digest。存在但 sha256 不一致 → `CAS_CONFLICT`，不覆盖。不存在 → `PUT`。PUT 使用 SigV4，签名范围是 `s3`，算法是标准库 `hmac` + SHA-256。只实现 `PutObject`、`GetObject`、`HeadObject`。不实现多段上传；单对象超过进程内存限制时，用分块读文件、分块签名的 payload hash，仍然是一次 `PutObject`。做不到的尺寸 → `BACKEND_UNAVAILABLE`，`detail.reason = "object-too-large"`，不要静默截断。
-2. MinIO 用 `addressing: path`：`{endpoint}/{bucket}/{key}`。`virtual` 把桶放在主机名里。endpoint 必须是 `http` 或 `https`。其他方案 → `BACKEND_CONFIG_INVALID`。
-3. `blob_path`：把对象下载到 `$FACTORY_ROOT/cas-cache/sha256/<2>/<62>`，返回该 `Path`。缓存不是真相来源。调用方按 M1 去读这个路径的字节。缓存文件的 digest 与请求不符 → 删掉缓存并 `CAS_MISSING`。
-4. 密钥只在签名时从环境变量读取。签名字符串、URL、异常文本里出现密钥 → 视为缺陷。实现必须在抛出前扫描 `detail` 的字符串值。
+控制面提供 provider status、migrate 和 verify 能力。CLI 和 HTTP 管理面使用同一 provider registry。
 
-### 5.3 SQL 翻译
+- `status` 返回当前模式、各 provider 名称、配置完整性、连接状态和非敏感原因。
+- `migrate` 从当前活动 provider 复制状态行、对象和密钥引用。密钥明文不能进入迁移报告，OpenBao 迁移只复制引用或通过 provider 内部轮换复制密文。
+- 迁移完成后计算状态行数、规范摘要、对象数量和对象摘要。所有摘要一致后才写入活动 provider 指针。
+- `verify` 对当前活动 provider 重算上述摘要并报告差异。校验失败退出失败状态，不修改数据和活动指针。
+- 迁移失败保留本地 provider、原数据和旧指针。目标 provider 的部分数据可以保留用于诊断，但不能自动切换。
+- 默认本地模式不会读取迁移配置，也不会执行迁移代码中的外部连接。
 
-对每个已发布的 `NNN_*.sql`，Postgres 适配器应用下列替换后执行。翻译结果不写回 sqlite 迁移文件。
+活动 provider 指针只包含 provider 名称、模式、规范配置摘要和切换时间。不得包含 DSN、访问密钥、OpenBao token 或签名 URL。
 
-| SQLite | Postgres |
-|---|---|
-| `INTEGER PRIMARY KEY` 且该列是 rowid 别名的单列主键 | `TEXT` 或原类型保持；本仓库主键都是 `TEXT`，保持 `TEXT PRIMARY KEY` |
-| `AUTOINCREMENT` | 删除（本仓库的迁移不应出现；出现则 `SQL_DIALECT`） |
-| `PRAGMA ...` | 不发送。版本号改记在 `schema_migrations(version INTEGER PRIMARY KEY)` |
-| `user_version` | 不使用。`migrate()` 的返回值仍是已应用的最大编号 |
-| 布尔按 0/1 存储 | 保持 INTEGER，不改成 BOOLEAN，避免调用方比较出错 |
-| `?` 占位符 | 见 4.3 |
+## 7. 错误语义
 
-翻译器见到未在上表覆盖的 SQLite 专有语法（`WITHOUT ROWID`、`STRICT` 表、`INSERT OR IGNORE` 除外——`INSERT OR IGNORE` 译为 `INSERT ... ON CONFLICT DO NOTHING`）→ `SQL_DIALECT`，不执行半截迁移。
+| 错误码 | 语义 |
+| --- | --- |
+| `PROVIDER_CONFIG_INVALID` | 模式、provider 名称、地址、桶或必需环境变量非法 |
+| `PROVIDER_UNAVAILABLE` | provider 无法连接、超时、认证失败或连接池不可用 |
+| `CAS_CONFLICT` | 已有对象与期望摘要或长度不一致 |
+| `CAS_MISSING` | 索引存在但对象或本地缓存缺失 |
+| `CAS_INTEGRITY_FAILED` | 读取对象的摘要或长度校验失败 |
+| `MIGRATE_VERIFY_FAILED` | 迁移后的行数、摘要或对象集合不一致 |
+| `MIGRATE_IN_PROGRESS` | 已有未完成迁移锁 |
+| `KMS_OPERATION_FAILED` | OpenBao 或本地 KMS 的加密、签名、HMAC 或轮换失败 |
 
-`schema_migrations` 与业务表的创建在同一个 `tx` 里。已记录的编号不重复执行。
+错误 detail 可以包含 provider 名称、主机名、桶名、摘要和审计引用。禁止包含 DSN、token、访问密钥、明文 secret 或带查询串的签名 URL。
 
-### 5.4 参数转义（仅当不能用绑定变量时）
+## 8. 分阶段交付边界
 
-- 字符串：用标准 SQL 单引号，内部 `'` 加倍。拒绝含 NUL 的字符串。
-- 整数与浮点：只用 `repr` 能被反向解析、且不含字母的形式。`nan` / `inf` → `SQL_DIALECT`。
-- `None` → `NULL`。
-- 其他类型 → `SQL_DIALECT`，不调用 `str` 拼进去。
+provider 改造按以下阶段提交。每一阶段都要同步更新本规范和对应 Bun 回归测试。
 
-优先使用绑定变量。转义是后备，不是默认。
+1. 本地适配层和 provider registry。接入 SQLite、CAS、AES-256-GCM Vault，验证未设置环境变量时的零外部连接。
+2. OpenBao KMS 和 Secret provider。完成 KV、Transit、签名、HMAC、轮换、审计引用及失败语义。
+3. PostgreSQL 和 MySQL State provider。完成连接池、事务、迁移和方言边界。未安装或不可用时返回 provider 错误。
+4. S3 或 MinIO Blob provider。完成摘要校验、幂等写入、HEAD、读写和只读缓存。
+5. 迁移、status、verify 和活动 provider 切换。只有摘要、行数和对象数量校验通过才能切换。
 
-### 5.5 数据迁移
+每阶段都保留默认本地路径。后续阶段失败不能改变已经可用的本地 provider。
 
-`factory backend migrate --from local --to FILE`：
+## 9. 验收要求
 
-1. 取得写锁：在 SQLite 里插入 `backend_lock` 行（本文件的迁移 `026_backend_lock.sql` 只含这张表（编号见 `plan/drift.md` D-33），本地库与目标库都执行）。已有未完成的锁 → `MIGRATE_IN_PROGRESS`。
-2. 按外键顺序复制每张业务表。顺序由 SQLite 的 `sqlite_master` 与目标上已翻译的表结构决定，不是手写的表名清单（避免漏表）。
-3. 复制 CAS：每个本地文件 `put_file` 到目标 BlobStore。
-4. 在目标上计算 4.4 的摘要，与源的摘要比较。任一张表或 blob 集合不一致 → `MIGRATE_VERIFY_FAILED`，不写 `backend-active.json`，删除锁。目标上的数据保留，便于复查，但不被 `open_context` 使用。
-5. `--dry-run`：做到第 4 步为止，同样不写指针。
-6. 校验通过：写入指针，删除锁，写事件 `backend.switched`，`data` 只有摘要与时间，没有 DSN。
-7. 切换之后，旧的 `factory.db` 与 `cas/` 不删除。回退是人把指针文件移走，使下一次 `open_context` 走 `Context.open`。本命令不提供“自动删云端”的开关。
+验收使用 Bun 测试和仓库标准入口。
 
-复制过程中源库若有新写入，摘要会不一致，迁移失败。调用方应先停止工厂进程。本命令不强制杀进程；它只靠锁拒绝第二个迁移。
+- 未设置 `MAO_STORAGE_MODE` 时，测试设置任意云端环境变量也不会发起 HTTP、TCP、psql、MySQL 或 OpenBao 连接。
+- `local` 模式使用 SQLite、本地 CAS 和本地 AES-256-GCM Vault，并保持现有 `MAO_VAULT_*` 行为。
+- `production` 模式默认选择 PostgreSQL、S3 和 OpenBao。缺少配置或服务不可用时返回 `PROVIDER_CONFIG_INVALID` 或 `PROVIDER_UNAVAILABLE`，不发生静默回退。
+- 显式 provider 覆盖只影响对应 provider。Operator、Foreman 和业务服务共用 provider registry，但每个调用者的 profile 和密钥引用保持独立。
+- OpenBao 测试覆盖 KV、Transit、签名、HMAC、轮换、审计引用和 token 脱敏。
+- S3 测试覆盖 HEAD、幂等 PUT、摘要冲突、读取校验、缓存和不可用错误。
+- PostgreSQL 和 MySQL 测试覆盖 provider 选择、事务边界、占位符翻译、迁移和不可用错误。测试使用本地 fake server 或受控 stub，不要求真实云服务。
+- 迁移测试覆盖摘要一致后切换、摘要不一致时保留原指针和失败后保留原数据。
 
-### 5.6 校验命令
+提交或推送前运行以下命令。
 
-`factory backend verify` 调用当前指针所指 store 的 `verify`，并重算 4.4 的表摘要与上次迁移报告比较（若报告还在）。不一致 → 退出码 1，打印问题清单。不修改数据。
-
----
-
-## 6. 错误
-
-| 错误码 | 触发条件 | detail |
-|---|---|---|
-| `BACKEND_UNAVAILABLE` | `psql` 不在 PATH，S3 超时，或对象大到无法一次 PUT | `reason` |
-| `BACKEND_CONFIG_INVALID` | 配置缺键、scheme 不对、或文件里出现密钥值 | `path, reason` |
-| `MIGRATE_VERIFY_FAILED` | 行数或摘要与源不一致 | `table` 或 `blobs, source, target` |
-| `MIGRATE_IN_PROGRESS` | 锁已存在 | `at` |
-| `CAS_CONFLICT` | 同一键上的字节与 digest 不符 | `digest` |
-| `CAS_MISSING` | 索引有、对象没有，或缓存与 digest 不符 | `digest` |
-| `SQL_DIALECT` | 迁移含无法翻译的语法，或参数无法安全发送 | `file, reason` |
-
-`detail` 与异常消息禁止含 DSN、访问密钥、签名 URL 的查询串。可以含 endpoint 的主机名与桶名。
-
----
-
-## 7. 验收测试
-
-S3 用测试内的标准库 HTTP 服务器实现 `PutObject` / `GetObject` / `HeadObject` 的子集，检查 SigV4 头存在即可，不要求对 AWS 公网。Postgres 用一个假的 `psql` 脚本：从 stdin 读 SQL，把结果以约定的 JSON 行写到 stdout，数据存在临时 SQLite 里。这样验收不依赖真实服务器，也零跳过。
-
-| 文件 | 测试 | 验证什么 |
-|---|---|---|
-| `tests/acceptance/m4/test_m4_04_backends.py` | `test_context_open_ignores_cloud_env` | 设置了 `MAO_S3_ACCESS_KEY` 仍调用 `Context.open` 时，不发生 HTTP；`open_context` 无指针文件时同样不发生 HTTP |
-| | `test_s3_put_get_roundtrip` | 假 S3 上 `put_file` 再 `get_file`，字节相同；第二次 put 不重复上传（HEAD 之后无 PUT） |
-| | `test_cas_conflict` | 假 S3 上同一键返回不同 sha256 元数据 → `CAS_CONFLICT`，对象未被覆盖 |
-| | `test_blob_path_is_local_file` | `blob_path` 返回的 Path 可读，内容 digest 正确 |
-| | `test_config_rejects_inline_secret` | 配置文件里写了访问密钥值 → `BACKEND_CONFIG_INVALID`，不发请求 |
-| | `test_psql_missing` | PATH 上没有 `psql` → `BACKEND_UNAVAILABLE`，不创建 SQLite 冒充成功 |
-| | `test_placeholder_not_concatenated` | 假 psql 收到的 SQL 不含参数原文被直接拼接的引号错误；含 `'` 的字符串被转义或绑定 |
-| | `test_migrate_verify_and_pointer` | 本地两行与一个 blob 迁到假后端后，摘要一致，指针文件出现 |
-| | `test_migrate_failure_keeps_pointer` | 假后端故意少写一个 blob → `MIGRATE_VERIFY_FAILED`，指针文件不存在，`open_context` 仍走本地 |
-| | `test_pragma_not_sent` | 假 psql 的 stdin 不含 `PRAGMA`；`migrate()` 返回的版本号与 SQLite 路径相同 |
-| | `test_no_third_party_import` | `mao.backends` 的导入图里没有 boto3、psycopg、minio |
-
-```
-uv run python tools/harness.py pytest tests/acceptance/m4/test_m4_04_backends.py
+```text
+bun run verify:bun
+bun run build:web
 ```
 
-零失败、零跳过。
-
----
-
-## 8. 错误示范与正确示范
-
-**8.1 不要改 M1 构造函数**
-
-```python
-# ✖ 错误：给 Database.__init__ 增加 dsn 参数，或让 Context.open 读取 MAO_PG_DSN
-# ✔ 正确：Context.open 与 Database(path) 保持原样。远程只走 open_context，且只在指针文件存在时
-```
-
-**8.2 校验失败不能切换**
-
-```python
-# ✖ 错误：复制到一半就写 backend-active.json，校验放到下次启动
-# ✔ 正确：摘要不一致 → MIGRATE_VERIFY_FAILED，不写指针。下次 open_context 仍用本地库
-```
-
-**8.3 密钥不进参数与异常**
-
-```python
-# ✖ 错误：S3BlobStore(secret_key="...")，或 FactoryError(..., url=signed_url)
-# ✔ 正确：只接收环境变量的名字。detail 里至多有 endpoint 主机名与 digest
-```
-
-**8.4 占位符不要拼进 SQL**
-
-```python
-# ✖ 错误：sql.replace("?", "'" + value + "'")
-# ✔ 正确：交给 psql 绑定变量；做不到时按 5.4 转义，转义不了就 SQL_DIALECT
-```
-
----
-
-## 9. 风险与注意事项
-
-- **`blob_path` 的缓存**。S3 实现返回的是缓存路径，不是 `s3://` URI。调用方若把返回值当成 CAS 真相并在上面写入，会破坏只读假设。缓存目录的文件在写完后应设为只读。
-- **psql 与 Windows**。`psql` 的路径用 `pathlib`，argv 用列表。假 psql 在验收里放在 PATH 前，与假 `docker` 相同。
-- **翻译不是第二份手写迁移**。新增 SQLite 迁移后，翻译器必须能处理它，否则 `SQL_DIALECT` 让 Postgres 路径失败，而不是悄悄跳过。已发布的 sqlite 文件仍然禁止修改（README 3.6）。
-- **锁与崩溃**。进程在复制中被杀死会留下 `backend_lock`。人删除锁之前，`MIGRATE_IN_PROGRESS` 一直拒绝新的迁移。不要在超时后自动删锁并再迁一次（可能双写）。
-- **D8 回归**。M1 验收不设置指针文件。任何在 `Warehouse.__init__` 或 `Database.__init__` 里探测云环境变量的改动都是缺陷。
----
-
-## 10. 任务拆分
-
-| ID | 标题 | 依赖 | 规范章节 | 允许修改的路径 | 验收 | 规模 |
-|---|---|---|---|---|---|---|
-| M4-04 | 本地与 S3 对象存储、Postgres 状态存储、`open_context` | M1-03 | 3–7 | `src/mao/backends.py`、`src/mao/cli.py`、`src/mao/errors.py`、`tests/system/test_backends_*.py` | `test_m4_04_backends.py`（第 7 章全部测试通过） | L |
-
-`Context.open` 的签名不增加参数。`tests/acceptance/m4/` 属于预先写好的验收材料。任务执行者不得修改它们。
+所有 provider 测试必须通过。默认本地测试不得因机器上存在云端环境变量而改变行为。

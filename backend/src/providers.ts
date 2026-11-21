@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 import { ManagedDatabase } from "./sqlite";
 import { VaultStore } from "./vault";
-import { ProviderError } from "./provider-errors";
+import { ProviderError, type ProviderErrorCode } from "./provider-errors";
 
 export type StorageMode = "local" | "production";
 export type StateProviderKind = "sqlite" | "postgres" | "mysql";
@@ -215,7 +215,7 @@ export class SqliteStateProvider implements StateProvider {
   query<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T[] { return this.database.query<T>(sql).all(...params); }
   execute(sql: string, params: readonly unknown[] = []): { changes: number; lastInsertRowid?: number } {
     const result = this.database.query(sql).run(...params);
-    return { changes: result.changes, lastInsertRowid: Number(result.lastInsertRowid) };
+    return { changes: result.changes ?? 0, lastInsertRowid: Number(result.lastInsertRowid) };
   }
   transaction<T>(work: () => T): T { return this.database.transaction(work).immediate(); }
   migrate(): number { return Number(this.database.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0); }
