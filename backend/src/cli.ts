@@ -363,8 +363,12 @@ async function runStorageCommand(args: string[]): Promise<number> {
   if (args.some((item, index) => ![operation, "--json", "--dry-run", "--root", rootFlag >= 0 ? args[rootFlag + 1] : ""].includes(item) && index !== rootFlag + 1)) {
     throw new CliUsageError("storage expects status, verify, or migrate [--dry-run] [--json] [--root PATH]");
   }
+  const root = rootFlag >= 0 ? args[rootFlag + 1]! : process.env.FACTORY_ROOT ?? ".factory";
+  const providerEnvironment = rootFlag >= 0
+    ? { ...process.env, FACTORY_ROOT: root }
+    : process.env;
   let storage;
-  try { storage = createStorageProviders(); }
+  try { storage = createStorageProviders({ root, env: providerEnvironment }); }
   catch (error) { console.log(JSON.stringify(storageJsonError(error), null, 2)); return 4; }
   try {
     if (operation === "status") {
@@ -380,8 +384,7 @@ async function runStorageCommand(args: string[]): Promise<number> {
       console.log(JSON.stringify({ ok: problems.length === 0 && stateProblems.length === 0, ...storageStatus(storage), problems, state_problems: stateProblems }, null, 2));
       return problems.length || stateProblems.length ? 1 : 0;
     }
-    const config = resolveStorageProviderConfig();
-    const root = rootFlag >= 0 ? args[rootFlag + 1]! : process.env.FACTORY_ROOT ?? ".factory";
+    const config = resolveStorageProviderConfig(providerEnvironment);
     if (config.state === "sqlite" && config.blob === "local" && config.secret === "local") {
       console.log(JSON.stringify({ ok: true, migrated: false, switched: false, dry_run: args.includes("--dry-run"), mode: "local", reason: "local provider is already active" }, null, 2));
       return 0;

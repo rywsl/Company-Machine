@@ -96,7 +96,9 @@ export class S3BlobProvider implements BlobProvider {
     if (expectedDigest && expectedDigest !== digest) throw new ProviderError("CAS_CONFLICT", "blob digest does not match expected digest", { digest: expectedDigest });
     const existing = await this.head(digest);
     if (existing) {
-      if (existing.digest && existing.digest !== digest) throw new ProviderError("CAS_CONFLICT", "remote object metadata digest mismatch", { digest });
+      if (existing.digest !== digest || existing.size !== value.byteLength) {
+        throw new ProviderError("CAS_CONFLICT", "remote object metadata does not match the content digest", { digest });
+      }
       this.knownDigests.add(digest);
       return digest;
     }
@@ -139,7 +141,13 @@ export class S3BlobProvider implements BlobProvider {
       const response = await this.request("HEAD", digest);
       const metadata = response.headers.get("x-amz-meta-sha256") ?? undefined;
       const sizeText = response.headers.get("content-length");
-      return { digest: metadata ? `sha256:${metadata.replace(/^sha256:/, "")}` : digest, size: sizeText ? Number(sizeText) : 0 };
+      const normalized = metadata?.replace(/^sha256:/, "");
+      if (normalized && !/^[0-9a-f]{64}$/.test(normalized)) {
+        throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object digest metadata is invalid", { digest });
+      }
+      const size = sizeText === null ? 0 : Number(sizeText);
+      if (!Number.isSafeInteger(size) || size < 0) throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object size metadata is invalid", { digest });
+      return { digest: normalized ? `sha256:${normalized}` : digest, size };
     } catch (error) {
       if (error instanceof ProviderError && error.detail.status === 404) return undefined;
       throw error;

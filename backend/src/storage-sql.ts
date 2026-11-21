@@ -315,7 +315,7 @@ export class MysqlStateProvider extends CliStateProvider {
     }
     if (/^PRAGMA\s+data_version$/i.test(statement.trim())) return "SELECT 1 AS data_version";
     if (/^PRAGMA\b/i.test(statement.trim())) return "SELECT 1";
-    return statement;
+    return normalizeSql(statement, "mysql");
   }
   protected translateExecute(sql: string): string { return normalizeSql(sql, "mysql"); }
   protected parseRows(text: string): Array<Record<string, unknown>> {
@@ -339,6 +339,7 @@ function normalizeSql(sql: string, dialect: "postgres" | "mysql"): string {
   value = value.replace(/UPDATE\s+[^;]*json_set[^;]*;?/gi, "");
   if (dialect === "mysql") value = value.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT IGNORE");
   else value = value.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT");
+  if (dialect === "mysql") value = value.replace(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "`$1`");
   return value;
 }
 

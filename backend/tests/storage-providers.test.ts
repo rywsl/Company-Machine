@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
@@ -40,6 +40,7 @@ test("OpenBao KV and transit use the HTTP API without exposing the token", async
     expect(await provider.get("vault://secret/example")).toBe("value");
     const encrypted = await provider.encrypt("plain");
     expect(encrypted.ciphertext).toBe("vault:v1:opaque");
+    expect(encrypted.auditRef).toMatch(/^audit:/);
     expect(Buffer.from(await provider.decrypt(encrypted)).toString()).toBe("plain");
     expect(await provider.sign("plain")).toBe("vault:v1:signature");
     expect(await provider.hmac("plain")).toBe("vault:v1:hmac");
@@ -47,6 +48,21 @@ test("OpenBao KV and transit use the HTTP API without exposing the token", async
     expect(observed.length).toBe(7);
     expect(observed).toHaveLength(7);
   } finally { server.stop(); }
+});
+
+test("local KMS returns opaque audit references and preserves AES-GCM behavior", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-kms-"));
+  const storage = createStorageProviders({ root, env: {} as NodeJS.ProcessEnv });
+  try {
+    const encrypted = await storage.kms.encrypt("local secret");
+    expect(encrypted.algorithm).toBe("aes-256-gcm");
+    expect(encrypted.auditRef).toMatch(/^kms-audit:\/\/sha256:/);
+    expect(encrypted.auditRef).not.toContain("default");
+    expect(Buffer.from(await storage.kms.decrypt(encrypted)).toString()).toBe("local secret");
+  } finally {
+    storage.state.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("S3 provider reports missing credentials without making a request", async () => {
@@ -220,12 +236,29 @@ test("migration verification failure leaves the active provider pointer untouche
   failingState.verify = () => [{ kind: "forced_failure" }];
   const failingTarget = { ...target, state: failingState } as typeof target;
   try {
-    await expect(migrateStorage({ root: sourceRoot, target: failingTarget })).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect(migrateStorage({ root: sourceRoot, target: failingTarget })).rejects.toMatchObject({ code: "MIGRATE_VERIFY_FAILED" });
     expect(readActiveStoragePointer(sourceRoot)).toBeUndefined();
   } finally {
     target.state.close();
     rmSync(sourceRoot, { recursive: true, force: true });
     rmSync(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("migration refuses a concurrent lock without changing the source", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-storage-lock-"));
+  const database = join(root, "factory.db");
+  const sourceDb = new ManagedDatabase(database, { create: true });
+  sourceDb.exec("CREATE TABLE records (id TEXT PRIMARY KEY)");
+  sourceDb.close();
+  writeFileSync(join(root, "storage-migration.lock"), "other-process\n", { encoding: "utf8", mode: 0o600 });
+  const target = createStorageProviders({ root: mkdtempSync(join(tmpdir(), "mao-storage-lock-target-")), env: {} as NodeJS.ProcessEnv });
+  try {
+    await expect(migrateStorage({ root, target })).rejects.toMatchObject({ code: "MIGRATE_IN_PROGRESS" });
+    expect(readActiveStoragePointer(root)).toBeUndefined();
+  } finally {
+    target.state.close();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

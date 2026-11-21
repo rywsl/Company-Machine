@@ -68,8 +68,6 @@ export interface EncryptedValue {
   ciphertext: string;
   /** Opaque provider audit reference. It never contains key material. */
   auditRef?: string;
-  /** Non-sensitive provider audit correlation returned by remote KMS calls. */
-  auditRef?: string;
 }
 
 export interface KmsProvider {
@@ -270,11 +268,23 @@ export class LocalKmsProvider implements KmsProvider {
     return key;
   }
   async encrypt(value: Uint8Array | string, keyId = "default"): Promise<EncryptedValue> {
-    const iv = vaultRandomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.key(keyId), iv);
-    const plaintext = typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
-    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-    return { keyId, algorithm: "aes-256-gcm", iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), ciphertext: ciphertext.toString("base64") };
+    try {
+      const iv = vaultRandomBytes(12);
+      const cipher = createCipheriv("aes-256-gcm", this.key(keyId), iv);
+      const plaintext = typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
+      const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+      return {
+        keyId,
+        algorithm: "aes-256-gcm",
+        iv: iv.toString("base64"),
+        tag: cipher.getAuthTag().toString("base64"),
+        ciphertext: ciphertext.toString("base64"),
+        auditRef: this.auditRef("encrypt", keyId),
+      };
+    } catch (error) {
+      if (error instanceof ProviderError) throw error;
+      throw new ProviderError("KMS_OPERATION_FAILED", "local KMS encryption failed", { reason: error instanceof Error ? error.message : String(error) });
+    }
   }
   async decrypt(value: EncryptedValue): Promise<Uint8Array> {
     if (value.algorithm !== "aes-256-gcm") throw new ProviderError("PROVIDER_CONFIG_INVALID", "unsupported KMS algorithm");
@@ -288,13 +298,23 @@ export class LocalKmsProvider implements KmsProvider {
   }
   async sign(value: Uint8Array | string, keyId = "default"): Promise<string> { return this.hmac(value, keyId); }
   async hmac(value: Uint8Array | string, keyId = "default"): Promise<string> {
-    const input = typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
-    return createHmac("sha256", this.key(keyId)).update(input).digest("base64");
+    try {
+      const input = typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
+      return createHmac("sha256", this.key(keyId)).update(input).digest("base64");
+    } catch (error) {
+      if (error instanceof ProviderError) throw error;
+      throw new ProviderError("KMS_OPERATION_FAILED", "local KMS HMAC failed", { reason: error instanceof Error ? error.message : String(error) });
+    }
   }
   async rotate(keyId = "default"): Promise<string> {
-    const next = `${keyId}/${randomUuid()}`;
-    this.vault.put(`vault://kms/key/${next}`, vaultRandomBytes(32).toString("base64"));
-    return next;
+    try {
+      const next = `${keyId}/${randomUuid()}`;
+      this.vault.put(`vault://kms/key/${next}`, vaultRandomBytes(32).toString("base64"));
+      return next;
+    } catch (error) {
+      if (error instanceof ProviderError) throw error;
+      throw new ProviderError("KMS_OPERATION_FAILED", "local KMS rotation failed", { reason: error instanceof Error ? error.message : String(error) });
+    }
   }
   auditRef(operation: string, keyId = "default"): string {
     const material = `${this.kind}\u0000${keyId}\u0000${operation}`;

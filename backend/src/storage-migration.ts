@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { canonicalJson, randomUuid, utcIso, SystemClock, type Clock } from "./legacy/foundation";
 import { ManagedDatabase } from "./sqlite";
@@ -72,7 +72,20 @@ function sourceTables(database: ManagedDatabase): Array<{ table: SqliteTable; co
 }
 
 function tableDigest(rows: Array<Record<string, unknown>>): string {
-  return digest(rows.map((row) => Object.fromEntries(Object.entries(row).sort(([left], [right]) => left.localeCompare(right)))));
+  const normalized = rows.map((row) => Object.fromEntries(Object.entries(row).sort(([left], [right]) => left.localeCompare(right))));
+  normalized.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+  return digest(normalized);
+}
+
+function targetTableRows(target: StorageProviders, tableName: string): Array<Record<string, unknown>> {
+  try {
+    return target.state.query<Record<string, unknown>>(`SELECT * FROM ${identifier(tableName)}`);
+  } catch (error) {
+    throw new ProviderError("MIGRATE_VERIFY_FAILED", "target table cannot be read after migration", {
+      table: tableName,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function writePointer(root: string, report: StorageMigrationReport, clock: Clock): void {
@@ -95,8 +108,23 @@ export async function migrateStorage(options: StorageMigrationOptions): Promise<
   const sourceCas = resolve(options.sourceCas ?? join(root, "cas"));
   const clock = options.clock ?? new SystemClock();
   if (!existsSync(sourceDatabase)) throw new ProviderError("PROVIDER_UNAVAILABLE", "source SQLite database is missing", { reason: sourceDatabase });
-  const source = new ManagedDatabase(sourceDatabase, { create: false, readonly: true });
+  mkdirSync(root, { recursive: true });
+  const lockPath = join(root, "storage-migration.lock");
+  let lockHandle: number | undefined;
   try {
+    lockHandle = openSync(lockPath, "wx", 0o600);
+    writeFileSync(lockHandle, `${process.pid}\n`, "utf8");
+  } catch (error) {
+    if ((error as { code?: string }).code === "EEXIST") {
+      throw new ProviderError("MIGRATE_IN_PROGRESS", "storage migration is already in progress");
+    }
+    try { if (lockHandle !== undefined) closeSync(lockHandle); } catch { /* preserve the primary error */ }
+    try { unlinkSync(lockPath); } catch { /* the lock was not published */ }
+    throw error;
+  }
+  let source: ManagedDatabase | undefined;
+  try {
+    source = new ManagedDatabase(sourceDatabase, { create: false, readonly: true });
     const tables = sourceTables(source);
     const tableReports = tables.map(({ table, rows }) => ({ name: table.name, rows: rows.length, digest: tableDigest(rows) }));
     const blobs = blobRecords(sourceCas);
@@ -130,7 +158,25 @@ export async function migrateStorage(options: StorageMigrationOptions): Promise<
       }
       const stateProblems = options.target.state.verify();
       const blobProblems = await options.target.blob.verify(blobs.map(({ digest: value }) => value));
-      if (stateProblems.length || blobProblems.length) throw new ProviderError("PROVIDER_UNAVAILABLE", "target provider verification failed", { state_problems: stateProblems.length, blob_problems: blobProblems.length });
+      const tableProblems: Array<Record<string, string>> = [];
+      for (const table of tableReports) {
+        const rows = targetTableRows(options.target, table.name);
+        if (rows.length !== table.rows || tableDigest(rows) !== table.digest) {
+          tableProblems.push({ kind: "table_mismatch", table: table.name, expected_rows: String(table.rows), actual_rows: String(rows.length) });
+        }
+      }
+      const secretProblems: Array<Record<string, string>> = [];
+      for (const ref of refs) {
+        if (!(await options.target.secret.has(ref))) secretProblems.push({ kind: "missing_secret_reference", ref });
+      }
+      if (stateProblems.length || blobProblems.length || tableProblems.length || secretProblems.length) {
+        throw new ProviderError("MIGRATE_VERIFY_FAILED", "target provider verification failed", {
+          state_problems: stateProblems.length,
+          table_problems: tableProblems.length,
+          blob_problems: blobProblems.length,
+          secret_problems: secretProblems.length,
+        });
+      }
     }
     const reportWithoutDigest = { ...reportBase, dryRun: Boolean(options.dryRun), switched: false };
     const report: StorageMigrationReport = { ...reportWithoutDigest, digest: digest(reportWithoutDigest), switched: false };
@@ -140,7 +186,9 @@ export async function migrateStorage(options: StorageMigrationOptions): Promise<
     }
     return report;
   } finally {
-    source.close();
+    source?.close();
+    if (lockHandle !== undefined) closeSync(lockHandle);
+    try { unlinkSync(lockPath); } catch { /* preserve the migration result when the lock was removed externally */ }
   }
 }
 

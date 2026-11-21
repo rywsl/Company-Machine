@@ -96,7 +96,7 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
   async transitDecrypt(key: string, ciphertext: string): Promise<{ plaintext: Uint8Array; auditRef: string }> {
     const response = await this.request("POST", `${this.transitMount}/decrypt/${encodeURIComponent(key)}`, { ciphertext });
     const encoded = response?.data?.plaintext;
-    if (typeof encoded !== "string") throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao decrypt response is invalid");
+    if (typeof encoded !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao decrypt response is invalid");
     return { plaintext: Buffer.from(encoded, "base64"), auditRef: this.responseAuditRef(response) };
   }
 
@@ -119,7 +119,8 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
   async transitRotate(key: string): Promise<{ version?: number; auditRef: string }> {
     const response = await this.request("POST", `${this.transitMount}/keys/${encodeURIComponent(key)}/rotate`, {});
     const version = response?.data?.latest_version;
-    return { ...(typeof version === "number" ? { version } : {}), auditRef: this.responseAuditRef(response) };
+    if (!Number.isInteger(version) || version < 1) throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao rotate response is invalid");
+    return { version, auditRef: this.responseAuditRef(response) };
   }
 
   status(): any {
@@ -150,7 +151,7 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
   }
 
   async decrypt(value: any): Promise<Uint8Array> {
-    if (!value || value.algorithm !== "openbao-transit" || typeof value.ciphertext !== "string") {
+    if (!value || value.algorithm !== "openbao-transit" || typeof value.keyId !== "string" || typeof value.ciphertext !== "string") {
       throw new ProviderError("KMS_OPERATION_FAILED", "OpenBao encrypted value is invalid");
     }
     return (await this.transitDecrypt(value.keyId ?? "default", value.ciphertext)).plaintext;
@@ -170,7 +171,7 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
   }
 
   auditRef(operation: string, keyId = "default"): string {
-    return `openbao-audit://${encodeURIComponent(keyId)}/${encodeURIComponent(operation)}`;
+    return `openbao-audit://${randomUuid()}`;
   }
 
   private kvPath(ref: string): string {
