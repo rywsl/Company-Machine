@@ -299,7 +299,10 @@ export function createLocalProviders(options: ProviderFactoryOptions = {}): { st
   const config: StorageProviderConfig = { mode: "local", state: "sqlite", blob: "local", secret: "local" };
   const state = options.state ?? options.createState?.("sqlite", root) ?? new SqliteStateProvider(join(root, "factory.db"));
   const blob = options.blob ?? options.createBlob?.("local", root) ?? new LocalBlobProvider(join(root, "cas"));
-  const secret = options.secret ?? options.createSecret?.("local", root) ?? new LocalSecretProvider();
+  const secret = options.secret ?? options.createSecret?.("local", root) ?? new LocalSecretProvider(new VaultStore(
+    process.env.MAO_VAULT_PATH ?? join(root, "vault.json"),
+    process.env.MAO_VAULT_KEY_PATH ?? join(root, "vault.key"),
+  ));
   const kms = options.kms ?? options.createKms?.("local", root) ?? new LocalKmsProvider((secret as LocalSecretProvider).vault);
   return { state, blob, secret, kms, config };
 }

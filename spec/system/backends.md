@@ -119,7 +119,7 @@ provider 配置只通过环境变量读取。Secret、token、DSN 和签名 URL 
 
 ### 4.1 SQL provider
 
-SQLite、PostgreSQL 和 MySQL 都实现 `StateProvider`。事务、查询、迁移、连接池、占位符和错误边界对业务层保持一致。
+SQLite、PostgreSQL 和 MySQL 都由 `StateProvider` 边界选择。事务、查询、迁移、连接池、占位符和错误边界对业务层保持一致。当前阶段先交付 SQLite 适配和 PostgreSQL/MySQL 的配置、命令探测、查询执行、迁移/校验错误边界，目标 provider 的持久事务会在第 8 章的 SQL 阶段接入。
 
 - SQLite 使用 Bun `bun:sqlite` 和现有数据库文件。
 - PostgreSQL 通过标准 PostgreSQL 客户端协议或受控官方命令行连接，连接串只从 `MAO_POSTGRES_DSN` 或等价环境变量读取。
@@ -127,7 +127,7 @@ SQLite、PostgreSQL 和 MySQL 都实现 `StateProvider`。事务、查询、迁�
 - PostgreSQL 和 MySQL 的占位符、事务隔离、分页、布尔值和迁移方言只在 provider 内处理。
 - provider 不可用、连接池耗尽或迁移失败返回 `PROVIDER_UNAVAILABLE`，不能创建 SQLite 伪装成功。
 
-迁移器以规范迁移描述为输入，为每个 SQL provider 生成对应方言。迁移过程在单个 provider 事务边界内执行，失败时回滚。业务层只能调用 `migrate()`、`transaction()`、`query()` 和 `verify()`。
+迁移器以规范迁移描述为输入，为每个 SQL provider 生成对应方言。业务层只能调用 `migrate()`、`transaction()`、`query()` 和 `verify()`。在目标 SQL 会话适配器尚未可用时，`transaction()` 和 `migrate()` 返回 `PROVIDER_UNAVAILABLE`，不能伪装为 SQLite 已迁移。
 
 ## 5. 行为
 
@@ -159,7 +159,7 @@ S3 凭据只在签名请求时从环境读取。请求头、签名字符串、�
 控制面提供 provider status、migrate 和 verify 能力。CLI 和 HTTP 管理面使用同一 provider registry。
 
 - `status` 返回当前模式、各 provider 名称、配置完整性、连接状态和非敏感原因。
-- `migrate` 从当前活动 provider 复制状态行、对象和密钥引用。密钥明文不能进入迁移报告，OpenBao 迁移只复制引用或通过 provider 内部轮换复制密文。
+- `migrate` 在目标 provider 会话适配器可用后复制状态行、对象和密钥引用。密钥明文不能进入迁移报告，OpenBao 迁移只复制引用或通过 provider 内部轮换复制密文。当前阶段对未接入会话适配器的目标返回 `PROVIDER_UNAVAILABLE`。
 - 迁移完成后计算状态行数、规范摘要、对象数量和对象摘要。所有摘要一致后才写入活动 provider 指针。
 - `verify` 对当前活动 provider 重算上述摘要并报告差异。校验失败退出失败状态，不修改数据和活动指针。
 - 迁移失败保留本地 provider、原数据和旧指针。目标 provider 的部分数据可以保留用于诊断，但不能自动切换。

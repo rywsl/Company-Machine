@@ -281,7 +281,7 @@ interface BackendAppOptions {
 
 export function createApp(options: BackendAppOptions = {}): BackendApp {
   const storageRoot = resolve(options.storageRoot ?? process.env.FACTORY_ROOT ?? dirname(process.env.FACTORY_DB_PATH ?? ".factory/factory.db"));
-  const storageConfig = resolveStorageProviderConfig();
+  const storageConfig = options.storage?.config ?? resolveStorageProviderConfig();
   if (storageConfig.state !== "sqlite" || storageConfig.blob !== "local" || storageConfig.secret !== "local") {
     throw new ProviderError("PROVIDER_UNAVAILABLE", "当前 Bun 控制面尚未将非本地 provider 接入业务事务", {
       reason: "run provider migrate and verify before switching the active control plane",

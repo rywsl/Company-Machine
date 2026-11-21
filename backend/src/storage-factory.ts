@@ -15,6 +15,7 @@ import {
 import { OpenBaoKmsProvider } from "./storage-openbao";
 import { S3BlobProvider } from "./storage-s3";
 import { MysqlStateProvider, PostgresStateProvider } from "./storage-sql";
+import { VaultStore } from "./vault";
 
 export interface StorageProviders {
   readonly config: StorageProviderConfig;
@@ -51,7 +52,10 @@ export function createStorageProviders(options: StorageFactoryOptions = {}): Sto
     return S3BlobProvider.fromEnvironment(env);
   })();
   const secret = options.secret ?? (() => {
-    if (config.secret === "local") return new LocalSecretProvider();
+    if (config.secret === "local") return new LocalSecretProvider(new VaultStore(
+      env.MAO_VAULT_PATH ?? join(root, "vault.json"),
+      env.MAO_VAULT_KEY_PATH ?? join(root, "vault.key"),
+    ));
     return OpenBaoKmsProvider.fromEnvironment(env);
   })();
   const kms = options.kms ?? (() => {
