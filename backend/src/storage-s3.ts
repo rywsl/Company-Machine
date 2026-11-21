@@ -66,7 +66,7 @@ export class S3BlobProvider implements BlobProvider {
   static fromEnvironment(env: NodeJS.ProcessEnv = process.env): S3BlobProvider {
     const endpoint = env.MAO_S3_ENDPOINT;
     const bucket = env.MAO_S3_BUCKET;
-    if (!endpoint || !bucket) throw new ProviderError("PROVIDER_CONFIG_INVALID", "MAO_S3_ENDPOINT and MAO_S3_BUCKET are required");
+    if (!endpoint || !bucket) throw new ProviderError("PROVIDER_CONFIG_INVALID", "S3 provider requires MAO_S3_ENDPOINT and MAO_S3_BUCKET");
     return new S3BlobProvider({
       endpoint,
       bucket,

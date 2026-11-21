@@ -5,6 +5,25 @@ import { randomUuid, SystemClock, utcIso, type Clock } from "./legacy/foundation
 
 type VaultRecord = { ref: string; iv: string; tag: string; ciphertext: string; updatedAt: string };
 
+export interface VaultAccess {
+  put(ref: string, value: string): void;
+  has(ref: string): boolean;
+  refs(): string[];
+  delete(ref: string): boolean;
+  get(ref: string): string | undefined;
+}
+
+/** Explicitly fails if legacy synchronous callers try to bypass a remote SecretProvider. */
+export class UnavailableVaultStore implements VaultAccess {
+  constructor(private readonly reason = "local Vault is unavailable for the active SecretProvider") {}
+  private fail(): never { throw new Error(this.reason); }
+  put(_ref: string, _value: string): void { this.fail(); }
+  has(_ref: string): boolean { this.fail(); }
+  refs(): string[] { this.fail(); }
+  delete(_ref: string): boolean { this.fail(); }
+  get(_ref: string): string | undefined { this.fail(); }
+}
+
 /** Cryptographic entropy belongs to the vault boundary rather than control-plane identity generation. */
 export function vaultRandomBytes(size: number): Buffer { return randomBytes(size); }
 
@@ -29,7 +48,7 @@ function keyFromEnvironment(path: string, environment: NodeJS.ProcessEnv = proce
   return created;
 }
 
-export class VaultStore {
+export class VaultStore implements VaultAccess {
   private readonly key: any;
   private readonly path: string;
 

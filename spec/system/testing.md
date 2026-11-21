@@ -127,7 +127,7 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 | 文件 | 验证 |
 |---|---|
 | `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱与资源恢复、source-tool 资源就绪后的 UnitRun 恢复、资产限量与归档排序、对话入队及取消、SSE 分页回放与跨进程写入 |
-| `backend/tests/storage-providers.test.ts` | 默认本地 provider 选择、OpenBao KV/Transit HTTP 边界、S3 凭据错误、幂等读写与回滚删除，以及本地应用 provider 状态投影 |
+| `backend/tests/storage-providers.test.ts` | 默认本地 provider 选择、OpenBao KV/Transit HTTP 边界、S3 凭据错误、幂等读写与回滚删除、同步生产状态 provider 控制面接入，以及本地应用 provider 状态投影 |
 | `backend/tests/storage-bun-sql.test.ts` | Bun 原生 PostgreSQL/MySQL 连接池、Promise-only 异步数据库边界、异步事务、占位符转换、迁移和 provider fail-closed |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验、跨平台 URI 凭据脱敏，以及同一 Conversion 从 planned/running 幂等升级为 completed 的状态合并 |

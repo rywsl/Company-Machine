@@ -108,9 +108,9 @@ export interface KmsProvider {
 
 `StateStatement` 只包含规范化 SQL、参数和业务操作名。业务层不能拼接方言 SQL。`ProviderStatus` 只返回 provider 名称、模式、可用状态、版本和非敏感原因。`VerificationReport` 只返回摘要、计数和不一致位置。
 
-`AsyncProviderStateDatabase` 将 `AsyncStateProvider` 暴露为 Promise-only 的查询、写入和事务接口。它不实现同步 `StateDatabase`，也不能被传给当前 `SqliteStore`。新的异步业务仓储必须通过这个边界接入，事务回调收到同一连接上下文，关闭操作必须等待池释放完成。生产控制面在全部业务仓储迁移到该边界前继续 fail-closed，不能把异步 provider 包装成同步数据库。
+`AsyncProviderStateDatabase` 将 `AsyncStateProvider` 暴露为 Promise-only 的查询、写入和事务接口。它不实现同步 `StateDatabase`，也不能被传给当前 `SqliteStore`。新的异步业务仓储必须通过这个边界接入，事务回调收到同一连接上下文，关闭操作必须等待池释放完成。生产控制面只接受明确提供同步 `database` 适配器的状态 provider，Bun.SQL provider 仍需后续异步业务仓储迁移才能成为活动状态实现，不能把 Promise provider 包装成同步数据库。
 
-当前 `SqliteStore`、`Warehouse` 和 `VaultStore` 通过适配器实现这些接口。`ProviderStateDatabase` 将 provider 的查询、语句和事务映射到现有同步仓储表面。适配器必须保持已有调用方的行为和本地文件布局，远程事务必须保证事务内查询能看到此前写入。
+当前 `SqliteStore`、`Warehouse` 和密钥读取路径通过适配器实现这些接口。`ProviderStateDatabase` 将带同步事务的 provider 查询、语句和事务映射到现有同步仓储表面。适配器必须保持已有调用方的行为和本地文件布局，远程事务必须保证事务内查询能看到此前写入。
 
 `Warehouse` 可以注入 `BlobProvider`。写入、物化和校验都通过注入的对象 provider 执行，`ensureLocal` 在 Harness 或物料挂载前把对象物化到平台管理的本地缓存。未注入时继续使用当前 `${FACTORY_ROOT}/cas` 布局。
 
@@ -151,7 +151,7 @@ SQLite、PostgreSQL 和 MySQL 都由 `StateProvider` 边界选择。事务、查
 
 迁移器以规范迁移描述为输入，为每个 SQL provider 生成对应方言。业务层只能调用 `migrate()`、`transaction()`、`query()` 和 `verify()`。目标客户端、DSN 或方言不满足时返回 `PROVIDER_UNAVAILABLE` 或 `PROVIDER_CONFIG_INVALID`，不能伪装为 SQLite 已迁移。
 
-生产异步业务接入使用 `BunPostgresStateProvider` 或 `BunMysqlStateProvider`。它们通过 Bun 原生 `Bun.SQL` 管理连接池，支持 `max`、空闲超时、连接超时、最长生命周期和 prepared statement 配置。该异步接口与现有同步 `StateProvider` 并行存在，业务仓储完成异步事务迁移前，现有同步控制面继续 fail-closed。
+生产异步业务接入使用 `BunPostgresStateProvider` 或 `BunMysqlStateProvider`。它们通过 Bun 原生 `Bun.SQL` 管理连接池，支持 `max`、空闲超时、连接超时、最长生命周期和 prepared statement 配置。该异步接口与现有同步 `StateProvider` 并行存在。现有控制面可以使用带同步 `database` 适配器的生产 provider，Bun.SQL provider 在业务仓储完成异步事务迁移前保持 fail-closed。
 
 ## 5. 行为
 
@@ -225,7 +225,7 @@ provider 改造按以下阶段提交。每一阶段都要同步更新本规范�
 3. PostgreSQL 和 MySQL State provider。完成受控客户端会话、事务批处理、迁移、占位符和方言边界。未安装或不可用时返回 provider 错误。
 4. S3 或 MinIO Blob provider。完成摘要校验、幂等写入、HEAD、读写和只读缓存。
 5. 迁移、status、verify 和活动 provider 指针。只有摘要、行数和对象数量校验通过才能写入指针。
-6. 业务控制面 active provider 接入。`SqliteStore`、Warehouse 和密钥读取路径需要在同一 provider 事务边界运行，完成后才允许生产模式创建业务服务。
+6. 业务控制面 active provider 接入。同步 `StateProvider.database`、Warehouse 和异步 SecretProvider 已接入生产控制面，provider 不可用时 fail-closed。Bun.SQL Promise provider 的完整异步业务仓储迁移仍作为后续阶段，不能被同步适配器伪装。
 
 每阶段都保留默认本地路径。后续阶段失败不能改变已经可用的本地 provider。
 

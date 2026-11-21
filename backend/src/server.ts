@@ -1,6 +1,6 @@
 import { EventBus } from "./event-bus";
 import { SqliteStore, type AssetCursor } from "./db";
-import { VaultStore } from "./vault";
+import { UnavailableVaultStore, VaultStore, type VaultAccess } from "./vault";
 import { exportBusinessSystem, exportBusinessSystemAsync, importBusinessSystem } from "./business-portability";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
@@ -231,7 +231,7 @@ function authorizedRequest(request: Request): boolean {
 export interface BackendApp {
   store: SqliteStore;
   events: EventBus;
-  vault: VaultStore;
+  vault: VaultAccess;
   storage: StorageProviders;
   foreman: ForemanCoordinator;
   operator: OperatorCoordinator;
@@ -268,7 +268,7 @@ interface BackendAppOptions {
   dbPath?: string;
   legacyPath?: string;
   runtime?: RuntimeProbe;
-  vault?: VaultStore;
+  vault?: VaultAccess;
   storageRoot?: string;
   foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn; prepareSources?: PrepareProjectSources };
   operator?: Pick<OperatorCoordinatorOptions, "cwd" | "spawn" | "acpSpawn" | "materialStage" | "prepareSources">;
@@ -282,27 +282,37 @@ interface BackendAppOptions {
 export function createApp(options: BackendAppOptions = {}): BackendApp {
   const storageRoot = resolve(options.storageRoot ?? process.env.FACTORY_ROOT ?? dirname(process.env.FACTORY_DB_PATH ?? ".factory/factory.db"));
   const storageConfig = options.storage?.config ?? resolveStorageProviderConfig();
-  if (storageConfig.state !== "sqlite" || storageConfig.blob !== "local" || storageConfig.secret !== "local") {
-    throw new ProviderError("PROVIDER_UNAVAILABLE", "当前 Bun 控制面尚未将非本地 provider 接入业务事务", {
-      reason: "run provider migrate and verify before switching the active control plane",
-      state: storageConfig.state,
-      blob: storageConfig.blob,
-      secret: storageConfig.secret,
+  const externalStorage = storageConfig.state !== "sqlite" || storageConfig.blob !== "local" || storageConfig.secret !== "local";
+  let storage: StorageProviders;
+  let store: SqliteStore;
+  let vault: VaultAccess;
+  if (options.storage || externalStorage) {
+    storage = options.storage ?? createStorageProviders({ root: storageRoot });
+    if (!storage.state.database) {
+      throw new ProviderError("PROVIDER_UNAVAILABLE", "active state provider does not expose the synchronous business repository boundary", {
+        state: storage.config.state,
+      });
+    }
+    store = new SqliteStore(options.dbPath, options.legacyPath, {
+      clock: options.clock,
+      uuid: options.uuid,
+      database: storage.state.database,
+    });
+    vault = options.vault ?? new UnavailableVaultStore();
+  } else {
+    store = new SqliteStore(options.dbPath, options.legacyPath, {
+      clock: options.clock,
+      uuid: options.uuid,
+    });
+    vault = options.vault ?? new VaultStore(undefined, undefined, store.clock);
+    storage = createStorageProviders({
+      root: storageRoot,
+      state: new SqliteStateProvider(store.db, false),
+      secret: new LocalSecretProvider(vault),
     });
   }
-  const store = new SqliteStore(options.dbPath, options.legacyPath, {
-    clock: options.clock,
-    uuid: options.uuid,
-    ...(options.storage?.state.database ? { database: options.storage.state.database } : {}),
-  });
   const events = new EventBus(store);
   const eventStreams = new AbortController();
-  const vault = options.vault ?? new VaultStore(undefined, undefined, store.clock);
-  const storage = options.storage ?? createStorageProviders({
-    root: storageRoot,
-    state: new SqliteStateProvider(store.db, false),
-    secret: new LocalSecretProvider(vault),
-  });
   let uploadWarehouse: Warehouse | undefined;
   const uploads = () => uploadWarehouse ??= new Warehouse(storageRoot, store.db, store.clock, new RandomIds(), storage.blob);
   const runtime = options.runtime ?? selectedContainerProvider();

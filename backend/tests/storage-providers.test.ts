@@ -6,10 +6,10 @@ import { join } from "node:path";
 import { createApp } from "../src/server";
 import { OpenBaoKmsProvider } from "../src/storage-openbao";
 import { S3BlobProvider } from "../src/storage-s3";
-import { resolveStorageProviderConfig, SqliteStateProvider } from "../src/providers";
+import { LocalBlobProvider, LocalKmsProvider, LocalSecretProvider, resolveStorageProviderConfig, SqliteStateProvider, type StateProvider } from "../src/providers";
 import { bindSqlParameters, MysqlStateProvider, PostgresStateProvider } from "../src/storage-sql";
 import { ManagedDatabase } from "../src/sqlite";
-import { createStorageProviders } from "../src/storage-factory";
+import { createStorageProviders, type StorageProviders } from "../src/storage-factory";
 import { migrateStorage, readActiveStoragePointer } from "../src/storage-migration";
 import { VaultStore } from "../src/vault";
 import { ProviderStateDatabase } from "../src/state-database";
@@ -248,6 +248,38 @@ test("createApp can run against an injected local provider database", () => {
   try {
     expect(app.store.createBusinessSystem({ name: "Injected app" }).name).toBe("Injected app");
     expect(app.storage.state.database).toBe(storage.state.database);
+  } finally {
+    app.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("production control plane accepts a synchronous provider database without creating a local Vault fallback", () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-production-provider-app-"));
+  const sqlite = new SqliteStateProvider(":memory:");
+  const state: StateProvider = {
+    kind: "postgres",
+    database: sqlite.database,
+    query: sqlite.query.bind(sqlite),
+    execute: sqlite.execute.bind(sqlite),
+    transaction: sqlite.transaction.bind(sqlite),
+    migrate: sqlite.migrate.bind(sqlite),
+    verify: sqlite.verify.bind(sqlite),
+    status: () => ({ kind: "postgres", mode: "production", available: true }),
+    close: sqlite.close.bind(sqlite),
+  };
+  const secret = new LocalSecretProvider(new VaultStore(join(root, "explicit-vault.json"), join(root, "explicit-vault.key")));
+  const storage: StorageProviders = {
+    config: { mode: "production", state: "postgres", blob: "local", secret: "local" },
+    state,
+    blob: new LocalBlobProvider(join(root, "cas")),
+    secret,
+    kms: new LocalKmsProvider(secret.vault),
+  };
+  const app = createApp({ storageRoot: root, storage, dispatchWork: false });
+  try {
+    expect(app.store.createBusinessSystem({ name: "Production provider boundary" }).name).toBe("Production provider boundary");
+    expect(() => app.vault.get("vault://should-not-use-local-fallback")).toThrow(/unavailable/i);
   } finally {
     app.stop();
     rmSync(root, { recursive: true, force: true });

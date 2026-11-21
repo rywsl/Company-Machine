@@ -4,7 +4,7 @@ import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "nod
 import { dirname, join, resolve } from "node:path";
 import { ManagedDatabase } from "./sqlite";
 import type { StateDatabase } from "./state-database";
-import { vaultRandomBytes, VaultStore } from "./vault";
+import { vaultRandomBytes, VaultStore, type VaultAccess } from "./vault";
 import { randomUuid } from "./legacy/foundation";
 import { ProviderError, type ProviderErrorCode } from "./provider-errors";
 
@@ -252,7 +252,7 @@ export class SqliteStateProvider implements StateProvider {
 
 export class LocalSecretProvider implements SecretProvider {
   readonly kind = "local" as const;
-  constructor(readonly vault = new VaultStore()) {}
+  constructor(readonly vault: VaultAccess = new VaultStore()) {}
   async put(ref: string, value: string): Promise<void> { this.vault.put(ref, value); }
   async get(ref: string): Promise<string | undefined> { return this.vault.get(ref); }
   async has(ref: string): Promise<boolean> { return this.vault.has(ref); }
@@ -263,7 +263,7 @@ export class LocalSecretProvider implements SecretProvider {
 /** KMS-compatible local implementation backed by the existing AES-256-GCM Vault. */
 export class LocalKmsProvider implements KmsProvider {
   readonly kind = "local-vault";
-  constructor(readonly vault = new VaultStore()) {}
+  constructor(readonly vault: VaultAccess = new VaultStore()) {}
   private key(keyId: string): Buffer {
     if (!keyId || !/^[A-Za-z0-9._/-]+$/.test(keyId)) throw new ProviderError("PROVIDER_CONFIG_INVALID", "KMS key id is invalid");
     const ref = `vault://kms/key/${keyId}`;
