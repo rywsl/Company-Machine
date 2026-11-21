@@ -8,6 +8,7 @@ import { digestBytes } from "../src/legacy/foundation";
 import { Warehouse } from "../src/legacy/warehouse";
 import { createMaterialFileStage } from "../src/material-files";
 import { VaultStore } from "../src/vault";
+import { LocalBlobProvider } from "../src/providers";
 
 function factory(root: string) {
   const database = join(root, "factory.db");
@@ -186,5 +187,19 @@ test("rejects known configured secret bytes inside a selected binary payload", a
     await expect(createBusinessPackage(path, { schema: "mao.business-system/1", system: { name: "Portable" }, ref: `cas://${digest}` }, root, [secret]))
       .rejects.toMatchObject({ code: "ASSET_SECRET" });
     expect(existsSync(path)).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test("exports a business package from an injected blob provider", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-remote-"));
+  try {
+    const blobRoot = join(root, "remote-cache");
+    const provider = new LocalBlobProvider(blobRoot);
+    const payload = new TextEncoder().encode("provider-backed bytes");
+    const digest = await provider.put(payload);
+    const packageRoot = join(root, "package");
+    await createBusinessPackage(packageRoot, { schema: "mao.business-system/1", system: { name: "Remote source" }, ref: `cas://${digest}` }, join(root, "no-local-cas"), [], provider);
+    expect((await readBusinessPackage(packageRoot)).blobs).toEqual([{ digest, size: payload.byteLength }]);
+    expect(new TextDecoder().decode(await Bun.file(businessPackageBlob(packageRoot, digest)).arrayBuffer())).toBe("provider-backed bytes");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });

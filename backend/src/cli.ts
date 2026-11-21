@@ -271,7 +271,8 @@ async function runCommand(argv: string[]): Promise<number> {
             const value = request.status === "available" ? app.vault.get(request.vaultRef) : undefined;
             return value ? [value] : [];
           }));
-          console.log(JSON.stringify(await createBusinessPackage(args[3], document, root, secrets), null, 2));
+          const blobProvider = app.storage.blob.kind === "local" ? undefined : app.storage.blob;
+          console.log(JSON.stringify(await createBusinessPackage(args[3], document, root, secrets, blobProvider), null, 2));
         } else console.log(JSON.stringify(document, null, 2));
         return 0;
       }

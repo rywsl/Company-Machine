@@ -405,7 +405,7 @@ bindings 的输入文件格式为 `{resources: {key: {kind, fingerprint, ref?, s
 
 ### 5.8 导出、校验与买家接手
 
-活动 Bun 业务包沿用 `mao.business-system/1` 业务文档。`factory business export ID --package DEST` 将该文档、文档中的 `cas://sha256:…` 引用对应的文件和 SHA-256 清单写入新目录，格式为 `mao.business-package/1`。文件名由内容摘要确定。导出扫描所选项目已配置的密钥值，发现匹配便终止发布。`factory business verify PACKAGE` 检查文件集合、文档引用、大小及摘要，校验报告显示 `acceptance: "not_run"`。`factory business import PACKAGE --root NEW_ROOT` 使用同级临时目录安装文件和业务定义，成功后发布到目标目录。买方获得新的业务和工位标识，以及待配置的密钥申请。导入的运行摘要可用于查看历史，执行队列从空状态开始。本入口提供业务定义与文件的跨工厂移交，M16 的披露审核、授权与契约验收使用以下规范。
+活动 Bun 业务包沿用 `mao.business-system/1` 业务文档。`factory business export ID --package DEST` 将该文档、文档中的 `cas://sha256:…` 引用对应的文件和 SHA-256 清单写入新目录，格式为 `mao.business-package/1`。文件名由内容摘要确定。导出扫描所选项目已配置的密钥值，发现匹配便终止发布。注入 `BlobProvider` 时，引用文件可以直接从对象存储导出，平台不要求先复制到本地 CAS。`factory business verify PACKAGE` 检查文件集合、文档引用、大小及摘要，校验报告显示 `acceptance: "not_run"`。`factory business import PACKAGE --root NEW_ROOT` 使用同级临时目录安装文件和业务定义，成功后发布到目标目录。买方获得新的业务和工位标识，以及待配置的密钥申请。导入的运行摘要可用于查看历史，执行队列从空状态开始。本入口提供业务定义与文件的跨工厂移交，M16 的披露审核、授权与契约验收使用以下规范。
 
 Bun 导出从所选工厂的 CAS 读取引用文件。CAS 目录、摘要目录及摘要分桶都必须是实际目录。遇到通过符号链接或目录联接点提供的路径时，导出失败并清理本次临时目录。
 

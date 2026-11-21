@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { FactoryError } from "./legacy/errors";
 import { canonicalJson } from "./legacy/foundation";
 import type { SqliteStore } from "./db";
+import type { BlobProvider } from "./providers";
 
 const format = "mao.business-package/1";
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
@@ -91,7 +92,7 @@ async function inspect(path: string, secrets: readonly string[] = []): Promise<F
   return { digest: `sha256:${hash.digest("hex")}`, size };
 }
 
-export async function createBusinessPackage(destination: string, document: unknown, warehouseRoot: string, secrets: readonly string[]) {
+export async function createBusinessPackage(destination: string, document: unknown, warehouseRoot: string, secrets: readonly string[], blobProvider?: BlobProvider) {
   return publishBusinessDirectory(destination, async (stage) => {
     const doc = join(stage, documentName);
     await Bun.write(doc, `${canonicalJson(document)}\n`);
@@ -101,17 +102,20 @@ export async function createBusinessPackage(destination: string, document: unkno
     const cas = join(warehouseRoot, "cas");
     const sha256 = join(cas, "sha256");
     if (digests.length) {
-      if (kind(cas) !== "directory" || kind(sha256) !== "directory") invalid("invalid CAS directory");
+      if (!blobProvider && (kind(cas) !== "directory" || kind(sha256) !== "directory")) invalid("invalid CAS directory");
       mkdirSync(join(stage, "blobs"));
     }
     for (const digest of digests) {
       const hex = digest.slice(7);
       const bucket = join(sha256, hex.slice(0, 2));
-      if (kind(bucket) !== "directory") invalid("invalid CAS bucket");
-      const source = join(bucket, hex.slice(2));
-      if (kind(source) !== "file") invalid("missing CAS payload");
+      if (!blobProvider && kind(bucket) !== "directory") invalid("invalid CAS bucket");
       const destination = businessPackageBlob(stage, digest);
-      await copyFile(source, destination);
+      if (blobProvider) await blobProvider.getFile(digest, destination);
+      else {
+        const source = join(bucket, hex.slice(2));
+        if (kind(source) !== "file") invalid("missing CAS payload");
+        await copyFile(source, destination);
+      }
       const blob = await inspect(destination, secrets);
       if (blob.digest !== digest) invalid("CAS digest mismatch");
       blobs.push(blob);
