@@ -13,6 +13,8 @@ import { projectCredentialName } from "./operator";
 import { VaultStore } from "./vault";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
 import { selectedContainerProvider } from "../runtime/selected";
+import { createStorageProviders, storageStatus } from "./storage-factory";
+import { ProviderError, resolveStorageProviderConfig } from "./storage";
 export { CliUsageError } from "./station-cli";
 
 const redactText = (text: string) => text.replace(/(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
@@ -32,6 +34,7 @@ export function usage(scope?: string): string {
   if (scope === "business") return `factory business commands\n  units ID\n  bind ID UNIT --harness ID [--model ID]\n  run ID [--input REF]\n  runs ID\n  export ID [--package DEST]\n  verify PACKAGE\n  import PACKAGE --root NEW_ROOT\n  graph ID [--file PATH]\n  artifact PROJECT_ID --file PATH\n  conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]`;
   if (scope === "foreman") return `factory foreman commands\n  inbox [--limit N]\n  claim ID\n  done ID\n  conversion ls [--status open|in_progress|resolved] [--root PATH]`;
   if (scope === "runtime") return `factory runtime commands\n  status\n  ensure-ready\n  doctor [--image DIGEST]`;
+  if (scope === "storage") return `factory storage commands\n  status [--json]\n  verify [--json]\n  migrate [--dry-run] [--json]`;
   if (scope === "registry") return "factory registry check PATH [--json] [--strict]";
   return `factory-bun commands\n  serve\n  status\n  runtime status\n  runtime ensure-ready\n  runtime doctor [--image REPOSITORY@sha256:DIGEST]\n  project register --repo URL [--name NAME] [--system ID]\n  project intake --name NAME [--repo URL | --folder PATH | --file-ref REF]\n  project secret request PROJECT --name KEY --purpose PURPOSE\n  business units ID\n  business bind ID UNIT --harness ID [--model ID]\n  business run ID [--input REF]\n  business runs ID\n  business export ID\n  business graph ID [--file PATH]\n  business artifact PROJECT_ID --file PATH\n  business conversion ID --kind KIND --summary TEXT [--input REF] [--output REF]\n  registry check PATH [--json] [--strict]\n  bean help\n  job help\n  foreman inbox [--limit N]\n  foreman claim ID\n  foreman done ID\n  talk send TEXT\n  talk reply TEXT --turn-id ID`;
 }
@@ -85,6 +88,7 @@ function runRegistryCli(args: string[]): number {
 
 async function runCommand(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
+  if (command === "storage") return runStorageCommand(args);
   if (command === "registry") return runRegistryCli(args);
   if (command === "foreman" && args[0] === "conversion") {
     return listConversions(args.slice(1));
@@ -340,6 +344,40 @@ async function runCommand(argv: string[]): Promise<number> {
   } finally {
     app.stop();
   }
+}
+
+function storageJsonError(error: unknown): Record<string, unknown> {
+  if (error instanceof ProviderError) return { ok: false, error: { code: error.code, message: error.message, details: error.details } };
+  return { ok: false, error: { code: "PROVIDER_UNAVAILABLE", message: error instanceof Error ? error.message : String(error) } };
+}
+
+async function runStorageCommand(args: string[]): Promise<number> {
+  const operation = args[0];
+  const json = args.includes("--json");
+  if (!operation || operation === "help" || operation === "--help") { console.log(usage("storage")); return 0; }
+  if (!["status", "verify", "migrate"].includes(operation)) throw new CliUsageError(`unknown storage command: ${operation}`);
+  if (args.some((item) => ![operation, "--json", "--dry-run"].includes(item))) throw new CliUsageError("storage expects status, verify, or migrate [--dry-run] [--json]");
+  let storage;
+  try { storage = createStorageProviders(); }
+  catch (error) { console.log(JSON.stringify(storageJsonError(error), null, 2)); return 4; }
+  try {
+    if (operation === "status") {
+      console.log(JSON.stringify({ ok: true, ...storageStatus(storage) }, null, 2));
+      return 0;
+    }
+    if (operation === "verify") {
+      const problems = await storage.blob.verify();
+      console.log(JSON.stringify({ ok: problems.length === 0, ...storageStatus(storage), problems }, null, 2));
+      return problems.length ? 1 : 0;
+    }
+    const config = resolveStorageProviderConfig();
+    if (config.state !== "sqlite" || config.blob !== "local" || config.secret !== "local") {
+      console.log(JSON.stringify({ ok: false, code: "PROVIDER_UNAVAILABLE", reason: "provider migration requires a target adapter and verification before switching", dry_run: args.includes("--dry-run") }, null, 2));
+      return 4;
+    }
+    console.log(JSON.stringify({ ok: true, migrated: false, switched: false, dry_run: args.includes("--dry-run"), mode: "local" }, null, 2));
+    return 0;
+  } finally { storage.state.close(); }
 }
 
 async function importBusinessPackage(source: string, destination: string) {

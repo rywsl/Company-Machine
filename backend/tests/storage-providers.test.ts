@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "../src/server";
 import { OpenBaoKmsProvider } from "../src/storage-openbao";
 import { S3BlobProvider } from "../src/storage-s3";
 import { resolveStorageProviderConfig } from "../src/providers";
@@ -35,4 +39,18 @@ test("S3 provider reports missing credentials without making a request", async (
   const provider = new S3BlobProvider({ endpoint: "http://127.0.0.1:1", bucket: "mao" });
   expect(provider.status()).toMatchObject({ kind: "s3", available: false, code: "PROVIDER_CONFIG_INVALID" });
   await expect(provider.put(new Uint8Array([1, 2, 3]))).rejects.toMatchObject({ code: "PROVIDER_CONFIG_INVALID" });
+});
+
+test("local app exposes provider status without changing the existing Vault path", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-storage-app-"));
+  const database = join(root, "factory.db");
+  const app = createApp({ storageRoot: root, dbPath: database, legacyPath: database, dispatchWork: false });
+  try {
+    const response = await app.fetch(new Request("http://localhost/api/v1/storage"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ mode: "local", state: { kind: "sqlite", available: true }, blob: { kind: "local", available: true }, secret: { kind: "local", available: true }, kms: { kind: "local-vault", available: true } });
+  } finally {
+    app.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

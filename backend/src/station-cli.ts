@@ -502,7 +502,7 @@ export function stationErrorExit(error: unknown): number {
   if (!(error instanceof FactoryError || error instanceof PodmanError)) return 1;
   if (error.code === "CLI_USAGE") return 2;
   if (error.code === "REGISTRY_INVALID") return 3;
-  if (["IMAGE_NOT_FOUND", "PODMAN_UNAVAILABLE", "PODMAN_FAILED", "RUNTIME_UNAVAILABLE", "GIT_FAILED", "REGISTRY_NOT_CONFIGURED"].includes(error.code)) return 4;
+  if (["IMAGE_NOT_FOUND", "PODMAN_UNAVAILABLE", "PODMAN_FAILED", "RUNTIME_UNAVAILABLE", "GIT_FAILED", "REGISTRY_NOT_CONFIGURED", "PROVIDER_UNAVAILABLE", "PROVIDER_CONFIG_INVALID", "CAS_CONFLICT", "CAS_MISSING"].includes(error.code)) return 4;
   return 1;
 }
 

@@ -9,6 +9,9 @@ import { Warehouse } from "./legacy/warehouse";
 import type { Artifact, BusinessConversion, BusinessSystem, Event, HarnessProfile, TalkMessage } from "./models";
 import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
+import { LocalSecretProvider, ProviderError, SqliteStateProvider, type StorageProviders } from "./storage";
+import { createStorageProviders, storageStatus } from "./storage-factory";
+import { resolveStorageProviderConfig } from "./providers";
 import { ForemanCoordinator } from "./foreman";
 import { prepareProjectSources, type PrepareProjectSources } from "./project-source-mounts";
 import { repositoryReference } from "./project-sources";
@@ -229,6 +232,7 @@ export interface BackendApp {
   store: SqliteStore;
   events: EventBus;
   vault: VaultStore;
+  storage: StorageProviders;
   foreman: ForemanCoordinator;
   operator: OperatorCoordinator;
   registerRepository: RegisterRepository;
@@ -272,14 +276,29 @@ interface BackendAppOptions {
   dispatchWork?: boolean;
   clock?: Clock;
   uuid?: () => string;
+  storage?: StorageProviders;
 }
 
 export function createApp(options: BackendAppOptions = {}): BackendApp {
+  const storageRoot = resolve(options.storageRoot ?? process.env.FACTORY_ROOT ?? dirname(process.env.FACTORY_DB_PATH ?? ".factory/factory.db"));
+  const storageConfig = resolveStorageProviderConfig();
+  if (storageConfig.state !== "sqlite" || storageConfig.blob !== "local" || storageConfig.secret !== "local") {
+    throw new ProviderError("PROVIDER_UNAVAILABLE", "当前 Bun 控制面尚未将非本地 provider 接入业务事务", {
+      reason: "run provider migrate and verify before switching the active control plane",
+      state: storageConfig.state,
+      blob: storageConfig.blob,
+      secret: storageConfig.secret,
+    });
+  }
   const store = new SqliteStore(options.dbPath, options.legacyPath, { clock: options.clock, uuid: options.uuid });
   const events = new EventBus(store);
   const eventStreams = new AbortController();
   const vault = options.vault ?? new VaultStore(undefined, undefined, store.clock);
-  const storageRoot = resolve(options.storageRoot ?? process.env.FACTORY_ROOT ?? dirname(process.env.FACTORY_DB_PATH ?? ".factory/factory.db"));
+  const storage = options.storage ?? createStorageProviders({
+    root: storageRoot,
+    state: new SqliteStateProvider(store.db, false),
+    secret: new LocalSecretProvider(vault),
+  });
   let uploadWarehouse: Warehouse | undefined;
   const uploads = () => uploadWarehouse ??= new Warehouse(storageRoot, store.db, store.clock, new RandomIds());
   const runtime = options.runtime ?? selectedContainerProvider();
@@ -711,6 +730,10 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_SCOPE", message: "只有管理员凭据可以读取平台运行时信息" }, 403);
       const health = await runtimeHealth();
       return response({ provider, health, dependency: runtimeDependency(health, provider) });
+    }
+    if (url.pathname === "/api/v1/storage" && request.method === "GET") {
+      if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以读取存储 provider 状态" }, 403);
+      return response(storageStatus(storage));
     }
     if (url.pathname === "/api/v1/runtime/ensure-ready" && request.method === "POST") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以启动平台运行时" }, 403);
@@ -1423,15 +1446,17 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     await Promise.allSettled([foreman.close(), operator.close(), machineExecutor.close(), ...activeKernelMachines.values()]);
     for (const context of activeKernelContexts.values()) context.close();
     activeKernelContexts.clear();
+    storage.state.close();
     store.close();
   })();
   const stop = () => {
     beginStop();
     for (const context of activeKernelContexts.values()) context.close();
     activeKernelContexts.clear();
+    storage.state.close();
     store.close();
   };
-  return { store, events, vault, foreman, operator, registerRepository, fetch, recoverQueuedWork, stop, shutdown };
+  return { store, events, vault, storage, foreman, operator, registerRepository, fetch, recoverQueuedWork, stop, shutdown };
 }
 
 function staticResponse(pathname: string): Response {
