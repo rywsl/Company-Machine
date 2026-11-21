@@ -142,9 +142,11 @@ abstract class CliStateProvider implements StateProvider {
       this.run("SELECT 1");
       return 0;
     }
+    this.runImmediate("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)");
+    const applied = new Set(this.query<Record<string, unknown>>("SELECT version FROM schema_migrations").map((row) => Number(row.version ?? row.value)).filter(Number.isFinite));
     this.transaction(() => {
-      this.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)");
       migrations.forEach((migration, index) => {
+        if (applied.has(index + 1)) return;
         const translated = this.translateMigration(migration);
         this.execute(translated);
         const version = index + 1;
@@ -160,7 +162,7 @@ abstract class CliStateProvider implements StateProvider {
     if (/\b(?:AUTOINCREMENT|WITHOUT\s+ROWID|STRICT)\b/i.test(sql)) {
       throw new ProviderError("PROVIDER_CONFIG_INVALID", `${this.kind} migration uses unsupported SQLite syntax`, { reason: "sql-dialect" });
     }
-    if (this.kind === "postgres") return sql.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT");
+    if (this.kind === "postgres") return sql.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT").replace(/;\s*$/, " ON CONFLICT DO NOTHING;");
     return sql.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT IGNORE");
   }
 

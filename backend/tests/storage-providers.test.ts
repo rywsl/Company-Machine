@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createApp } from "../src/server";
 import { OpenBaoKmsProvider } from "../src/storage-openbao";
 import { S3BlobProvider } from "../src/storage-s3";
-import { resolveStorageProviderConfig } from "../src/providers";
+import { resolveStorageProviderConfig, SqliteStateProvider } from "../src/providers";
 import { bindSqlParameters, MysqlStateProvider, PostgresStateProvider } from "../src/storage-sql";
 import { ManagedDatabase } from "../src/sqlite";
 import { createStorageProviders } from "../src/storage-factory";
@@ -107,6 +107,16 @@ test("SQL providers fail closed when their connection environment is absent", ()
   expect(new MysqlStateProvider().status()).toMatchObject({ kind: "mysql", available: false, code: "PROVIDER_UNAVAILABLE" });
 });
 
+test("SQLite state migrations are transactional and idempotent", () => {
+  const provider = new SqliteStateProvider(":memory:");
+  try {
+    const migration = "CREATE TABLE IF NOT EXISTS migration_probe (id TEXT PRIMARY KEY)";
+    expect(provider.migrate([migration])).toBe(1);
+    expect(provider.migrate([migration])).toBe(1);
+    expect(provider.query("SELECT name FROM sqlite_master WHERE name='migration_probe'")).toHaveLength(1);
+  } finally { provider.close(); }
+});
+
 test("SQL placeholder binding preserves literals and comments", () => {
   expect(bindSqlParameters("SELECT '?' AS literal, ? AS value -- ?\n/* ? */", ["O'Reilly"]))
     .toBe("SELECT '?' AS literal, 'O''Reilly' AS value -- ?\n/* ? */");
@@ -154,6 +164,27 @@ test("dry-run migration never writes the active provider pointer", async () => {
     const report = await migrateStorage({ root: sourceRoot, target, dryRun: true });
     expect(report.dryRun).toBe(true);
     expect(report.switched).toBe(false);
+    expect(readActiveStoragePointer(sourceRoot)).toBeUndefined();
+  } finally {
+    target.state.close();
+    rmSync(sourceRoot, { recursive: true, force: true });
+    rmSync(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("migration verification failure leaves the active provider pointer untouched", async () => {
+  const sourceRoot = mkdtempSync(join(tmpdir(), "mao-storage-fail-source-"));
+  const targetRoot = mkdtempSync(join(tmpdir(), "mao-storage-fail-target-"));
+  const database = join(sourceRoot, "factory.db");
+  const sourceDb = new ManagedDatabase(database, { create: true });
+  sourceDb.exec("CREATE TABLE records (id TEXT PRIMARY KEY)");
+  sourceDb.close();
+  const target = createStorageProviders({ root: targetRoot, env: {} as NodeJS.ProcessEnv });
+  const failingState = Object.create(target.state) as typeof target.state;
+  failingState.verify = () => [{ kind: "forced_failure" }];
+  const failingTarget = { ...target, state: failingState } as typeof target;
+  try {
+    await expect(migrateStorage({ root: sourceRoot, target: failingTarget })).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
     expect(readActiveStoragePointer(sourceRoot)).toBeUndefined();
   } finally {
     target.state.close();

@@ -224,7 +224,9 @@ export class SqliteStateProvider implements StateProvider {
     if (migrations.length === 0) return Number(this.database.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0);
     this.database.transaction(() => {
       this.database.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)");
+      const applied = new Set(this.database.query<{ version: number }>("SELECT version FROM schema_migrations").all().map(({ version }) => Number(version)));
       migrations.forEach((migration, index) => {
+        if (applied.has(index + 1)) return;
         this.database.exec(migration);
         this.database.query("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)").run(index + 1);
       });
