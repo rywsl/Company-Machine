@@ -26,7 +26,7 @@ function rows(value: unknown, field: string): Json[] {
 
 function uri(value: string): string {
   if (/^(?:file|vault|secret):\/\//i.test(value)) return value.startsWith("file:") ? LOCAL_PATH : REDACTED;
-  if (!/^(?:https?|ssh|git):\/\//i.test(value)) return value;
+  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(value)) return value;
   try {
     const parsed = new URL(value);
     let changed = false;

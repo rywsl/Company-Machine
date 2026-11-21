@@ -16,7 +16,12 @@ describe("business record and DAG boundaries", () => {
     try {
       const { store } = source;
       const system = store.createBusinessSystem({
-        name: "Portable factory", metadata: { workspaceRoot: "/srv/private/work", OPENAI_API_KEY: "unregistered-key" },
+        name: "Portable factory", metadata: {
+          workspaceRoot: "/srv/private/work",
+          OPENAI_API_KEY: "unregistered-key",
+          database_url: "postgres://db-user:database-password@example.test:5432/private",
+          git_mirror: "git+ssh://git-user:repository-password@example.test/team/repo.git",
+        },
       });
       const first = store.createIntake({
         business_system_id: system.id, name: "Producer", repo_url: "https://reader:repository-password@example.test/team/repo.git?token=repository-token",
@@ -63,7 +68,7 @@ describe("business record and DAG boundaries", () => {
       expect(exported.status).toBe(200);
       const document = await body(exported);
       const serialized = JSON.stringify(document);
-      for (const privateValue of ["plain-secret", "unregistered-key", "host-harness-session", "repository-password", "repository-token", "/srv/private", "private\\\\checkout", "vault://secret/old"]) {
+      for (const privateValue of ["plain-secret", "unregistered-key", "database-password", "host-harness-session", "repository-password", "repository-token", "/srv/private", "private\\\\checkout", "vault://secret/old"]) {
         expect(serialized).not.toContain(privateValue);
       }
       const repository = document.projects.find((item: any) => item.id === first.id).sources.find((item: any) => item.kind === "repo_url");

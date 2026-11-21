@@ -130,7 +130,7 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 | `backend/tests/storage-providers.test.ts` | 默认本地 provider 选择、OpenBao KV/Transit HTTP 边界、S3 凭据错误和本地应用 provider 状态投影 |
 | `backend/tests/storage-bun-sql.test.ts` | Bun 原生 PostgreSQL/MySQL 连接池、异步事务、占位符转换、迁移和 provider fail-closed |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
-| `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验，以及同一 Conversion 从 planned/running 幂等升级为 completed 的状态合并 |
+| `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验、跨平台 URI 凭据脱敏，以及同一 Conversion 从 planned/running 幂等升级为 completed 的状态合并 |
 | `backend/tests/business-runtime.test.ts` | 业务 DAG 节点集合限定执行范围、Operator 来源只读交接、缺少来源工具时的 waiting_resources 和资源请求、暂存物料的成功登记和下游挂载、文件下载授权、超时清理、启动前的运行时就绪和容器 Operator 的 ACP 能力边界 |
 | `backend/tests/material-files.test.ts` | 验证暂存普通文件、按摘要复用输入挂载、跨读取边界的密钥检测及临时文件清理 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、登记仓库与读取厂区 DAG、只读 Registry 检查与用法、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
