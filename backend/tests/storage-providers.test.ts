@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
@@ -100,6 +100,46 @@ test("S3 provider performs idempotent CAS writes, HEAD, GET and digest verificat
     expect(calls.filter((call) => call.startsWith("HEAD "))).toHaveLength(2);
     expect(calls.filter((call) => call.startsWith("GET "))).toHaveLength(1);
     expect((await fresh.verify([digest])).length).toBe(0);
+  } finally {
+    server.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("S3 provider streams putFile and getFile without changing the CAS contract", async () => {
+  const objects = new Map<string, Uint8Array>();
+  const methods: string[] = [];
+  const server = Bun.serve({ port: 0, async fetch(request) {
+    const key = new URL(request.url).pathname;
+    methods.push(request.method);
+    if (request.method === "PUT") {
+      objects.set(key, new Uint8Array(await request.arrayBuffer()));
+      return new Response(null, { status: 200 });
+    }
+    if (request.method === "HEAD") {
+      const body = objects.get(key);
+      return body
+        ? new Response(null, { status: 200, headers: { "content-length": String(body.length), "x-amz-meta-sha256": createHash("sha256").update(body).digest("hex") } })
+        : new Response(null, { status: 404 });
+    }
+    if (request.method === "GET") {
+      const body = objects.get(key);
+      return body ? new Response(body as unknown as BodyInit) : new Response(null, { status: 404 });
+    }
+    return new Response(null, { status: 405 });
+  }});
+  const root = mkdtempSync(join(tmpdir(), "mao-s3-stream-"));
+  const source = join(root, "source.bin");
+  const destination = join(root, "nested", "destination.bin");
+  const environment = { MAO_S3_ACCESS_KEY: "access", MAO_S3_SECRET_KEY: "secret" } as NodeJS.ProcessEnv;
+  writeFileSync(source, new Uint8Array(256 * 1024).fill(7));
+  try {
+    const provider = new S3BlobProvider({ endpoint: `http://127.0.0.1:${server.port}`, bucket: "mao", cacheRoot: join(root, "cache"), environment });
+    const digest = await provider.putFile(source);
+    const fresh = new S3BlobProvider({ endpoint: `http://127.0.0.1:${server.port}`, bucket: "mao", cacheRoot: join(root, "fresh-cache"), environment });
+    await fresh.getFile(digest, destination);
+    expect(readFileSync(destination)).toEqual(readFileSync(source));
+    expect(methods).toEqual(["HEAD", "PUT", "GET"]);
   } finally {
     server.stop();
     rmSync(root, { recursive: true, force: true });

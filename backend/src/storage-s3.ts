@@ -1,5 +1,8 @@
 import { createHash, createHmac } from "node:crypto";
-import { mkdirSync, readFileSync, statSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { createReadStream, createWriteStream, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { chmod, copyFile } from "node:fs/promises";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { dirname, join } from "node:path";
 import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 import { ProviderError, providerFailure } from "./provider-errors";
@@ -82,10 +85,30 @@ export class S3BlobProvider implements BlobProvider {
   }
 
   async putFile(source: string): Promise<string> {
-    let bytes: Buffer;
-    try { bytes = readFileSync(source); }
-    catch (error) { throw new ProviderError("PROVIDER_UNAVAILABLE", "cannot read blob source", { reason: error instanceof Error ? error.message : String(error) }); }
-    return this.put(bytes);
+    const file = await this.hashFile(source);
+    const digest = `sha256:${file.hash}`;
+    const existing = await this.headWithMetadata(digest);
+    if (existing) {
+      if (existing.digest !== digest || existing.size !== file.size) {
+        throw new ProviderError("CAS_CONFLICT", "remote object metadata does not match the content digest", { digest });
+      }
+      if (!existing.metadataPresent) await this.verifyRemoteDigest(digest, file.size);
+      this.knownDigests.add(digest);
+      return digest;
+    }
+    const stream = createReadStream(source);
+    try {
+      await this.request("PUT", digest, stream, {
+        "content-length": String(file.size),
+        "content-type": "application/octet-stream",
+        "x-amz-meta-sha256": file.hash,
+      }, file.hash);
+    } catch (error) {
+      stream.destroy();
+      throw error;
+    }
+    this.knownDigests.add(digest);
+    return digest;
   }
 
   async put(input: BlobInput, expectedDigest?: string): Promise<string> {
@@ -134,9 +157,41 @@ export class S3BlobProvider implements BlobProvider {
   }
 
   async getFile(digest: string, destination: string): Promise<void> {
-    const bytes = await this.get(digest);
-    mkdirSync(dirname(destination), { recursive: true });
-    writeFileSync(destination, bytes, { mode: 0o600 });
+    this.checkDigest(digest);
+    const cached = this.cachePath(digest);
+    try {
+      const cachedFile = await this.hashFile(cached);
+      if (`sha256:${cachedFile.hash}` === digest) {
+        await this.copyFile(cached, destination);
+        this.knownDigests.add(digest);
+        return;
+      }
+      unlinkSync(cached);
+    } catch { /* cache miss */ }
+
+    const response = await this.request("GET", digest);
+    if (!response.body) throw new ProviderError("PROVIDER_UNAVAILABLE", "S3 response has no body", { operation: "GET" });
+    mkdirSync(dirname(cached), { recursive: true });
+    const temporary = `${cached}.${randomUuid()}.part`;
+    try {
+      const hash = createHash("sha256");
+      let size = 0;
+      const hashing = new Transform({ transform(chunk, _encoding, callback) {
+        hash.update(chunk);
+        size += chunk.length;
+        callback(null, chunk);
+      } });
+      await pipeline(Readable.fromWeb(response.body as ReadableStream<Uint8Array>), hashing, createWriteStream(temporary, { mode: 0o600 }));
+      if (size !== Number(response.headers.get("content-length") ?? size) || `sha256:${hash.digest("hex")}` !== digest) {
+        throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object digest mismatch", { digest });
+      }
+      renameSync(temporary, cached);
+      await this.copyFile(cached, destination);
+      this.knownDigests.add(digest);
+    } catch (error) {
+      try { unlinkSync(temporary); } catch { /* best effort cleanup */ }
+      throw error;
+    }
   }
 
   blobPath(digest: string): string { this.checkDigest(digest); return this.cachePath(digest); }
@@ -186,6 +241,50 @@ export class S3BlobProvider implements BlobProvider {
   private checkDigest(digest: string): void { if (!DIGEST.test(digest)) throw new ProviderError("CAS_MISSING", "blob digest is invalid", { digest }); }
   private cachePath(digest: string): string { const value = digest.slice(7); return join(this.cacheRoot, "sha256", value.slice(0, 2), value.slice(2)); }
 
+  private async hashFile(source: string): Promise<{ hash: string; size: number }> {
+    try {
+      const hash = createHash("sha256");
+      let size = 0;
+      for await (const chunk of createReadStream(source)) {
+        hash.update(chunk);
+        size += chunk.length;
+      }
+      return { hash: hash.digest("hex"), size };
+    } catch (error) {
+      throw new ProviderError("PROVIDER_UNAVAILABLE", "cannot read blob source", { reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  private async verifyRemoteDigest(digest: string, expectedSize: number): Promise<void> {
+    const response = await this.request("GET", digest);
+    if (!response.body) throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object has no body", { digest });
+    const result = await this.hashResponse(response);
+    if (result.size !== expectedSize || `sha256:${result.hash}` !== digest) throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object content does not match its digest", { digest });
+  }
+
+  private async hashResponse(response: Response): Promise<{ hash: string; size: number }> {
+    const hash = createHash("sha256");
+    let size = 0;
+    for await (const chunk of Readable.fromWeb(response.body as ReadableStream<Uint8Array>)) {
+      hash.update(chunk);
+      size += chunk.length;
+    }
+    return { hash: hash.digest("hex"), size };
+  }
+
+  private async copyFile(source: string, destination: string): Promise<void> {
+    mkdirSync(dirname(destination), { recursive: true });
+    const temporary = `${destination}.${randomUuid()}.part`;
+    try {
+      await copyFile(source, temporary);
+      await chmod(temporary, 0o600);
+      renameSync(temporary, destination);
+    } catch (error) {
+      try { unlinkSync(temporary); } catch { /* best effort cleanup */ }
+      throw new ProviderError("PROVIDER_UNAVAILABLE", "cannot materialize blob destination", { reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   private objectUrl(digest: string): URL {
     const value = digest.slice(7);
     const path = `${this.prefix ? `${this.prefix}/` : ""}sha256/${value.slice(0, 2)}/${value.slice(2)}`;
@@ -197,27 +296,29 @@ export class S3BlobProvider implements BlobProvider {
     return url;
   }
 
-  private async request(method: string, digest: string, body?: Uint8Array, extra: Record<string, string> = {}): Promise<Response> {
+  private async request(method: string, digest: string, body?: BodyInit, extra: Record<string, string> = {}, payloadHash?: string): Promise<Response> {
     const url = this.objectUrl(digest);
-    const payloadHash = body === undefined ? sha256("") : sha256(body);
+    const signedPayloadHash = payloadHash ?? (body === undefined ? sha256("") : sha256(body as Uint8Array));
     const now = this.clock.now();
     const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
     const date = amzDate.slice(0, 8);
     const access = this.environment[this.accessKeyEnv];
     const secret = this.environment[this.secretKeyEnv];
     if (!access || !secret) throw new ProviderError("PROVIDER_CONFIG_INVALID", "S3 credentials are missing", { accessKeyEnv: this.accessKeyEnv, secretKeyEnv: this.secretKeyEnv });
-    const headers: Record<string, string> = { host: url.host, "x-amz-content-sha256": payloadHash, "x-amz-date": amzDate, ...extra };
+    const headers: Record<string, string> = { host: url.host, "x-amz-content-sha256": signedPayloadHash, "x-amz-date": amzDate, ...extra };
     const session = this.sessionTokenEnv ? this.environment[this.sessionTokenEnv] : undefined;
     if (session) headers["x-amz-security-token"] = session;
     const signedNames = Object.keys(headers).map((key) => key.toLowerCase()).sort();
     const canonicalHeaders = signedNames.map((key) => `${key}:${headers[key]!.trim().replace(/\s+/g, " ")}\n`).join("");
-    const canonical = `${method}\n${url.pathname.split("/").map((part, index) => index === 0 ? "" : encodeURIComponent(decodeURIComponent(part))).join("/")}\n${url.searchParams.toString()}\n${canonicalHeaders}\n${signedNames.join(";")}\n${payloadHash}`;
+    const canonical = `${method}\n${url.pathname.split("/").map((part, index) => index === 0 ? "" : encodeURIComponent(decodeURIComponent(part))).join("/")}\n${url.searchParams.toString()}\n${canonicalHeaders}\n${signedNames.join(";")}\n${signedPayloadHash}`;
     const scope = `${date}/${this.region}/s3/aws4_request`;
     const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${sha256(canonical)}`;
     const signingKey = hmac(hmac(hmac(hmac(`AWS4${secret}`, date), this.region), "s3"), "aws4_request");
     headers.authorization = `AWS4-HMAC-SHA256 Credential=${access}/${scope}, SignedHeaders=${signedNames.join(";")}, Signature=${hex(hmac(signingKey, stringToSign))}`;
     try {
-      const response = await fetch(url, { method, headers, body: body as BodyInit | undefined, signal: AbortSignal.timeout(this.timeoutMs) });
+      const init: RequestInit & { duplex?: "half" } = { method, headers, body, signal: AbortSignal.timeout(this.timeoutMs) };
+      if (body !== undefined && payloadHash !== undefined && !(body instanceof Uint8Array) && typeof body !== "string") init.duplex = "half";
+      const response = await fetch(url, init);
       if (!response.ok) throw new ProviderError(response.status >= 500 ? "PROVIDER_UNAVAILABLE" : response.status === 404 ? "CAS_MISSING" : "KMS_ERROR", `S3 request failed (${response.status})`, { status: response.status, operation: method });
       return response;
     } catch (error) {
