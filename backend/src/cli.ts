@@ -368,8 +368,11 @@ async function runStorageCommand(args: string[]): Promise<number> {
   catch (error) { console.log(JSON.stringify(storageJsonError(error), null, 2)); return 4; }
   try {
     if (operation === "status") {
-      console.log(JSON.stringify({ ok: true, ...(await probeStorageStatus(storage)) }, null, 2));
-      return 0;
+      const status = await probeStorageStatus(storage);
+      const providers = [status.state, status.blob, status.secret, status.kms] as Array<{ available?: boolean }>;
+      const ok = providers.every((item) => item.available === true);
+      console.log(JSON.stringify({ ok, ...status }, null, 2));
+      return ok ? 0 : 4;
     }
     if (operation === "verify") {
       const problems = await storage.blob.verify();
