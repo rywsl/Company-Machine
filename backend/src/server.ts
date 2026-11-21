@@ -1261,6 +1261,20 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
           : undefined,
         verification: { state: "pending", checkedAt: store.timestamp() },
       });
+      const persistedProfile = store.listHarnessProfiles().find((item) => item.id === profile.id) ?? profile;
+      if (body.role === "foreman" && [sessionTimeoutSeconds, contextTokens, sessionBudgetUsd, dailyBudgetUsd, maxTurns, maxAttempts, backoffSeconds].some((value) => value !== undefined)) {
+        const operatorProfile = store.listHarnessProfiles().find((item) => item.role === "operator");
+        if (operatorProfile) store.saveHarnessProfile({
+          ...operatorProfile,
+          sessionTimeoutSeconds: persistedProfile.sessionTimeoutSeconds,
+          contextTokens: persistedProfile.contextTokens,
+          sessionBudgetUsd: persistedProfile.sessionBudgetUsd,
+          dailyBudgetUsd: persistedProfile.dailyBudgetUsd,
+          maxTurns: persistedProfile.maxTurns,
+          maxAttempts: persistedProfile.maxAttempts,
+          backoffSeconds: persistedProfile.backoffSeconds,
+        });
+      }
       verificationJobs.get(profile.id)?.abort();
       verificationJobs.delete(profile.id);
       events.publish("harness.profile.saved", { id: profile.id, runtime: profile.runtime, role: profile.role });
@@ -1268,8 +1282,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       // Reconcile the durable queue immediately so first-run setup does not
       // require a restart or a manual dispatch request.
       if (profile.role === "foreman") recoverQueuedWork();
-      const foremanProfile = profile.role === "foreman" ? profile : store.listHarnessProfiles().find((item) => item.role === "foreman");
-      return response({ profile: publicProfile(profile, (ref) => vault.get(ref)), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) } }, 200);
+      const foremanProfile = persistedProfile.role === "foreman" ? persistedProfile : store.listHarnessProfiles().find((item) => item.role === "foreman");
+      return response({ profile: publicProfile(persistedProfile, (ref) => vault.get(ref)), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, profile: publicProfile(foremanProfile, (ref) => vault.get(ref)) } }, 200);
     }
     if (url.pathname === "/api/web/harnesses/verify" && request.method === "POST") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以验证 Harness" }, 403);

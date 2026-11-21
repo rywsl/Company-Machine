@@ -33,11 +33,15 @@ describe("Bun business backend", () => {
       }
       const saved = await configure({ session_timeout_s: 45 });
       expect((await jsonResponse(saved)).profile.session_timeout_s).toBe(45);
+      app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "operator-fixture", mode: "session" });
       const advanced = await configure({ thinking_effort: "max", context: 256000, session_budget_usd: 2, daily_budget_usd: 12, max_turns: 30, max_attempts: 3, backoff_s: 15 });
       expect((await jsonResponse(advanced)).profile).toMatchObject({ thinking_effort: "max", context: 256000, session_budget_usd: 2, daily_budget_usd: 12, max_turns: 30, max_attempts: 3, backoff_s: 15 });
       expect((await jsonResponse(await configure({ model: "other" }))).profile.session_timeout_s).toBe(45);
       const reopened = new SqliteStore(dbPath, dbPath);
-      try { expect(reopened.listHarnessProfiles()[0]).toMatchObject({ sessionTimeoutSeconds: 45, model: "other", thinkingEffort: "max", contextTokens: 256000, sessionBudgetUsd: 2, dailyBudgetUsd: 12, maxTurns: 30, maxAttempts: 3, backoffSeconds: 15 }); }
+      try {
+        expect(reopened.listHarnessProfiles().find((item) => item.role === "foreman")).toMatchObject({ sessionTimeoutSeconds: 45, model: "other", thinkingEffort: "max", contextTokens: 256000, sessionBudgetUsd: 2, dailyBudgetUsd: 12, maxTurns: 30, maxAttempts: 3, backoffSeconds: 15 });
+        expect(reopened.listHarnessProfiles().find((item) => item.role === "operator")).toMatchObject({ sessionTimeoutSeconds: 45, contextTokens: 256000, sessionBudgetUsd: 2, dailyBudgetUsd: 12, maxTurns: 30, maxAttempts: 3, backoffSeconds: 15 });
+      }
       finally { reopened.close(); }
     } finally { app.stop(); await rm(root, { recursive: true, force: true }); }
   });
