@@ -29,7 +29,7 @@
 
 `local` 模式的默认集合如下。
 
-- `StateProvider` 使用当前 Bun SQLite 实现和 `FACTORY_DB_PATH` 或 `FACTORY_ROOT` 路径。
+- `StateProvider` 使用当前 Bun SQLite 实现和 `BUSINESS_DB_PATH` 或 `FACTORY_ROOT/factory.db` 路径。应用层仍可通过现有 `FACTORY_DB_PATH` 选择兼容的控制面数据库位置。
 - `BlobProvider` 使用当前本地 CAS 布局 `cas/sha256/<前两位>/<其余摘要>`。
 - `SecretProvider` 与 `KmsProvider` 使用当前本地 AES-256-GCM Vault。
 - 本地模式只读取 `MAO_VAULT_PATH`、`MAO_VAULT_KEY_PATH` 和 `MAO_VAULT_KEY`。即使存在 `MAO_OPENBAO_*`、`MAO_S3_*`、`MAO_POSTGRES_*` 或 `MAO_MYSQL_*`，也不能读取和连接。
