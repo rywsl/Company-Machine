@@ -141,22 +141,23 @@ type HarnessForm = {
   mode: string;
 };
 
-function emptyHarnessForm(role: string, runtime: string, profile?: HarnessProfile | null): HarnessForm {
+function emptyHarnessForm(role: string, runtime: string, profile?: HarnessProfile | null, sharedProfile?: HarnessProfile | null): HarnessForm {
+  const shared = role === "operator" ? sharedProfile : undefined;
   return {
     runtime: profile?.runtime ?? runtime,
     base_url: profile?.base_url ?? "",
     model: profile?.model ?? "",
     api_key: "",
-    thinking_effort: profile?.thinking_effort ?? (role === "foreman" ? "max" : "medium"),
-    context: String(profile?.context ?? 128000),
+    thinking_effort: profile?.thinking_effort ?? shared?.thinking_effort ?? (role === "foreman" ? "max" : "medium"),
+    context: String(profile?.context ?? shared?.context ?? 128000),
     image: profile?.image ?? "",
     network: profile?.network ?? (role === "foreman" ? "bridge" : "egress"),
-    session_timeout_s: String(profile?.session_timeout_s ?? 600),
-    session_budget_usd: String(profile?.session_budget_usd ?? 1),
-    daily_budget_usd: String(profile?.daily_budget_usd ?? 10),
-    max_turns: String(profile?.max_turns ?? 20),
-    max_attempts: String(profile?.max_attempts ?? 2),
-    backoff_s: String(profile?.backoff_s ?? 60),
+    session_timeout_s: String(profile?.session_timeout_s ?? shared?.session_timeout_s ?? 600),
+    session_budget_usd: String(profile?.session_budget_usd ?? shared?.session_budget_usd ?? 1),
+    daily_budget_usd: String(profile?.daily_budget_usd ?? shared?.daily_budget_usd ?? 10),
+    max_turns: String(profile?.max_turns ?? shared?.max_turns ?? 20),
+    max_attempts: String(profile?.max_attempts ?? shared?.max_attempts ?? 2),
+    backoff_s: String(profile?.backoff_s ?? shared?.backoff_s ?? 60),
     mode: profile?.mode ?? (role === "foreman" ? "session" : "session"),
   };
 }
@@ -165,7 +166,8 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
   const profiles = (bootstrap.harness_profiles ?? []).filter((item) => item.role === role);
   const runtimes = bootstrap.harnesses.filter((item) => item.kind === "agent-cli" || item.roles?.includes(role));
   const [selectedProfile, setSelectedProfile] = useState("");
-  const [form, setForm] = useState<HarnessForm>(() => emptyHarnessForm(role, initialRuntime ?? runtimes[0]?.id ?? ""));
+  const sharedProfile = role === "operator" ? bootstrap.foreman.profile : undefined;
+  const [form, setForm] = useState<HarnessForm>(() => emptyHarnessForm(role, initialRuntime ?? runtimes[0]?.id ?? "", undefined, sharedProfile));
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState("");
@@ -180,10 +182,10 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
     const current = profiles.find((item) => item.runtime === initialRuntime) ?? profiles[0];
     setSelectedProfile(current?.id ?? "");
     setSavedProfile(current ?? null);
-    setForm(emptyHarnessForm(role, initialRuntime ?? runtimes[0]?.id ?? "", current));
+    setForm(emptyHarnessForm(role, initialRuntime ?? runtimes[0]?.id ?? "", current, sharedProfile));
     setApiKeySource(current?.api_key_configured ? current.id : "");
     setMessage("");
-  }, [open, role, initialRuntime]);
+  }, [open, role, initialRuntime, sharedProfile]);
 
   if (!open) return null;
   const update = (key: keyof HarnessForm, value: string) => setForm((current) => ({ ...current, [key]: value }));
@@ -192,7 +194,7 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
     setSelectedProfile(id);
     setSavedProfile(profile ?? null);
     setApiKeySource(profile?.api_key_configured ? profile.id : "");
-    if (profile) setForm(emptyHarnessForm(role, profile.runtime, profile));
+    if (profile) setForm(emptyHarnessForm(role, profile.runtime, profile, sharedProfile));
   };
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
