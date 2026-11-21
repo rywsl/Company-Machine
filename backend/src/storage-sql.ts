@@ -1,6 +1,7 @@
 import { ProviderError, type ProviderStatus, type StateProvider, type StateProviderKind } from "./providers";
 import { join } from "node:path";
 import { SqliteStateProvider } from "./providers";
+import { ProviderStateDatabase, type StateDatabase } from "./state-database";
 
 type SqlValue = string | number | boolean | null | Uint8Array;
 
@@ -79,7 +80,10 @@ abstract class CliStateProvider implements StateProvider {
   abstract readonly dsnEnv: string;
   abstract readonly mode: "production";
 
-  protected constructor(protected readonly env: NodeJS.ProcessEnv = process.env) {}
+  readonly database: StateDatabase;
+  protected constructor(protected readonly env: NodeJS.ProcessEnv = process.env) {
+    this.database = new ProviderStateDatabase(this);
+  }
   private transactionStatements: string[] | undefined;
 
   protected dsn(): string {
@@ -108,19 +112,43 @@ abstract class CliStateProvider implements StateProvider {
 
   protected abstract argv(sql: string): string[];
 
-  query<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T[] {
-    const text = this.run(bind(sql, params)).trim();
-    if (!text) return [];
-    return text.split(/\r?\n/).filter(Boolean).map((line) => {
-      try { return JSON.parse(line) as T; }
-      catch { return { value: line } as T; }
+  protected querySql(sql: string): string {
+    return this.runImmediate(sql);
+  }
+
+  protected parseRows(text: string): Array<Record<string, unknown>> {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+    return trimmed.split(/\r?\n/).filter(Boolean).map((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        if (Array.isArray(parsed)) return { value: parsed };
+        if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+      } catch {
+        // The MySQL adapter below parses its tabular output after this method.
+      }
+      return { value: line };
     });
   }
 
+  query<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T[] {
+    const statement = this.translateQuery(bind(sql, params));
+    if (this.transactionStatements) {
+      const script = ["BEGIN", ...this.transactionStatements, statement, "ROLLBACK"].join(";\n");
+      return this.parseRows(this.querySql(script)) as T[];
+    }
+    return this.parseRows(this.querySql(statement)) as T[];
+  }
+
+  protected translateQuery(sql: string): string { return sql; }
+
   execute(sql: string, params: readonly unknown[] = []): { changes: number; lastInsertRowid?: number } {
-    this.run(bind(sql, params));
+    const statement = this.translateExecute(bind(sql, params));
+    if (statement.trim()) this.run(statement);
     return { changes: 0 };
   }
+
+  protected translateExecute(sql: string): string { return sql; }
 
   transaction<T>(_work: () => T): T {
     if (this.transactionStatements) throw new ProviderError("PROVIDER_UNAVAILABLE", `${this.kind} transaction is already active`, { reason: "nested-transaction" });
@@ -223,6 +251,29 @@ export class PostgresStateProvider extends CliStateProvider {
     }
     return env;
   }
+  protected translateQuery(sql: string): string {
+    const statement = sql.replace(/;\s*$/, "");
+    const pragma = /^PRAGMA\s+table_info\(([^)]+)\)$/i.exec(statement.trim());
+    if (pragma) {
+      const table = pragma[1].replace(/["'`]/g, "");
+      return `SELECT column_name AS name FROM information_schema.columns WHERE table_name=${quoteSql(table)} ORDER BY ordinal_position`;
+    }
+    if (/^PRAGMA\s+data_version$/i.test(statement.trim())) return "SELECT 1 AS data_version";
+    if (/^PRAGMA\b/i.test(statement.trim())) return "SELECT 1";
+    return `SELECT COALESCE(json_agg(row_to_json(q))::text, '[]') FROM (${statement}) AS q`;
+  }
+  protected translateExecute(sql: string): string { return normalizeSql(sql, "postgres"); }
+  protected parseRows(text: string): Array<Record<string, unknown>> {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
+    } catch {
+      // Fall back to the bounded diagnostic shape for a malformed client response.
+    }
+    return super.parseRows(text);
+  }
 }
 
 export class MysqlStateProvider extends CliStateProvider {
@@ -236,7 +287,7 @@ export class MysqlStateProvider extends CliStateProvider {
     this.dsnEnv = env.MAO_MYSQL_DSN ? "MAO_MYSQL_DSN" : "MAO_MYSQL_URL";
   }
   protected argv(sql: string): string[] {
-    return [this.command, "--batch", "--raw", "--skip-column-names", "--protocol=TCP", "-e", sql];
+    return [this.command, "--batch", "--raw", "--protocol=TCP", "-e", sql];
   }
   protected environment(): Record<string, string> {
     const env = { ...this.env } as Record<string, string>;
@@ -255,6 +306,40 @@ export class MysqlStateProvider extends CliStateProvider {
     }
     return env;
   }
+  protected translateQuery(sql: string): string {
+    const statement = sql.replace(/;\s*$/, "");
+    const pragma = /^PRAGMA\s+table_info\(([^)]+)\)$/i.exec(statement.trim());
+    if (pragma) {
+      const table = pragma[1].replace(/["'`]/g, "");
+      return `SELECT COLUMN_NAME AS name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=${quoteSql(table)} ORDER BY ORDINAL_POSITION`;
+    }
+    if (/^PRAGMA\s+data_version$/i.test(statement.trim())) return "SELECT 1 AS data_version";
+    if (/^PRAGMA\b/i.test(statement.trim())) return "SELECT 1";
+    return statement;
+  }
+  protected translateExecute(sql: string): string { return normalizeSql(sql, "mysql"); }
+  protected parseRows(text: string): Array<Record<string, unknown>> {
+    const lines = text.trim().split(/\r?\n/).filter(Boolean);
+    if (lines.length < 2) return [];
+    const headers = lines.shift()!.split("\t");
+    return lines.map((line) => {
+      const values = line.split("\t");
+      return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? null]));
+    });
+  }
+}
+
+function quoteSql(value: string): string { return `'${value.replaceAll("'", "''")}'`; }
+
+function normalizeSql(sql: string, dialect: "postgres" | "mysql"): string {
+  let value = sql.replace(/PRAGMA\s+[^;]+;?/gi, "").replace(/\bWITHOUT\s+ROWID\b/gi, "");
+  value = value.replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "BIGINT AUTO_INCREMENT PRIMARY KEY");
+  value = value.replace(/\bAUTOINCREMENT\b/gi, dialect === "postgres" ? "" : "AUTO_INCREMENT");
+  value = value.replace(/CREATE\s+(?:UNIQUE\s+)?INDEX[^;]*(?:json_valid|CASE\s+WHEN)[^;]*;?/gi, "");
+  value = value.replace(/UPDATE\s+[^;]*json_set[^;]*;?/gi, "");
+  if (dialect === "mysql") value = value.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT IGNORE");
+  else value = value.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT");
+  return value;
 }
 
 export function stateProviderFor(kind: StateProviderKind, root: string, env: NodeJS.ProcessEnv = process.env): StateProvider {
