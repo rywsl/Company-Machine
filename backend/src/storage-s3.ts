@@ -13,6 +13,7 @@ export interface S3BlobOptions {
   secretKeyEnv?: string;
   sessionTokenEnv?: string;
   addressing?: "path" | "virtual";
+  prefix?: string;
   cacheRoot?: string;
   timeoutMs?: number;
   clock?: Clock;
@@ -30,6 +31,7 @@ export class S3BlobProvider implements BlobProvider {
   private readonly endpoint: URL;
   private readonly region: string;
   private readonly addressing: "path" | "virtual";
+  private readonly prefix: string;
   private readonly cacheRoot: string;
   private readonly timeoutMs: number;
   private readonly accessKeyEnv: string;
@@ -46,6 +48,10 @@ export class S3BlobProvider implements BlobProvider {
     if (!options.bucket || /[\\/?#]/.test(options.bucket)) throw new ProviderError("PROVIDER_CONFIG_INVALID", "S3 bucket is invalid", { variable: "MAO_S3_BUCKET" });
     this.region = options.region ?? "us-east-1";
     this.addressing = options.addressing ?? "path";
+    this.prefix = (options.prefix ?? "").replace(/^\/+|\/+$/g, "");
+    if (this.prefix && this.prefix.split("/").some((part) => !part || part === "." || part === ".." || /[?#]/.test(part))) {
+      throw new ProviderError("PROVIDER_CONFIG_INVALID", "S3 prefix is invalid", { variable: "MAO_S3_PREFIX" });
+    }
     this.cacheRoot = options.cacheRoot ?? join(process.env.FACTORY_ROOT ?? ".factory", "cas-cache");
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.accessKeyEnv = options.accessKeyEnv ?? "MAO_S3_ACCESS_KEY";
@@ -68,6 +74,7 @@ export class S3BlobProvider implements BlobProvider {
       secretKeyEnv: env.MAO_S3_SECRET_KEY_ENV ?? "MAO_S3_SECRET_KEY",
       sessionTokenEnv: env.MAO_S3_SESSION_TOKEN_ENV,
       addressing: env.MAO_S3_ADDRESSING === "virtual" ? "virtual" : "path",
+      prefix: env.MAO_S3_PREFIX,
       cacheRoot: env.MAO_S3_CACHE_ROOT,
       timeoutMs: env.MAO_S3_TIMEOUT_MS ? Number(env.MAO_S3_TIMEOUT_MS) : undefined,
       environment: env,
@@ -161,7 +168,7 @@ export class S3BlobProvider implements BlobProvider {
 
   private objectUrl(digest: string): URL {
     const value = digest.slice(7);
-    const path = `sha256/${value.slice(0, 2)}/${value.slice(2)}`;
+    const path = `${this.prefix ? `${this.prefix}/` : ""}sha256/${value.slice(0, 2)}/${value.slice(2)}`;
     const url = new URL(this.endpoint.toString());
     if (this.addressing === "virtual") {
       url.hostname = `${this.options.bucket}.${url.hostname}`;
