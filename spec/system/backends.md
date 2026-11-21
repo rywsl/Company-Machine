@@ -95,7 +95,7 @@ export interface KmsProvider {
 
 `StateStatement` 只包含规范化 SQL、参数和业务操作名。业务层不能拼接方言 SQL。`ProviderStatus` 只返回 provider 名称、模式、可用状态、版本和非敏感原因。`VerificationReport` 只返回摘要、计数和不一致位置。
 
-当前 `SqliteStore`、`Warehouse` 和 `VaultStore` 通过适配器实现这些接口。适配器必须保持已有调用方的行为和本地文件布局。
+当前 `SqliteStore`、`Warehouse` 和 `VaultStore` 通过适配器实现这些接口。`ProviderStateDatabase` 将 provider 的查询、语句和事务映射到现有同步仓储表面。适配器必须保持已有调用方的行为和本地文件布局，远程事务必须保证事务内查询能看到此前写入。
 
 ## 3. 接口
 
