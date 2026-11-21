@@ -136,6 +136,14 @@ export interface DependencyStatus {
   integrity?: Record<string, boolean>;
 }
 
+export interface StorageProviderStatus {
+  kind?: string;
+  mode?: string;
+  available?: boolean;
+  code?: string;
+  reason?: string;
+}
+
 export interface HarnessProfile {
   id: string;
   runtime: string;
@@ -199,7 +207,7 @@ export interface Bootstrap {
   talk: TalkMessage[];
   harnesses: HarnessRecord[];
   harness_profiles?: HarnessProfile[];
-  dependencies?: { harnesses: DependencyStatus[]; podman?: DependencyStatus; kiri?: DependencyStatus; docker?: DependencyStatus };
+  dependencies?: { harnesses: DependencyStatus[]; podman?: DependencyStatus; kiri?: DependencyStatus; docker?: DependencyStatus; storage?: { mode?: string; state?: StorageProviderStatus; blob?: StorageProviderStatus; secret?: StorageProviderStatus; kms?: StorageProviderStatus } };
   foreman: {
     configured?: boolean;
     setup_required?: boolean;
