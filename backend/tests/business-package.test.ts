@@ -27,6 +27,25 @@ async function cli(root: string, ...arguments_: string[]) {
   return { code, stdout, stderr };
 }
 
+async function productionCli(root: string, ...arguments_: string[]) {
+  const bun = Bun as unknown as { spawn(argv: string[], options: object): { exited: Promise<number>; stdout: ReadableStream; stderr: ReadableStream } };
+  const environment = {
+    ...process.env,
+    MAO_STORAGE_MODE: "production",
+    MAO_STATE_PROVIDER: "sqlite",
+    MAO_BLOB_PROVIDER: "local",
+    MAO_SECRET_PROVIDER: "local",
+    FACTORY_ROOT: root,
+    FACTORY_DB_PATH: join(root, "factory.db"),
+    BUSINESS_DB_PATH: join(root, "factory.db"),
+    MAO_VAULT_PATH: join(root, "vault.json"),
+    MAO_VAULT_KEY_PATH: join(root, "vault.key"),
+  };
+  const child = bun.spawn([Bun.argv[0], "run", "backend/src/cli.ts", "business", ...arguments_], { env: environment, stdout: "pipe", stderr: "pipe" });
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  return { code, stdout, stderr };
+}
+
 async function intake(app: ReturnType<typeof factory>, system: string, name: string, contents: string) {
   const body = new FormData();
   body.set("name", name);
@@ -201,5 +220,34 @@ test("exports a business package from an injected blob provider", async () => {
     await createBusinessPackage(packageRoot, { schema: "mao.business-system/1", system: { name: "Remote source" }, ref: `cas://${digest}` }, join(root, "no-local-cas"), [], provider);
     expect((await readBusinessPackage(packageRoot)).blobs).toEqual([{ digest, size: payload.byteLength }]);
     expect(new TextDecoder().decode(await Bun.file(businessPackageBlob(packageRoot, digest)).arrayBuffer())).toBe("provider-backed bytes");
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test("exports and imports a business package through the production-mode provider path", { timeout: 60_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-production-"));
+  const packageRoot = join(root, "package");
+  const targetRoot = join(root, "target");
+  try {
+    await createBusinessPackage(packageRoot, { schema: "mao.business-system/1", system: { name: "Production import" } }, root, []);
+    const imported = await productionCli(targetRoot, "import", packageRoot, "--root", targetRoot);
+    expect(imported.code).toBe(0);
+    const document = JSON.parse(imported.stdout);
+    expect(document.system.name).toBe("Production import");
+    const exported = await productionCli(targetRoot, "export", document.system.id, "--package", join(root, "exported"));
+    expect(exported.code).toBe(0);
+    expect((await readBusinessPackage(join(root, "exported"))).document).toBeDefined();
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test("accepts legacy business package manifests without protection metadata", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-legacy-manifest-"));
+  try {
+    const packageRoot = join(root, "package");
+    await createBusinessPackage(packageRoot, { schema: "mao.business-system/1", system: { name: "Legacy package" } }, root, []);
+    const manifestPath = join(packageRoot, "manifest.json");
+    const manifest = JSON.parse(await Bun.file(manifestPath).text());
+    delete manifest.protection;
+    await Bun.write(manifestPath, `${JSON.stringify(manifest)}\n`);
+    expect((await readBusinessPackage(packageRoot)).protection).toEqual({ mode: "plaintext", envelope: "portable" });
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });

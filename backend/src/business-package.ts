@@ -12,7 +12,8 @@ const digestPattern = /^sha256:[a-f0-9]{64}$/;
 const documentName = "business.json";
 const manifestName = "manifest.json";
 type FileDescription = { digest: string; size: number };
-type BusinessPackage = { format: typeof format; document: FileDescription; blobs: FileDescription[] };
+export type BusinessPackageProtection = { mode: "plaintext"; envelope: "portable" };
+type BusinessPackage = { format: typeof format; protection: BusinessPackageProtection; document: FileDescription; blobs: FileDescription[] };
 
 function invalid(reason: string): never {
   throw new FactoryError("PACKAGE_CORRUPT", "业务包校验失败", { reason });
@@ -120,7 +121,7 @@ export async function createBusinessPackage(destination: string, document: unkno
       if (blob.digest !== digest) invalid("CAS digest mismatch");
       blobs.push(blob);
     }
-    const manifest: BusinessPackage = { format, document: description, blobs };
+    const manifest: BusinessPackage = { format, protection: { mode: "plaintext", envelope: "portable" }, document: description, blobs };
     await Bun.write(join(stage, manifestName), `${canonicalJson(manifest)}\n`);
     return manifest;
   });
@@ -142,9 +143,12 @@ export async function readBusinessPackage(directory: string) {
   const root = resolve(directory);
   if (kind(root) !== "directory") invalid("package directory is missing");
   const data = await readJson(join(root, manifestName));
+  const protection = data && typeof data === "object" && "protection" in data && data.protection && typeof data.protection === "object"
+    ? data.protection as Record<string, unknown> : { mode: "plaintext", envelope: "portable" };
   if (!data || typeof data !== "object" || !("format" in data) || data.format !== format
+    || protection.mode !== "plaintext" || protection.envelope !== "portable"
     || !("document" in data) || !fileDescription(data.document) || !("blobs" in data) || !Array.isArray(data.blobs)
-    || !data.blobs.every(fileDescription) || Object.keys(data).some((key) => !["format", "document", "blobs"].includes(key))) invalid("manifest");
+    || !data.blobs.every(fileDescription) || Object.keys(data).some((key) => !["format", "protection", "document", "blobs"].includes(key))) invalid("manifest");
   const expected = [documentName, manifestName, ...(data.blobs.length ? ["blobs"] : [])].sort();
   if (canonicalJson(readdirSync(root).sort()) !== canonicalJson(expected)) invalid("unexpected package files");
   const doc = join(root, documentName);
@@ -167,7 +171,7 @@ export async function readBusinessPackage(directory: string) {
       if (actual.digest !== blob.digest || actual.size !== blob.size) invalid("blob checksum");
     }
   }
-  return { root, document, blobs: data.blobs };
+  return { root, document, blobs: data.blobs, protection: protection as BusinessPackageProtection };
 }
 
 export function registerVerifiedArtifactFiles(store: SqliteStore, systemId: string, blobs: readonly FileDescription[]): void {

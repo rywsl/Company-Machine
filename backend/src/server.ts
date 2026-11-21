@@ -2030,7 +2030,7 @@ function graphProjection(store: SqliteStore, scope: string, workarea: string | n
   return { scope: "factory", id: "factory", title: "工厂", nodes: systems.map((system, index) => ({ id: system.id, type: "workarea", group: "factory", label: system.name, position: { x: 180 + (index % 3) * 300, y: 160 + Math.floor(index / 3) * 200 }, status: system.status === "active" ? "ready" : "unknown", metadata: { description: system.description, project_count: projectCounts.get(system.id) ?? 0 } })), edges: [] };
 }
 
-function validateDag(value: unknown): string | undefined {
+export function validateDag(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return "graph must be an object";
   const graph = value as { nodes?: unknown; edges?: unknown };
   if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return "graph requires nodes and edges arrays";

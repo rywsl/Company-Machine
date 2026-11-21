@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { createApp, startServer } from "./server";
+import { createApp, startServer, validateDag } from "./server";
+import { SqliteStore } from "./db";
 import { checkRegistry, type RegistryCheckResult } from "../mrl/factory";
 import { Context } from "./legacy/context";
 import { ConversionStore, conversionDocument } from "./legacy/conversion-requests";
@@ -8,6 +9,7 @@ import { FactoryError } from "./legacy/errors";
 import { RandomIds } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
 import { businessPackageBlob, createBusinessPackage, publishBusinessDirectory, readBusinessPackage, registerVerifiedArtifactFiles } from "./business-package";
+import { exportBusinessSystem, importBusinessSystem } from "./business-portability";
 import { parseRepositoryRegistration } from "./project-registration";
 import { projectCredentialName } from "./operator";
 import { VaultStore } from "./vault";
@@ -55,6 +57,31 @@ async function requestJson(app: ReturnType<typeof createApp>, path: string, init
   try { parsed = body ? JSON.parse(body) : {}; } catch { parsed = { error: body }; }
   if (!result.ok) throw new Error(typeof parsed === "object" && parsed && "error" in parsed ? String((parsed as Record<string, unknown>).error) : `request failed with ${result.status}`);
   return parsed;
+}
+
+async function runProductionBusinessExport(args: string[]): Promise<number> {
+  const id = args[1];
+  if (!id) throw new CliUsageError("business system id is required");
+  if (args.length !== 2 && (args.length !== 4 || args[2] !== "--package" || args[3].startsWith("--"))) {
+    throw new CliUsageError("business export expects ID [--package DEST]");
+  }
+  const root = resolve(process.env.FACTORY_ROOT ?? ".factory");
+  const storage = createStorageProviders({ root });
+  const store = new SqliteStore(":memory:", ":memory:", { database: storage.state.database });
+  try {
+    const system = store.getBusinessSystem(id);
+    if (!system) throw new Error("business system was not found");
+    const document = JSON.parse(JSON.stringify(exportBusinessSystem(store, id, () => system.metadata.graph ?? { nodes: [], edges: [] })));
+    if (!document) throw new Error("business system was not found");
+    if (args.length === 4) {
+      const blobProvider = storage.blob.kind === "local" ? undefined : storage.blob;
+      console.log(JSON.stringify(await createBusinessPackage(args[3], document, root, [], blobProvider), null, 2));
+    } else console.log(JSON.stringify(document, null, 2));
+    return 0;
+  } finally {
+    store.close();
+    storage.state.close();
+  }
 }
 
 function runRegistryCli(args: string[]): number {
@@ -115,6 +142,9 @@ async function runCommand(argv: string[]): Promise<number> {
   }
   if (isStationScope(command) || ["--root", "--registry", "--provider", "--local-commands", "--epoch", "--json"].includes(command)) {
     return runStationCli(argv);
+  }
+  if (command === "business" && args[0] === "export" && process.env.MAO_STORAGE_MODE === "production") {
+    return runProductionBusinessExport(args);
   }
   if (!command || command === "help" || command === "--help") {
     console.log(usage());
@@ -398,6 +428,25 @@ async function runStorageCommand(args: string[]): Promise<number> {
 
 async function importBusinessPackage(source: string, destination: string) {
   const verified = await readBusinessPackage(source);
+  if (process.env.MAO_STORAGE_MODE === "production") {
+    const root = resolve(destination);
+    const environment = { ...process.env, FACTORY_ROOT: root };
+    const storage = createStorageProviders({ root, env: environment });
+    const store = new SqliteStore(":memory:", ":memory:", { database: storage.state.database });
+    try {
+      for (const { digest, size } of verified.blobs) {
+        const actual = await storage.blob.putFile(businessPackageBlob(verified.root, digest));
+        if (actual !== digest) throw new FactoryError("PACKAGE_CORRUPT", "安装时内容摘要不匹配", { digest });
+        store.db.query("INSERT OR IGNORE INTO intake_uploads(digest,size) VALUES (?,?)").run(digest, size);
+      }
+      const system = importBusinessSystem(store, verified.document as Record<string, unknown>, validateDag);
+      registerVerifiedArtifactFiles(store, system.id, verified.blobs);
+      return { root, system, acceptance: "not_run", storage: storage.config };
+    } finally {
+      store.close();
+      storage.state.close();
+    }
+  }
   return publishBusinessDirectory(destination, async (stage) => {
     const database = join(stage, "factory.db");
     const vault = new VaultStore(join(stage, "vault.json"), join(stage, "vault.key"));
