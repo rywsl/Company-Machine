@@ -201,7 +201,7 @@ export class PostgresStateProvider extends CliStateProvider {
     return [this.command, "-X", "-q", "-t", "-A", "-F", "\t", "-v", "ON_ERROR_STOP=1", ...(database ? ["-d", database] : []), "-c", sql];
   }
   protected environment(): Record<string, string> {
-    const env = { ...process.env } as Record<string, string>;
+    const env = { ...this.env } as Record<string, string>;
     const dsn = this.dsn();
     if (dsn.startsWith("postgres://") || dsn.startsWith("postgresql://")) {
       try {
