@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server";
@@ -190,5 +190,27 @@ test("migration verification failure leaves the active provider pointer untouche
     target.state.close();
     rmSync(sourceRoot, { recursive: true, force: true });
     rmSync(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("production mode fails before creating a local business database", () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-production-guard-"));
+  const names = ["MAO_STORAGE_MODE", "FACTORY_ROOT", "FACTORY_DB_PATH", "BUSINESS_DB_PATH"];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    process.env.MAO_STORAGE_MODE = "production";
+    process.env.FACTORY_ROOT = root;
+    process.env.FACTORY_DB_PATH = join(root, "factory.db");
+    process.env.BUSINESS_DB_PATH = join(root, "business.db");
+    expect(() => createApp({ storageRoot: root, dispatchWork: false })).toThrow(/provider/i);
+    expect(existsSync(join(root, "factory.db"))).toBe(false);
+    expect(existsSync(join(root, "business.db"))).toBe(false);
+  } finally {
+    for (const name of names) {
+      const value = previous[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
   }
 });
