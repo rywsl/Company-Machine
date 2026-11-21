@@ -49,7 +49,7 @@
 
 ### 2.1 TypeScript 接口
 
-接口位于 `backend/src/storage.ts`、`backend/src/storage-openbao.ts`、`backend/src/storage-s3.ts` 和 SQL provider 模块。接口只暴露业务需要的操作，连接、事务、缓存、重试和方言实现放在 provider 内。
+接口位于 `backend/src/storage.ts`、`backend/src/state-database.ts`、`backend/src/storage-openbao.ts`、`backend/src/storage-s3.ts` 和 SQL provider 模块。接口只暴露业务需要的操作，连接、事务、缓存、重试和方言实现放在 provider 内。
 
 ```ts
 export interface StateProvider {
