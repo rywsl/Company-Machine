@@ -12,6 +12,8 @@ import { ManagedDatabase } from "../src/sqlite";
 import { createStorageProviders } from "../src/storage-factory";
 import { migrateStorage, readActiveStoragePointer } from "../src/storage-migration";
 import { VaultStore } from "../src/vault";
+import { ProviderStateDatabase } from "../src/state-database";
+import { SqliteStore } from "../src/db";
 
 test("local storage configuration never selects external providers", () => {
   expect(resolveStorageProviderConfig({} as NodeJS.ProcessEnv)).toEqual({ mode: "local", state: "sqlite", blob: "local", secret: "local" });
@@ -114,6 +116,27 @@ test("SQLite state migrations are transactional and idempotent", () => {
     expect(provider.migrate([migration])).toBe(1);
     expect(provider.migrate([migration])).toBe(1);
     expect(provider.query("SELECT name FROM sqlite_master WHERE name='migration_probe'")).toHaveLength(1);
+  } finally { provider.close(); }
+});
+
+test("provider database adapter preserves the repository statement and transaction surface", () => {
+  const provider = new SqliteStateProvider(":memory:");
+  const database = new ProviderStateDatabase(provider);
+  try {
+    database.exec("CREATE TABLE adapter_probe (id TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    database.transaction(() => {
+      database.query("INSERT INTO adapter_probe(id,value) VALUES (?,?)").run("a", "b");
+    }).immediate();
+    expect(database.query<{ id: string; value: string }>("SELECT id,value FROM adapter_probe").get()).toEqual({ id: "a", value: "b" });
+  } finally { database.close(); }
+});
+
+test("SqliteStore can receive an injected StateDatabase without changing business behavior", () => {
+  const provider = new SqliteStateProvider(":memory:");
+  try {
+    const store = new SqliteStore(":memory:", ":memory:", { database: provider.database });
+    expect(store.createBusinessSystem({ name: "Injected state" }).name).toBe("Injected state");
+    store.close();
   } finally { provider.close(); }
 });
 

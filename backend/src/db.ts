@@ -102,14 +102,17 @@ export class SqliteStore {
   constructor(
     readonly dbPath = process.env.BUSINESS_DB_PATH ?? defaultFactoryDatabase(),
     readonly legacyPath = defaultFactoryDatabase(),
-    options: { clock?: Clock; uuid?: () => string } = {},
+    options: { clock?: Clock; uuid?: () => string; database?: StateDatabase } = {},
   ) {
     this.clock = options.clock ?? new SystemClock();
     this.uuid = options.uuid ?? randomUuid;
-    if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new ManagedDatabase(dbPath, { create: true });
-    this.db.exec("PRAGMA busy_timeout = 5000");
-    this.db.exec("PRAGMA journal_mode = WAL");
+    if (options.database) this.db = options.database;
+    else {
+      if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
+      this.db = new ManagedDatabase(dbPath, { create: true });
+      this.db.exec("PRAGMA busy_timeout = 5000");
+      this.db.exec("PRAGMA journal_mode = WAL");
+    }
     this.init();
     this.bridgeLegacy = dbPath === legacyPath && /factory\.db$/i.test(dbPath.replaceAll("\\", "/"));
     if (dbPath === legacyPath) return;
