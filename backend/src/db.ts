@@ -186,7 +186,7 @@ export class SqliteStore {
         id TEXT PRIMARY KEY, message_id TEXT NOT NULL, text TEXT NOT NULL,
         status TEXT NOT NULL, created_at TEXT NOT NULL, queued_at TEXT, claimed_at TEXT,
         started_at TEXT, last_event_at TEXT, completed_at TEXT, elapsed_ms INTEGER,
-        business_status TEXT NOT NULL DEFAULT 'not_started', business_reason TEXT
+        business_status TEXT NOT NULL DEFAULT 'not_started', business_reason TEXT, queue_seq INTEGER
       );
       -- The legacy factory database already owns foreman_sessions with a
       -- different schema. Keep that table available to the legacy status and
@@ -296,6 +296,8 @@ export class SqliteStore {
     this.addColumnIfMissing("foreman_outbox", "elapsed_ms", "INTEGER");
     this.addColumnIfMissing("foreman_outbox", "business_status", "TEXT NOT NULL DEFAULT 'not_started'");
     this.addColumnIfMissing("foreman_outbox", "business_reason", "TEXT");
+    this.addColumnIfMissing("foreman_outbox", "queue_seq", "INTEGER");
+    this.backfillForemanQueueSequence();
     this.db.query("UPDATE foreman_outbox SET queued_at=created_at WHERE queued_at IS NULL").run();
     this.db.exec(`
       UPDATE business_talk_messages
@@ -316,6 +318,21 @@ export class SqliteStore {
     this.db.transaction(() => {
       if (!hasColumn()) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }).immediate();
+  }
+
+  private backfillForemanQueueSequence(): void {
+    const rows = this.db.query<{ id: string; queue_seq: number | null }>(
+      "SELECT id, queue_seq FROM foreman_outbox ORDER BY created_at, id",
+    ).all();
+    let next = 0;
+    for (const row of rows) {
+      if (row.queue_seq !== null && row.queue_seq !== undefined) {
+        next = Math.max(next, Number(row.queue_seq));
+        continue;
+      }
+      next += 1;
+      this.db.query("UPDATE foreman_outbox SET queue_seq=? WHERE id=? AND queue_seq IS NULL").run(next, row.id);
+    }
   }
 
   listBusinessSystems(): BusinessSystem[] {
@@ -1470,22 +1487,24 @@ export class SqliteStore {
       SELECT prior.id, substr(message.body, 1, 1000) AS user
       FROM foreman_outbox AS prior
       JOIN business_talk_messages AS message ON message.id = prior.message_id
-      WHERE prior.rowid < (SELECT rowid FROM foreman_outbox WHERE id = ?)
+      JOIN foreman_outbox AS current ON current.id = ?
+      WHERE prior.queue_seq < current.queue_seq
         AND prior.status = 'done' AND message.role IN ('user','human')
-      ORDER BY prior.rowid DESC LIMIT 4
+      ORDER BY prior.queue_seq DESC LIMIT 4
     `).all(inboxId);
     const reply = this.db.query<{ text: string }>(`
       SELECT substr(body, 1, 1000) AS text FROM business_talk_messages
       WHERE role = 'foreman' AND CASE WHEN json_valid(metadata) THEN json_extract(metadata,'$.inbox_id') END = ?
-      ORDER BY rowid DESC LIMIT 1
+      ORDER BY created_at DESC, id DESC LIMIT 1
     `);
     return previous.reverse().map(({ id, user }) => ({ user, foreman: reply.get(id)?.text }));
   }
 
   queueForemanMessage(messageId: string, text: string): ForemanEnvelope {
     const queuedAt = this.timestamp();
+    const queueSeq = Number(this.db.query<{ next: number }>("SELECT COALESCE(MAX(queue_seq),0) + 1 AS next FROM foreman_outbox").get()?.next ?? 1);
     const value: ForemanEnvelope = { id: this.uuid(), messageId, text, status: "queued", createdAt: queuedAt, queuedAt, businessStatus: "not_started" };
-    this.db.query("INSERT INTO foreman_outbox (id,message_id,text,status,created_at,queued_at,claimed_at,business_status) VALUES (?,?,?,?,?,?,NULL,?)").run(value.id, value.messageId, value.text, value.status, value.createdAt, value.queuedAt, value.businessStatus);
+    this.db.query("INSERT INTO foreman_outbox (id,message_id,text,status,created_at,queued_at,claimed_at,business_status,queue_seq) VALUES (?,?,?,?,?,?,NULL,?,?)").run(value.id, value.messageId, value.text, value.status, value.createdAt, value.queuedAt, value.businessStatus, queueSeq);
     return value;
   }
 
@@ -1513,12 +1532,12 @@ export class SqliteStore {
 
   listForemanInbox(limit = 50): ForemanEnvelope[] {
     const bounded = Math.max(1, Math.min(200, Math.trunc(limit)));
-    return this.db.query("SELECT * FROM foreman_outbox WHERE status IN ('queued','claimed') ORDER BY rowid LIMIT ?").all(bounded).map((row: any) => this.foremanEnvelopeFromRow(row));
+    return this.db.query("SELECT * FROM foreman_outbox WHERE status IN ('queued','claimed') ORDER BY queue_seq, id LIMIT ?").all(bounded).map((row: any) => this.foremanEnvelopeFromRow(row));
   }
 
   listQueuedForemanMessageIds(): string[] {
     return this.db.query<{ id: string }>(
-      "SELECT id FROM foreman_outbox WHERE status='queued' ORDER BY rowid",
+      "SELECT id FROM foreman_outbox WHERE status='queued' ORDER BY queue_seq, id",
     ).all().map(({ id }) => id);
   }
 
@@ -1529,11 +1548,12 @@ export class SqliteStore {
 
   listForemanTurns(messageIds: readonly string[]): ForemanEnvelope[] {
     if (!messageIds.length) return [];
+    const placeholders = messageIds.map(() => "?").join(",");
     return this.db.query<any>(`
       SELECT id, message_id, text, status, created_at, queued_at, claimed_at, started_at, last_event_at, completed_at, elapsed_ms, business_status, business_reason
       FROM foreman_outbox
-      WHERE message_id IN (SELECT value FROM json_each(?)) ORDER BY rowid
-    `).all(json(messageIds)).map((row: any) => this.foremanEnvelopeFromRow(row));
+      WHERE message_id IN (${placeholders}) ORDER BY queue_seq, id
+    `).all(...messageIds).map((row: any) => this.foremanEnvelopeFromRow(row));
   }
 
   claimForemanMessage(id: string): ForemanEnvelope | undefined {

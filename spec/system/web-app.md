@@ -404,7 +404,7 @@ Foreman profile 的 `execution_mode` 默认为 `trusted_container`，并且要�
 
 项目主动申请的密钥在 UI 中标记为“项目需要配置的资源”或等价文案，显示项目、用途、范围和状态。不得把资源请求显示成 Agent 向用户索取私人密钥，也不得要求用户预先配置未被当前项目触及的密钥。
 
-每一轮 Foreman 对话必须持久化 `queued_at`、`started_at`、`last_event_at`、`completed_at`、`elapsed_ms` 和 `status`，并通过 `inbox_id` 把用户消息、流式回复、最终回复和终态绑定到同一轮。`status` 至少支持 `queued`、`processing`、`waiting_foreman`、`completed`、`failed`、`cancelled`。业务写入结果另存为 `business_status` 和脱敏的 `business_reason`，至少区分 `not_started`、`in_progress`、`applied`、`no_change`、`blocked_environment`、`blocked_input` 和 `failed`。前端在 `queued` 或 `processing` 状态显示从 `queued_at` 或 `started_at` 起算的实时计时，在重连时使用服务端时间戳恢复计时，不因刷新归零。收到 `foreman.reply.delta` 时更新 `last_event_at`，完成事件到达后用持久化回复替换临时增量，并在对话列表中紧跟对应的用户消息显示。
+每一轮 Foreman 对话必须持久化 `queued_at`、`started_at`、`last_event_at`、`completed_at`、`elapsed_ms` 和 `status`，并通过 `inbox_id` 把用户消息、流式回复、最终回复和终态绑定到同一轮。持久化队列序号必须独立于 SQLite `rowid`，让 PostgreSQL、MySQL 和 SQLite 保持相同的入队顺序。`status` 至少支持 `queued`、`processing`、`waiting_foreman`、`completed`、`failed`、`cancelled`。业务写入结果另存为 `business_status` 和脱敏的 `business_reason`，至少区分 `not_started`、`in_progress`、`applied`、`no_change`、`blocked_environment`、`blocked_input` 和 `failed`。前端在 `queued` 或 `processing` 状态显示从 `queued_at` 或 `started_at` 起算的实时计时，在重连时使用服务端时间戳恢复计时，不因刷新归零。收到 `foreman.reply.delta` 时更新 `last_event_at`，完成事件到达后用持久化回复替换临时增量，并在对话列表中紧跟对应的用户消息显示。
 
 若超过 `session_timeout_s` 仍未完成，控制面必须取消本轮官方 Harness 子进程，将状态写为 `failed`，错误原因为 `SESSION_TIMEOUT`，并通过 SSE 或下一次游标读取把终态推送给页面。Foreman 未配置时使用 `waiting_foreman`，页面显示配置入口和已等待时长。任何不可恢复的启动、协议、退出或持久化错误都必须在本轮内写入 `failed` 和脱敏原因，禁止让用户看到无限期的“处理中”。
 
