@@ -153,7 +153,11 @@ export class SqliteStore {
         id TEXT PRIMARY KEY, runtime TEXT NOT NULL, role TEXT NOT NULL, base_url TEXT NOT NULL,
         model TEXT NOT NULL, mode TEXT NOT NULL, image TEXT, network TEXT, secret_ref TEXT,
         verification TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL,
-        session_timeout_s INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}
+        session_timeout_s INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds},
+        thinking_effort TEXT NOT NULL DEFAULT 'medium', context_tokens INTEGER NOT NULL DEFAULT 128000,
+        session_budget_usd REAL NOT NULL DEFAULT 1, daily_budget_usd REAL NOT NULL DEFAULT 10,
+        max_turns INTEGER NOT NULL DEFAULT 20, max_attempts INTEGER NOT NULL DEFAULT 2,
+        backoff_s INTEGER NOT NULL DEFAULT 60
       );
       CREATE TABLE IF NOT EXISTS business_events (
         seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
@@ -171,7 +175,10 @@ export class SqliteStore {
         id TEXT PRIMARY KEY, message_id TEXT NOT NULL, text TEXT NOT NULL,
         status TEXT NOT NULL, created_at TEXT NOT NULL, claimed_at TEXT
       );
-      CREATE TABLE IF NOT EXISTS foreman_sessions (
+      -- The legacy factory database already owns foreman_sessions with a
+      -- different schema. Keep that table available to the legacy status and
+      -- retention readers and store Bun Foreman resume cursors separately.
+      CREATE TABLE IF NOT EXISTS business_foreman_sessions (
         profile_id TEXT PRIMARY KEY, session_id TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS unit_secret_requests (
@@ -255,6 +262,13 @@ export class SqliteStore {
       this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS business_conversions_identity ON business_conversions(business_system_id, kind, summary, inputs, outputs)");
     }).immediate();
     this.addColumnIfMissing("harness_profiles", "session_timeout_s", `INTEGER NOT NULL DEFAULT ${defaultSessionTimeoutSeconds}`);
+    this.addColumnIfMissing("harness_profiles", "thinking_effort", "TEXT NOT NULL DEFAULT 'medium'");
+    this.addColumnIfMissing("harness_profiles", "context_tokens", "INTEGER NOT NULL DEFAULT 128000");
+    this.addColumnIfMissing("harness_profiles", "session_budget_usd", "REAL NOT NULL DEFAULT 1");
+    this.addColumnIfMissing("harness_profiles", "daily_budget_usd", "REAL NOT NULL DEFAULT 10");
+    this.addColumnIfMissing("harness_profiles", "max_turns", "INTEGER NOT NULL DEFAULT 20");
+    this.addColumnIfMissing("harness_profiles", "max_attempts", "INTEGER NOT NULL DEFAULT 2");
+    this.addColumnIfMissing("harness_profiles", "backoff_s", "INTEGER NOT NULL DEFAULT 60");
     this.addColumnIfMissing("business_run_graphs", "edges_indexed", "INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("business_run_graphs", "nodes", "TEXT");
     this.addColumnIfMissing("machine_attempts", "owner_token", "TEXT");
@@ -361,6 +375,13 @@ export class SqliteStore {
       model: row.model,
       mode: row.mode,
       sessionTimeoutSeconds: row.session_timeout_s,
+      thinkingEffort: row.thinking_effort ?? (row.role === "foreman" ? "max" : "medium"),
+      contextTokens: row.context_tokens ?? 128000,
+      sessionBudgetUsd: row.session_budget_usd ?? 1,
+      dailyBudgetUsd: row.daily_budget_usd ?? 10,
+      maxTurns: row.max_turns ?? 20,
+      maxAttempts: row.max_attempts ?? 2,
+      backoffSeconds: row.backoff_s ?? 60,
       image: row.image ?? undefined,
       network: row.network ?? undefined,
       secretRef: row.secret_ref ?? undefined,
@@ -375,16 +396,32 @@ export class SqliteStore {
     const updatedAt = this.timestamp();
     const value = { ...input, id: input.id ?? `${input.role}:${input.runtime}`, updatedAt };
     const row = this.db.query<{ session_timeout_s: number }>(`INSERT INTO harness_profiles (
-        id,runtime,role,base_url,model,mode,image,network,secret_ref,verification,updated_at,session_timeout_s
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+      id,runtime,role,base_url,model,mode,image,network,secret_ref,verification,updated_at,session_timeout_s,
+        thinking_effort,context_tokens,session_budget_usd,daily_budget_usd,max_turns,max_attempts,backoff_s
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
         runtime=excluded.runtime, role=excluded.role, base_url=excluded.base_url, model=excluded.model,
         mode=excluded.mode, image=excluded.image, network=excluded.network, secret_ref=excluded.secret_ref,
         verification=excluded.verification, updated_at=excluded.updated_at,
-        session_timeout_s=COALESCE(?, harness_profiles.session_timeout_s)
+        session_timeout_s=COALESCE(?, harness_profiles.session_timeout_s),
+        thinking_effort=COALESCE(?, harness_profiles.thinking_effort),
+        context_tokens=COALESCE(?, harness_profiles.context_tokens),
+        session_budget_usd=COALESCE(?, harness_profiles.session_budget_usd),
+        daily_budget_usd=COALESCE(?, harness_profiles.daily_budget_usd),
+        max_turns=COALESCE(?, harness_profiles.max_turns),
+        max_attempts=COALESCE(?, harness_profiles.max_attempts),
+        backoff_s=COALESCE(?, harness_profiles.backoff_s)
       RETURNING session_timeout_s`)
       .get(value.id, value.runtime, value.role, value.baseUrl, value.model, value.mode, value.image ?? null, value.network ?? null,
-        value.secretRef ?? null, json(value.verification ?? {}), updatedAt, timeout ?? defaultSessionTimeoutSeconds, timeout ?? null)!;
-    return { ...value, sessionTimeoutSeconds: row.session_timeout_s };
+        value.secretRef ?? null, json(value.verification ?? {}), updatedAt, timeout ?? defaultSessionTimeoutSeconds,
+        value.thinkingEffort ?? (value.role === "foreman" ? "max" : "medium"), value.contextTokens ?? 128000,
+        value.sessionBudgetUsd ?? 1, value.dailyBudgetUsd ?? 10, value.maxTurns ?? 20, value.maxAttempts ?? 2,
+        value.backoffSeconds ?? 60, timeout ?? null, value.thinkingEffort ?? null, value.contextTokens ?? null,
+        value.sessionBudgetUsd ?? null, value.dailyBudgetUsd ?? null, value.maxTurns ?? null, value.maxAttempts ?? null,
+        value.backoffSeconds ?? null)!;
+    return { ...value, sessionTimeoutSeconds: row.session_timeout_s,
+      thinkingEffort: value.thinkingEffort ?? (value.role === "foreman" ? "max" : "medium"), contextTokens: value.contextTokens ?? 128000,
+      sessionBudgetUsd: value.sessionBudgetUsd ?? 1, dailyBudgetUsd: value.dailyBudgetUsd ?? 10,
+      maxTurns: value.maxTurns ?? 20, maxAttempts: value.maxAttempts ?? 2, backoffSeconds: value.backoffSeconds ?? 60 };
   }
 
   markHarnessVerification(id: string, state: string, reason?: string): HarnessProfile | undefined {
@@ -1458,11 +1495,11 @@ export class SqliteStore {
   }
 
   foremanSession(profileId: string): string | undefined {
-    return this.db.query<{ session_id: string }>("SELECT session_id FROM foreman_sessions WHERE profile_id=?").get(profileId)?.session_id;
+    return this.db.query<{ session_id: string }>("SELECT session_id FROM business_foreman_sessions WHERE profile_id=?").get(profileId)?.session_id;
   }
 
   saveForemanSession(profileId: string, sessionId: string): void {
-    this.db.query("INSERT INTO foreman_sessions (profile_id,session_id) VALUES (?,?) ON CONFLICT (profile_id) DO UPDATE SET session_id=excluded.session_id")
+    this.db.query("INSERT INTO business_foreman_sessions (profile_id,session_id) VALUES (?,?) ON CONFLICT (profile_id) DO UPDATE SET session_id=excluded.session_id")
       .run(profileId, sessionId);
   }
 
@@ -1491,7 +1528,7 @@ export class SqliteStore {
         WHERE id=? AND status=? RETURNING id, message_id AS messageId, status
       `).get(id, expected);
       if (!row) return undefined;
-      if (resume) this.db.query("DELETE FROM foreman_sessions WHERE profile_id=? AND session_id=?").run(resume.profileId, resume.sessionId);
+      if (resume) this.db.query("DELETE FROM business_foreman_sessions WHERE profile_id=? AND session_id=?").run(resume.profileId, resume.sessionId);
       const foremanTurn = { ...row, cancellable: false };
       const event = this.appendEvent("foreman.message.cancelled", foremanTurn);
       return { foremanTurn, event };
@@ -1683,7 +1720,11 @@ export class SqliteStore {
 
   recentTalk(limit: number): TalkMessage[] {
     const active = this.listTalkMessages(limit);
-    return active.length >= limit ? active : [...this.legacyTalk(limit - active.length), ...active];
+    if (active.length >= limit) return active;
+    const merged = new Map<string, TalkMessage>();
+    for (const message of this.legacyTalk(limit - active.length)) merged.set(message.id, message);
+    for (const message of active) merged.set(message.id, message);
+    return [...merged.values()].slice(-limit);
   }
 
   private hasLegacyTable(name: string) {

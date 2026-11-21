@@ -142,8 +142,8 @@ export interface HarnessProfile {
   role: "operator" | "foreman" | string;
   base_url: string;
   model: string;
-  thinking_effort: string;
-  context: number;
+  thinking_effort?: string;
+  context?: number;
   api_key_configured: boolean;
   image?: string;
   network?: string;
@@ -213,6 +213,7 @@ export interface TalkMessage {
   body?: string;
   state?: string;
   at?: string;
+  createdAt?: string;
   card?: Record<string, unknown>;
   [key: string]: unknown;
 }

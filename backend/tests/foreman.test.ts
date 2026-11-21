@@ -31,6 +31,28 @@ async function askMailbox(root: string, index: number, op: string, args: Record<
   return JSON.parse(await Bun.file(response).text());
 }
 
+test("keeps native Foreman sessions working beside the legacy foreman_sessions schema", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-foreman-schema-"));
+  const dbPath = join(root, "factory.db");
+  const legacy = new (await import("bun:sqlite")).Database(dbPath);
+  legacy.exec("CREATE TABLE foreman_sessions (id TEXT PRIMARY KEY, wake_id TEXT NOT NULL, role TEXT NOT NULL, runtime TEXT NOT NULL, actor TEXT NOT NULL, model TEXT NOT NULL, epoch TEXT NOT NULL, state TEXT NOT NULL, exit_code INTEGER, cost_usd REAL NOT NULL DEFAULT 0, turns INTEGER, outcome TEXT NOT NULL DEFAULT '{}', error TEXT, started_at TEXT NOT NULL, ended_at TEXT)");
+  legacy.close();
+  const app = createApp({ dbPath, legacyPath: dbPath, dispatchWork: false, foreman: { spawn: async () => fakeProcess([JSON.stringify({ type: "result", text: "已连接" })]) } });
+  try {
+    app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+    const posted = await app.fetch(new Request("http://localhost/api/web/talk", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "hello" }),
+    }));
+    const body = await posted.json() as { foremanTurn: { id: string } };
+    await app.foreman.dispatch(body.foremanTurn.id);
+    expect(app.store.getForemanMessage(body.foremanTurn.id)?.status).toBe("done");
+    expect(app.store.listTalkMessages().at(-1)?.body).toBe("已连接");
+  } finally {
+    app.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("applies a container Foreman mailbox request within its intake scope", async () => {
   let root: string | undefined;
   let sourceOptions: { cloneRepositories?: boolean } | undefined;
@@ -713,6 +735,26 @@ describe("Foreman official Harness dispatch", () => {
     } finally {
       app.stop();
       await rm(dbPath, { force: true });
+    }
+  });
+
+  test("settles a CLI turn after the final streamed reply instead of waiting for process EOF", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false, foreman: {
+      spawn: () => fakeProcess([
+        JSON.stringify({ type: "turn.completed" }),
+        JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "已收到。" }] } }),
+        JSON.stringify({ type: "turn.completed" }),
+      ]),
+    } });
+    try {
+      app.store.saveHarnessProfile({ runtime: "codex", role: "foreman", baseUrl: "", model: "fixture", mode: "session" });
+      const queued = app.store.queueForemanMessage("early-terminal", "hello");
+      await app.foreman.dispatch(queued.id);
+      expect(app.store.getForemanMessage(queued.id)?.status).toBe("done");
+      expect(app.store.listTalkMessages().at(-1)?.body).toBe("已收到。");
+    } finally {
+      await app.foreman.close();
+      app.stop();
     }
   });
 

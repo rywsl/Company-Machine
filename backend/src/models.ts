@@ -181,6 +181,13 @@ export interface HarnessProfile {
   model: string;
   mode: string;
   sessionTimeoutSeconds: number;
+  thinkingEffort?: string;
+  contextTokens?: number;
+  sessionBudgetUsd?: number;
+  dailyBudgetUsd?: number;
+  maxTurns?: number;
+  maxAttempts?: number;
+  backoffSeconds?: number;
   image?: string;
   network?: string;
   secretRef?: string;

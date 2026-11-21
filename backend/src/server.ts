@@ -18,7 +18,7 @@ import { foremanCredential } from "./foreman-credentials";
 import { verifyHarness } from "./harness-verification";
 import { OperatorCoordinator, projectCredentialName, type OperatorCoordinatorOptions } from "./operator";
 import { operatorBindingView, parseOperatorBinding } from "./operator-binding";
-import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, supportsLocalProjectMounts, type OfficialSpawn } from "./harness";
+import { harnessEndpointEnv, officialHarness, officialHarnesses as harnessDefinitions, resolveOfficialHarness, supportsLocalProjectMounts, type OfficialSpawn } from "./harness";
 import type { AcpSpawn } from "./acp";
 import { validSessionTimeout } from "./harness-turn";
 import { captureBusinessKernel, kernelRunMetadata, loadBusinessKernel, materializeBusinessKernel } from "./business-kernel-bridge";
@@ -1221,13 +1221,40 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       catch { return response({ error: "invalid Harness base URL" }, 400); }
       const image = typeof body.image === "string" ? body.image.trim() : "";
       if (image && !/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(image)) return response({ error: "Harness image must be pinned by digest" }, 400);
+      const currentProfile = store.listHarnessProfiles().find((item) => item.id === `${body.role}:${definition.id}`);
+      const sourceProfileId = typeof body.api_key_profile_id === "string" && body.api_key_profile_id.length > 0 ? body.api_key_profile_id : undefined;
+      const sourceProfile = sourceProfileId ? store.listHarnessProfiles().find((item) => item.id === sourceProfileId && item.role === body.role) : undefined;
+      if (sourceProfileId && !sourceProfile) return response({ error: "saved API key configuration was not found" }, 400);
       const sessionTimeoutSeconds = body.session_timeout_s;
       if (sessionTimeoutSeconds !== undefined && !validSessionTimeout(sessionTimeoutSeconds)) {
         return response({ error: "Harness session timeout must be a whole number of seconds from 1 to 2147483" }, 400);
       }
+      const thinkingEffort = body.thinking_effort === undefined ? undefined : body.thinking_effort;
+      if (thinkingEffort !== undefined && (typeof thinkingEffort !== "string" || !["minimal", "low", "medium", "high", "max"].includes(thinkingEffort))) {
+        return response({ error: "thinking_effort must be minimal, low, medium, high, or max" }, 400);
+      }
+      const contextTokens = body.context;
+      if (contextTokens !== undefined && (!Number.isInteger(contextTokens) || contextTokens < 1 || contextTokens > 2_147_483_647)) {
+        return response({ error: "context must be a positive whole number" }, 400);
+      }
+      const sessionBudgetUsd = body.session_budget_usd;
+      const dailyBudgetUsd = body.daily_budget_usd;
+      if ((sessionBudgetUsd !== undefined && (typeof sessionBudgetUsd !== "number" || !Number.isFinite(sessionBudgetUsd) || sessionBudgetUsd < 0))
+        || (dailyBudgetUsd !== undefined && (typeof dailyBudgetUsd !== "number" || !Number.isFinite(dailyBudgetUsd) || dailyBudgetUsd < 0))) {
+        return response({ error: "session and daily budgets must be non-negative numbers" }, 400);
+      }
+      const maxTurns = body.max_turns;
+      const maxAttempts = body.max_attempts;
+      const backoffSeconds = body.backoff_s;
+      if ((maxTurns !== undefined && (!Number.isInteger(maxTurns) || maxTurns < 1))
+        || (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1))
+        || (backoffSeconds !== undefined && (!Number.isInteger(backoffSeconds) || backoffSeconds < 0))) {
+        return response({ error: "max_turns and max_attempts must be positive whole numbers, backoff_s must be non-negative" }, 400);
+      }
       const profile = store.saveHarnessProfile({
         runtime: definition.id, role: body.role, baseUrl, model: body.model.trim(), mode: typeof body.mode === "string" ? body.mode : "session",
-        sessionTimeoutSeconds,
+        sessionTimeoutSeconds, thinkingEffort, contextTokens, sessionBudgetUsd, dailyBudgetUsd, maxTurns, maxAttempts, backoffSeconds,
+        secretRef: sourceProfile?.secretRef ?? currentProfile?.secretRef,
         image: image || undefined,
         network: image
           ? body.network === "bridge" ? "bridge" : body.network === "egress" ? "egress" : "none"
@@ -1401,9 +1428,23 @@ function publicProfile(profile?: HarnessProfile, readSecret?: (ref: string) => s
   if (!profile) return null;
   const { secretRef, ...safeProfile } = profile;
   const configured = profile.role === "foreman"
-    ? Boolean(foremanCredential(profile, readSecret))
+    ? Boolean(foremanCredential(profile, readSecret) || (!profile.image && resolveOfficialHarness(profile.runtime) && Bun.which(resolveOfficialHarness(profile.runtime)!.executable)))
     : Boolean(secretRef && (!readSecret || readSecret(secretRef)));
-  return { ...safeProfile, base_url: profile.baseUrl, session_timeout_s: profile.sessionTimeoutSeconds, api_key_configured: configured, updated_at: profile.updatedAt, verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined };
+  return {
+    ...safeProfile,
+    base_url: profile.baseUrl,
+    session_timeout_s: profile.sessionTimeoutSeconds,
+    thinking_effort: profile.thinkingEffort ?? (profile.role === "foreman" ? "max" : "medium"),
+    context: profile.contextTokens ?? 128000,
+    session_budget_usd: profile.sessionBudgetUsd ?? 1,
+    daily_budget_usd: profile.dailyBudgetUsd ?? 10,
+    max_turns: profile.maxTurns ?? 20,
+    max_attempts: profile.maxAttempts ?? 2,
+    backoff_s: profile.backoffSeconds ?? 60,
+    api_key_configured: configured,
+    updated_at: profile.updatedAt,
+    verification: profile.verification ? { ...profile.verification, checked_at: profile.verification.checkedAt } : undefined,
+  };
 }
 
 function publicUnit(unit: any) {

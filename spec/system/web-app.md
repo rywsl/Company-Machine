@@ -250,6 +250,7 @@ M18 的正式用户入口由 `factory web` 启动。默认服务绑定 `127.0.0.
 - `GET /api/web/talk` 返回最近的 Foreman 对话，默认 80 条，`limit` 接受 1 到 1000。查询先取活动消息，条数不足时从归档对话补齐。页面引导响应使用相同查询。
 - `GET /api/web/talk` 对范围凭据返回已授权业务上下文内的对话。进入具体厂区后，前端附带 `business_system_id`，以便保持当前 Foreman 线程上下文。
 - `POST /api/web/talk` 接受 `{ "text": "...", "business_system_id": "...", "project_id": "..." }`，使用本地用户身份调用现有 `talk.post_human`，把消息投递给常驻 Foreman。范围凭据必须提供已授权的业务系统或项目上下文。控制面不在此请求中调用模型 API
+- `POST /api/web/talk` 的响应必须包含本轮 `foremanTurn` 标识、持久化消息标识、当前状态和事件游标。响应只确认消息已经入队，不等待官方 Harness 完成，也不能把排队状态伪装成已回复。
 - Foreman 尚未配置时，消息仍持久化进入队列，响应状态为 `waiting_foreman` 并带 `setup_required=true`。页面把它显示为配置前等待，不能显示为已完成
 - 页面引导响应附带 SSE 游标和进行中的厂长回复。浏览器按邮箱消息 ID 累积 `foreman.reply.delta`，完成后用持久化消息替换流式内容，重连从已接收的事件继续。
 - 从同一 Harness 更新提取的会话事件与可见回复增量按顺序写入同一个 SQLite 事务，提交后通知 SSE 连接。刷新页面或断线重连使用相同的增量记录。
@@ -392,6 +393,18 @@ Intake 会为每个项目建立一个 Operator 单元和一个 Machine 单元。
 
 Operator 完成时，SQLite 在同一个事务里保存运行输出、用状态索引汇总业务运行状态并同步基础单元状态。普通成功路径按直接后继及其前置依赖读取数据，长链中的每次完成无需读取整个运行的单元列表。
 
+### 11.6 Harness 配置与对话反馈
+
+配置厂长或 Operator 时，首屏只要求三类连接信息。用户可以填写或选择 `Base URL`、项目资源中的 `API key` 和 `Model`。每个字段都提供已保存配置的可选项。选择已保存项只引用其保险箱引用或脱敏值，页面和 API 永远不返回 API key 明文。Harness 适配器、运行时和连接方式由所选官方 Harness 能力解析，页面不能要求用户填写 CLI 参数或内部协议细节。
+
+运行参数归入“设置”的共享高级配置，厂长和 Operator 默认读取同一份配置。共享配置包括 `thinking_effort`、`context`、`image`、`network`、`mode`、`max_turns`、`session_timeout_s`、`session_budget_usd`、`daily_budget_usd`、`max_attempts` 和 `backoff_s`。页面应使用可读标签显示这些值，不把高级参数堆叠在基础连接表单中。除非用户明确保存角色覆盖值，Foreman 与 Operator 使用共享值。Foreman 的 `thinking_effort` 默认值为 `max`，历史配置缺少该字段时也按 `max` 读取并在下一次保存时补齐。
+
+项目主动申请的密钥在 UI 中标记为“项目需要配置的资源”或等价文案，显示项目、用途、范围和状态。不得把资源请求显示成 Agent 向用户索取私人密钥，也不得要求用户预先配置未被当前项目触及的密钥。
+
+每一轮 Foreman 对话必须持久化 `queued_at`、`started_at`、`last_event_at`、`completed_at`、`elapsed_ms` 和 `status`。`status` 至少支持 `queued`、`processing`、`waiting_foreman`、`completed`、`failed`、`cancelled`。前端在 `queued` 或 `processing` 状态显示从 `queued_at` 或 `started_at` 起算的实时计时，在重连时使用服务端时间戳恢复计时，不因刷新归零。收到 `foreman.reply.delta` 时更新 `last_event_at`，完成事件到达后用持久化回复替换临时增量。
+
+若超过 `session_timeout_s` 仍未完成，控制面必须取消本轮官方 Harness 子进程，将状态写为 `failed`，错误原因为 `SESSION_TIMEOUT`，并通过 SSE 或下一次游标读取把终态推送给页面。Foreman 未配置时使用 `waiting_foreman`，页面显示配置入口和已等待时长。任何不可恢复的启动、协议、退出或持久化错误都必须在本轮内写入 `failed` 和脱敏原因，禁止让用户看到无限期的“处理中”。
+
 ## 12. 真实 Web App 验收
 
 迁移后的 Bun 验收入口为 `bun run acceptance:bun`，执行 `backend/tests`、`backend/runtime` 和 `backend/mrl` 的 TypeScript 测试。`bun run verify:bun` 执行完整 Bun backend 集合和 Web TypeScript 检查。测试夹具通过注入的官方 Harness process、ACP JSON-RPC stream 和 Podman/Kiri command runner 运行，不调用模型 API，不依赖 shell 拼接。Python 验收目录只作为历史证据保留。
@@ -407,6 +420,10 @@ Operator 完成时，SQLite 在同一个事务里保存运行输出、用状态�
 - 本地浏览器可完成看板、编排、资产、日志和 Foreman 对话的真实读写闭环
 - Intake 创建的项目会进入 BusinessSystem 图并通过事件流刷新
 - Foreman 回复可以通过外部 Harness 回写同一 talk 线程
+- Harness 基础配置只要求 Base URL、API key 和 Model，并为每个字段提供已保存配置的可选项，页面不显示 API key 明文
+- Foreman 与 Operator 读取同一份设置页高级运行参数，Foreman 默认 `thinking_effort=max`
+- Foreman 对话在页面显示入队、处理、等待、完成或失败状态及持续时间，刷新或 SSE 重连后计时连续
+- 官方 Harness 超时或退出会在 `session_timeout_s` 内进入带原因的失败终态，页面不会无限显示处理中
 - 带镜像的 Operator 启动前会等待运行时 readiness，运行时不可用时不启动 Harness。镜像内声明的官方 ACP 能力不依赖宿主 PATH
 - 并发的 runtime readiness 请求与带镜像的业务启动共享一次探测和启动操作
 - 项目资源请求只显示项目用途、范围、检查项和状态，密钥值进入保险箱

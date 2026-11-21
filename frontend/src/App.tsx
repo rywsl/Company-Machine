@@ -147,7 +147,7 @@ function emptyHarnessForm(role: string, runtime: string, profile?: HarnessProfil
     base_url: profile?.base_url ?? "",
     model: profile?.model ?? "",
     api_key: "",
-    thinking_effort: profile?.thinking_effort ?? "medium",
+    thinking_effort: profile?.thinking_effort ?? (role === "foreman" ? "max" : "medium"),
     context: String(profile?.context ?? 128000),
     image: profile?.image ?? "",
     network: profile?.network ?? (role === "foreman" ? "bridge" : "egress"),
@@ -170,6 +170,7 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState("");
   const [savedProfile, setSavedProfile] = useState<HarnessProfile | null>(null);
+  const [apiKeySource, setApiKeySource] = useState("");
   const persistedProfile = profiles.find((item) => item.id === savedProfile?.id);
   const verification = (persistedProfile?.verification?.checked_at ?? "") >= (savedProfile?.verification?.checked_at ?? "")
     ? persistedProfile?.verification ?? savedProfile?.verification : savedProfile?.verification;
@@ -180,6 +181,7 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
     setSelectedProfile(current?.id ?? "");
     setSavedProfile(current ?? null);
     setForm(emptyHarnessForm(role, initialRuntime ?? runtimes[0]?.id ?? "", current));
+    setApiKeySource(current?.api_key_configured ? current.id : "");
     setMessage("");
   }, [open, role, initialRuntime]);
 
@@ -189,6 +191,7 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
     const profile = profiles.find((item) => item.id === id);
     setSelectedProfile(id);
     setSavedProfile(profile ?? null);
+    setApiKeySource(profile?.api_key_configured ? profile.id : "");
     if (profile) setForm(emptyHarnessForm(role, profile.runtime, profile));
   };
   const save = async (event: React.FormEvent) => {
@@ -197,7 +200,7 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
     setMessage("");
     try {
       const { api_key: _apiKey, ...safeForm } = form;
-      const result = await configureHarness({ ...safeForm, role, context: Number(form.context), session_timeout_s: Number(form.session_timeout_s), session_budget_usd: Number(form.session_budget_usd), daily_budget_usd: Number(form.daily_budget_usd), max_turns: Number(form.max_turns), max_attempts: Number(form.max_attempts), backoff_s: Number(form.backoff_s) });
+      const result = await configureHarness({ ...safeForm, role, api_key_profile_id: apiKeySource || undefined, context: Number(form.context), session_timeout_s: Number(form.session_timeout_s), session_budget_usd: Number(form.session_budget_usd), daily_budget_usd: Number(form.daily_budget_usd), max_turns: Number(form.max_turns), max_attempts: Number(form.max_attempts), backoff_s: Number(form.backoff_s) });
       setSavedProfile(result.profile);
       setSelectedProfile(result.profile.id);
       setMessage("配置已保存。可以验证连通性 harness 和模型连通性。");
@@ -224,7 +227,9 @@ function HarnessConfigPanel({ open, role, bootstrap, initialRuntime, onClose, on
       setChecking(false);
     }
   };
-  return <aside className="detail-panel harness-config-panel"><button className="icon-button" onClick={onClose} aria-label="关闭 Harness 配置">×</button><span className="eyebrow">HARNESS CONFIGURATION</span><h2>{role === "foreman" ? "配置厂长 Harness" : "配置 Operator Harness"}</h2><p className="config-intro">项目只申请实际需要的密钥。密钥值通过项目资源请求写入保险箱，Foreman 负责后续启动和连通性验证。</p>{profiles.length > 0 && <label className="config-field"><span>已保存配置</span><select value={selectedProfile} onChange={(event) => loadProfile(event.target.value)}><option value="">新建配置</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.runtime} · {item.model}</option>)}</select></label>}<form onSubmit={save}><label className="config-field"><span>Harness Runtime</span><select value={form.runtime} onChange={(event) => update("runtime", event.target.value)} required><option value="">选择 agent-cli runtime</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.name}{item.version ? ` · ${item.version}` : ""}</option>)}</select></label><label className="config-field"><span>Base URL</span><input value={form.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="使用官方 Harness 默认地址" /></label><label className="config-field"><span>Model</span><input value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="claude-sonnet-5-5" required /></label><div className="context-note">密钥由项目主动请求。保存 Harness 配置后，缺失资源会在资源请求卡片中出现。</div><div className="config-grid"><label className="config-field"><span>Thinking effort</span><select value={form.thinking_effort} onChange={(event) => update("thinking_effort", event.target.value)}>{["minimal", "low", "medium", "high", "max"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="config-field"><span>Context</span><input type="number" min="1" value={form.context} onChange={(event) => update("context", event.target.value)} /></label></div><label className="config-field"><span>Harness image</span><input value={form.image} onChange={(event) => update("image", event.target.value)} placeholder="留空使用本机官方 Harness" /></label><div className="config-grid"><label className="config-field"><span>Network</span><select value={form.network} onChange={(event) => update("network", event.target.value)}>{role === "foreman" && <option value="bridge">bridge（可信厂长，可下载项目依赖）</option>}<option value="egress">egress</option><option value="none">none</option></select></label><label className="config-field"><span>Mode</span><select value={form.mode} onChange={(event) => update("mode", event.target.value)}><option value="session">session</option><option value="resident">resident</option></select></label></div><div className="config-grid"><label className="config-field"><span>Max turns</span><input type="number" min="1" value={form.max_turns} onChange={(event) => update("max_turns", event.target.value)} /></label><label className="config-field"><span>Timeout seconds</span><input type="number" min="1" value={form.session_timeout_s} onChange={(event) => update("session_timeout_s", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Session budget</span><input type="number" min="0" step="0.01" value={form.session_budget_usd} onChange={(event) => update("session_budget_usd", event.target.value)} /></label><label className="config-field"><span>Daily budget</span><input type="number" min="0" step="0.01" value={form.daily_budget_usd} onChange={(event) => update("daily_budget_usd", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Max attempts</span><input type="number" min="1" value={form.max_attempts} onChange={(event) => update("max_attempts", event.target.value)} /></label><label className="config-field"><span>Backoff seconds</span><input type="number" min="0" value={form.backoff_s} onChange={(event) => update("backoff_s", event.target.value)} /></label></div><div className="config-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存配置"}</button><button className="secondary-button" type="button" onClick={() => void verify()} disabled={checking || !savedProfile}>{checking ? "请求中…" : "验证连通性"}</button></div></form>{message && <div className="context-note">{message}</div>}{verification && <div className="context-line"><span>验证状态</span><strong>{display(verification.reason ?? verification.state, "待验证")}</strong></div>}</aside>;
+  const baseUrls = Array.from(new Set(profiles.map((item) => item.base_url).filter(Boolean)));
+  const models = Array.from(new Set(profiles.map((item) => item.model).filter(Boolean)));
+  return <aside className="detail-panel harness-config-panel"><button className="icon-button" onClick={onClose} aria-label="关闭 Harness 配置">×</button><span className="eyebrow">HARNESS CONFIGURATION</span><h2>{role === "foreman" ? "配置厂长 Harness" : "配置 Operator Harness"}</h2><p className="config-intro">先选择 Harness、Base URL、API key 来源和模型。其他运行参数收纳在高级设置中，由厂长与 Operator 共用。</p>{profiles.length > 0 && <label className="config-field"><span>已保存配置</span><select value={selectedProfile} onChange={(event) => loadProfile(event.target.value)}><option value="">新建配置</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.runtime} · {item.model}</option>)}</select></label>}<form onSubmit={save}><label className="config-field"><span>Harness Runtime</span><select value={form.runtime} onChange={(event) => update("runtime", event.target.value)} required><option value="">选择 agent-cli runtime</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.name}{item.version ? ` · ${item.version}` : ""}</option>)}</select></label><label className="config-field"><span>Base URL</span><input list="harness-base-urls" value={form.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="留空使用官方 Harness 默认地址" /><datalist id="harness-base-urls">{baseUrls.map((item) => <option key={item} value={item} />)}</datalist></label><label className="config-field"><span>API key</span><select value={apiKeySource} onChange={(event) => setApiKeySource(event.target.value)}><option value="">由项目资源请求提供</option>{profiles.filter((item) => item.api_key_configured).map((item) => <option key={item.id} value={item.id}>已配置 · {item.runtime} · {item.model}</option>)}</select><small className="field-hint">密钥值保存在项目资源保险箱，不会进入 Harness 配置表单。</small></label><label className="config-field"><span>Model</span><input list="harness-models" value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="例如 claude-sonnet-5-5" required /><datalist id="harness-models">{models.map((item) => <option key={item} value={item} />)}</datalist></label><div className="context-note">项目缺少密钥时，Foreman 会创建项目资源请求并在此处显示状态。</div><details className="config-advanced"><summary>高级运行参数 <span>厂长与 Operator 共用</span></summary><div className="config-grid"><label className="config-field"><span>Thinking effort</span><select value={form.thinking_effort} onChange={(event) => update("thinking_effort", event.target.value)}>{["minimal", "low", "medium", "high", "max"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="config-field"><span>Context</span><input type="number" min="1" value={form.context} onChange={(event) => update("context", event.target.value)} /></label></div><label className="config-field"><span>Harness image</span><input value={form.image} onChange={(event) => update("image", event.target.value)} placeholder="留空使用本机官方 Harness" /></label><div className="config-grid"><label className="config-field"><span>Network</span><select value={form.network} onChange={(event) => update("network", event.target.value)}>{role === "foreman" && <option value="bridge">bridge（可信厂长，可下载项目依赖）</option>}<option value="egress">egress</option><option value="none">none</option></select></label><label className="config-field"><span>Mode</span><select value={form.mode} onChange={(event) => update("mode", event.target.value)}><option value="session">session</option><option value="resident">resident</option></select></label></div><div className="config-grid"><label className="config-field"><span>Max turns</span><input type="number" min="1" value={form.max_turns} onChange={(event) => update("max_turns", event.target.value)} /></label><label className="config-field"><span>Timeout seconds</span><input type="number" min="1" value={form.session_timeout_s} onChange={(event) => update("session_timeout_s", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Session budget</span><input type="number" min="0" step="0.01" value={form.session_budget_usd} onChange={(event) => update("session_budget_usd", event.target.value)} /></label><label className="config-field"><span>Daily budget</span><input type="number" min="0" step="0.01" value={form.daily_budget_usd} onChange={(event) => update("daily_budget_usd", event.target.value)} /></label></div><div className="config-grid"><label className="config-field"><span>Max attempts</span><input type="number" min="1" value={form.max_attempts} onChange={(event) => update("max_attempts", event.target.value)} /></label><label className="config-field"><span>Backoff seconds</span><input type="number" min="0" value={form.backoff_s} onChange={(event) => update("backoff_s", event.target.value)} /></label></div></details><div className="config-actions"><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存配置"}</button><button className="secondary-button" type="button" onClick={() => void verify()} disabled={checking || !savedProfile}>{checking ? "请求中…" : "验证连通性"}</button></div></form>{message && <div className="context-note">{message}</div>}{verification && <div className="context-line"><span>验证状态</span><strong>{display(verification.reason ?? verification.state, "待验证")}</strong></div>}</aside>;
 }
 
 const foremanTurnStatus = {
@@ -257,6 +262,12 @@ function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForem
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [cancelling, setCancelling] = useState<string>();
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [open]);
   if (!open) return null;
   const foreman = bootstrap.foreman;
   const profile = foreman.profile;
@@ -278,6 +289,14 @@ function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForem
       setSending(false);
     }
   };
+  const elapsed = (at?: string) => {
+    if (!at) return "";
+    const started = Date.parse(at);
+    if (!Number.isFinite(started)) return "";
+    const seconds = Math.max(0, Math.floor((clock - started) / 1_000));
+    const minutes = Math.floor(seconds / 60);
+    return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  };
   return <aside className="foreman-panel">
     <div className="panel-head">
       <div><span className="eyebrow">FOREMAN CONSOLE</span><h2>厂长</h2></div>
@@ -287,9 +306,9 @@ function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForem
       <div>
         <span>Harness CLI</span>
         <strong>{foreman.configured ? `${display(foreman.runtime)} · ${display(foreman.model)}` : "未配置"}</strong>
-        {profile && <small>{profile.api_key_configured ? "部署凭证已配置" : "部署凭证未配置"}</small>}
+        {profile && <small>{profile.image ? (profile.api_key_configured ? "部署凭证已配置" : "部署凭证未配置") : (profile.api_key_configured ? "本机官方 Harness 可用" : "本机官方 Harness 未发现")}</small>}
       </div>
-      <button className="text-button" onClick={onConfigureForeman}>{foreman.configured ? "编辑配置" : "配置厂长"}</button>
+      <div className="foreman-harness-actions"><span className={`connection-pill ${foreman.configured ? "good" : "warn"}`}><span className="status-dot" />{foreman.configured ? "可对话" : "待配置"}</span><button className="text-button" onClick={onConfigureForeman}>{foreman.configured ? "编辑配置" : "配置厂长"}</button></div>
     </div>
     {foreman.setup_required && <div className="context-note">项目已启动，但厂长 Harness 尚未配置。先完成配置，Foreman 才能接管缺失依赖和运行验证。</div>}
     {firstRequest && <div className="foreman-resource">
@@ -307,7 +326,7 @@ function ForemanPanel({ open, bootstrap, talk, turns, activity, onConfigureForem
         return <div className={`talk-message ${human ? "human" : "agent"}`} key={item.id ?? `${item.at}-${index}`}>
           <span className="talk-role">{human ? "你" : "Foreman"}</span>
           <p>{display(item.body)}</p>
-          <small>{turn ? foremanTurnStatus[turn.status].label : display(item.state, "已接收")}</small>
+          <small>{turn ? `${foremanTurnStatus[turn.status].label}${turn.status === "queued" || turn.status === "claimed" ? ` · 已用时 ${elapsed(item.at ?? item.createdAt)}` : ""}` : display(item.state, "已接收")}</small>
           {turn?.cancellable && foremanTurnStatus[turn.status].rank < 2 && <button type="button" className="text-button"
             disabled={Boolean(cancelling)} onClick={() => void cancel(turn.id)}>
             {cancelling === turn.id ? "取消中…" : "取消本轮"}
@@ -459,7 +478,22 @@ function SettingsPage({ bootstrap, onRuntimeReady }: { bootstrap: Bootstrap; onR
       setChecking(false);
     }
   };
-  return <section className="page settings-page"><div className="page-heading"><div><span className="eyebrow">PROJECT DEPENDENCIES</span><h1>设置</h1><p>只检查本项目启动所需的 Harness 与容器运行时。</p></div><ConnectionState state={bootstrap.connection.state} message={bootstrap.connection.message} /></div><div className="dependency-grid"><section className="panel dependency-card"><div className="panel-head"><div><span className="eyebrow">CONTAINER RUNTIME</span><h2>{runtimeLabel}</h2></div><DependencyState item={runtime} /></div><div className="context-line"><span>状态</span><strong>{display(runtime.message, "待检查")}</strong></div><div className="context-line"><span>版本</span><strong className="mono">{display(runtime.version, "—")}</strong></div><button className="secondary-button" onClick={() => void startRuntime()} disabled={checking}>{checking ? "检查中…" : `尝试启动 ${runtimeLabel}`}</button>{message && <div className="context-note">{message}</div>}</section><section className="panel dependency-card"><div className="panel-head"><div><span className="eyebrow">AGENT HARNESSES</span><h2>Harness</h2></div><span className="count-badge">{dependencies.harnesses.length} 个</span></div>{dependencies.harnesses.length ? <div className="dependency-list">{dependencies.harnesses.map((item) => <div className="dependency-row" key={item.id}><span><strong>{item.name}</strong><small>{display(item.version, "未声明版本")}</small></span><DependencyState item={item} /></div>)}</div> : <EmptyState text="Registry 中没有发现 agent harness。" />}</section></div></section>;
+  const foremanProfile = bootstrap.foreman.profile;
+  const operatorProfiles = (bootstrap.harness_profiles ?? []).filter((item) => item.role === "operator");
+  const sharedDefaults = [
+    ["Thinking effort", foremanProfile?.thinking_effort ?? "max"],
+    ["Context", foremanProfile?.context ?? 128000],
+    ["Harness image", foremanProfile?.image || "本机官方 Harness"],
+    ["Network", foremanProfile?.network || "bridge"],
+    ["Mode", foremanProfile?.mode || "session"],
+    ["Max turns", foremanProfile?.max_turns ?? 20],
+    ["Timeout seconds", foremanProfile?.session_timeout_s ?? 600],
+    ["Session budget", foremanProfile?.session_budget_usd ?? 1],
+    ["Daily budget", foremanProfile?.daily_budget_usd ?? 10],
+    ["Max attempts", foremanProfile?.max_attempts ?? 2],
+    ["Backoff seconds", foremanProfile?.backoff_s ?? 60],
+  ];
+  return <section className="page settings-page"><div className="page-heading"><div><span className="eyebrow">PROJECT DEPENDENCIES</span><h1>设置</h1><p>项目依赖、Harness 运行默认值和共享资源都集中在这里。</p></div><ConnectionState state={bootstrap.connection.state} message={bootstrap.connection.message} /></div><div className="dependency-grid"><section className="panel dependency-card"><div className="panel-head"><div><span className="eyebrow">CONTAINER RUNTIME</span><h2>{runtimeLabel}</h2></div><DependencyState item={runtime} /></div><div className="context-line"><span>状态</span><strong>{display(runtime.message, "待检查")}</strong></div><div className="context-line"><span>版本</span><strong className="mono">{display(runtime.version, "—")}</strong></div><button className="secondary-button" onClick={() => void startRuntime()} disabled={checking}>{checking ? "检查中…" : `尝试启动 ${runtimeLabel}`}</button>{message && <div className="context-note">{message}</div>}</section><section className="panel dependency-card"><div className="panel-head"><div><span className="eyebrow">AGENT HARNESSES</span><h2>Harness</h2></div><span className="count-badge">{dependencies.harnesses.length} 个</span></div>{dependencies.harnesses.length ? <div className="dependency-list">{dependencies.harnesses.map((item) => <div className="dependency-row" key={item.id}><span><strong>{item.name}</strong><small>{display(item.version, "未声明版本")}</small></span><DependencyState item={item} /></div>)}</div> : <EmptyState text="Registry 中没有发现 agent harness。" />}</section></div><section className="panel shared-settings-card"><div className="panel-head"><div><span className="eyebrow">SHARED RUNTIME DEFAULTS</span><h2>共享运行参数</h2></div><span className="count-badge">厂长 {bootstrap.foreman.configured ? "已配置" : "待配置"} · Operator {operatorProfiles.length} 个</span></div><p className="settings-help">这些默认值由厂长与 Operator 共用。Base URL、API key 和模型仍在 Harness 配置中按角色选择。</p><div className="shared-settings-grid">{sharedDefaults.map(([label, value]) => <div className="shared-setting" key={label}><span>{label}</span><strong>{String(value)}</strong></div>)}</div></section></section>;
 }
 
 function assetTitle(asset: AssetRecord): string {
@@ -684,6 +718,18 @@ export function App(): ReactElement {
       if (turn) rememberTurn(turn);
       return;
     }
+    if (type === "foreman.session.failed" && typeof inboxId === "string") {
+      const turn = readForemanTurn(eventData);
+      if (turn) rememberTurn(turn);
+      if (!cancelledTurns.current.has(inboxId)) {
+        const reason = typeof eventData?.reason === "string" ? eventData.reason : "厂长会话中断";
+        setLiveReplies((current) => ({ ...current, [inboxId]: {
+          id: `live-${inboxId}`, role: "foreman", body: current[inboxId]?.body || reason, state: "会话失败",
+        } }));
+      }
+      setForemanActivity((current) => ({ ...current, [inboxId]: "厂长本轮处理失败" }));
+      return;
+    }
     if (type.startsWith("foreman.session.") && typeof inboxId === "string") {
       const activity = type.endsWith("tool.started") ? "厂长正在执行工具操作…"
         : type.endsWith("tool.finished") ? "厂长已完成工具操作，正在整理结果…"
@@ -728,14 +774,6 @@ export function App(): ReactElement {
       const text = eventData.text;
       setLiveReplies((current) => ({ ...current, [inboxId]: {
         id: `live-${inboxId}`, role: "foreman", body: (current[inboxId]?.body ?? "") + text, state: "回复中",
-      } }));
-      return;
-    }
-    if (type === "foreman.session.failed" && typeof inboxId === "string") {
-      if (cancelledTurns.current.has(inboxId)) return;
-      const reason = typeof eventData?.reason === "string" ? eventData.reason : "厂长会话中断";
-      setLiveReplies((current) => ({ ...current, [inboxId]: {
-        id: `live-${inboxId}`, role: "foreman", body: current[inboxId]?.body || reason, state: "会话失败",
       } }));
       return;
     }

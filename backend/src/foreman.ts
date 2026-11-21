@@ -283,6 +283,12 @@ export class ForemanCoordinator {
           this.options.events.publish(sessionType, payload);
         }
         if (event.type === "session.failed") failure = text || "official-harness-failed";
+        // Some official CLI versions emit an intermediate turn-completed
+        // record while they are still producing the user-visible answer.
+        // Once a reply has been streamed, the next terminal event closes this
+        // turn immediately so a healthy Harness cannot leave the outbox
+        // claimed until the process-level stream exits.
+        if (event.type === "session.finished" && reply.trim()) break;
       }
       if (stopped()) return;
       if (failure) {
