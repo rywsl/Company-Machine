@@ -1,8 +1,9 @@
-import { constants, type Database } from "bun:sqlite";
+import { constants } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ManagedDatabase } from "./sqlite";
+import type { StateDatabase } from "./state-database";
 import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 import { defaultSessionTimeoutSeconds, validSessionTimeout } from "./harness-turn";
 import type { OperatorBinding } from "./operator-binding";
@@ -91,8 +92,8 @@ type LegacyAssetRow = { id: string; document: string; created_at: string; by_act
 type LegacyBridgeRow = { seq: number; id: string; kind: string; at: string; data: string; job_id?: string | null; run_id?: string | null };
 
 export class SqliteStore {
-  readonly db: Database;
-  readonly legacy?: Database;
+  readonly db: StateDatabase;
+  readonly legacy?: StateDatabase;
   private readonly bridgeLegacy: boolean;
 
   readonly clock: Clock;
@@ -1751,11 +1752,11 @@ export class SqliteStore {
     return source ? this.legacyAssetRows(source, limit).map((row) => this.legacyAssetFromRow(row)) : [];
   }
 
-  private legacyAssetSource(): Database | undefined {
+  private legacyAssetSource(): StateDatabase | undefined {
     if (this.hasLegacyTable("asset_records")) return this.legacy ?? this.db;
   }
 
-  private legacyAssetRows(source: Database, limit?: number, older?: LegacyAssetCursor): LegacyAssetRow[] {
+  private legacyAssetRows(source: StateDatabase, limit?: number, older?: LegacyAssetCursor): LegacyAssetRow[] {
     if (limit === 0) return [];
     if (limit === undefined) {
       return source.query<LegacyAssetRow>("SELECT id,document,created_at,by_actor,CAST(rowid AS TEXT) AS row_id FROM asset_records ORDER BY created_at").all();

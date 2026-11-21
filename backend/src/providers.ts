@@ -2,8 +2,8 @@ import { createHash, createHmac, createCipheriv, createDecipheriv } from "node:c
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { Database } from "bun:sqlite";
 import { ManagedDatabase } from "./sqlite";
+import type { StateDatabase } from "./state-database";
 import { vaultRandomBytes, VaultStore } from "./vault";
 import { randomUuid } from "./legacy/foundation";
 import { ProviderError, type ProviderErrorCode } from "./provider-errors";
@@ -26,7 +26,7 @@ export interface ProviderStatus {
 
 export interface StateProvider {
   readonly kind: StateProviderKind;
-  readonly database?: Database;
+  readonly database?: StateDatabase;
   query<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): T[];
   execute(sql: string, params?: readonly unknown[]): { changes: number; lastInsertRowid?: number };
   transaction<T>(work: () => T): T;
@@ -200,9 +200,9 @@ export class LocalBlobProvider implements BlobProvider {
 
 export class SqliteStateProvider implements StateProvider {
   readonly kind = "sqlite" as const;
-  readonly database: Database;
+  readonly database: StateDatabase;
   private readonly ownsDatabase: boolean;
-  constructor(pathOrDatabase: string | Database = process.env.BUSINESS_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db"), ownsDatabase = true) {
+  constructor(pathOrDatabase: string | StateDatabase = process.env.BUSINESS_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db"), ownsDatabase = true) {
     if (typeof pathOrDatabase === "string") {
       if (pathOrDatabase !== ":memory:") mkdirSync(dirname(pathOrDatabase), { recursive: true });
       this.database = new ManagedDatabase(pathOrDatabase, { create: true });

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import type { StateDatabase } from "../state-database";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { open } from "node:fs/promises";
@@ -43,7 +43,7 @@ function checkPayloadPath(path: string): void {
 
 export class Warehouse {
   private readonly root: string;
-  constructor(root: string, readonly db: Database, readonly clock: Clock, readonly ids?: IdSource) {
+  constructor(root: string, readonly db: StateDatabase, readonly clock: Clock, readonly ids?: IdSource) {
     this.root = root;
     mkdirSync(join(root, "cas"), { recursive: true });
     mkdirSync(join(root, "tmp"), { recursive: true });
