@@ -61,6 +61,10 @@ function bind(sql: string, params: readonly unknown[]): string {
   return result;
 }
 
+export function bindSqlParameters(sql: string, params: readonly unknown[]): string {
+  return bind(sql, params);
+}
+
 function outputText(result: ReturnType<typeof Bun.spawnSync>): string {
   if (result.exitCode !== 0) {
     const stderr = result.stderr instanceof Uint8Array ? new TextDecoder().decode(result.stderr) : "";
