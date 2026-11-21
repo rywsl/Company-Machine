@@ -1650,9 +1650,10 @@ export class SqliteStore {
   }
 
   markSecretAvailable(id: string): SecretRequest | undefined {
+    const current = this.getSecretRequest(id);
+    if (!current || current.status !== "requested") return undefined;
     const timestamp = this.timestamp();
-    const changed = this.db.query("UPDATE secret_requests SET status = 'available', updated_at = ? WHERE id = ? AND status = 'requested'").run(timestamp, id) as { changes?: number };
-    if ((changed.changes ?? 0) === 0) return undefined;
+    this.db.query("UPDATE secret_requests SET status = 'available', updated_at = ? WHERE id = ? AND status = 'requested'").run(timestamp, id);
     this.recordSecretAudit(id, "available", "user");
     return this.getSecretRequest(id);
   }
@@ -1661,8 +1662,7 @@ export class SqliteStore {
     const current = this.getSecretRequest(id);
     if (!current || current.status === status) return current;
     const timestamp = this.timestamp();
-    const changed = this.db.query("UPDATE secret_requests SET status=?, updated_at=? WHERE id=?").run(status, timestamp, id) as { changes?: number };
-    if ((changed.changes ?? 0) === 0) return undefined;
+    this.db.query("UPDATE secret_requests SET status=?, updated_at=? WHERE id=?").run(status, timestamp, id);
     this.recordSecretAudit(id, status, actor, undefined, detail);
     return this.getSecretRequest(id);
   }
@@ -1682,8 +1682,10 @@ export class SqliteStore {
 
   appendEvent(type: string, data: unknown): Event {
     const value = { id: this.uuid(), type, data, createdAt: this.timestamp() };
-    const result = this.db.query("INSERT INTO business_events (id,type,data,created_at) VALUES (?,?,?,?)").run(value.id, value.type, json(value.data), value.createdAt);
-    return { ...value, seq: Number(result.lastInsertRowid) };
+    this.db.query("INSERT INTO business_events (id,type,data,created_at) VALUES (?,?,?,?)").run(value.id, value.type, json(value.data), value.createdAt);
+    const row = this.db.query<{ seq: number }>("SELECT seq FROM business_events WHERE id=?").get(value.id);
+    if (!row) throw new Error("business event was not persisted");
+    return { ...value, seq: Number(row.seq) };
   }
 
   /** Copies append-only legacy events into the business event log exactly once. */
@@ -1700,11 +1702,12 @@ export class SqliteStore {
     `).all(last, limit);
     if (!selected.length) return [];
     return this.db.transaction(() => selected.flatMap((row) => {
-      const inserted = this.db.query(`
+      const existing = this.db.query<{ business_seq: number }>("SELECT business_seq FROM legacy_event_bridge WHERE source_key=? AND legacy_seq=?").get(sourceKey, row.seq);
+      if (existing) return [];
+      this.db.query(`
         INSERT OR IGNORE INTO legacy_event_bridge (source_key,legacy_seq,legacy_id,business_seq,bridged_at)
         VALUES (?,?,?,?,?)
-      `).run(sourceKey, row.seq, row.id, 0, this.timestamp()) as { changes?: number };
-      if ((inserted.changes ?? 0) === 0) return [];
+      `).run(sourceKey, row.seq, row.id, 0, this.timestamp());
       const payload = parseJson(row.data);
       const data: Record<string, unknown> = {
         ...payload,
