@@ -44,6 +44,7 @@ abstract class CliStateProvider implements StateProvider {
   abstract readonly mode: "production";
 
   protected constructor(protected readonly env: NodeJS.ProcessEnv = process.env) {}
+  private transactionStatements: string[] | undefined;
 
   protected dsn(): string {
     const value = this.env[this.dsnEnv]?.trim();
@@ -52,6 +53,14 @@ abstract class CliStateProvider implements StateProvider {
   }
 
   protected run(sql: string): string {
+    if (this.transactionStatements) {
+      this.transactionStatements.push(sql);
+      return "";
+    }
+    return this.runImmediate(sql);
+  }
+
+  private runImmediate(sql: string): string {
     this.dsn();
     if (!Bun.which(this.command)) throw new ProviderError("PROVIDER_UNAVAILABLE", `${this.command} is not installed`, { reason: "command-not-found" });
     return outputText(Bun.spawnSync(this.argv(sql), { stdout: "pipe", stderr: "pipe", env: this.environment() }));
@@ -78,12 +87,45 @@ abstract class CliStateProvider implements StateProvider {
   }
 
   transaction<T>(_work: () => T): T {
-    throw new ProviderError("PROVIDER_UNAVAILABLE", `${this.kind} transactions require the SQL provider session adapter`, { reason: "transaction-session-not-configured" });
+    if (this.transactionStatements) throw new ProviderError("PROVIDER_UNAVAILABLE", `${this.kind} transaction is already active`, { reason: "nested-transaction" });
+    this.transactionStatements = [];
+    try {
+      const result = _work();
+      const statements = this.transactionStatements;
+      this.transactionStatements = undefined;
+      if (statements.length > 0) this.runImmediate(["BEGIN", ...statements, "COMMIT"].join(";\n"));
+      return result;
+    } catch (error) {
+      this.transactionStatements = undefined;
+      throw error;
+    }
   }
 
-  migrate(): number {
-    this.run("SELECT 1");
-    return 0;
+  migrate(migrations: readonly string[] = []): number {
+    if (migrations.length === 0) {
+      this.run("SELECT 1");
+      return 0;
+    }
+    this.transaction(() => {
+      this.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)");
+      migrations.forEach((migration, index) => {
+        const translated = this.translateMigration(migration);
+        this.execute(translated);
+        const version = index + 1;
+        this.execute(this.kind === "postgres"
+          ? `INSERT INTO schema_migrations(version) VALUES (${version}) ON CONFLICT DO NOTHING`
+          : `INSERT IGNORE INTO schema_migrations(version) VALUES (${version})`);
+      });
+    });
+    return migrations.length;
+  }
+
+  private translateMigration(sql: string): string {
+    if (/\b(?:AUTOINCREMENT|WITHOUT\s+ROWID|STRICT)\b/i.test(sql)) {
+      throw new ProviderError("PROVIDER_CONFIG_INVALID", `${this.kind} migration uses unsupported SQLite syntax`, { reason: "sql-dialect" });
+    }
+    if (this.kind === "postgres") return sql.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT");
+    return sql.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT IGNORE");
   }
 
   verify(): Array<Record<string, string>> {
@@ -177,9 +219,9 @@ export class MysqlStateProvider extends CliStateProvider {
   }
 }
 
-export function stateProviderFor(kind: StateProviderKind, root: string): StateProvider {
+export function stateProviderFor(kind: StateProviderKind, root: string, env: NodeJS.ProcessEnv = process.env): StateProvider {
   if (kind === "sqlite") return new SqliteStateProvider(join(root, "factory.db"));
-  return kind === "postgres" ? new PostgresStateProvider() : new MysqlStateProvider();
+  return kind === "postgres" ? new PostgresStateProvider(env) : new MysqlStateProvider(env);
 }
 
 export type { SqlValue };

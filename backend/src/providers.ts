@@ -30,7 +30,7 @@ export interface StateProvider {
   query<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): T[];
   execute(sql: string, params?: readonly unknown[]): { changes: number; lastInsertRowid?: number };
   transaction<T>(work: () => T): T;
-  migrate(): number;
+  migrate(migrations?: readonly string[]): number;
   verify(): Array<Record<string, string>>;
   status(): ProviderStatus;
   close(): void;
