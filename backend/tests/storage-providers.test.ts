@@ -140,6 +140,19 @@ test("SqliteStore can receive an injected StateDatabase without changing busines
   } finally { provider.close(); }
 });
 
+test("createApp can run against an injected local provider database", () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-injected-app-"));
+  const storage = createStorageProviders({ root, env: {} as NodeJS.ProcessEnv });
+  const app = createApp({ storageRoot: root, dbPath: join(root, "factory.db"), legacyPath: join(root, "factory.db"), storage, dispatchWork: false });
+  try {
+    expect(app.store.createBusinessSystem({ name: "Injected app" }).name).toBe("Injected app");
+    expect(app.storage.state.database).toBe(storage.state.database);
+  } finally {
+    app.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("SQL placeholder binding preserves literals and comments", () => {
   expect(bindSqlParameters("SELECT '?' AS literal, ? AS value -- ?\n/* ? */", ["O'Reilly"]))
     .toBe("SELECT '?' AS literal, 'O''Reilly' AS value -- ?\n/* ? */");
