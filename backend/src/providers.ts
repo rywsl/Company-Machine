@@ -60,7 +60,7 @@ export interface SecretProvider {
 
 export interface EncryptedValue {
   keyId: string;
-  algorithm: "aes-256-gcm";
+  algorithm: "aes-256-gcm" | "openbao-transit";
   iv: string;
   tag: string;
   ciphertext: string;
@@ -198,12 +198,19 @@ export class LocalBlobProvider implements BlobProvider {
 
 export class SqliteStateProvider implements StateProvider {
   readonly kind = "sqlite" as const;
-  readonly database: ManagedDatabase;
-  constructor(path = process.env.BUSINESS_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db")) {
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    this.database = new ManagedDatabase(path, { create: true });
-    this.database.exec("PRAGMA busy_timeout = 5000");
-    this.database.exec("PRAGMA journal_mode = WAL");
+  readonly database: Database;
+  private readonly ownsDatabase: boolean;
+  constructor(pathOrDatabase: string | Database = process.env.BUSINESS_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db"), ownsDatabase = true) {
+    if (typeof pathOrDatabase === "string") {
+      if (pathOrDatabase !== ":memory:") mkdirSync(dirname(pathOrDatabase), { recursive: true });
+      this.database = new ManagedDatabase(pathOrDatabase, { create: true });
+      this.database.exec("PRAGMA busy_timeout = 5000");
+      this.database.exec("PRAGMA journal_mode = WAL");
+      this.ownsDatabase = true;
+    } else {
+      this.database = pathOrDatabase;
+      this.ownsDatabase = ownsDatabase;
+    }
   }
   query<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T[] { return this.database.query<T>(sql).all(...params); }
   execute(sql: string, params: readonly unknown[] = []): { changes: number; lastInsertRowid?: number } {
@@ -213,7 +220,7 @@ export class SqliteStateProvider implements StateProvider {
   transaction<T>(work: () => T): T { return this.database.transaction(work).immediate(); }
   migrate(): number { return Number(this.database.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0); }
   status(): ProviderStatus { return { kind: this.kind, mode: "local", available: true }; }
-  close(): void { this.database.close(); }
+  close(): void { if (this.ownsDatabase) this.database.close(); }
 }
 
 export class LocalSecretProvider implements SecretProvider {
