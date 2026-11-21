@@ -5,7 +5,7 @@ import { ProviderStateDatabase, type StateDatabase } from "./state-database";
 
 type SqlValue = string | number | boolean | null | Uint8Array;
 
-type SqlDialect = "generic" | "postgres" | "mysql";
+export type SqlDialect = "generic" | "postgres" | "mysql";
 
 function quote(value: unknown, dialect: SqlDialect = "generic"): string {
   if (value === null || value === undefined) return "NULL";
@@ -67,8 +67,8 @@ function bind(sql: string, params: readonly unknown[], dialect: SqlDialect = "ge
   return result;
 }
 
-export function bindSqlParameters(sql: string, params: readonly unknown[]): string {
-  return bind(sql, params);
+export function bindSqlParameters(sql: string, params: readonly unknown[], dialect: SqlDialect = "generic"): string {
+  return bind(sql, params, dialect);
 }
 
 function outputText(result: ReturnType<typeof Bun.spawnSync>): string {
@@ -119,7 +119,7 @@ abstract class CliStateProvider implements StateProvider {
 
   protected bindParameters(sql: string, params: readonly unknown[]): string {
     const dialect: SqlDialect = this.kind === "postgres" || this.kind === "mysql" ? this.kind : "generic";
-    return bind(sql, params, dialect);
+    return bindSqlParameters(sql, params, dialect);
   }
 
   protected querySql(sql: string): string {

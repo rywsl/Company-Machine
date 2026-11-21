@@ -225,6 +225,8 @@ test("createApp can run against an injected local provider database", () => {
 test("SQL placeholder binding preserves literals and comments", () => {
   expect(bindSqlParameters("SELECT '?' AS literal, ? AS value -- ?\n/* ? */", ["O'Reilly"]))
     .toBe("SELECT '?' AS literal, 'O''Reilly' AS value -- ?\n/* ? */");
+  expect(bindSqlParameters("SELECT ? AS enabled, ? AS payload", [true, new Uint8Array([1, 2])], "postgres"))
+    .toBe("SELECT TRUE AS enabled, decode('0102', 'hex') AS payload");
 });
 
 test("local migration copies rows, CAS bytes and secret references before switching", async () => {
