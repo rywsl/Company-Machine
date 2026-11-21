@@ -19,7 +19,7 @@ export interface OperatorCoordinatorOptions {
   acpSpawn?: AcpSpawn;
   onProgress?: (runId: string, completedUnitRunId?: string) => void;
   ensureRuntime?: () => Promise<void>;
-  readSecret?: (ref: string) => string | undefined;
+  readSecret?: (ref: string) => Promise<string | undefined>;
   prepareSources?: PrepareProjectSources;
   materialStage?: () => ReturnType<typeof createMaterialFileStage> | undefined;
 }
@@ -192,7 +192,7 @@ export class OperatorCoordinator {
       const materialInputs = materialStage ? await turn.wait(materialStage.prepareInputs(this.options.store.artifactFileGrants(unit.businessSystemId, artifactIds))) : undefined;
       for (const resource of this.options.store.unitSecretRequests(unitRun.id)) {
         if (resource.projectId !== unit.projectId || resource.status !== "available" || !projectCredentialName(resource.name)) continue;
-        const value = this.options.readSecret?.(resource.vaultRef);
+        const value = await this.options.readSecret?.(resource.vaultRef);
         if (!value) throw new Error("project-credential-vault-entry-missing");
         credentials[resource.name] = value;
       }

@@ -111,6 +111,14 @@ declare module "bun:test" {
 }
 
 declare const Bun: {
+  SQL: new (url: string, options?: Record<string, unknown>) => {
+    unsafe<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): Promise<T[]>;
+    begin<T>(work: (transaction: {
+      unsafe<R = Record<string, unknown>>(sql: string, params?: readonly unknown[]): Promise<R[]>;
+    }) => Promise<T> | T): Promise<T>;
+    close(): Promise<void>;
+    readonly options?: Record<string, unknown>;
+  };
   argv: string[];
   which(executable: string): string | null;
   build(options: { entrypoints: string[]; target: "bun" }): Promise<{ outputs: Blob[] }>;

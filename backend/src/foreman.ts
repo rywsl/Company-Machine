@@ -10,7 +10,7 @@ import type { RegisterRepository } from "./project-registration";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, requireDeclaredTransport, harnessControlPlaneRoot, harnessEndpointEnv, resolveOfficialHarness, type HarnessSessionRequest, type OfficialSpawn } from "./harness";
 import { HarnessTurn } from "./harness-turn";
-import { ForemanReplyRedactor, foremanCredential, redactForemanText } from "./foreman-credentials";
+import { ForemanReplyRedactor, foremanCredentialAsync, redactForemanText } from "./foreman-credentials";
 
 export interface ForemanCoordinatorOptions {
   store: SqliteStore;
@@ -20,7 +20,7 @@ export interface ForemanCoordinatorOptions {
   acpSpawn?: AcpSpawn;
   ensureRuntime?: () => Promise<void>;
   factoryEnv?: Record<string, string>;
-  readSecret?: (ref: string) => string | undefined;
+  readSecret?: (ref: string) => Promise<string | undefined>;
   fetchBusiness?: (request: Request) => Promise<Response>;
   registerRepository?: RegisterRepository;
   prepareSources?: PrepareProjectSources;
@@ -169,7 +169,7 @@ export class ForemanCoordinator {
     let turn = new HarnessTurn(profile.sessionTimeoutSeconds);
     const owner: ActiveForemanTurn = { turn };
     this.turns.set(id, owner);
-    const credential = foremanCredential(profile, this.options.readSecret);
+    const credential = await foremanCredentialAsync(profile, this.options.readSecret);
     const useAcp = requireDeclaredTransport(definition, acpAvailable) === "acp";
     let mailbox: ReturnType<typeof openForemanMailbox> | undefined;
     let sourceMounts: PreparedProjectSources | undefined;

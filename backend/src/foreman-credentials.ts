@@ -44,11 +44,18 @@ export function foremanCredential(
   profile: Pick<HarnessProfile, "role" | "runtime" | "baseUrl" | "secretRef">,
   readSecret?: (ref: string) => string | undefined,
 ): { variable: string; value: string; baseUrl: string } | undefined {
+  return resolveCredential(profile, profile.secretRef ? readSecret?.(profile.secretRef) : undefined);
+}
+
+function resolveCredential(
+  profile: Pick<HarnessProfile, "role" | "runtime" | "baseUrl" | "secretRef">,
+  secretValue?: string,
+): { variable: string; value: string; baseUrl: string } | undefined {
   if (profile.role !== "foreman") return;
   const id = resolveOfficialHarness(profile.runtime)?.id;
   const explicit = id ? explicitCredentials()[id] : undefined;
   if (explicit) {
-    const value = profile.secretRef ? readSecret?.(profile.secretRef) : explicit.source ? process.env[explicit.source] : undefined;
+    const value = profile.secretRef ? secretValue : explicit.source ? process.env[explicit.source] : undefined;
     if (!value?.trim()) return;
     const baseUrl = profile.baseUrl || explicit.base_url || "";
     if (baseUrl && !url(baseUrl)) return;
@@ -56,7 +63,7 @@ export function foremanCredential(
   }
   if (id !== "claude-code" && id !== "codex") return;
   const config = deploymentCredentials[id];
-  const value = (profile.secretRef ? readSecret?.(profile.secretRef) : undefined) ?? process.env[config.key];
+  const value = (profile.secretRef ? secretValue : undefined) ?? process.env[config.key];
   if (!value?.trim()) return;
   const endpoint = url(profile.baseUrl || config.base);
   const configured = process.env[config.endpoint];
@@ -64,6 +71,14 @@ export function foremanCredential(
   if (!endpoint || !expected || endpoint.origin !== expected.origin) return;
   if (configured && (endpoint.pathname.replace(/\/+$/, "") !== expected.pathname.replace(/\/+$/, "") || endpoint.search !== expected.search)) return;
   return { variable: config.variable, value, baseUrl: profile.baseUrl || config.base };
+}
+
+export async function foremanCredentialAsync(
+  profile: Pick<HarnessProfile, "role" | "runtime" | "baseUrl" | "secretRef">,
+  readSecret?: (ref: string) => Promise<string | undefined>,
+): Promise<{ variable: string; value: string; baseUrl: string } | undefined> {
+  const secretValue = profile.secretRef && readSecret ? await readSecret(profile.secretRef) : undefined;
+  return resolveCredential(profile, secretValue);
 }
 
 export function redactForemanText(text: string, value?: string): string {

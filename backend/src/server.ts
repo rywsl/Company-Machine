@@ -373,7 +373,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)], { cloneRepositories: false, strict: true, ...sourceOptions });
   const foreman = new ForemanCoordinator({
     store, events, ...options.foreman, ensureRuntime,
-    readSecret: (ref) => vault.get(ref),
+    readSecret: (ref) => storage.secret.get(ref),
     factoryEnv: { FACTORY_ROOT: storageRoot, FACTORY_DB_PATH: databasePath(store.legacyPath), BUSINESS_DB_PATH: databasePath(store.dbPath) },
     fetchBusiness: (request) => fetch(request),
     prepareSources: options.foreman?.prepareSources ?? prepareSources,
@@ -388,7 +388,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   };
   const operator = new OperatorCoordinator({
     store, events, materialStage: () => supportsLocalProjectMounts() ? createMaterialFileStage(uploads()) : undefined,
-    ...options.operator, onProgress: dispatchOperatorRun, ensureRuntime, readSecret: (ref) => vault.get(ref),
+    ...options.operator, onProgress: dispatchOperatorRun, ensureRuntime, readSecret: (ref) => storage.secret.get(ref),
     prepareSources: options.operator?.prepareSources ?? (async (project) => supportsLocalProjectMounts() ? prepareSources(project) : undefined),
   });
   const hasForeman = () => store.listHarnessProfiles().some((profile) => profile.role === "foreman");
@@ -1150,14 +1150,14 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (secretActionMatch[2] === "rotate") {
         if (record.status === "revoked") return response({ error: "secret request is already revoked" }, 409);
         store.setSecretStatus(record.id, "revoked", "user", { reason: "rotation" });
-        vault.delete(record.vaultRef);
+        await storage.secret.delete(record.vaultRef);
         const rotated = store.createSecretRequest({ projectId: record.projectId, name: record.name, vaultRef: `vault://secret/${store.uuid()}`, metadata: { ...record.metadata, rotated_from: record.id } });
         events.publish("secret.rotated", { id: rotated.id, projectId: rotated.projectId, name: rotated.name, status: rotated.status });
         return response({ request_id: rotated.id, state: rotated.status }, 201);
       }
       const status = secretActionMatch[2] === "deny" ? "denied" : "revoked";
       const updated = store.setSecretStatus(record.id, status, "user");
-      if (status === "revoked") vault.delete(record.vaultRef);
+      if (status === "revoked") await storage.secret.delete(record.vaultRef);
       events.publish(`secret.${status}`, { id: record.id, projectId: record.projectId, name: record.name, status: updated?.status ?? status });
       return response({ request_id: record.id, state: updated?.status ?? status }, 200);
     }
@@ -1193,7 +1193,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (typeof body.value !== "string" || body.value.length === 0) return response({ error: "value is required" }, 400);
       if (requestRecord.status !== "requested") return response({ error: `secret request is ${requestRecord.status}` }, 409);
       try {
-        vault.put(requestRecord.vaultRef, body.value);
+        await storage.secret.put(requestRecord.vaultRef, body.value);
       } catch (error) {
         return response({ error: error instanceof Error ? error.message : "secret storage failed" }, 503);
       }
@@ -1339,7 +1339,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       verificationJobs.set(profile.id, controller);
       events.publish("harness.profile.verification.requested", { id: profile.id, runtime: profile.runtime, role: profile.role });
       const transportOptions = profile.role === "operator" ? options.operator : options.foreman;
-      void verifyHarness(profile, { ...transportOptions, ensureRuntime, readSecret: (ref) => vault.get(ref), signal: controller.signal, timeoutMs: options.harnessVerificationTimeoutMs }).then(({ state, reason }) => {
+      void verifyHarness(profile, { ...transportOptions, ensureRuntime, readSecret: (ref) => storage.secret.get(ref), signal: controller.signal, timeoutMs: options.harnessVerificationTimeoutMs }).then(({ state, reason }) => {
         if (verificationJobs.get(profile.id) !== controller) return;
         verificationJobs.delete(profile.id);
         const current = store.listHarnessProfiles().find((item) => item.id === profile.id);

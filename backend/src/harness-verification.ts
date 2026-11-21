@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { AcpTransport, defaultAcpSpawn, type AcpSpawn } from "./acp";
 import { OfficialCliTransport, requireDeclaredTransport, harnessEndpointEnv, resolveOfficialHarness, type HarnessSession, type OfficialSpawn } from "./harness";
 import type { HarnessProfile } from "./models";
-import { foremanCredential } from "./foreman-credentials";
+import { foremanCredentialAsync } from "./foreman-credentials";
 
 const verificationReply = "MAO-OK";
 type Outcome = { state: "verified" | "failed"; reason: string };
@@ -15,7 +15,7 @@ interface VerificationOptions {
   ensureRuntime: () => Promise<void>;
   signal: AbortSignal;
   timeoutMs?: number;
-  readSecret?: (ref: string) => string | undefined;
+  readSecret?: (ref: string) => Promise<string | undefined>;
 }
 
 const failed = (reason: string): Outcome => ({ state: "failed", reason });
@@ -24,7 +24,7 @@ export async function verifyHarness(profile: HarnessProfile, options: Verificati
   const definition = resolveOfficialHarness(profile.runtime);
   if (!definition) return failed("未找到配置的官方 Harness");
   let env: Record<string, string>;
-  const credential = foremanCredential(profile, options.readSecret);
+  const credential = await foremanCredentialAsync(profile, options.readSecret);
   try {
     env = harnessEndpointEnv(definition, credential?.baseUrl ?? profile.baseUrl);
     if (credential) env[credential.variable] = credential.value;

@@ -95,6 +95,16 @@ export interface KmsProvider {
 
 `EncryptedValue.auditRef` 可选，远程 KMS 调用返回时只允许携带不可逆审计引用。
 
+### 2.2 Bun.SQL 异步边界
+
+`backend/src/storage-bun-sql.ts` 提供独立的 `AsyncStateProvider`，用于后续异步业务仓储接入 Bun 1.3 的原生 SQL 客户端。它不扩展同步 `StateProvider`，也不改变当前 `SqliteStore`、`ProviderStateDatabase` 或同步 provider registry。
+
+- `BunPostgresStateProvider` 使用 `postgres://` 或 `postgresql://` DSN，`BunMysqlStateProvider` 使用 `mysql://` DSN。缺少或不匹配 DSN 时返回 `PROVIDER_UNAVAILABLE` 或 `PROVIDER_CONFIG_INVALID`。
+- provider 通过 `new Bun.SQL(dsn, options)` 创建 Bun 管理的长连接池。`max`、`idleTimeout`、`connectionTimeout`、`maxLifetime` 和 `prepare` 只在 provider 构造边界传入，业务层不持有连接。
+- `query()`、`execute()` 和 `transaction()` 返回 Promise。事务使用 Bun.SQL 的 `begin()` 回调，事务内查询和写入共享同一租借连接，并在回调完成后由 Bun 归还连接。
+- 业务 SQL 可以继续使用仓储现有的 `?` 占位符。PostgreSQL provider 在忽略字符串、标识符和注释中的问号后转换为 `$1`、`$2` 等参数，参数仍通过 Bun.SQL 绑定传递。MySQL 保留 `?`。
+- 该边界只接受异步调用方。同步 `StateProvider` 仍由 SQLite 或现有受控 CLI provider 实现，未连接 Bun.SQL provider，避免把 Promise 引入现有同步仓储。
+
 `StateStatement` 只包含规范化 SQL、参数和业务操作名。业务层不能拼接方言 SQL。`ProviderStatus` 只返回 provider 名称、模式、可用状态、版本和非敏感原因。`VerificationReport` 只返回摘要、计数和不一致位置。
 
 当前 `SqliteStore`、`Warehouse` 和 `VaultStore` 通过适配器实现这些接口。`ProviderStateDatabase` 将 provider 的查询、语句和事务映射到现有同步仓储表面。适配器必须保持已有调用方的行为和本地文件布局，远程事务必须保证事务内查询能看到此前写入。
@@ -135,6 +145,8 @@ SQLite、PostgreSQL 和 MySQL 都由 `StateProvider` 边界选择。事务、查
 - provider 不可用、连接池耗尽或迁移失败返回 `PROVIDER_UNAVAILABLE`，不能创建 SQLite 伪装成功。
 
 迁移器以规范迁移描述为输入，为每个 SQL provider 生成对应方言。业务层只能调用 `migrate()`、`transaction()`、`query()` 和 `verify()`。目标客户端、DSN 或方言不满足时返回 `PROVIDER_UNAVAILABLE` 或 `PROVIDER_CONFIG_INVALID`，不能伪装为 SQLite 已迁移。
+
+生产异步业务接入使用 `BunPostgresStateProvider` 或 `BunMysqlStateProvider`。它们通过 Bun 原生 `Bun.SQL` 管理连接池，支持 `max`、空闲超时、连接超时、最长生命周期和 prepared statement 配置。该异步接口与现有同步 `StateProvider` 并行存在，业务仓储完成异步事务迁移前，现有同步控制面继续 fail-closed。
 
 ## 5. 行为
 
