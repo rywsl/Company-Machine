@@ -1,4 +1,6 @@
 import { ProviderError, type ProviderStatus, type StateProvider, type StateProviderKind } from "./providers";
+import { join } from "node:path";
+import { SqliteStateProvider } from "./providers";
 
 type SqlValue = string | number | boolean | null | Uint8Array;
 
@@ -164,10 +166,7 @@ export class MysqlStateProvider extends CliStateProvider {
 }
 
 export function stateProviderFor(kind: StateProviderKind, root: string): StateProvider {
-  if (kind === "sqlite") {
-    // Kept in providers.ts so all local construction shares the same SQLite setup.
-    throw new ProviderError("PROVIDER_CONFIG_INVALID", "Use SqliteStateProvider for sqlite state");
-  }
+  if (kind === "sqlite") return new SqliteStateProvider(join(root, "factory.db"));
   return kind === "postgres" ? new PostgresStateProvider() : new MysqlStateProvider();
 }
 

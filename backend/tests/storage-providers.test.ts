@@ -6,6 +6,7 @@ import { createApp } from "../src/server";
 import { OpenBaoKmsProvider } from "../src/storage-openbao";
 import { S3BlobProvider } from "../src/storage-s3";
 import { resolveStorageProviderConfig } from "../src/providers";
+import { MysqlStateProvider, PostgresStateProvider } from "../src/storage-sql";
 
 test("local storage configuration never selects external providers", () => {
   expect(resolveStorageProviderConfig({} as NodeJS.ProcessEnv)).toEqual({ mode: "local", state: "sqlite", blob: "local", secret: "local" });
@@ -53,4 +54,9 @@ test("local app exposes provider status without changing the existing Vault path
     app.stop();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("SQL providers fail closed when their connection environment is absent", () => {
+  expect(new PostgresStateProvider().status()).toMatchObject({ kind: "postgres", available: false, code: "PROVIDER_UNAVAILABLE" });
+  expect(new MysqlStateProvider().status()).toMatchObject({ kind: "mysql", available: false, code: "PROVIDER_UNAVAILABLE" });
 });
