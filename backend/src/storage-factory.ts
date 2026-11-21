@@ -44,8 +44,8 @@ export function createStorageProviders(options: StorageFactoryOptions = {}): Sto
   const root = resolve(options.root ?? env.FACTORY_ROOT ?? ".factory");
   const state = options.state ?? (() => {
     if (config.state === "sqlite") return new SqliteStateProvider(env.BUSINESS_DB_PATH ?? join(root, "factory.db"));
-    if (config.state === "postgres") return new PostgresStateProvider();
-    return new MysqlStateProvider();
+    if (config.state === "postgres") return new PostgresStateProvider(env);
+    return new MysqlStateProvider(env);
   })();
   const blob = options.blob ?? (() => {
     if (config.blob === "local") return new LocalBlobProvider(join(root, "cas"));

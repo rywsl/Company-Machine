@@ -43,8 +43,10 @@ abstract class CliStateProvider implements StateProvider {
   abstract readonly dsnEnv: string;
   abstract readonly mode: "production";
 
+  protected constructor(protected readonly env: NodeJS.ProcessEnv = process.env) {}
+
   protected dsn(): string {
-    const value = process.env[this.dsnEnv]?.trim();
+    const value = this.env[this.dsnEnv]?.trim();
     if (!value) throw new ProviderError("PROVIDER_UNAVAILABLE", `${this.kind} provider is not configured`, { reason: `${this.dsnEnv} is missing` });
     return value;
   }
@@ -56,7 +58,7 @@ abstract class CliStateProvider implements StateProvider {
   }
 
   protected environment(): Record<string, string> {
-    return { ...process.env } as Record<string, string>;
+    return { ...this.env } as Record<string, string>;
   }
 
   protected abstract argv(sql: string): string[];
@@ -108,9 +110,14 @@ abstract class CliStateProvider implements StateProvider {
 
 export class PostgresStateProvider extends CliStateProvider {
   readonly kind = "postgres" as const;
-  readonly command = process.env.MAO_POSTGRES_COMMAND?.trim() || "psql";
-  readonly dsnEnv = process.env.MAO_POSTGRES_DSN ? "MAO_POSTGRES_DSN" : "MAO_PG_DSN";
+  readonly command: string;
+  readonly dsnEnv: string;
   readonly mode = "production" as const;
+  constructor(env: NodeJS.ProcessEnv = process.env) {
+    super(env);
+    this.command = env.MAO_POSTGRES_COMMAND?.trim() || "psql";
+    this.dsnEnv = env.MAO_POSTGRES_DSN ? "MAO_POSTGRES_DSN" : "MAO_PG_DSN";
+  }
   protected argv(sql: string): string[] {
     const dsn = this.dsn();
     let database: string | undefined;
@@ -140,14 +147,19 @@ export class PostgresStateProvider extends CliStateProvider {
 
 export class MysqlStateProvider extends CliStateProvider {
   readonly kind = "mysql" as const;
-  readonly command = process.env.MAO_MYSQL_COMMAND?.trim() || "mysql";
-  readonly dsnEnv = process.env.MAO_MYSQL_DSN ? "MAO_MYSQL_DSN" : "MAO_MYSQL_URL";
+  readonly command: string;
+  readonly dsnEnv: string;
   readonly mode = "production" as const;
+  constructor(env: NodeJS.ProcessEnv = process.env) {
+    super(env);
+    this.command = env.MAO_MYSQL_COMMAND?.trim() || "mysql";
+    this.dsnEnv = env.MAO_MYSQL_DSN ? "MAO_MYSQL_DSN" : "MAO_MYSQL_URL";
+  }
   protected argv(sql: string): string[] {
     return [this.command, "--batch", "--raw", "--skip-column-names", "--protocol=TCP", "-e", sql];
   }
   protected environment(): Record<string, string> {
-    const env = { ...process.env } as Record<string, string>;
+    const env = { ...this.env } as Record<string, string>;
     const dsn = this.dsn();
     if (dsn.startsWith("mysql://")) {
       try {
