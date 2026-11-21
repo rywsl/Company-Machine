@@ -820,7 +820,9 @@ export function App(): ReactElement {
   const refreshLive = useCallback(async (eventType: string, eventData?: Record<string, unknown>) => {
     setConnection("connected");
     const type = typeof eventData?.type === "string" ? eventData.type : eventType;
-    const inboxId = eventData?.inboxId;
+    const inboxId = typeof eventData?.inboxId === "string"
+      ? eventData.inboxId
+      : typeof eventData?.inbox_id === "string" ? eventData.inbox_id : undefined;
     if (type.startsWith("foreman.message.")) {
       const turn = readForemanTurn(eventData);
       if (turn) rememberTurn(turn);
