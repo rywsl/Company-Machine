@@ -10,7 +10,11 @@
 - 密钥值只能在 provider 的运行时边界读取。日志、数据库、事件、错误、审计引用和 UI 中不得出现令牌、明文密钥、DSN 或签名 URL。
 - provider 不可用必须返回 `PROVIDER_UNAVAILABLE`。禁止静默退回另一种 provider。
 
-## 1. 运行模式
+## 1. 目的与范围
+
+本规范定义 Bun 控制面的可替换状态、对象、密钥和 KMS provider。默认路径保持 SQLite、本地 CAS 和本地 AES-256-GCM Vault。生产 provider 只有在明确选择后才会被构造。
+
+### 1.1 运行模式
 
 运行模式由环境变量选择。
 
@@ -39,7 +43,11 @@
 
 显式设置 `MAO_STATE_PROVIDER=sqlite`、`MAO_BLOB_PROVIDER=local` 或 `MAO_SECRET_PROVIDER=local` 可以在生产模式中覆盖对应 provider。`MAO_SECRET_PROVIDER=local` 只在用户明确配置时生效。
 
-## 2. TypeScript 接口
+## 2. 依赖
+
+控制面只依赖 Bun、Node 标准库和已有 `bun:sqlite`。S3/MinIO 使用标准 HTTP，OpenBao 使用 HTTP API，PostgreSQL 和 MySQL 使用各自官方 CLI 边界。不得引入 SDK、嵌入式 OpenBao 或新的模型服务。
+
+### 2.1 TypeScript 接口
 
 接口位于 `backend/src/storage.ts`、`backend/src/storage-openbao.ts`、`backend/src/storage-s3.ts` 和 SQL provider 模块。接口只暴露业务需要的操作，连接、事务、缓存、重试和方言实现放在 provider 内。
 
@@ -86,7 +94,11 @@ export interface KmsProvider {
 
 当前 `SqliteStore`、`Warehouse` 和 `VaultStore` 通过适配器实现这些接口。适配器必须保持已有调用方的行为和本地文件布局。
 
-## 3. OpenBao provider
+## 3. 接口
+
+下列 provider-specific 章节实现第 2 章的接口，并由 `backend/src/storage.ts` 统一导出。
+
+### 3.1 OpenBao provider
 
 OpenBao provider 通过 `fetch` 调用 OpenBao HTTP API。Bun 进程不嵌入 OpenBao，也不启动 OpenBao 子进程。
 
@@ -101,7 +113,11 @@ provider 至少实现 KV Secret、Transit 加密和解密、签名、HMAC、轮�
 
 OpenBao 返回非成功 HTTP 状态、超时、证书错误或响应格式错误时，provider 返回 `PROVIDER_UNAVAILABLE`。生产模式不得创建本地 Vault 作为回退。OpenBao 的明文只在调用边界短暂存在，响应 DTO 和事件只能携带 secret reference、状态和审计引用。
 
-## 4. SQL provider
+## 4. 数据格式
+
+provider 配置只通过环境变量读取。Secret、token、DSN 和签名 URL 不进入数据文件、事件或 UI。迁移报告只保存 provider 名称、摘要、计数和不可逆审计引用。
+
+### 4.1 SQL provider
 
 SQLite、PostgreSQL 和 MySQL 都实现 `StateProvider`。事务、查询、迁移、连接池、占位符和错误边界对业务层保持一致。
 
@@ -113,7 +129,11 @@ SQLite、PostgreSQL 和 MySQL 都实现 `StateProvider`。事务、查询、迁�
 
 迁移器以规范迁移描述为输入，为每个 SQL provider 生成对应方言。迁移过程在单个 provider 事务边界内执行，失败时回滚。业务层只能调用 `migrate()`、`transaction()`、`query()` 和 `verify()`。
 
-## 5. S3 或 MinIO Blob provider
+## 5. 行为
+
+各 provider 必须保持本地调用方现有的摘要、幂等和错误语义。
+
+### 5.1 S3 或 MinIO Blob provider
 
 S3 provider 通过标准 HTTP 实现对象读写，不要求 `boto3`、MinIO SDK 或其他第三方依赖。MinIO 使用同一 provider，通过 endpoint 和 addressing 选择路径式或虚拟主机式 URL。
 
@@ -130,7 +150,11 @@ S3 provider 通过标准 HTTP 实现对象读写，不要求 `boto3`、MinIO SDK
 
 S3 凭据只在签名请求时从环境读取。请求头、签名字符串、异常、事件和数据库中不得持久化凭据。S3 不可用时返回 `PROVIDER_UNAVAILABLE`，不能回退到本地 CAS。
 
-## 6. 迁移、状态和校验
+## 6. 错误
+
+迁移、状态和校验的失败必须保留原 provider 和原数据，不能静默降级。
+
+### 6.1 迁移、状态和校验
 
 控制面提供 provider status、migrate 和 verify 能力。CLI 和 HTTP 管理面使用同一 provider registry。
 
@@ -143,7 +167,11 @@ S3 凭据只在签名请求时从环境读取。请求头、签名字符串、�
 
 活动 provider 指针只包含 provider 名称、模式、规范配置摘要和切换时间。不得包含 DSN、访问密钥、OpenBao token 或签名 URL。
 
-## 7. 错误语义
+## 7. 验收测试
+
+验收覆盖默认本地模式离线、provider 选择、外部 provider 配置缺失、OpenBao HTTP 错误、S3 摘要校验、SQL 命令不可用和切换保护。
+
+### 7.1 错误语义
 
 | 错误码 | 语义 |
 | --- | --- |
@@ -158,7 +186,11 @@ S3 凭据只在签名请求时从环境读取。请求头、签名字符串、�
 
 错误 detail 可以包含 provider 名称、主机名、桶名、摘要和审计引用。禁止包含 DSN、token、访问密钥、明文 secret 或带查询串的签名 URL。
 
-## 8. 分阶段交付边界
+## 8. 错误示范与正确示范
+
+错误示范包括生产模式回退到 SQLite 或本地 Vault、把 token 传入日志和错误、迁移未校验就写 active 指针。正确实现必须在 provider 边界返回结构化错误并保留源数据。
+
+### 8.1 分阶段交付边界
 
 provider 改造按以下阶段提交。每一阶段都要同步更新本规范和对应 Bun 回归测试。
 
@@ -170,7 +202,11 @@ provider 改造按以下阶段提交。每一阶段都要同步更新本规范�
 
 每阶段都保留默认本地路径。后续阶段失败不能改变已经可用的本地 provider。
 
-## 9. 验收要求
+## 9. 风险与注意事项
+
+生产 SQL 事务、S3 对象索引和切换指针需要在部署前完成真实环境验收。默认本地模式不读取云端配置，避免本地启动因为远端服务缺失而改变现有行为。
+
+### 9.1 验收要求
 
 验收使用 Bun 测试和仓库标准入口。
 

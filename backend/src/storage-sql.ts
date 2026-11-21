@@ -82,6 +82,15 @@ abstract class CliStateProvider implements StateProvider {
     return 0;
   }
 
+  verify(): Array<Record<string, string>> {
+    try {
+      this.run("SELECT 1");
+      return [];
+    } catch (error) {
+      return [{ kind: "provider_unavailable", reason: error instanceof Error ? error.message : String(error) }];
+    }
+  }
+
   status(): ProviderStatus {
     try {
       this.dsn();
