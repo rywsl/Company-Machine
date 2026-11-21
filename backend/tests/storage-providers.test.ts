@@ -20,6 +20,19 @@ test("local storage configuration never selects external providers", () => {
   expect(resolveStorageProviderConfig({ MAO_STORAGE_MODE: "production" } as NodeJS.ProcessEnv)).toEqual({ mode: "production", state: "postgres", blob: "s3", secret: "openbao" });
 });
 
+test("local SQLite provider preserves the legacy FACTORY_DB_PATH override", () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-storage-db-path-"));
+  const configured = join(root, "configured.db");
+  const storage = createStorageProviders({ root, env: { FACTORY_ROOT: root, FACTORY_DB_PATH: configured } as NodeJS.ProcessEnv });
+  try {
+    expect(existsSync(configured)).toBe(true);
+    expect(existsSync(join(root, "factory.db"))).toBe(false);
+  } finally {
+    storage.state.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("OpenBao KV and transit use the HTTP API without exposing the token", async () => {
   const observed: Request[] = [];
   const server = Bun.serve({ port: 0, async fetch(request) {

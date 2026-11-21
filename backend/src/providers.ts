@@ -204,7 +204,7 @@ export class SqliteStateProvider implements StateProvider {
   readonly kind = "sqlite" as const;
   readonly database: StateDatabase;
   private readonly ownsDatabase: boolean;
-  constructor(pathOrDatabase: string | StateDatabase = process.env.BUSINESS_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db"), ownsDatabase = true) {
+  constructor(pathOrDatabase: string | StateDatabase = process.env.BUSINESS_DB_PATH ?? process.env.FACTORY_DB_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "factory.db"), ownsDatabase = true) {
     if (typeof pathOrDatabase === "string") {
       if (pathOrDatabase !== ":memory:") mkdirSync(dirname(pathOrDatabase), { recursive: true });
       this.database = new ManagedDatabase(pathOrDatabase, { create: true });

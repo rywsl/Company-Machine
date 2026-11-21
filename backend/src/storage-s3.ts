@@ -1,8 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
-import { createReadStream, createWriteStream, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
-import { chmod, copyFile } from "node:fs/promises";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 import { ProviderError, providerFailure } from "./provider-errors";
@@ -96,17 +94,11 @@ export class S3BlobProvider implements BlobProvider {
       this.knownDigests.add(digest);
       return digest;
     }
-    const stream = createReadStream(source);
-    try {
-      await this.request("PUT", digest, stream, {
-        "content-length": String(file.size),
-        "content-type": "application/octet-stream",
-        "x-amz-meta-sha256": file.hash,
-      }, file.hash);
-    } catch (error) {
-      stream.destroy();
-      throw error;
-    }
+    await this.request("PUT", digest, Bun.file(source).stream(), {
+      "content-length": String(file.size),
+      "content-type": "application/octet-stream",
+      "x-amz-meta-sha256": file.hash,
+    }, file.hash);
     this.knownDigests.add(digest);
     return digest;
   }
@@ -174,15 +166,8 @@ export class S3BlobProvider implements BlobProvider {
     mkdirSync(dirname(cached), { recursive: true });
     const temporary = `${cached}.${randomUuid()}.part`;
     try {
-      const hash = createHash("sha256");
-      let size = 0;
-      const hashing = new Transform({ transform(chunk, _encoding, callback) {
-        hash.update(chunk);
-        size += chunk.length;
-        callback(null, chunk);
-      } });
-      await pipeline(Readable.fromWeb(response.body as ReadableStream<Uint8Array>), hashing, createWriteStream(temporary, { mode: 0o600 }));
-      if (size !== Number(response.headers.get("content-length") ?? size) || `sha256:${hash.digest("hex")}` !== digest) {
+      const streamed = await this.writeResponse(temporary, response.body);
+      if (streamed.size !== Number(response.headers.get("content-length") ?? streamed.size) || `sha256:${streamed.hash}` !== digest) {
         throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object digest mismatch", { digest });
       }
       renameSync(temporary, cached);
@@ -243,13 +228,7 @@ export class S3BlobProvider implements BlobProvider {
 
   private async hashFile(source: string): Promise<{ hash: string; size: number }> {
     try {
-      const hash = createHash("sha256");
-      let size = 0;
-      for await (const chunk of createReadStream(source)) {
-        hash.update(chunk);
-        size += chunk.length;
-      }
-      return { hash: hash.digest("hex"), size };
+      return this.hashStream(Bun.file(source).stream());
     } catch (error) {
       throw new ProviderError("PROVIDER_UNAVAILABLE", "cannot read blob source", { reason: error instanceof Error ? error.message : String(error) });
     }
@@ -263,26 +242,53 @@ export class S3BlobProvider implements BlobProvider {
   }
 
   private async hashResponse(response: Response): Promise<{ hash: string; size: number }> {
+    return this.hashStream(response.body as ReadableStream<Uint8Array>);
+  }
+
+  private async writeResponse(destination: string, stream: ReadableStream<Uint8Array>): Promise<{ hash: string; size: number }> {
+    const output = await open(destination, "w");
+    chmodSync(destination, 0o600);
     const hash = createHash("sha256");
     let size = 0;
-    for await (const chunk of Readable.fromWeb(response.body as ReadableStream<Uint8Array>)) {
-      hash.update(chunk);
-      size += chunk.length;
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        hash.update(next.value);
+        size += next.value.byteLength;
+        await output.write(next.value, 0, next.value.byteLength, null);
+      }
+      return { hash: hash.digest("hex"), size };
+    } finally {
+      await output.close();
     }
-    return { hash: hash.digest("hex"), size };
   }
 
   private async copyFile(source: string, destination: string): Promise<void> {
     mkdirSync(dirname(destination), { recursive: true });
     const temporary = `${destination}.${randomUuid()}.part`;
     try {
-      await copyFile(source, temporary);
-      await chmod(temporary, 0o600);
+      await Bun.write(temporary, Bun.file(source));
+      chmodSync(temporary, 0o600);
       renameSync(temporary, destination);
     } catch (error) {
       try { unlinkSync(temporary); } catch { /* best effort cleanup */ }
       throw new ProviderError("PROVIDER_UNAVAILABLE", "cannot materialize blob destination", { reason: error instanceof Error ? error.message : String(error) });
     }
+  }
+
+  private async hashStream(stream: ReadableStream<Uint8Array>): Promise<{ hash: string; size: number }> {
+    const hash = createHash("sha256");
+    let size = 0;
+    const reader = stream.getReader();
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      hash.update(next.value);
+      size += next.value.byteLength;
+    }
+    return { hash: hash.digest("hex"), size };
   }
 
   private objectUrl(digest: string): URL {
