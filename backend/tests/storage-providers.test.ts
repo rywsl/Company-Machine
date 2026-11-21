@@ -159,6 +159,38 @@ test("S3 provider streams putFile and getFile without changing the CAS contract"
   }
 });
 
+test("S3 provider removes only an existing CAS object and its local cache", async () => {
+  const objects = new Map<string, Uint8Array>();
+  const server = Bun.serve({ port: 0, async fetch(request) {
+    const key = new URL(request.url).pathname;
+    if (request.method === "PUT") { objects.set(key, new Uint8Array(await request.arrayBuffer())); return new Response(null, { status: 200 }); }
+    if (request.method === "HEAD") {
+      const body = objects.get(key);
+      return body ? new Response(null, { status: 200, headers: { "content-length": String(body.length), "x-amz-meta-sha256": createHash("sha256").update(body).digest("hex") } }) : new Response(null, { status: 404 });
+    }
+    if (request.method === "GET") {
+      const body = objects.get(key);
+      return body ? new Response(body as unknown as BodyInit) : new Response(null, { status: 404 });
+    }
+    if (request.method === "DELETE") { objects.delete(key); return new Response(null, { status: 204 }); }
+    return new Response(null, { status: 405 });
+  }});
+  const root = mkdtempSync(join(tmpdir(), "mao-s3-remove-"));
+  const environment = { MAO_S3_ACCESS_KEY: "access", MAO_S3_SECRET_KEY: "secret" } as NodeJS.ProcessEnv;
+  try {
+    const provider = new S3BlobProvider({ endpoint: `http://127.0.0.1:${server.port}`, bucket: "mao", cacheRoot: root, environment });
+    const digest = await provider.put(new Uint8Array([3, 2, 1]));
+    await provider.get(digest);
+    expect(await provider.remove?.(digest)).toBe(true);
+    expect(await provider.exists(digest)).toBe(false);
+    expect(await provider.remove?.(digest)).toBe(false);
+    expect(existsSync(provider.blobPath(digest))).toBe(false);
+  } finally {
+    server.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("local app exposes provider status without changing the existing Vault path", async () => {
   const root = mkdtempSync(join(tmpdir(), "mao-storage-app-"));
   const database = join(root, "factory.db");
