@@ -76,6 +76,11 @@ export class VaultStore {
     return Boolean(this.read()[ref]);
   }
 
+  /** Returns references only. Secret values stay inside the vault boundary. */
+  refs(): string[] {
+    return Object.keys(this.read()).sort();
+  }
+
   delete(ref: string): boolean {
     const records = this.read();
     if (!records[ref]) return false;

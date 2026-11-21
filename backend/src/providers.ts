@@ -47,7 +47,7 @@ export interface BlobProvider {
   head(digest: string): Promise<BlobHead | undefined>;
   exists(digest: string): Promise<boolean>;
   blobPath(digest: string): string;
-  verify(): Promise<Array<Record<string, string>>>;
+  verify(digests?: string[]): Promise<Array<Record<string, string>>>;
   status(): ProviderStatus;
 }
 
@@ -174,7 +174,7 @@ export class LocalBlobProvider implements BlobProvider {
     catch (error) { if ((error as { code?: string }).code === "ENOENT") return undefined; throw error; }
   }
   async exists(digest: string): Promise<boolean> { return Boolean(await this.head(digest)); }
-  async verify(): Promise<Array<Record<string, string>>> {
+  async verify(_digests?: string[]): Promise<Array<Record<string, string>>> {
     const problems: Array<Record<string, string>> = [];
     const base = join(this.root, "sha256");
     const walk = async (directory: string): Promise<void> => {
@@ -220,7 +220,17 @@ export class SqliteStateProvider implements StateProvider {
     return { changes: result.changes ?? 0, lastInsertRowid: Number(result.lastInsertRowid) };
   }
   transaction<T>(work: () => T): T { return this.database.transaction(work).immediate(); }
-  migrate(): number { return Number(this.database.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0); }
+  migrate(migrations: readonly string[] = []): number {
+    if (migrations.length === 0) return Number(this.database.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0);
+    this.database.transaction(() => {
+      this.database.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)");
+      migrations.forEach((migration, index) => {
+        this.database.exec(migration);
+        this.database.query("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)").run(index + 1);
+      });
+    }).immediate();
+    return migrations.length;
+  }
   verify(): Array<Record<string, string>> { return []; }
   status(): ProviderStatus { return { kind: this.kind, mode: "local", available: true }; }
   close(): void { if (this.ownsDatabase) this.database.close(); }

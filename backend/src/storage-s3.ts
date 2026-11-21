@@ -139,8 +139,8 @@ export class S3BlobProvider implements BlobProvider {
     }
   }
 
-  async verify(): Promise<Array<Record<string, string>>> {
-    const digests: string[] = [...this.knownDigests];
+  async verify(requested?: string[]): Promise<Array<Record<string, string>>> {
+    const digests: string[] = requested ? [...new Set(requested)] : [...this.knownDigests];
     const problems: Array<Record<string, string>> = [];
     for (const digest of digests) {
       try { const object = await this.head(digest); if (!object) problems.push({ kind: "missing_blob", digest }); else if (object.digest && object.digest !== digest) problems.push({ kind: "digest_mismatch", digest }); }

@@ -14,7 +14,7 @@ import { VaultStore } from "./vault";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
 import { selectedContainerProvider } from "../runtime/selected";
 import { createStorageProviders, storageStatus } from "./storage-factory";
-import { ProviderError, resolveStorageProviderConfig } from "./storage";
+import { ProviderError, migrateStorage, resolveStorageProviderConfig } from "./storage";
 export { CliUsageError } from "./station-cli";
 
 const redactText = (text: string) => text.replace(/(api[_-]?key|secret|token|password|authorization|cookie)\s*[:=]\s*\S+/gi, (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`);
@@ -356,7 +356,13 @@ async function runStorageCommand(args: string[]): Promise<number> {
   const json = args.includes("--json");
   if (!operation || operation === "help" || operation === "--help") { console.log(usage("storage")); return 0; }
   if (!["status", "verify", "migrate"].includes(operation)) throw new CliUsageError(`unknown storage command: ${operation}`);
-  if (args.some((item) => ![operation, "--json", "--dry-run"].includes(item))) throw new CliUsageError("storage expects status, verify, or migrate [--dry-run] [--json]");
+  const rootFlag = args.indexOf("--root");
+  if (rootFlag >= 0 && (!args[rootFlag + 1] || args[rootFlag + 1].startsWith("--") || args.filter((item) => item === "--root").length !== 1)) {
+    throw new CliUsageError("storage --root requires one path");
+  }
+  if (args.some((item, index) => ![operation, "--json", "--dry-run", "--root", rootFlag >= 0 ? args[rootFlag + 1] : ""].includes(item) && index !== rootFlag + 1)) {
+    throw new CliUsageError("storage expects status, verify, or migrate [--dry-run] [--json] [--root PATH]");
+  }
   let storage;
   try { storage = createStorageProviders(); }
   catch (error) { console.log(JSON.stringify(storageJsonError(error), null, 2)); return 4; }
@@ -367,15 +373,18 @@ async function runStorageCommand(args: string[]): Promise<number> {
     }
     if (operation === "verify") {
       const problems = await storage.blob.verify();
-      console.log(JSON.stringify({ ok: problems.length === 0, ...storageStatus(storage), problems }, null, 2));
-      return problems.length ? 1 : 0;
+      const stateProblems = storage.state.verify();
+      console.log(JSON.stringify({ ok: problems.length === 0 && stateProblems.length === 0, ...storageStatus(storage), problems, state_problems: stateProblems }, null, 2));
+      return problems.length || stateProblems.length ? 1 : 0;
     }
     const config = resolveStorageProviderConfig();
-    if (config.state !== "sqlite" || config.blob !== "local" || config.secret !== "local") {
-      console.log(JSON.stringify({ ok: false, code: "PROVIDER_UNAVAILABLE", reason: "provider migration requires a target adapter and verification before switching", dry_run: args.includes("--dry-run") }, null, 2));
-      return 4;
+    const root = rootFlag >= 0 ? args[rootFlag + 1]! : process.env.FACTORY_ROOT ?? ".factory";
+    if (config.state === "sqlite" && config.blob === "local" && config.secret === "local") {
+      console.log(JSON.stringify({ ok: true, migrated: false, switched: false, dry_run: args.includes("--dry-run"), mode: "local", reason: "local provider is already active" }, null, 2));
+      return 0;
     }
-    console.log(JSON.stringify({ ok: true, migrated: false, switched: false, dry_run: args.includes("--dry-run"), mode: "local" }, null, 2));
+    const report = await migrateStorage({ root, target: storage, dryRun: args.includes("--dry-run") });
+    console.log(JSON.stringify({ ok: true, ...report }, null, 2));
     return 0;
   } finally { storage.state.close(); }
 }

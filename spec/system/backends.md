@@ -53,40 +53,43 @@
 
 ```ts
 export interface StateProvider {
-  migrate(): Promise<number> | number;
-  transaction<T>(work: (tx: StateTransaction) => Promise<T> | T): Promise<T> | T;
-  query<T = unknown>(statement: StateStatement): Promise<T[]> | T[];
-  status(): Promise<ProviderStatus> | ProviderStatus;
-  verify(): Promise<VerificationReport> | VerificationReport;
-  close(): Promise<void> | void;
+  query<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): T[];
+  execute(sql: string, params?: readonly unknown[]): { changes: number; lastInsertRowid?: number };
+  transaction<T>(work: () => T): T;
+  migrate(migrations?: readonly string[]): number;
+  verify(): Array<Record<string, string>>;
+  status(): ProviderStatus;
+  close(): void;
 }
 
 export interface BlobProvider {
-  put(input: BlobInput): Promise<BlobRecord>;
+  put(input: BlobInput, expectedDigest?: string): Promise<string>;
+  putFile(path: string): Promise<string>;
   get(digest: string): Promise<Uint8Array>;
-  head(digest: string): Promise<BlobRecord | undefined>;
+  getFile(digest: string, destination: string): Promise<void>;
+  head(digest: string): Promise<{ digest: string; size: number } | undefined>;
   exists(digest: string): Promise<boolean>;
-  verify(digests?: string[]): Promise<VerificationReport>;
-  status(): Promise<ProviderStatus> | ProviderStatus;
+  blobPath(digest: string): string;
+  verify(digests?: string[]): Promise<Array<Record<string, string>>>;
+  status(): ProviderStatus;
 }
 
 export interface SecretProvider {
   put(ref: string, value: string): Promise<void> | void;
   get(ref: string): Promise<string | undefined> | string | undefined;
-  delete(ref: string): Promise<boolean> | boolean;
   has(ref: string): Promise<boolean> | boolean;
-  audit(ref: string, action: string): Promise<string> | string;
-  status(): Promise<ProviderStatus> | ProviderStatus;
+  delete(ref: string): Promise<boolean> | boolean;
+  status(): ProviderStatus;
 }
 
 export interface KmsProvider {
-  encrypt(key: string, plaintext: Uint8Array, context?: Record<string, string>): Promise<KmsCiphertext>;
-  decrypt(key: string, ciphertext: KmsCiphertext, context?: Record<string, string>): Promise<Uint8Array>;
-  sign(key: string, payload: Uint8Array, algorithm?: string): Promise<Uint8Array>;
-  hmac(key: string, payload: Uint8Array, algorithm?: string): Promise<Uint8Array>;
-  rotate(key: string): Promise<KmsKeyVersion>;
-  audit(key: string, action: string): Promise<string>;
-  status(): Promise<ProviderStatus> | ProviderStatus;
+  encrypt(value: Uint8Array | string, keyId?: string): Promise<EncryptedValue>;
+  decrypt(value: EncryptedValue): Promise<Uint8Array>;
+  sign(value: Uint8Array | string, keyId?: string): Promise<string>;
+  hmac(value: Uint8Array | string, keyId?: string): Promise<string>;
+  rotate(keyId?: string): Promise<string>;
+  auditRef(operation: string, keyId?: string): string;
+  status(): ProviderStatus;
 }
 ```
 
@@ -119,7 +122,7 @@ provider 配置只通过环境变量读取。Secret、token、DSN 和签名 URL 
 
 ### 4.1 SQL provider
 
-SQLite、PostgreSQL 和 MySQL 都由 `StateProvider` 边界选择。事务、查询、迁移、连接池、占位符和错误边界对业务层保持一致。当前阶段先交付 SQLite 适配和 PostgreSQL/MySQL 的配置、命令探测、查询执行、迁移/校验错误边界，目标 provider 的持久事务会在第 8 章的 SQL 阶段接入。
+SQLite、PostgreSQL 和 MySQL 都由 `StateProvider` 边界选择。事务、查询、迁移、连接池、占位符和错误边界对业务层保持一致。当前 Bun provider 使用受控官方客户端会话执行查询和批量事务，目标数据库方言只存在于 provider 内。
 
 - SQLite 使用 Bun `bun:sqlite` 和现有数据库文件。
 - PostgreSQL 通过标准 PostgreSQL 客户端协议或受控官方命令行连接，连接串只从 `MAO_POSTGRES_DSN` 或等价环境变量读取。
@@ -127,7 +130,7 @@ SQLite、PostgreSQL 和 MySQL 都由 `StateProvider` 边界选择。事务、查
 - PostgreSQL 和 MySQL 的占位符、事务隔离、分页、布尔值和迁移方言只在 provider 内处理。
 - provider 不可用、连接池耗尽或迁移失败返回 `PROVIDER_UNAVAILABLE`，不能创建 SQLite 伪装成功。
 
-迁移器以规范迁移描述为输入，为每个 SQL provider 生成对应方言。业务层只能调用 `migrate()`、`transaction()`、`query()` 和 `verify()`。在目标 SQL 会话适配器尚未可用时，`transaction()` 和 `migrate()` 返回 `PROVIDER_UNAVAILABLE`，不能伪装为 SQLite 已迁移。
+迁移器以规范迁移描述为输入，为每个 SQL provider 生成对应方言。业务层只能调用 `migrate()`、`transaction()`、`query()` 和 `verify()`。目标客户端、DSN 或方言不满足时返回 `PROVIDER_UNAVAILABLE` 或 `PROVIDER_CONFIG_INVALID`，不能伪装为 SQLite 已迁移。
 
 ## 5. 行为
 
@@ -159,7 +162,7 @@ S3 凭据只在签名请求时从环境读取。请求头、签名字符串、�
 控制面提供 provider status、migrate 和 verify 能力。CLI 和 HTTP 管理面使用同一 provider registry。
 
 - `status` 返回当前模式、各 provider 名称、配置完整性、连接状态和非敏感原因。
-- `migrate` 在目标 provider 会话适配器可用后复制状态行、对象和密钥引用。密钥明文不能进入迁移报告，OpenBao 迁移只复制引用或通过 provider 内部轮换复制密文。当前阶段对未接入会话适配器的目标返回 `PROVIDER_UNAVAILABLE`。
+- `migrate` 在目标 provider 会话适配器可用后复制状态行、对象和密钥引用。密钥明文不能进入迁移报告，OpenBao 迁移只复制引用或通过 provider 内部轮换复制密文。
 - 迁移完成后计算状态行数、规范摘要、对象数量和对象摘要。所有摘要一致后才写入活动 provider 指针。
 - `verify` 对当前活动 provider 重算上述摘要并报告差异。校验失败退出失败状态，不修改数据和活动指针。
 - 迁移失败保留本地 provider、原数据和旧指针。目标 provider 的部分数据可以保留用于诊断，但不能自动切换。
@@ -196,9 +199,10 @@ provider 改造按以下阶段提交。每一阶段都要同步更新本规范�
 
 1. 本地适配层和 provider registry。接入 SQLite、CAS、AES-256-GCM Vault，验证未设置环境变量时的零外部连接。
 2. OpenBao KMS 和 Secret provider。完成 KV、Transit、签名、HMAC、轮换、审计引用及失败语义。
-3. PostgreSQL 和 MySQL State provider。完成连接池、事务、迁移和方言边界。未安装或不可用时返回 provider 错误。
+3. PostgreSQL 和 MySQL State provider。完成受控客户端会话、事务批处理、迁移、占位符和方言边界。未安装或不可用时返回 provider 错误。
 4. S3 或 MinIO Blob provider。完成摘要校验、幂等写入、HEAD、读写和只读缓存。
-5. 迁移、status、verify 和活动 provider 切换。只有摘要、行数和对象数量校验通过才能切换。
+5. 迁移、status、verify 和活动 provider 指针。只有摘要、行数和对象数量校验通过才能写入指针。
+6. 业务控制面 active provider 接入。`SqliteStore`、Warehouse 和密钥读取路径需要在同一 provider 事务边界运行，完成后才允许生产模式创建业务服务。
 
 每阶段都保留默认本地路径。后续阶段失败不能改变已经可用的本地 provider。
 

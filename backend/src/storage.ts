@@ -4,3 +4,4 @@ export * from "./storage-openbao";
 export * from "./storage-s3";
 export * from "./storage-sql";
 export * from "./storage-factory";
+export * from "./storage-migration";
