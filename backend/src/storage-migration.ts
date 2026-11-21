@@ -88,12 +88,14 @@ function targetTableRows(target: StorageProviders, tableName: string): Array<Rec
   }
 }
 
-function writePointer(root: string, report: StorageMigrationReport, clock: Clock): void {
+function writePointer(root: string, report: StorageMigrationReport, config: StorageProviders["config"], clock: Clock): void {
   const path = join(root, "storage-active.json");
   mkdirSync(dirname(path), { recursive: true });
   const body = canonicalJson({
     schema: "mao.storage-active/1",
+    mode: config.mode,
     provider: report.target,
+    configuration_digest: digest({ mode: config.mode, provider: report.target }),
     migration_digest: report.digest,
     switched_at: utcIso(clock.now()),
   });
@@ -181,7 +183,7 @@ export async function migrateStorage(options: StorageMigrationOptions): Promise<
     const reportWithoutDigest = { ...reportBase, dryRun: Boolean(options.dryRun), switched: false };
     const report: StorageMigrationReport = { ...reportWithoutDigest, digest: digest(reportWithoutDigest), switched: false };
     if (!options.dryRun) {
-      writePointer(root, report, clock);
+      writePointer(root, report, options.target.config, clock);
       report.switched = true;
     }
     return report;

@@ -250,7 +250,9 @@ test("local migration copies rows, CAS bytes and secret references before switch
     expect(typeof report.tables[0]?.digest).toBe("string");
     expect(target.state.query<{ id: string; body: string }>("SELECT id,body FROM records")).toEqual([{ id: "one", body: "payload" }]);
     expect(await target.secret.has("vault://project/API_KEY")).toBe(true);
-    expect(readActiveStoragePointer(sourceRoot)).toMatchObject({ schema: "mao.storage-active/1", migration_digest: report.digest });
+    expect(readActiveStoragePointer(sourceRoot)).toMatchObject({ schema: "mao.storage-active/1", mode: "local", migration_digest: report.digest });
+    const pointer = readActiveStoragePointer(sourceRoot);
+    expect(pointer?.configuration_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
   } finally {
     target.state.close();
     sourceBlob.state.close();
