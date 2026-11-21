@@ -12,6 +12,8 @@ bun run verify:bun
 
 The command runs the Bun business control plane, MRL, Podman and Kiri runtime tests. The full acceptance entry point is `bun run acceptance:bun`.
 
+Use `bun run verify:official-harness` on a host with installed official CLIs to record executable versions and negotiate ACP `initialize` without sending a model prompt.
+
 ## Runtime selection
 
 Podman is the default runtime. Set `MAO_PODMAN_EXECUTABLE` when a desktop process has an older PATH snapshot.

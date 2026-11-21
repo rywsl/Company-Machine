@@ -1,0 +1,16 @@
+.git
+.factory
+.playwright-mcp
+.pytest_cache
+.ruff_cache
+.venv
+cas
+jobs
+node_modules
+frontend/dist
+frontend/node_modules
+output
+tmp
+*.pyc
+__pycache__
+.env*

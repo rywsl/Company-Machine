@@ -13,8 +13,8 @@
 ```bash
 bun install
 bun run verify:bun
-pnpm check:web
-pnpm build:web
+bun run check:web
+bun run build:web
 ```
 
 ## 启动本地工厂
@@ -51,7 +51,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
 
-MAO 默认通过 `/run/kiri/docker.sock` 连接。headless Kiri 发行版如果把套接字放在 `/var/lib/kiri-daemon/.kiri/run/docker.sock`，控制面会自动发现该路径。自定义部署可以设置 `MAO_KIRI_SOCKET` 和 `MAO_DOCKER_EXECUTABLE` 指定套接字和客户端。安装后先运行 `MAO_CONTAINER_RUNTIME=kiri bun run factory runtime doctor`，再启动服务。官方 Linux 路径直接使用 Unix 套接字，无需桌面会话。
+MAO 默认通过 `/run/kiri/docker.sock` 连接。headless Kiri 发行版如果把套接字放在 `/var/lib/kiri-daemon/.kiri/run/docker.sock`，控制面会自动发现该路径。自定义部署可以设置 `MAO_KIRI_SOCKET` 和 `MAO_DOCKER_EXECUTABLE` 指定套接字和客户端。在 WSL 或 80、443 已被占用的主机上，将 `KIRI_HTTP_PORT=18080` 和 `KIRI_HTTPS_PORT=18443` 写入 Kiri systemd 服务环境。安装后先运行 `MAO_CONTAINER_RUNTIME=kiri bun run factory runtime doctor`，再启动服务。官方 Linux 路径直接使用 Unix 套接字，无需桌面会话。
 
 在 WSL 中运行工位时，保留示例的 Linux 数据目录。文件邮箱使用 Linux 目录权限保护宿主响应。MAO 由系统服务启动时，对该服务的运行账户授权，并给服务配置相同的环境变量。
 
@@ -64,6 +64,13 @@ export MAO_CONTAINER_RUNTIME=kiri
 bun run build:test-images
 bun run tools/verify-runtime.ts
 bun run tools/verify-runtime.ts --foreman
+```
+
+可以探测本机安装的官方 Harness，而不发送模型提示词。该命令检查 CLI 版本，ACP Harness 只执行协议 `initialize` 握手。
+
+```bash
+bun run tools/verify-official-harness.ts
+bun run tools/verify-official-harness.ts --runtime kimi-code
 ```
 
 若 Kiri 的镜像构建请求超时，可在同 CPU 架构的 Podman 主机上运行 `bun run build:test-images --save-to /tmp/mao-test-images`。将目录复制到 Kiri 主机，执行 `MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --load-from /tmp/mao-test-images`，再运行同一条工位验收命令。

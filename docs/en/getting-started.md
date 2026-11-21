@@ -13,8 +13,8 @@ The active project is a Bun + TypeScript business control plane. Python source a
 ```bash
 bun install
 bun run verify:bun
-pnpm check:web
-pnpm build:web
+bun run check:web
+bun run build:web
 ```
 
 ## Start the local factory
@@ -49,7 +49,7 @@ MAO_CONTAINER_RUNTIME=kiri bun run factory runtime ensure-ready
 MAO_CONTAINER_RUNTIME=kiri bun run backend/src/index.ts
 ```
 
-MAO normally connects through `/run/kiri/docker.sock`. The headless Kiri distribution is also discovered when its socket is at `/var/lib/kiri-daemon/.kiri/run/docker.sock`. Set `MAO_KIRI_SOCKET` for a custom deployment and `MAO_DOCKER_EXECUTABLE` to select the CLI. Run `MAO_CONTAINER_RUNTIME=kiri bun run factory runtime doctor` before starting the service. The official Linux path uses the Unix socket directly and works without a desktop session.
+MAO normally connects through `/run/kiri/docker.sock`. The headless Kiri distribution is also discovered when its socket is at `/var/lib/kiri-daemon/.kiri/run/docker.sock`. Set `MAO_KIRI_SOCKET` for a custom deployment and `MAO_DOCKER_EXECUTABLE` to select the CLI. On WSL or hosts where ports 80 and 443 are already occupied, set `KIRI_HTTP_PORT=18080` and `KIRI_HTTPS_PORT=18443` in the Kiri systemd service environment. Run `MAO_CONTAINER_RUNTIME=kiri bun run factory runtime doctor` before starting the service. The official Linux path uses the Unix socket directly and works without a desktop session.
 
 For station jobs inside WSL, point `FACTORY_ROOT` to a Linux filesystem such as `$HOME/.local/share/mao`. The mailbox uses Linux directory permissions to protect host responses.
 
@@ -62,6 +62,13 @@ export MAO_CONTAINER_RUNTIME=kiri
 bun run build:test-images
 bun run tools/verify-runtime.ts
 bun run tools/verify-runtime.ts --foreman
+```
+
+Probe installed official Harness executables without sending a model prompt. The probe checks CLI versions and, for ACP Harnesses, performs only the protocol `initialize` handshake.
+
+```bash
+bun run tools/verify-official-harness.ts
+bun run tools/verify-official-harness.ts --runtime kimi-code
 ```
 
 If Kiri's image build request times out, run `bun run build:test-images --save-to /tmp/mao-test-images` on a Podman host with the same CPU architecture. Copy the directory to the Kiri host, run `MAO_CONTAINER_RUNTIME=kiri bun run build:test-images --load-from /tmp/mao-test-images`, then run the same station verification command.

@@ -2,7 +2,7 @@
 
 The control plane is a Bun process and launches official Harnesses through the embedded rootless Podman or headless Kiri provider. The supported production topology runs Bun as the same user that owns the local container runtime. This keeps project and material bind mounts in one host path namespace.
 
-Build the production image with the repository's pinned Bun and frontend lockfile.
+Build the production image with the repository's pinned Bun runtime and `bun.lock` frontend lockfile.
 
 ```bash
 podman build -f deploy/mao-control-plane.Containerfile -t localhost/mao-control-plane:latest .
@@ -29,7 +29,7 @@ curl --fail http://127.0.0.1:3000/readyz
 
 The service unit does not run a Podman preflight and does not force a runtime provider. When Podman is selected, enable `podman.socket` before or alongside the control plane. `/readyz` reports the runtime state while the process remains available for recovery.
 
-For Linux headless Kiri, create `~/.config/mao/control-plane.env` with `MAO_CONTAINER_RUNTIME=kiri`, then reload and restart the same Bun service. Do not enable `podman.socket` for a Kiri-only host. Set `MAO_KIRI_SOCKET` when the socket is outside the standard locations. The runtime provider can request `kiri.service` through `ensure-ready` when the socket is temporarily absent.
+For Linux headless Kiri, create `~/.config/mao/control-plane.env` with `MAO_CONTAINER_RUNTIME=kiri`, then reload and restart the same Bun service. Do not enable `podman.socket` for a Kiri-only host. Set `MAO_KIRI_SOCKET` when the socket is outside the standard locations. On WSL or hosts where ports 80 and 443 are already occupied, add `KIRI_HTTP_PORT=18080` and `KIRI_HTTPS_PORT=18443` to the Kiri systemd service environment before restarting `kiri.service`. The runtime provider can request `kiri.service` through `ensure-ready` when the socket is temporarily absent.
 
 ```bash
 mkdir -p ~/.config/mao

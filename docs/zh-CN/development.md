@@ -12,6 +12,8 @@ bun run verify:bun
 
 该命令运行 Bun 业务控制面、MRL、Podman 和 Kiri runtime 测试。完整活动验收入口为 `bun run acceptance:bun`。
 
+在安装了官方 CLI 的主机上运行 `bun run verify:official-harness`，记录官方 Harness 版本并只完成 ACP `initialize` 协商，不发送模型提示词。
+
 ## 运行时选择
 
 默认使用 Podman。桌面进程继承旧 PATH 时可以指定 `MAO_PODMAN_EXECUTABLE`。

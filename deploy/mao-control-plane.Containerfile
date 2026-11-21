@@ -2,12 +2,11 @@ ARG BASE_IMAGE=oven/bun:1.3.14
 
 FROM ${BASE_IMAGE} AS build
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json bun.lock ./
 COPY frontend/package.json frontend/package.json
-RUN npm install --global pnpm@11.16.0 \
- && pnpm install --frozen-lockfile
+RUN bun install --frozen-lockfile
 COPY . .
-RUN pnpm --filter @mao/web build
+RUN bun run --cwd frontend build
 
 FROM ${BASE_IMAGE}
 WORKDIR /app
