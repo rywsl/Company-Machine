@@ -5,9 +5,11 @@ import { ProviderStateDatabase, type StateDatabase } from "./state-database";
 
 type SqlValue = string | number | boolean | null | Uint8Array;
 
-function quote(value: unknown): string {
+type SqlDialect = "generic" | "postgres" | "mysql";
+
+function quote(value: unknown, dialect: SqlDialect = "generic"): string {
   if (value === null || value === undefined) return "NULL";
-  if (typeof value === "boolean") return value ? "1" : "0";
+  if (typeof value === "boolean") return dialect === "postgres" ? (value ? "TRUE" : "FALSE") : (value ? "1" : "0");
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new ProviderError("PROVIDER_CONFIG_INVALID", "SQL 参数必须是有限数字");
     return String(value);
@@ -16,11 +18,14 @@ function quote(value: unknown): string {
     if (value.includes("\u0000")) throw new ProviderError("PROVIDER_CONFIG_INVALID", "SQL 参数不能包含 NUL 字符");
     return `'${value.replaceAll("'", "''")}'`;
   }
-  if (value instanceof Uint8Array) return `X'${Buffer.from(value).toString("hex")}'`;
+  if (value instanceof Uint8Array) {
+    const hex = Buffer.from(value).toString("hex");
+    return dialect === "postgres" ? `decode('${hex}', 'hex')` : `X'${hex}'`;
+  }
   throw new ProviderError("PROVIDER_CONFIG_INVALID", "SQL 参数类型不受支持");
 }
 
-function bind(sql: string, params: readonly unknown[]): string {
+function bind(sql: string, params: readonly unknown[], dialect: SqlDialect = "generic"): string {
   let index = 0;
   let result = "";
   for (let cursor = 0; cursor < sql.length; cursor += 1) {
@@ -53,7 +58,7 @@ function bind(sql: string, params: readonly unknown[]): string {
     }
     if (character === "?") {
       if (index >= params.length) throw new ProviderError("PROVIDER_CONFIG_INVALID", "SQL 参数数量不匹配");
-      result += quote(params[index++]);
+      result += quote(params[index++], dialect);
       continue;
     }
     result += character;
@@ -112,6 +117,11 @@ abstract class CliStateProvider implements StateProvider {
 
   protected abstract argv(sql: string): string[];
 
+  protected bindParameters(sql: string, params: readonly unknown[]): string {
+    const dialect: SqlDialect = this.kind === "postgres" || this.kind === "mysql" ? this.kind : "generic";
+    return bind(sql, params, dialect);
+  }
+
   protected querySql(sql: string): string {
     return this.runImmediate(sql);
   }
@@ -132,7 +142,7 @@ abstract class CliStateProvider implements StateProvider {
   }
 
   query<T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []): T[] {
-    const statement = this.translateQuery(bind(sql, params));
+    const statement = this.translateQuery(this.bindParameters(sql, params));
     if (this.transactionStatements) {
       const script = ["BEGIN", ...this.transactionStatements, statement, "ROLLBACK"].join(";\n");
       return this.parseRows(this.querySql(script)) as T[];
@@ -143,7 +153,7 @@ abstract class CliStateProvider implements StateProvider {
   protected translateQuery(sql: string): string { return sql; }
 
   execute(sql: string, params: readonly unknown[] = []): { changes: number; lastInsertRowid?: number } {
-    const statement = this.translateExecute(bind(sql, params));
+    const statement = this.translateExecute(this.bindParameters(sql, params));
     if (statement.trim()) this.run(statement);
     return { changes: 0 };
   }
@@ -187,11 +197,13 @@ abstract class CliStateProvider implements StateProvider {
   }
 
   private translateMigration(sql: string): string {
-    if (/\b(?:AUTOINCREMENT|WITHOUT\s+ROWID|STRICT)\b/i.test(sql)) {
-      throw new ProviderError("PROVIDER_CONFIG_INVALID", `${this.kind} migration uses unsupported SQLite syntax`, { reason: "sql-dialect" });
+    const hadIgnore = /\bINSERT\s+OR\s+IGNORE\b/i.test(sql);
+    const dialect = this.kind === "postgres" ? "postgres" : "mysql";
+    const translated = normalizeSql(sql, dialect);
+    if (this.kind === "postgres" && hadIgnore && !/\bON\s+CONFLICT\b/i.test(translated)) {
+      return `${translated.replace(/;\s*$/, "")} ON CONFLICT DO NOTHING;`;
     }
-    if (this.kind === "postgres") return sql.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT").replace(/;\s*$/, " ON CONFLICT DO NOTHING;");
-    return sql.replace(/\bINSERT\s+OR\s+IGNORE\b/gi, "INSERT IGNORE");
+    return translated;
   }
 
   verify(): Array<Record<string, string>> {
@@ -333,6 +345,8 @@ function quoteSql(value: string): string { return `'${value.replaceAll("'", "''"
 
 function normalizeSql(sql: string, dialect: "postgres" | "mysql"): string {
   let value = sql.replace(/PRAGMA\s+[^;]+;?/gi, "").replace(/\bWITHOUT\s+ROWID\b/gi, "");
+  value = value.replace(/\bSTRICT\b/gi, "");
+  if (dialect === "postgres") value = value.replace(/\bREAL\b/gi, "DOUBLE PRECISION");
   value = value.replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "BIGINT AUTO_INCREMENT PRIMARY KEY");
   value = value.replace(/\bAUTOINCREMENT\b/gi, dialect === "postgres" ? "" : "AUTO_INCREMENT");
   value = value.replace(/CREATE\s+(?:UNIQUE\s+)?INDEX[^;]*(?:json_valid|CASE\s+WHEN)[^;]*;?/gi, "");
