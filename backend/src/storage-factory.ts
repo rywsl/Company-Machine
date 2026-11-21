@@ -56,6 +56,8 @@ export function createStorageProviders(options: StorageFactoryOptions = {}): Sto
     if (config.secret === "local") return new LocalSecretProvider(new VaultStore(
       env.MAO_VAULT_PATH ?? join(root, "vault.json"),
       env.MAO_VAULT_KEY_PATH ?? join(root, "vault.key"),
+      undefined,
+      env,
     ));
     return OpenBaoKmsProvider.fromEnvironment(env);
   })();

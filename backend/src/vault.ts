@@ -8,8 +8,8 @@ type VaultRecord = { ref: string; iv: string; tag: string; ciphertext: string; u
 /** Cryptographic entropy belongs to the vault boundary rather than control-plane identity generation. */
 export function vaultRandomBytes(size: number): Buffer { return randomBytes(size); }
 
-function keyFromEnvironment(path: string): any {
-  const configured = process.env.MAO_VAULT_KEY;
+function keyFromEnvironment(path: string, environment: NodeJS.ProcessEnv = process.env): any {
+  const configured = environment.MAO_VAULT_KEY;
   if (configured) {
     const value = /^[0-9a-f]{64}$/i.test(configured)
       ? Buffer.from(configured, "hex")
@@ -37,9 +37,10 @@ export class VaultStore {
     path = process.env.MAO_VAULT_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "vault.json"),
     keyPath = process.env.MAO_VAULT_KEY_PATH ?? join(process.env.FACTORY_ROOT ?? ".factory", "vault.key"),
     private readonly clock: Clock = new SystemClock(),
+    private readonly environment: NodeJS.ProcessEnv = process.env,
   ) {
     this.path = path;
-    this.key = keyFromEnvironment(keyPath);
+    this.key = keyFromEnvironment(keyPath, environment);
     mkdirSync(dirname(path), { recursive: true });
   }
 

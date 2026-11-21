@@ -14,6 +14,9 @@ export interface OpenBaoOptions {
   secretId?: string;
   jwt?: string;
   jwtRole?: string;
+  /** Environment used for deferred token lookup. This keeps injected provider
+   * configurations deterministic in tests and in embedded runtimes. */
+  environment?: NodeJS.ProcessEnv;
 }
 
 type OpenBaoResponse = { data?: any; errors?: string[]; [key: string]: any };
@@ -57,6 +60,7 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
       secretId: env.MAO_OPENBAO_SECRET_ID,
       jwt: env.MAO_OPENBAO_JWT,
       jwtRole: env.MAO_OPENBAO_JWT_ROLE,
+      environment: env,
     });
   }
 
@@ -113,7 +117,11 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
   }
 
   status(): any {
-    const configured = Boolean(this.token || this.options.tokenEnv || (this.options.roleId && this.options.secretId) || (this.options.jwt && this.options.jwtRole));
+    const environment = this.options.environment ?? process.env;
+    const configured = Boolean(this.token
+      || (this.options.tokenEnv && environment[this.options.tokenEnv])
+      || (this.options.roleId && this.options.secretId)
+      || (this.options.jwt && this.options.jwtRole));
     return configured
       ? { kind: this.kind, mode: "production", available: true }
       : { kind: this.kind, mode: "production", available: false, code: "PROVIDER_CONFIG_INVALID", reason: "OpenBao credentials are not configured" };
@@ -168,7 +176,7 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
 
   private async ensureToken(): Promise<string | undefined> {
     if (this.token) return this.token;
-    if (this.options.tokenEnv) this.token = process.env[this.options.tokenEnv] || undefined;
+    if (this.options.tokenEnv) this.token = (this.options.environment ?? process.env)[this.options.tokenEnv] || undefined;
     if (this.token) return this.token;
     if (this.options.roleId && this.options.secretId) {
       const response = await this.requestRaw("POST", "auth/approle/login", { role_id: this.options.roleId, secret_id: this.options.secretId }, true);
