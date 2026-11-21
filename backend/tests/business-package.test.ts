@@ -236,6 +236,10 @@ test("exports and imports a business package through the production-mode provide
     const exported = await productionCli(targetRoot, "export", document.system.id, "--package", join(root, "exported"));
     expect(exported.code).toBe(0);
     expect((await readBusinessPackage(join(root, "exported"))).document).toBeDefined();
+    const localRoot = join(root, "local-roundtrip");
+    const roundTrip = await cli(join(root, "isolated"), "import", join(root, "exported"), "--root", localRoot);
+    expect(roundTrip.code).toBe(0);
+    expect(JSON.parse(roundTrip.stdout).system.name).toBe("Production import");
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
