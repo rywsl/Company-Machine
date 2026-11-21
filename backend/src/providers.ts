@@ -46,6 +46,8 @@ export interface BlobProvider {
   getFile(digest: string, destination: string): Promise<void>;
   head(digest: string): Promise<BlobHead | undefined>;
   exists(digest: string): Promise<boolean>;
+  /** Remove an object created by the current operation when a later commit fails. */
+  remove?(digest: string): Promise<boolean>;
   blobPath(digest: string): string;
   verify(digests?: string[]): Promise<Array<Record<string, string>>>;
   status(): ProviderStatus;
@@ -176,6 +178,14 @@ export class LocalBlobProvider implements BlobProvider {
     catch (error) { if ((error as { code?: string }).code === "ENOENT") return undefined; throw error; }
   }
   async exists(digest: string): Promise<boolean> { return Boolean(await this.head(digest)); }
+  async remove(digest: string): Promise<boolean> {
+    const path = this.blobPath(digest);
+    try { await rm(path); return true; }
+    catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return false;
+      throw error;
+    }
+  }
   async verify(_digests?: string[]): Promise<Array<Record<string, string>>> {
     const problems: Array<Record<string, string>> = [];
     const base = join(this.root, "sha256");

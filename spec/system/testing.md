@@ -135,7 +135,7 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 | `backend/tests/material-files.test.ts` | 验证暂存普通文件、按摘要复用输入挂载、跨读取边界的密钥检测及临时文件清理 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、登记仓库与读取厂区 DAG、只读 Registry 检查与用法、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
-| `backend/tests/business-package.test.ts` | 业务包 CLI 跨目录移交、字节闭包校验、回滚和已知密钥拒绝 |
+| `backend/tests/business-package.test.ts` | 业务包 CLI 跨目录移交、平台隔离清单、字节闭包校验、生产导入失败后的 blob 回滚、未来保护 envelope 拒绝和已知密钥拒绝 |
 | `backend/tests/changesets.test.ts` | ChangeSet 受理、Git 候选、MRL 风险、合同验证和影子运行 |
 | `backend/tests/foreman.test.ts` | 厂长队列、运行中取消、官方 Harness 回复与完成事务、容器邮箱的业务持久化、厂区登记、单个项目密钥请求、项目来源交接和暂存文件清理 |
 | `backend/tests/conversion-requests.test.ts` | 转换需求跨重启合并，按冻结契约结案和回滚恢复，厂长 CLI 状态筛选 |

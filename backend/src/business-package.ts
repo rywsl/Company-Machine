@@ -13,7 +13,23 @@ const documentName = "business.json";
 const manifestName = "manifest.json";
 type FileDescription = { digest: string; size: number };
 export type BusinessPackageProtection = { mode: "plaintext"; envelope: "portable" };
-type BusinessPackage = { format: typeof format; protection: BusinessPackageProtection; document: FileDescription; blobs: FileDescription[] };
+export type BusinessPackageIsolation = {
+  scope: "business";
+  identities: "remapped";
+  secrets: "references-only";
+  runtime: "reset";
+  host: "omitted";
+};
+type BusinessPackage = {
+  format: typeof format;
+  protection: BusinessPackageProtection;
+  isolation: BusinessPackageIsolation;
+  document: FileDescription;
+  blobs: FileDescription[];
+};
+const portableIsolation: BusinessPackageIsolation = {
+  scope: "business", identities: "remapped", secrets: "references-only", runtime: "reset", host: "omitted",
+};
 
 function invalid(reason: string): never {
   throw new FactoryError("PACKAGE_CORRUPT", "业务包校验失败", { reason });
@@ -121,7 +137,9 @@ export async function createBusinessPackage(destination: string, document: unkno
       if (blob.digest !== digest) invalid("CAS digest mismatch");
       blobs.push(blob);
     }
-    const manifest: BusinessPackage = { format, protection: { mode: "plaintext", envelope: "portable" }, document: description, blobs };
+    const manifest: BusinessPackage = {
+      format, protection: { mode: "plaintext", envelope: "portable" }, isolation: portableIsolation, document: description, blobs,
+    };
     await Bun.write(join(stage, manifestName), `${canonicalJson(manifest)}\n`);
     return manifest;
   });
@@ -145,10 +163,14 @@ export async function readBusinessPackage(directory: string) {
   const data = await readJson(join(root, manifestName));
   const protection = data && typeof data === "object" && "protection" in data && data.protection && typeof data.protection === "object"
     ? data.protection as Record<string, unknown> : { mode: "plaintext", envelope: "portable" };
+  const isolation = data && typeof data === "object" && "isolation" in data && data.isolation && typeof data.isolation === "object"
+    ? data.isolation as Record<string, unknown> : portableIsolation;
   if (!data || typeof data !== "object" || !("format" in data) || data.format !== format
     || protection.mode !== "plaintext" || protection.envelope !== "portable"
+    || isolation.scope !== "business" || isolation.identities !== "remapped" || isolation.secrets !== "references-only"
+    || isolation.runtime !== "reset" || isolation.host !== "omitted"
     || !("document" in data) || !fileDescription(data.document) || !("blobs" in data) || !Array.isArray(data.blobs)
-    || !data.blobs.every(fileDescription) || Object.keys(data).some((key) => !["format", "protection", "document", "blobs"].includes(key))) invalid("manifest");
+    || !data.blobs.every(fileDescription) || Object.keys(data).some((key) => !["format", "protection", "isolation", "document", "blobs"].includes(key))) invalid("manifest");
   const expected = [documentName, manifestName, ...(data.blobs.length ? ["blobs"] : [])].sort();
   if (canonicalJson(readdirSync(root).sort()) !== canonicalJson(expected)) invalid("unexpected package files");
   const doc = join(root, documentName);
@@ -171,7 +193,7 @@ export async function readBusinessPackage(directory: string) {
       if (actual.digest !== blob.digest || actual.size !== blob.size) invalid("blob checksum");
     }
   }
-  return { root, document, blobs: data.blobs, protection: protection as BusinessPackageProtection };
+  return { root, document, blobs: data.blobs, protection: protection as BusinessPackageProtection, isolation: isolation as BusinessPackageIsolation };
 }
 
 export function registerVerifiedArtifactFiles(store: SqliteStore, systemId: string, blobs: readonly FileDescription[]): void {

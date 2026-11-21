@@ -71,11 +71,24 @@ async function runProductionBusinessExport(args: string[]): Promise<number> {
   try {
     const system = store.getBusinessSystem(id);
     if (!system) throw new Error("business system was not found");
-    const document = JSON.parse(JSON.stringify(exportBusinessSystem(store, id, () => system.metadata.graph ?? { nodes: [], edges: [] })));
+    const secretValues = new Map<string, string>();
+    for (const project of store.listProjects(id)) {
+      for (const request of project.secretRequests) {
+        if (request.status !== "available") continue;
+        const value = await storage.secret.get(request.vaultRef);
+        if (value) secretValues.set(request.vaultRef, value);
+      }
+    }
+    const document = JSON.parse(JSON.stringify(exportBusinessSystem(
+      store,
+      id,
+      () => system.metadata.graph ?? { nodes: [], edges: [] },
+      (ref) => secretValues.get(ref),
+    )));
     if (!document) throw new Error("business system was not found");
     if (args.length === 4) {
       const blobProvider = storage.blob.kind === "local" ? undefined : storage.blob;
-      console.log(JSON.stringify(await createBusinessPackage(args[3], document, root, [], blobProvider), null, 2));
+      console.log(JSON.stringify(await createBusinessPackage(args[3], document, root, [...secretValues.values()], blobProvider), null, 2));
     } else console.log(JSON.stringify(document, null, 2));
     return 0;
   } finally {
@@ -433,15 +446,23 @@ async function importBusinessPackage(source: string, destination: string) {
     const environment = { ...process.env, FACTORY_ROOT: root };
     const storage = createStorageProviders({ root, env: environment });
     const store = new SqliteStore(":memory:", ":memory:", { database: storage.state.database });
+    const installed = new Set<string>();
     try {
       for (const { digest, size } of verified.blobs) {
+        const before = await storage.blob.head(digest);
         const actual = await storage.blob.putFile(businessPackageBlob(verified.root, digest));
         if (actual !== digest) throw new FactoryError("PACKAGE_CORRUPT", "安装时内容摘要不匹配", { digest });
+        if (!before) installed.add(digest);
         store.db.query("INSERT OR IGNORE INTO intake_uploads(digest,size) VALUES (?,?)").run(digest, size);
       }
       const system = importBusinessSystem(store, verified.document as Record<string, unknown>, validateDag);
       registerVerifiedArtifactFiles(store, system.id, verified.blobs);
       return { root, system, acceptance: "not_run", storage: storage.config };
+    } catch (error) {
+      for (const digest of installed) {
+        try { await storage.blob.remove?.(digest); } catch { /* preserve the original import error */ }
+      }
+      throw error;
     } finally {
       store.close();
       storage.state.close();

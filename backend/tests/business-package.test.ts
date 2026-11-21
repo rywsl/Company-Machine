@@ -239,6 +239,71 @@ test("exports and imports a business package through the production-mode provide
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
+test("cleans newly uploaded production blobs when the state import is rejected", { timeout: 60_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-production-rollback-"));
+  const packageRoot = join(root, "package");
+  const targetRoot = join(root, "target");
+  try {
+    const payload = new TextEncoder().encode("rollback payload\n");
+    const digest = digestBytes(payload);
+    const hex = digest.slice(7);
+    mkdirSync(join(root, "cas", "sha256", hex.slice(0, 2)), { recursive: true });
+    await Bun.write(join(root, "cas", "sha256", hex.slice(0, 2), hex.slice(2)), payload);
+    await createBusinessPackage(packageRoot, {
+      schema: "mao.business-system/1",
+      system: { name: "Rejected production import" },
+      ref: `cas://${digest}`,
+      graph: { invalid: true },
+    }, root, []);
+    const rejected = await productionCli(targetRoot, "import", packageRoot, "--root", targetRoot);
+    expect(rejected.code).toBe(1);
+    expect(existsSync(join(targetRoot, "cas", "sha256", hex.slice(0, 2), hex.slice(2)))).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test("production export scans secrets from the configured SecretProvider", { timeout: 60_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-production-secret-"));
+  const packageRoot = join(root, "package");
+  const app = factory(root);
+  try {
+    const system = app.store.createBusinessSystem({ name: "Production secret scan" });
+    const project = app.store.createIntake({ business_system_id: system.id, name: "Selected project" });
+    const secret = "production-export-secret";
+    const request = app.store.createSecretRequest({
+      projectId: project.id,
+      name: "PUBLISH_TOKEN",
+      vaultRef: "vault://production-export-secret",
+    });
+    app.vault.put(request.vaultRef, secret);
+    app.store.markSecretAvailable(request.id);
+
+    const payload = new Uint8Array(128 * 1024);
+    payload.set(new TextEncoder().encode(secret), 65_531);
+    const payloadPath = join(root, "payload.bin");
+    await Bun.write(payloadPath, payload);
+    const warehouse = new Warehouse(root, app.store.db, app.store.clock);
+    const digest = await warehouse.putFile(payloadPath);
+    const artifact = app.store.addArtifact({
+      projectId: project.id,
+      recordType: "material",
+      kind: "binary-output",
+      ref: "material://binary-output",
+      files: [{ ref: "cas://" + digest, path: "payload.bin", digest, mediaType: "application/octet-stream" }],
+      metadata: {},
+    });
+    app.store.registerArtifactFiles(artifact.id, [{ position: 0, digest, size: payload.byteLength }]);
+
+    const exported = await productionCli(root, "export", system.id, "--package", packageRoot);
+    expect(exported.code).toBe(1);
+    expect(exported.stdout).toBe("");
+    expect(exported.stderr).not.toContain(secret);
+    expect(existsSync(packageRoot)).toBe(false);
+  } finally {
+    app.stop();
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
 test("accepts legacy business package manifests without protection metadata", async () => {
   const root = mkdtempSync(join(tmpdir(), "mao-business-package-legacy-manifest-"));
   try {
@@ -249,6 +314,34 @@ test("accepts legacy business package manifests without protection metadata", as
     delete manifest.protection;
     await Bun.write(manifestPath, `${JSON.stringify(manifest)}\n`);
     expect((await readBusinessPackage(packageRoot)).protection).toEqual({ mode: "plaintext", envelope: "portable" });
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test("accepts legacy manifests without isolation and restores the fixed portable contract", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-legacy-isolation-"));
+  try {
+    const packageRoot = join(root, "package");
+    await createBusinessPackage(packageRoot, { schema: "mao.business-system/1", system: { name: "Legacy package" } }, root, []);
+    const manifestPath = join(packageRoot, "manifest.json");
+    const manifest = JSON.parse(await Bun.file(manifestPath).text());
+    delete manifest.isolation;
+    await Bun.write(manifestPath, `${JSON.stringify(manifest)}\n`);
+    expect((await readBusinessPackage(packageRoot)).isolation).toEqual({
+      scope: "business", identities: "remapped", secrets: "references-only", runtime: "reset", host: "omitted",
+    });
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test("rejects a package that weakens platform isolation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mao-business-package-isolation-"));
+  try {
+    const packageRoot = join(root, "package");
+    await createBusinessPackage(packageRoot, { schema: "mao.business-system/1", system: { name: "Portable package" } }, root, []);
+    const manifestPath = join(packageRoot, "manifest.json");
+    const manifest = JSON.parse(await Bun.file(manifestPath).text());
+    manifest.isolation = { scope: "factory", identities: "preserved", secrets: "included", runtime: "resumed", host: "included" };
+    await Bun.write(manifestPath, `${JSON.stringify(manifest)}\n`);
+    await expect(readBusinessPackage(packageRoot)).rejects.toMatchObject({ code: "PACKAGE_CORRUPT", detail: { reason: "manifest" } });
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 

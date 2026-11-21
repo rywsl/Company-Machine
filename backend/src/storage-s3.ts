@@ -182,6 +182,18 @@ export class S3BlobProvider implements BlobProvider {
   blobPath(digest: string): string { this.checkDigest(digest); return this.cachePath(digest); }
   async exists(digest: string): Promise<boolean> { return Boolean(await this.head(digest)); }
 
+  async remove(digest: string): Promise<boolean> {
+    this.checkDigest(digest);
+    const present = await this.headWithMetadata(digest);
+    if (!present) return false;
+    await this.request("DELETE", digest);
+    try { unlinkSync(this.cachePath(digest)); } catch (error) {
+      if ((error as { code?: string }).code !== "ENOENT") throw error;
+    }
+    this.knownDigests.delete(digest);
+    return true;
+  }
+
   async head(digest: string): Promise<{ size: number; digest: string } | undefined> {
     const result = await this.headWithMetadata(digest);
     return result ? { digest: result.digest, size: result.size } : undefined;

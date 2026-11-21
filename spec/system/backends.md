@@ -69,6 +69,7 @@ export interface BlobProvider {
   getFile(digest: string, destination: string): Promise<void>;
   head(digest: string): Promise<{ digest: string; size: number } | undefined>;
   exists(digest: string): Promise<boolean>;
+  remove?(digest: string): Promise<boolean>;
   blobPath(digest: string): string;
   verify(digests?: string[]): Promise<Array<Record<string, string>>>;
   status(): ProviderStatus;
@@ -168,6 +169,8 @@ S3 provider 通过标准 HTTP 实现对象读写，不要求 `boto3`、MinIO SDK
 对象键与本地 CAS 的摘要保持一致。写入前计算 SHA-256，使用 HEAD 检查幂等性。相同摘要和长度的对象不重复上传，摘要冲突返回 `CAS_CONFLICT`。读取后校验摘要和长度，失败返回 `CAS_MISSING` 或 `CAS_INTEGRITY_FAILED`。本地缓存只能作为只读缓存，不能成为数据真相。
 
 S3 凭据只在签名请求时从环境读取。请求头、签名字符串、异常、事件和数据库中不得持久化凭据。S3 不可用时返回 `PROVIDER_UNAVAILABLE`，不能回退到本地 CAS。
+
+生产业务包导入会记录本次新建的对象。状态事务失败时，provider 使用可选的 `remove` 能力清理这些此前不存在的对象，已有共享 CAS 对象不会被删除。没有删除能力的只读 provider 仍然保留原始导入错误，并由后续未引用对象回收任务处理。
 
 ## 6. 错误
 
