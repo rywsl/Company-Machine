@@ -116,7 +116,7 @@ export function createMaterialFileStage(warehouse: Warehouse) {
         let source: string;
         let stat: FileStat;
         try {
-          source = warehouse.blobPath(grant.digest);
+          source = await warehouse.ensureLocal(grant.digest);
           stat = lstatSync(source);
           if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== grant.size) throw new Error("invalid CAS file");
           source = realpathSync(source);

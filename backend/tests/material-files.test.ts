@@ -7,6 +7,33 @@ import { createMaterialFileStage } from "../src/material-files";
 import { Context } from "../src/legacy/context";
 import { digestBytes } from "../src/legacy/foundation";
 
+function fakeBlobProvider(root: string) {
+  const objects = new Map<string, Uint8Array>();
+  const digest = (value: Uint8Array) => digestBytes(value);
+  return {
+    kind: "s3" as const,
+    put: async (input: string | Uint8Array) => {
+      const bytes = typeof input === "string" ? new Uint8Array(await Bun.file(input).arrayBuffer()) : input;
+      const id = digest(bytes);
+      objects.set(id, bytes);
+      return id;
+    },
+    putFile: async (path: string) => {
+      const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+      const id = digest(bytes);
+      objects.set(id, bytes);
+      return id;
+    },
+    get: async (id: string) => objects.get(id) ?? new Uint8Array(),
+    getFile: async (id: string, destination: string) => { await Bun.write(destination, objects.get(id) ?? new Uint8Array()); },
+    head: async (id: string) => objects.has(id) ? { digest: id, size: objects.get(id)!.length } : undefined,
+    exists: async (id: string) => objects.has(id),
+    blobPath: (id: string) => join(root, "provider-cache", id.slice(7, 9), id.slice(9)),
+    verify: async () => [],
+    status: () => ({ kind: "s3", mode: "production" as const, available: true }),
+  };
+}
+
 async function fixture(work: (context: Context, stage: ReturnType<typeof createMaterialFileStage>) => Promise<void>): Promise<void> {
   const context = Context.open(mkdtempSync(join(tmpdir(), "material-files-test-")));
   const stage = createMaterialFileStage(context.warehouse);
@@ -49,6 +76,24 @@ test("collects declared staged file bytes and prepares scoped read-only input mo
   expect(new Uint8Array(await Bun.file(blob).arrayBuffer())).toEqual(bytes);
   await expect(stage.collect([])).rejects.toMatchObject({ code: "MATERIAL_STAGE_CLOSED" });
 }));
+
+test("Warehouse can publish to a remote blob provider and materialize it locally", async () => {
+  const root = mkdtempSync(join(tmpdir(), "material-provider-test-"));
+  const provider = fakeBlobProvider(root);
+  const context = Context.open(root, { blob: provider });
+  try {
+    const source = join(root, "source.txt");
+    await Bun.write(source, "remote bytes");
+    const digest = await context.warehouse.putFile(source);
+    expect(digest).toBe(digestBytes(new TextEncoder().encode("remote bytes")));
+    const local = await context.warehouse.ensureLocal(digest);
+    expect(await Bun.file(local).text()).toBe("remote bytes");
+    expect(context.warehouse.blobPath(digest)).toContain("provider-cache");
+  } finally {
+    context.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 4 });
+  }
+});
 
 test("rejects staged links, directories and paths outside the declared flat file set", async () => fixture(async (context, stage) => {
   const privatePath = join(context.root, "unrelated.txt");

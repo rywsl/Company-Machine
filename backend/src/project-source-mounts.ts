@@ -12,7 +12,7 @@ export type ProjectSourceMount = { source: string; index: number };
 export const projectSourceRoot = "/mao/sources";
 
 type UploadedBlob = { path: string; size: number };
-type LookupUpload = (digest: string) => UploadedBlob | undefined;
+type LookupUpload = (digest: string) => UploadedBlob | undefined | Promise<UploadedBlob | undefined>;
 
 function canonicalPath(path: string): string | undefined {
   if (!isAbsolute(path) || /[,\u0000-\u001f\u007f]/.test(path) || path.split(/[\\/]/).some((part) => part === "..")) return;
@@ -77,7 +77,7 @@ export async function prepareProjectSources(
         if (!facts[offset].name && source.localFolder) facts[offset].name = basename(source.localFolder) || undefined;
       } else if (source.kind === "uploaded_file") {
         const digest = /^cas:\/\/(sha256:[0-9a-f]{64})$/.exec(source.fileRef ?? "")?.[1];
-        const blob = digest && uploadedBlob(digest);
+        const blob = digest && await uploadedBlob(digest);
         if (blob) {
           const candidate = canonicalPath(blob.path);
           if (candidate) {

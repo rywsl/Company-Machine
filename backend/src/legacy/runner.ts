@@ -542,7 +542,7 @@ export class Runner {
           error: { code: "PLAN_INVALID" },
         });
       }
-      const file = Bun.file(this.context.warehouse.blobPath(payload.digest));
+      const file = Bun.file(await this.context.warehouse.ensureLocal(payload.digest));
       let document: unknown;
       try { document = JSON.parse(await file.text()); } catch (error) {
         if (!(error instanceof SyntaxError)) throw error;

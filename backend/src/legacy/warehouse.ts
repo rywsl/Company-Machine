@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { canonicalBytes, canonicalJson, digestBytes, digestFile, randomUuid, utcIso, type Clock, type IdSource } from "./foundation";
 import { FactoryError } from "./errors";
 import { listFiles } from "../../mrl/factory/paths";
+import type { BlobProvider } from "../providers";
 
 const TYPE = /^[A-Za-z0-9][A-Za-z0-9._-]*@[0-9]+\.[0-9]+$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
@@ -43,7 +44,7 @@ function checkPayloadPath(path: string): void {
 
 export class Warehouse {
   private readonly root: string;
-  constructor(root: string, readonly db: StateDatabase, readonly clock: Clock, readonly ids?: IdSource) {
+  constructor(root: string, readonly db: StateDatabase, readonly clock: Clock, readonly ids?: IdSource, private readonly blob?: BlobProvider) {
     this.root = root;
     mkdirSync(join(root, "cas"), { recursive: true });
     mkdirSync(join(root, "tmp"), { recursive: true });
@@ -59,13 +60,32 @@ export class Warehouse {
   }
   blobPath(digest: string): string {
     checkDigest(digest);
+    if (this.blob) return this.blob.blobPath(digest);
     const hex = digest.slice("sha256:".length);
     return join(this.root, "cas", "sha256", hex.slice(0, 2), hex.slice(2));
   }
+  /** Ensure a provider-backed object is materialized in the local cache path. */
+  async ensureLocal(digest: string): Promise<string> {
+    checkDigest(digest);
+    const destination = this.blobPath(digest);
+    if (!this.blob) return destination;
+    try {
+      await this.blob.getFile(digest, destination);
+    } catch (error) {
+      throw new FactoryError("CAS_MISSING", "provider blob cannot be materialized locally", { digest, reason: error instanceof Error ? error.message : String(error) });
+    }
+    return destination;
+  }
   async putFile(source: string): Promise<string> {
+    if (this.blob) return this.blob.putFile(source);
     return (await this.storeFile(source)).digest;
   }
   private async storeFile(source: string): Promise<{ digest: string; size: number }> {
+    if (this.blob) {
+      const digest = await this.blob.putFile(source);
+      const size = statSync(source).size;
+      return { digest, size };
+    }
     const input = await open(source, "r");
     try { return await this.putOpenedFile(input); }
     finally { await input.close(); }
@@ -107,6 +127,13 @@ export class Warehouse {
       } finally { await output.close(); }
 
       const digest = `sha256:${hash.digest("hex")}`;
+      if (this.blob) {
+        let stored: string;
+        try { stored = await this.blob.putFile(part); }
+        catch (error) { throw new FactoryError("PROVIDER_UNAVAILABLE", "provider blob cannot be stored", { reason: error instanceof Error ? error.message : String(error) }); }
+        if (stored !== digest) throw new FactoryError("CAS_CONFLICT", "provider returned an unexpected blob digest", { digest, stored });
+        return { digest, size };
+      }
       const destination = this.blobPath(digest);
       if (!existsSync(destination)) {
         mkdirSync(dirname(destination), { recursive: true });
@@ -194,7 +221,7 @@ export class Warehouse {
     if (target && !target.isDirectory()) throw new FactoryError("DEST_INVALID", "物化目标不是目录", { dest: destination });
     mkdirSync(destination, { recursive: true });
     const prefix = layout === "bean" ? join(destination, "payload") : destination;
-    for (const file of bean.payload) { const target = join(prefix, ...file.path.replaceAll("\\", "/").split("/")); mkdirSync(join(target, ".."), { recursive: true }); await copyFile(this.blobPath(file.digest), target); }
+    for (const file of bean.payload) { const target = join(prefix, ...file.path.replaceAll("\\", "/").split("/")); mkdirSync(join(target, ".."), { recursive: true }); await copyFile(await this.ensureLocal(file.digest), target); }
     const body = { id: bean.id, type: bean.type, facts: bean.facts, meta: bean.meta, payload: bean.payload.map((file) => ({ path: file.path, digest: file.digest, size: file.size, media_type: file.mediaType })) };
     const runtime = bun(); if (!runtime) throw new FactoryError("RUNTIME_UNAVAILABLE", "Bun runtime is required"); await runtime.write(join(destination, "bean.json"), canonicalBytes(body));
   }
@@ -239,6 +266,10 @@ export class Warehouse {
   labels(id: string): Record<string, string> { this.get(id); return Object.fromEntries((this.db.query("SELECT key,value FROM bean_labels WHERE bean_id = ?").all(id) as any[]).map((row) => [row.key, row.value])); }
   label(id: string, key: string, value: string, by: string): void { this.get(id); this.db.query("INSERT INTO bean_labels (bean_id,key,value,set_by,at) VALUES (?,?,?,?,?) ON CONFLICT(bean_id,key) DO UPDATE SET value=excluded.value,set_by=excluded.set_by,at=excluded.at").run(id, key, value, by, utcIso(this.clock.now())); }
   async verify(): Promise<Array<Record<string, string>>> {
+    if (this.blob) {
+      const digests = this.db.query<{ digest: string }>("SELECT DISTINCT digest FROM payload_files").all().map(({ digest }) => digest);
+      return this.blob.verify(digests);
+    }
     const problems: Array<Record<string, string>> = [];
     const cas = join(this.root, "cas", "sha256");
     for (const file of listFiles(cas)) if (statSync(file).isFile()) { const parts = file.replaceAll("\\", "/").split("/"); const expected = `sha256:${parts.at(-2)}${parts.at(-1)}`; if (await digestFile(file) !== expected) problems.push({ kind: "digest_mismatch", path: file, bean_id: "", digest: expected }); }

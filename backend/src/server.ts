@@ -304,7 +304,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     secret: new LocalSecretProvider(vault),
   });
   let uploadWarehouse: Warehouse | undefined;
-  const uploads = () => uploadWarehouse ??= new Warehouse(storageRoot, store.db, store.clock, new RandomIds());
+  const uploads = () => uploadWarehouse ??= new Warehouse(storageRoot, store.db, store.clock, new RandomIds(), storage.blob);
   const runtime = options.runtime ?? selectedContainerProvider();
   const provider = runtimeProvider(runtime);
   let runtimeCache: { at: number; health: RuntimeHealth } | undefined;
@@ -363,13 +363,13 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     events.publish("project.intake.created", publicProject(project));
     return { projectId: project.id, systemId: system.id };
   };
-  const prepareSources: PrepareProjectSources = (project, sourceOptions) => prepareProjectSources(project, (digest) => {
+  const prepareSources: PrepareProjectSources = (project, sourceOptions) => prepareProjectSources(project, async (digest) => {
     const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
-    if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
+    if (uploaded) return { path: await uploads().ensureLocal(digest), size: uploaded.size };
   }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)], { sourceCacheRoot: join(storageRoot, "source-cache"), ...sourceOptions });
-  const prepareMachineSources: PrepareProjectSources = (project, sourceOptions) => prepareProjectSources(project, (digest) => {
+  const prepareMachineSources: PrepareProjectSources = (project, sourceOptions) => prepareProjectSources(project, async (digest) => {
     const uploaded = store.db.query<{ size: number }>("SELECT size FROM intake_uploads WHERE digest=?").get(digest);
-    if (uploaded) return { path: uploads().blobPath(digest), size: uploaded.size };
+    if (uploaded) return { path: await uploads().ensureLocal(digest), size: uploaded.size };
   }, [storageRoot, databasePath(store.dbPath), databasePath(store.legacyPath)], { cloneRepositories: false, strict: true, ...sourceOptions });
   const foreman = new ForemanCoordinator({
     store, events, ...options.foreman, ensureRuntime,
@@ -606,7 +606,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         if (typeof provider.open !== "function") throw new Error(`${runtimeProvider(runtime)} does not expose a ContainerProvider for MAO Runner`);
         const legacyRunId = typeof run.metadata.legacy_run_id === "string" ? run.metadata.legacy_run_id : undefined;
         if (recovering && !legacyRunId) throw new Error("CONTROL_PLANE_RESTART: legacy Run ID was not persisted");
-        context = Context.open(root, { clock: store.clock });
+        context = Context.open(root, { clock: store.clock, blob: storage.blob });
         activeKernelContexts.set(unitRunId, context);
         const executableKernel = { ...kernel, inputs: await resolveKernelInputs(system.id, context, frozenInputs) };
         const execution = createBusinessKernelExecution(context, provider);

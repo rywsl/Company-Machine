@@ -4,8 +4,9 @@ import { dirname, join, resolve } from "node:path";
 import { ManagedDatabase } from "../sqlite";
 import { randomUuid, RandomIds, SystemClock, type Clock, type IdSource } from "./foundation";
 import { Warehouse } from "./warehouse";
+import type { BlobProvider } from "../providers";
 
-export interface ContextOptions { provider?: unknown; clock?: Clock; ids?: IdSource; }
+export interface ContextOptions { provider?: unknown; blob?: BlobProvider; clock?: Clock; ids?: IdSource; }
 export class Context {
   readonly root: string;
   readonly db: Database;
@@ -13,13 +14,13 @@ export class Context {
   readonly ids: IdSource;
   readonly warehouse: Warehouse;
   readonly provider: unknown;
-  private constructor(root: string, db: Database, options: Required<ContextOptions>) {
+  private constructor(root: string, db: Database, options: ContextOptions) {
     this.root = root;
     this.db = db;
-    this.clock = options.clock;
-    this.ids = options.ids;
+    this.clock = options.clock ?? new SystemClock();
+    this.ids = options.ids ?? new RandomIds();
     this.provider = options.provider;
-    this.warehouse = new Warehouse(root, db, this.clock, this.ids);
+    this.warehouse = new Warehouse(root, db, this.clock, this.ids, options.blob);
   }
   static open(root: string, options: ContextOptions = {}): Context {
     const absolute = resolve(root);
@@ -28,7 +29,7 @@ export class Context {
     const db = new ManagedDatabase(dbPath, { create: true });
     db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA journal_mode = WAL");
-    return new Context(absolute, db, { provider: options.provider, clock: options.clock ?? new SystemClock(), ids: options.ids ?? new RandomIds() });
+    return new Context(absolute, db, { provider: options.provider, blob: options.blob, clock: options.clock ?? new SystemClock(), ids: options.ids ?? new RandomIds() });
   }
   close(): void { this.db.close(); }
 }
