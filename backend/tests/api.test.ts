@@ -481,6 +481,25 @@ describe("Bun business backend", () => {
     }
   });
 
+  test("marks a source tool resource ready and resumes its waiting Operator", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Source tool resource" });
+      const project = app.store.createIntake({ business_system_id: system.id, name: "Private source", repo_url: "https://git.example/private/repo" });
+      const run = app.store.createBusinessRun(system.id, "test", {}, [], true)!;
+      const unit = app.store.claimUnitRun(run.id, `${project.id}:operator`, "source-wait")!;
+      const request = app.store.createSourceToolRequest({ unitRunId: unit.id, projectId: project.id, tool: "git", source: "https://git.example/private/repo" });
+      app.store.completeUnitRun(unit.id, "waiting_resources", [], undefined);
+      const bootstrapBefore = await jsonResponse(await app.fetch(new Request("http://localhost/api/web/bootstrap")));
+      expect(bootstrapBefore.secrets.find((item: any) => item.id === request.id)).toMatchObject({ kind: "source-tool", source_tool: "git", configured: false });
+      const ready = await app.fetch(new Request(`http://localhost/api/v1/secrets/requests/${request.id}/ready`, { method: "POST" }));
+      expect(ready.status).toBe(200);
+      expect(app.store.getUnitRun(run.id, unit.id)).toMatchObject({ status: "queued" });
+      expect(app.store.getUnitRun(run.id, unit.id)?.sessionId).toBeUndefined();
+      expect(app.events.after().some(({ type, data }) => type === "source.tool.available" && (data as any).id === request.id)).toBe(true);
+    } finally { app.stop(); }
+  });
+
   test("preserves committed vault values when publication fails or the vault is damaged", async () => {
     const root = mkdtempSync(join(tmpdir(), "mao-vault-publication-"));
     const path = join(root, "vault.json");

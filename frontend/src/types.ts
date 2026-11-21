@@ -169,6 +169,8 @@ export interface SecretRecord {
   expires_at?: string | null;
   expired?: boolean;
   status?: string;
+  kind?: string;
+  source_tool?: string;
   request?: { id?: string; project_id?: string; project_name?: string; status?: string; purpose?: string; scope?: string } | null;
   agent_generated_checks?: string[];
 }

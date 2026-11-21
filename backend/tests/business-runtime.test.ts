@@ -11,6 +11,7 @@ import { prepareProjectSources, type PreparedProjectSources } from "../src/proje
 import { Warehouse } from "../src/legacy/warehouse";
 import { createMaterialFileStage } from "../src/material-files";
 import { VaultStore } from "../src/vault";
+import { SourceToolUnavailableError } from "../src/source-fetcher";
 
 function processForRecord(ref = "cas://report-1", summary = "项目已完成构建"): OfficialProcess {
   const record = JSON.stringify({ type: "mao.record", record_type: "material", kind: "build.report", ref, title: "构建报告", summary, files: [{ ref: `${ref}:file`, path: "build/report.md" }] });
@@ -190,6 +191,31 @@ describe("Bun business execution loop", () => {
       await operator.close();
       app.stop();
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("persists missing source tools as a resource wait and exposes a resumable request", async () => {
+    const app = createApp({ dbPath: ":memory:", legacyPath: ":memory:", dispatchWork: false });
+    const operator = new OperatorCoordinator({
+      store: app.store,
+      events: app.events,
+      prepareSources: async () => { throw new SourceToolUnavailableError("git", "https://git.example/private/repo"); },
+      spawn: () => { throw new Error("source preparation should wait before Harness startup"); },
+    });
+    try {
+      const system = app.store.createBusinessSystem({ name: "Source tool wait" });
+      const project = app.store.createIntake({ business_system_id: system.id, name: "Private source", repo_url: "https://git.example/private/repo" });
+      app.store.saveHarnessProfile({ runtime: "codex", role: "operator", baseUrl: "", model: "fixture", mode: "session", image: `registry.example/operator@sha256:${"a".repeat(64)}` });
+      const run = app.store.createBusinessRun(system.id)!;
+      await operator.dispatch(run.id);
+      const unit = app.store.listUnitRuns(run.id)[0];
+      expect(unit).toMatchObject({ status: "waiting_resources" });
+      const request = app.store.listSecretRequests().find((item) => item.projectId === project.id && item.metadata.kind === "source-tool");
+      expect(request).toMatchObject({ status: "requested", metadata: { kind: "source-tool", tool: "git", source: "https://git.example/private/repo" } });
+      expect(app.events.after().some(({ type }) => type === "source.tool.requested")).toBe(true);
+    } finally {
+      await operator.close();
+      app.stop();
     }
   });
 

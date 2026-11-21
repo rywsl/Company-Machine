@@ -324,7 +324,7 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - `POST /api/v1/foreman/inbox/<id>/dispatch` 将已入队意图交给配置好的官方 Harness。控制面只启动外部 Harness、转发事件和保存回复，不调用模型 API 或自建 Harness
 - 保存厂长 Harness 配置后，控制面立即重新扫描此前已入队的厂长消息并派发，不要求重启服务或用户再次点击 dispatch。服务启动和恢复周期会按 `claimed_at` 回收超过 `MAO_FOREMAN_CLAIM_TIMEOUT_S` 的失联轮次，默认超时为 900 秒，并记录 `foreman.message.requeued` 事件。
 - 容器厂长轮次按隔离邮箱并发派发。使用本机可恢复会话的厂长轮次只在同一 Harness profile 内保持顺序，避免共享官方 session，同时不让一个 profile 的轮次阻塞其他 profile 或容器轮次。
-- 项目来源准备由平台拥有的 SourceFetcher 负责，不要求 Foreman 镜像预装 Git。SourceFetcher 使用持久化 `FACTORY_ROOT/source-cache`，优先使用无交互 Git 浅克隆，宿主缺少 Git 时对 GitHub HTTP(S) 来源使用官方仓库元数据和 codeload 归档，并校验归档路径、大小和摘要。来源 facts 记录工具、来源摘要和 revision，缓存目录不随 Harness 轮次清理。非 GitHub 来源缺少 Git 时产生 `SOURCE_TOOL_UNAVAILABLE`，后续由资源等待与恢复流程接管。
+- 项目来源准备由平台拥有的 SourceFetcher 负责，不要求 Foreman 镜像预装 Git。SourceFetcher 使用持久化 `FACTORY_ROOT/source-cache`，优先使用无交互 Git 浅克隆，宿主缺少 Git 时对 GitHub HTTP(S) 来源使用官方仓库元数据和 codeload 归档，并校验归档路径、大小和摘要。来源 facts 记录工具、来源摘要和 revision，缓存目录不随 Harness 轮次清理。非 GitHub 来源缺少 Git 时产生 `SOURCE_TOOL_UNAVAILABLE`，Operator 将运行持久化为 `waiting_resources`，为项目创建 kind 为 `source-tool` 的资源请求并保留来源与工具名称。管理员或厂长在宿主准备工具后调用资源就绪入口，平台把请求标记为可用、重新排队原 UnitRun 并自动恢复 Operator。该请求不要求写入密钥值，也不改变可信 Foreman 容器的自由工具模式。
 - 可信容器 Foreman 的仓库链接继续作为来源数据交给官方 Harness。Foreman 启动后可以在 `/workspace` 私有工作区内自行安装 Git、Scion 或项目需要的其他工具并下载、检验和切换源码。平台只准备已登记的上传文件和本地目录挂载，不在 Foreman 启动前替它决定项目内部工具和执行时序。
 - Bun HTTP 服务开始监听后，按持久队列顺序派发仍为 `queued` 的 Foreman 消息，并按正常 DAG 就绪规则推进已授权运行中的 `queued` 单元。历史运行中已完成的 Operator 可作为先前派发的依据。已领用的 Foreman 消息保留 `claimed` 状态，每个新领用的 Operator 单元在 SQLite 保存执行进程归属。Linux 服务启动时在同一内核启动和 PID 命名空间内检查归属，只有系统确认原 PID 已退出才将其置为 `failed` 并记录 `CONTROL_PLANE_RESTART`，保留已登记产物与会话编号。外部执行结果由用户核对后决定后续动作。活跃、无法核实以及历史没有归属记录的 `running` 单元保留原状态。等待资源的单元继续通过现有资源请求流程恢复。容器化 Operator 在领取单元前检查运行时。检查失败、超时或服务停止时，单元保留 `queued` 状态。成功执行 `POST /api/v1/runtime/ensure-ready` 后，通过正常 DAG 就绪规则恢复已授权的排队工作。服务在五秒内复用确认在线的运行时状态。
 - kernel 绑定的 Machine 运行在 `unit_run.session_id=legacy:<unit-run-id>` 下，并在 BusinessRun metadata 保存 legacy Run ID。控制面重启后按该 Run ID 调用既有 `LineRunner` 恢复，避免重新提交 Job；若崩溃发生在 Run ID 持久化之前，则启动一个新的 legacy Run 并把旧的 Machine 运行标为失败或由用户重试。
@@ -352,12 +352,12 @@ Operator 详情把生效的 Harness 与模型和共享连接配置分别呈现�
 - 连接就绪、会话启动及响应共用 45 秒时限。收到预期文本且会话正常结束后保存 `verified`，其他情况保存 `failed` 和固定说明。`harness.profile.verification.completed` 事件和配置读模型只提供验证状态、说明和时间。重新保存配置将取消原检查，旧结果不会覆盖新配置。
 - `GET /api/v1/events` 使用 SSE 推送 `mao.event`，事件数据携带真实类型、序号和聚合摘要
 - SSE 发生读取错误时，前端连接状态进入 `degraded`，恢复收到事件后回到 `connected`。发送 Foreman 消息失败时保留输入内容并显示错误，不能清空输入后伪装成已提交。
-- `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测
+- `GET /api/v1/runtime` 返回当前 Podman 或 Kiri 健康状态、machine 和 rootless 能力，结果在控制面短时间缓存，避免首屏重复探测。Linux headless Kiri 使用 `/run/kiri/docker.sock` 或显式 `MAO_KIRI_SOCKET`，WSL 中若宿主 80/443 已占用，应通过 Kiri systemd 环境设置 `KIRI_HTTP_PORT` 与 `KIRI_HTTPS_PORT` 后再启动 bridge 网络
 - `POST /api/v1/runtime/ensure-ready` 请求当前运行时就绪。Linux Kiri 先探测套接字并复用在线服务，需要时请求 systemd 启动官方 `kiri.service`，包括自动发现的 headless Kiri `/var/lib/kiri-daemon/.kiri/run/docker.sock`。自定义套接字使用部署方的服务管理。Linux Podman 不满足 rootless 条件时返回明确的 MAO 用户和 `systemctl --user enable --now podman.socket` 恢复诊断，不把 rootful 或未知状态报告为在线。不可用时返回 503 和诊断。
 
 并发的运行时状态查询共用一次在途探测，结果缓存 5 秒。主动就绪检查在并发的被动探测期间完成时，后返回的被动探测使用最新的就绪结果。
 - Windows 用户目录安装的 Podman CLI 可以通过 `MAO_PODMAN_EXECUTABLE` 指定，控制面启动时必须优先使用该路径，运行时健康检查和带镜像的官方 Harness/ACP 启动必须复用同一解析结果，避免桌面进程继承旧 PATH 后误报运行时缺失
-- `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱。保险箱写入成功后，SQLite 在同一事务内更新请求状态、记录可用事件并重新排队所需请求均已可用的工位。事件推送与派发在提交后执行。若保险箱已写入而 SQLite 提交失败，用户可重新提交同一请求。
+- `POST /api/v1/secrets/requests` 创建项目资源请求，`POST /api/v1/secrets/requests/<id>/value` 将值直接加密写入本地保险箱。kind 为 `source-tool` 的资源使用 `POST /api/v1/secrets/requests/<id>/ready` 标记宿主工具已准备，不接收密钥值。资源可用后，SQLite 在同一事务内更新请求状态、记录可用事件并重新排队所需请求均已可用的工位。事件推送与派发在提交后执行。若保险箱已写入而 SQLite 提交失败，用户可重新提交同一请求。
 - 密钥请求状态支持 `requested`、`available`、`denied`、`revoked` 和 `expired`。已经 `available` 的请求不能覆盖写入，轮换必须先调用 `rotate` 生成新的请求和保险箱引用。`deny`、`revoke`、`rotate` 和 `audit` 路由只返回请求标识、状态和脱敏审计记录，审计记录不能包含密钥值。Operator 读取可用密钥时登记使用事件，并按项目请求和工位绑定范围恢复运行。
 - SecretRequest 元数据与审计明细在存储边界统一脱敏，历史记录读取也重新经过脱敏，避免内部 Harness 事件绕过 Web 路由保护。
 - 服务启动恢复时，已授权运行中等待资源的工位在所有已绑定的本项目请求均为可用时重新排队，再按 DAG 派发。缺少资源关联、请求仍未完成或归属其他项目的工位继续等待。

@@ -147,6 +147,10 @@ export const putProjectSecret = (request_id: string, value: string) => api<{ req
   body: JSON.stringify({ value }),
 });
 
+export const markProjectResourceReady = (request_id: string) => api<{ request_id: string; state: string }>(`/api/v1/secrets/requests/${encodeURIComponent(request_id)}/ready`, {
+  method: "POST",
+});
+
 export function subscribeToEvents(
   onEvent: (event: StreamEvent) => void,
   onError?: () => void,

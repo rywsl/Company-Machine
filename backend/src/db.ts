@@ -1284,6 +1284,19 @@ export class SqliteStore {
     }).immediate();
   }
 
+  createSourceToolRequest(input: { unitRunId: string; projectId: string; tool: string; source: string }): SecretRequest {
+    const normalizedTool = input.tool.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-");
+    if (!normalizedTool) throw new Error("source-tool-invalid");
+    const request = this.createSecretRequest({
+      projectId: input.projectId,
+      name: `MAO_SOURCE_TOOL_${normalizedTool.replace(/[^A-Z0-9]+/gi, "_").toUpperCase()}`,
+      vaultRef: `vault://resource/source-tool/${this.uuid()}`,
+      metadata: { kind: "source-tool", tool: normalizedTool, source: input.source, purpose: `项目需要 ${normalizedTool} 准备来源` },
+    });
+    this.linkUnitSecret(input.unitRunId, request.id);
+    return request;
+  }
+
   linkUnitSecret(unitRunId: string, requestId: string): void {
     this.db.query("INSERT OR IGNORE INTO unit_secret_requests (unit_run_id,request_id) VALUES (?,?)").run(unitRunId, requestId);
   }

@@ -267,7 +267,7 @@ interface BackendAppOptions {
   vault?: VaultStore;
   storageRoot?: string;
   foreman?: { cwd?: string; spawn?: OfficialSpawn; acpSpawn?: AcpSpawn; prepareSources?: PrepareProjectSources };
-  operator?: Pick<OperatorCoordinatorOptions, "cwd" | "spawn" | "acpSpawn" | "materialStage">;
+  operator?: Pick<OperatorCoordinatorOptions, "cwd" | "spawn" | "acpSpawn" | "materialStage" | "prepareSources">;
   harnessVerificationTimeoutMs?: number;
   dispatchWork?: boolean;
   clock?: Clock;
@@ -366,7 +366,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
   const operator = new OperatorCoordinator({
     store, events, materialStage: () => supportsLocalProjectMounts() ? createMaterialFileStage(uploads()) : undefined,
     ...options.operator, onProgress: dispatchOperatorRun, ensureRuntime, readSecret: (ref) => vault.get(ref),
-    prepareSources: async (project) => supportsLocalProjectMounts() ? prepareSources(project) : undefined,
+    prepareSources: options.operator?.prepareSources ?? (async (project) => supportsLocalProjectMounts() ? prepareSources(project) : undefined),
   });
   const hasForeman = () => store.listHarnessProfiles().some((profile) => profile.role === "foreman");
   const dispatchForemanIfConfigured = (id: string) => {
@@ -1124,6 +1124,28 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       return response({ request_id: record.id, state: updated?.status ?? status }, 200);
     }
     const secretValueMatch = url.pathname.match(/^\/api\/v1\/secrets\/requests\/([^/]+)\/value$/);
+    const resourceReadyMatch = url.pathname.match(/^\/api\/v1\/secrets\/requests\/([^/]+)\/ready$/);
+    if (resourceReadyMatch && request.method === "POST") {
+      if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "只有厂长或管理员可以标记项目资源已准备" }, 403);
+      const requestRecord = store.getSecretRequest(resourceReadyMatch[1]);
+      if (!requestRecord) return response({ error: "resource request was not found" }, 404);
+      if (principal?.scoped && !canAccessProject(principal, store, requestRecord.projectId)) return response({ code: "FORBIDDEN_SCOPE", message: "当前凭据没有该项目权限" }, 403);
+      if (requestRecord.metadata.kind !== "source-tool") return response({ error: "only source-tool resources can be marked ready" }, 400);
+      if (requestRecord.status !== "requested") return response({ error: `resource request is ${requestRecord.status}` }, 409);
+      const { runIds, event } = store.db.transaction(() => {
+        const available = store.markSecretAvailable(requestRecord.id);
+        if (!available) throw new Error("resource request changed while writing");
+        const runIds = store.resumeResourceRuns(requestRecord.id);
+        const event = store.appendEvent("source.tool.available", {
+          id: requestRecord.id, projectId: requestRecord.projectId, name: requestRecord.name,
+          tool: requestRecord.metadata.tool, status: available.status,
+        });
+        return { runIds, event };
+      }).immediate();
+      events.notifyCommitted(event);
+      for (const runId of runIds) dispatchOperatorRun(runId);
+      return response({ request_id: requestRecord.id, state: "available" }, 200);
+    }
     if (secretValueMatch && request.method === "POST") {
       if (principal?.scoped && !canMutate(principal, "foreman")) return response({ code: "FORBIDDEN_ROLE", message: "只有厂长或管理员可以写入项目密钥" }, 403);
       const requestRecord = store.getSecretRequest(secretValueMatch[1]);
@@ -1472,6 +1494,8 @@ function publicSecretRequest(secret: any) {
     configured: secret.status === "available",
     status: secret.status,
     usage_scope: secret.metadata.scope,
+    kind: secret.metadata.kind,
+    source_tool: secret.metadata.tool,
     agent_generated_checks: checks,
     request: {
       id: secret.id,

@@ -16,7 +16,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from "@xyflow/react";
-import { ApiError, cancelBusinessRun, cancelForemanTurn, configureHarness, createBusinessRun, dispatchBusinessRun, ensureRuntime, getAssetsPage, getBootstrap, getBusinessRuns, getGraph, getLogs, getTalk, putProjectSecret, retryBusinessRun, sendTalk, submitProjectIntake, subscribeToEvents, verifyHarness, type WebScope } from "./api";
+import { ApiError, cancelBusinessRun, cancelForemanTurn, configureHarness, createBusinessRun, dispatchBusinessRun, ensureRuntime, getAssetsPage, getBootstrap, getBusinessRuns, getGraph, getLogs, getTalk, markProjectResourceReady, putProjectSecret, retryBusinessRun, sendTalk, submitProjectIntake, subscribeToEvents, verifyHarness, type WebScope } from "./api";
 import { OperatorBindingForm } from "./OperatorBindingForm";
 import { WorkareaConversions } from "./WorkareaConversions";
 import type { AssetPageData, AssetRecord, Bootstrap, BusinessRun, DependencyStatus, EventRecord, ForemanTurn, Graph, GraphNode, HarnessProfile, LayoutGraph, LayoutState, OperatorBindingView, Page, Scope, SecretRecord, TalkMessage } from "./types";
@@ -104,7 +104,7 @@ function Dashboard({ bootstrap, onCompose, onIntake, onSecrets, onConstitution, 
   const status = bootstrap.status ?? {}; const runs = status.runs; const active = runs ? Number(runs.RUNNING ?? 0) + Number(runs.PENDING ?? 0) : undefined; const alerts = status.alerts; const exceptions = alerts ? alerts.length : undefined; const secrets = bootstrap.secrets ?? []; const configuredSecrets = secrets.filter((item) => item.configured).length; const factory = bootstrap.graph.factory;
   return <section className="page dashboard-page"><div className="page-heading"><div><span className="eyebrow">FACTORY OVERVIEW</span><h1>看板</h1><p>工厂由 Foreman 驱动，人管理边界和方向。</p></div><div className="compose-actions"><button className="secondary-button" onClick={onIntake}>导入项目</button><ConnectionState state={bootstrap.connection.state} message={bootstrap.connection.message} /></div></div>
     {!bootstrap.foreman.configured && <div className="setup-banner"><div><strong>先配置厂长 Harness</strong><span>Foreman 是本项目的自治入口，缺少配置时会主动提出后续依赖。</span></div><button className="primary-button" onClick={onForemanConfig}>进入编排配置</button></div>}
-    <div className="metric-grid"><MetricCard label="当前运行" value={active === undefined ? "待观测" : active} note={active === undefined ? "后端未提供运行汇总" : active ? "正在由员工处理" : "当前无运行"} tone={active === undefined ? "blue" : "running"} /><MetricCard label="自治完成" value="待观测" note="等待运行事实汇总" tone="blue" /><MetricCard label="厂区" value={factory.nodes.length} note="从现有执行图聚合" tone="violet" /><MetricCard label="异常" value={exceptions === undefined ? "待观测" : exceptions} note={exceptions === undefined ? "后端未提供异常汇总" : exceptions ? "进入日志上下文" : "Foreman 当前可继续"} tone={exceptions === undefined ? "blue" : exceptions ? "bad" : "good"} /><button className="metric-card metric-action" onClick={onSecrets}><span className="eyebrow">密钥资源</span><strong className="metric-value violet">{configuredSecrets}/{secrets.length}</strong><small>查看项目资源请求</small></button></div>
+    <div className="metric-grid"><MetricCard label="当前运行" value={active === undefined ? "待观测" : active} note={active === undefined ? "后端未提供运行汇总" : active ? "正在由员工处理" : "当前无运行"} tone={active === undefined ? "blue" : "running"} /><MetricCard label="自治完成" value="待观测" note="等待运行事实汇总" tone="blue" /><MetricCard label="厂区" value={factory.nodes.length} note="从现有执行图聚合" tone="violet" /><MetricCard label="异常" value={exceptions === undefined ? "待观测" : exceptions} note={exceptions === undefined ? "后端未提供异常汇总" : exceptions ? "进入日志上下文" : "Foreman 当前可继续"} tone={exceptions === undefined ? "blue" : exceptions ? "bad" : "good"} /><button className="metric-card metric-action" onClick={onSecrets}><span className="eyebrow">项目资源</span><strong className="metric-value violet">{configuredSecrets}/{secrets.length}</strong><small>查看项目资源请求</small></button></div>
     <div className="dashboard-columns"><section className="panel overview-panel"><div className="panel-head"><div><span className="eyebrow">WORKAREAS</span><h2>厂区</h2></div><button className="text-button" onClick={onCompose}>打开编排 <span>→</span></button></div>{factory.nodes.length ? <div className="workarea-list">{factory.nodes.map((node) => <button className="workarea-row" key={node.id} onClick={() => onWorkarea(node.id)}><span className={`status-ring ${statusTone(node.status)}`} /><span className="row-main"><strong>{node.label}</strong><small>{display(node.metadata?.brief, "现有执行图聚合")}</small></span><span className={`row-state ${statusTone(node.status)}`}>{statusLabel(node.status)}</span><span className="chevron">›</span></button>)}</div> : <EmptyState text="当前 Registry 没有可展示的厂区。" />}</section>
       <section className="panel boundary-panel"><div className="panel-head"><div><span className="eyebrow">HUMAN BOUNDARY</span><h2>厂长边界</h2></div><span className="signal good" /></div><p>人决定工厂方向。厂长管理工位和业务流程，项目只申请运行所需的密钥。</p><div className="boundary-chain"><span>人</span><b>→</b><span>Foreman</span><b>→</b><span>Operator</span><b>→</b><span>Machine</span></div><button className="boundary-action" onClick={onConstitution}><span><strong>宪法</strong><small>{display(bootstrap.constitution.version, "未配置")} · {display(bootstrap.constitution.status, "边界状态未知")}</small></span><b>›</b></button></section></div>
     <section className="panel recent-panel"><div className="panel-head"><div><span className="eyebrow">RECENT ACTIVITY</span><h2>最近运行</h2></div><button className="text-button" onClick={onCompose}>进入编排</button></div><div className="recent-strip"><SummaryItem label="最近日志" value={`${bootstrap.logs.length} 条`} /><SummaryItem label="资产" value={`${bootstrap.assetTotal ?? bootstrap.assets.length} 项`} /><SummaryItem label="Foreman" value={bootstrap.foreman.configured ? "可用" : "待配置"} /><SummaryItem label="宪法" value={display(bootstrap.constitution.version, "未配置")} /></div></section></section>;
@@ -532,6 +532,7 @@ function SecretDrawer({ secret, requests, onSelect, onClose, onSaved }: { secret
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const requestId = secret.request?.id;
+  const sourceTool = secret.kind === "source-tool";
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!requestId || !value || saving) return;
@@ -547,17 +548,31 @@ function SecretDrawer({ secret, requests, onSelect, onClose, onSaved }: { secret
       setSaving(false);
     }
   };
+  const markReady = async () => {
+    if (!requestId || saving) return;
+    setSaving(true);
+    try {
+      await markProjectResourceReady(requestId);
+      setMessage("项目来源工具已标记为可用，运行将自动恢复。");
+      await onSaved();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "资源状态更新失败");
+    } finally {
+      setSaving(false);
+    }
+  };
   return <DetailDrawer title="项目资源请求" eyebrow="PROJECT RESOURCE" onClose={onClose}>
     {requests.length > 1 && <label className="config-field"><span>项目请求</span><select value={secret.id} onChange={(event) => {
       const selection = requests.find((item) => item.id === event.target.value);
       if (selection) onSelect(selection);
     }}>{requests.map((item) => <option key={item.id} value={item.id}>{item.request?.project_name ? `${item.request.project_name} · ` : ""}{item.key} · {item.configured ? "已配置" : "待补充"}</option>)}</select></label>}
     {secret.request?.project_name && <div className="context-line"><span>请求项目</span><strong>{secret.request.project_name}</strong></div>}
-    <div className="secret-key"><strong>{secret.key}</strong><span className={`status-badge ${secret.configured ? "good" : "bad"}`}>{secret.configured ? "已配置" : "待补充"}</span></div>
-    {secret.request?.purpose && <p>{display(secret.request.purpose)}</p>}
+    <div className="secret-key"><strong>{secret.key}</strong><span className={`status-badge ${secret.configured ? "good" : "bad"}`}>{secret.configured ? (sourceTool ? "已准备" : "已配置") : (sourceTool ? "待准备" : "待补充")}</span></div>
+    {sourceTool ? <p>项目需要在当前宿主准备 {secret.source_tool ?? "来源工具"}。安装或确认工具可用后标记资源，等待中的 Operator 会自动恢复。</p> : secret.request?.purpose && <p>{display(secret.request.purpose)}</p>}
     <div className="context-line"><span>使用范围</span><strong>{display(secret.usage_scope ?? secret.request?.scope, "未声明")}</strong></div>
     {secret.agent_generated_checks?.length ? <details className="detail-collapse" open><summary>Agent 生成的检查项</summary><ul className="check-list">{secret.agent_generated_checks.map((check, index) => <li key={`${check}-${index}`}><strong>{check}</strong></li>)}</ul></details> : null}
-    {requestId && !secret.configured && <form className="secret-form" onSubmit={submit}>
+    {requestId && !secret.configured && sourceTool && <button className="primary-button" type="button" onClick={() => void markReady()} disabled={saving}>{saving ? "更新中…" : "标记已准备"}</button>}
+    {requestId && !secret.configured && !sourceTool && <form className="secret-form" onSubmit={submit}>
       <label className="config-field"><span>填写这项项目密钥</span><input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoComplete="off" /></label>
       <button className="primary-button" type="submit" disabled={!value || saving}>{saving ? "写入中…" : "写入保险箱"}</button>
     </form>}

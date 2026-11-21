@@ -9,6 +9,7 @@ import { OfficialCliTransport, requireDeclaredTransport, harnessControlPlaneRoot
 import { HarnessTurn } from "./harness-turn";
 import { resolveOperatorBinding } from "./operator-binding";
 import { createUnitRunOwner, unitRunOwnerExited, unitRunProcessScope } from "./unit-run-owner";
+import { SourceToolUnavailableError } from "./source-fetcher";
 
 export interface OperatorCoordinatorOptions {
   store: SqliteStore;
@@ -336,6 +337,27 @@ export class OperatorCoordinator {
     } catch (error) {
       if (this.closed) return;
       if (!claimed) throw error;
+      if (error instanceof SourceToolUnavailableError) {
+        const request = this.options.store.createSourceToolRequest({
+          unitRunId: unitRun.id,
+          projectId: unit.projectId,
+          tool: error.tool,
+          source: error.source,
+        });
+        const waiting = this.options.store.completeUnitRun(unitRun.id, "waiting_resources", [...outputIds], undefined, owner.token);
+        if (waiting) {
+          this.options.events.publish("source.tool.requested", {
+            id: request.id,
+            projectId: request.projectId,
+            unitRunId: unitRun.id,
+            tool: request.metadata.tool,
+            source: request.metadata.source,
+            status: request.status,
+          });
+          this.options.events.publish("operator.run.waiting_resources", waiting);
+        }
+        return;
+      }
       const message = redactCredentialValues(error instanceof Error ? error.message : "official-harness-failed", Object.values(credentials)) as string;
       const completed = this.options.store.completeUnitRun(unitRun.id, "failed", [...outputIds], message, owner.token);
       if (completed) this.options.events.publish("operator.run.failed", completed);

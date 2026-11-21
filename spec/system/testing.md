@@ -126,10 +126,10 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 
 | 文件 | 验证 |
 |---|---|
-| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱与资源恢复、资产限量与归档排序、对话入队及取消、SSE 分页回放与跨进程写入 |
+| `backend/tests/api.test.ts` | 业务系统和项目接收、密钥保险箱与资源恢复、source-tool 资源就绪后的 UnitRun 恢复、资产限量与归档排序、对话入队及取消、SSE 分页回放与跨进程写入 |
 | `backend/tests/backup.test.ts` | SQLite、CAS 与 Registry Git bundle 备份，检查原 ID、仓库与上传文件字节、Git 引用、凭据边界和损坏情况 |
 | `backend/tests/business-records.test.ts` | 物料查询、业务 DAG 迁移与长链环路校验，以及同一 Conversion 从 planned/running 幂等升级为 completed 的状态合并 |
-| `backend/tests/business-runtime.test.ts` | 业务 DAG 节点集合限定执行范围、Operator 来源只读交接、暂存物料的成功登记和下游挂载、文件下载授权、超时清理、启动前的运行时就绪和容器 Operator 的 ACP 能力边界 |
+| `backend/tests/business-runtime.test.ts` | 业务 DAG 节点集合限定执行范围、Operator 来源只读交接、缺少来源工具时的 waiting_resources 和资源请求、暂存物料的成功登记和下游挂载、文件下载授权、超时清理、启动前的运行时就绪和容器 Operator 的 ACP 能力边界 |
 | `backend/tests/material-files.test.ts` | 验证暂存普通文件、按摘要复用输入挂载、跨读取边界的密钥检测及临时文件清理 |
 | `backend/tests/cli.test.ts` | Bun 工厂命令、登记仓库与读取厂区 DAG、只读 Registry 检查与用法、缓存查询和失效、跨 epoch 重建、从冻结快照恢复审批和调度运行 |
 | `backend/tests/status.test.ts` | 工厂状态、按告警确定退出码、费用口径和 Prometheus 文本 |
@@ -147,7 +147,8 @@ Kiri 厂长验收必须在 Linux 进程中执行。验收前用 `MAO_CONTAINER_R
 | `backend/tests/operator-recovery.test.ts` | Operator 领取归属、会话更新和结果提交的归属校验、Linux 确认原进程退出后的恢复及其他环境保留未知状态 |
 | `backend/tests/harness.test.ts` | 七个官方 Harness 的目录、Pi 与 Qwen Code CLI 参数、Windows 原生 Claude Code 路径、ACP 会话、事件流、有界脱敏 stderr，以及可信 Foreman 的 root 工作区和隔离 bridge 网络边界 |
 | `backend/tests/harness-verification.test.ts` | Harness 配置通过官方 CLI 和 ACP 验证，检查结果投影、运行时就绪、超时和配置更新 |
-| `backend/tests/deployment.test.ts` | 生产 systemd user service 不固定 Podman，Podman/Kiri readiness 由 Bun 控制面选择 |
+| `backend/tests/deployment.test.ts` | 生产 systemd user service 不固定 Podman，Podman/Kiri readiness 由 Bun 控制面选择，生产镜像使用 Bun frozen lockfile 构建并排除运行态构建上下文 |
+| `tools/verify-official-harness.ts` | 真实官方 Harness 版本探测和 ACP `initialize` 协商，不发送模型提示词 |
 | `backend/tests/source-fetcher.test.ts` | 持久化源码缓存、GitHub archive fallback、归档路径校验和无 Git 工具诊断 |
 | `backend/tests/legacy-approvals.test.ts` | 工位审批的费用规则、尝试隔离、到期、缺失规则和不同 Runtime 的复核票数 |
 | `backend/tests/legacy-contract.test.ts` | validator 正反样例、GoldenSet、Baseline、转换等价、差分及 Sink 方案试运行恢复 |
