@@ -290,7 +290,11 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       secret: storageConfig.secret,
     });
   }
-  const store = new SqliteStore(options.dbPath, options.legacyPath, { clock: options.clock, uuid: options.uuid });
+  const store = new SqliteStore(options.dbPath, options.legacyPath, {
+    clock: options.clock,
+    uuid: options.uuid,
+    ...(options.storage?.state.database ? { database: options.storage.state.database } : {}),
+  });
   const events = new EventBus(store);
   const eventStreams = new AbortController();
   const vault = options.vault ?? new VaultStore(undefined, undefined, store.clock);
