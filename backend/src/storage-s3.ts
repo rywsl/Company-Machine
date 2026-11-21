@@ -94,10 +94,17 @@ export class S3BlobProvider implements BlobProvider {
       : input instanceof ArrayBuffer ? new Uint8Array(input) : input;
     const digest = `sha256:${sha256(value)}`;
     if (expectedDigest && expectedDigest !== digest) throw new ProviderError("CAS_CONFLICT", "blob digest does not match expected digest", { digest: expectedDigest });
-    const existing = await this.head(digest);
+    const existing = await this.headWithMetadata(digest);
     if (existing) {
       if (existing.digest !== digest || existing.size !== value.byteLength) {
         throw new ProviderError("CAS_CONFLICT", "remote object metadata does not match the content digest", { digest });
+      }
+      if (!existing.metadataPresent) {
+        const response = await this.request("GET", digest);
+        const remote = new Uint8Array(await response.arrayBuffer());
+        if (remote.byteLength !== value.byteLength || `sha256:${sha256(remote)}` !== digest) {
+          throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object content does not match its digest", { digest });
+        }
       }
       this.knownDigests.add(digest);
       return digest;
@@ -136,6 +143,11 @@ export class S3BlobProvider implements BlobProvider {
   async exists(digest: string): Promise<boolean> { return Boolean(await this.head(digest)); }
 
   async head(digest: string): Promise<{ size: number; digest: string } | undefined> {
+    const result = await this.headWithMetadata(digest);
+    return result ? { digest: result.digest, size: result.size } : undefined;
+  }
+
+  private async headWithMetadata(digest: string): Promise<{ size: number; digest: string; metadataPresent: boolean } | undefined> {
     this.checkDigest(digest);
     try {
       const response = await this.request("HEAD", digest);
@@ -147,7 +159,7 @@ export class S3BlobProvider implements BlobProvider {
       }
       const size = sizeText === null ? 0 : Number(sizeText);
       if (!Number.isSafeInteger(size) || size < 0) throw new ProviderError("CAS_INTEGRITY_FAILED", "remote object size metadata is invalid", { digest });
-      return { digest: normalized ? `sha256:${normalized}` : digest, size };
+      return { digest: normalized ? `sha256:${normalized}` : digest, size, metadataPresent: Boolean(normalized) };
     } catch (error) {
       if (error instanceof ProviderError && error.detail.status === 404) return undefined;
       throw error;
