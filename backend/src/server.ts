@@ -1,7 +1,7 @@
 import { EventBus } from "./event-bus";
 import { SqliteStore, type AssetCursor } from "./db";
 import { VaultStore } from "./vault";
-import { exportBusinessSystem, importBusinessSystem } from "./business-portability";
+import { exportBusinessSystem, exportBusinessSystemAsync, importBusinessSystem } from "./business-portability";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { RandomIds, canonicalBytes, digestBytes, type Clock } from "./legacy/foundation";
@@ -17,7 +17,7 @@ import { prepareProjectSources, type PrepareProjectSources } from "./project-sou
 import { repositoryReference } from "./project-sources";
 import { createMaterialFileStage } from "./material-files";
 import type { RegisterRepository } from "./project-registration";
-import { foremanCredential } from "./foreman-credentials";
+import { foremanCredentialAsync } from "./foreman-credentials";
 import { verifyHarness } from "./harness-verification";
 import { OperatorCoordinator, projectCredentialName, type OperatorCoordinatorOptions } from "./operator";
 import { operatorBindingView, parseOperatorBinding } from "./operator-binding";
@@ -838,7 +838,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     const exportMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/export$/);
     if (exportMatch && request.method === "GET") {
       const id = exportMatch[1];
-      const document = exportBusinessSystem(store, id, () => graphProjection(store, "workarea", id), (ref) => vault.get(ref));
+      const document = await exportBusinessSystemAsync(store, id, () => graphProjection(store, "workarea", id), (ref) => storage.secret.get(ref));
       return document ? response(document) : response({ error: "business system was not found" }, 404);
     }
     const unitsMatch = url.pathname.match(/^\/api\/v1\/business-systems\/([^/]+)\/units$/);
@@ -1244,7 +1244,11 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     if (url.pathname === "/api/web/harnesses" && request.method === "GET") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以读取全局 Harness 配置" }, 403);
       const profiles = store.listHarnessProfiles();
-      return response(officialHarnesses(profiles).map((item) => ({ ...item, configuration: publicProfile(profiles.find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })));
+      const projected = await Promise.all(officialHarnesses(profiles).map(async (item) => ({
+        ...item,
+        configuration: await publicProfileAsync(profiles.find((profile) => profile.runtime === item.id), (ref) => storage.secret.get(ref)),
+      })));
+      return response(projected);
     }
     if (url.pathname === "/api/web/harnesses/configure" && request.method === "POST") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以配置 Harness" }, 403);
@@ -1323,8 +1327,9 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       // require a restart or a manual dispatch request.
       if (profile.role === "foreman") recoverQueuedWork();
       const foremanProfile = persistedProfile.role === "foreman" ? persistedProfile : store.listHarnessProfiles().find((item) => item.role === "foreman");
-      const foremanPublic = publicProfile(foremanProfile, (ref) => vault.get(ref));
-      return response({ profile: publicProfile(persistedProfile, (ref) => vault.get(ref)), foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, runtime_state: foremanPublic?.foreman_runtime?.state, runtime_reason: foremanPublic?.foreman_runtime?.reason, profile: foremanPublic } }, 200);
+      const foremanPublic = await publicProfileAsync(foremanProfile, (ref) => storage.secret.get(ref));
+      const profilePublic = await publicProfileAsync(persistedProfile, (ref) => storage.secret.get(ref));
+      return response({ profile: profilePublic, foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: foremanProfile?.runtime, model: foremanProfile?.model, mode: foremanProfile?.mode, runtime_state: foremanPublic?.foreman_runtime?.state, runtime_reason: foremanPublic?.foreman_runtime?.reason, profile: foremanPublic } }, 200);
     }
     if (url.pathname === "/api/web/harnesses/verify" && request.method === "POST") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以验证 Harness" }, 403);
@@ -1332,22 +1337,22 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       if (typeof body.profile_id !== "string") return response({ error: "profile_id is required" }, 400);
       const existing = store.listHarnessProfiles().find((item) => item.id === body.profile_id);
       if (!existing) return response({ error: "profile was not found" }, 404);
-      if (verificationJobs.has(existing.id)) return response({ profile: publicProfile(existing, (ref) => vault.get(ref)) }, 202);
+      if (verificationJobs.has(existing.id)) return response({ profile: await publicProfileAsync(existing, (ref) => storage.secret.get(ref)) }, 202);
       const profile = store.markHarnessVerification(existing.id, "requested", "正在验证官方 Harness 连通性");
       if (!profile) return response({ error: "profile was not found" }, 404);
       const controller = new AbortController();
       verificationJobs.set(profile.id, controller);
       events.publish("harness.profile.verification.requested", { id: profile.id, runtime: profile.runtime, role: profile.role });
       const transportOptions = profile.role === "operator" ? options.operator : options.foreman;
-      void verifyHarness(profile, { ...transportOptions, ensureRuntime, readSecret: (ref) => storage.secret.get(ref), signal: controller.signal, timeoutMs: options.harnessVerificationTimeoutMs }).then(({ state, reason }) => {
+      void verifyHarness(profile, { ...transportOptions, ensureRuntime, readSecret: (ref) => storage.secret.get(ref), signal: controller.signal, timeoutMs: options.harnessVerificationTimeoutMs }).then(async ({ state, reason }) => {
         if (verificationJobs.get(profile.id) !== controller) return;
         verificationJobs.delete(profile.id);
         const current = store.listHarnessProfiles().find((item) => item.id === profile.id);
         if (current?.updatedAt !== profile.updatedAt || current.verification?.state !== "requested") return;
         const completed = store.markHarnessVerification(profile.id, state, reason);
-        if (completed) events.publish("harness.profile.verification.completed", { id: profile.id, runtime: profile.runtime, role: profile.role, verification: publicProfile(completed, (ref) => vault.get(ref))?.verification });
+        if (completed) events.publish("harness.profile.verification.completed", { id: profile.id, runtime: profile.runtime, role: profile.role, verification: (await publicProfileAsync(completed, (ref) => storage.secret.get(ref)))?.verification });
       }).catch(() => {});
-      return response({ profile: publicProfile(profile, (ref) => vault.get(ref)) }, 202);
+      return response({ profile: await publicProfileAsync(profile, (ref) => storage.secret.get(ref)) }, 202);
     }
     if (url.pathname === "/api/web/assets" && request.method === "GET") {
       const limit = Math.trunc(Math.max(1, Number(url.searchParams.get("limit") ?? 100)));
@@ -1399,15 +1404,22 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const assets = assetPage ? assetPage.items : scopedAssets(store, 100, projects);
       const logs = systems ? scopedLogs(store, 100, principal) : webLogs(store, 100);
       const secrets = store.listSecretRequests().filter((secret) => !projects || projects.has(secret.projectId));
-      const harnesses = systems ? officialHarnesses([]) : officialHarnesses(store.listHarnessProfiles());
+      const allProfiles = store.listHarnessProfiles();
+      const harnesses = systems ? officialHarnesses([]) : officialHarnesses(allProfiles);
+      const projectedHarnesses = await Promise.all(harnesses.map(async (item) => ({
+        ...item,
+        configuration: systems ? null : await publicProfileAsync(allProfiles.find((profile) => profile.runtime === item.id), (ref) => storage.secret.get(ref)),
+      })));
+      const projectedProfiles = systems ? [] : await Promise.all(allProfiles.map((profile) => publicProfileAsync(profile, (ref) => storage.secret.get(ref))));
+      const projectedForeman = systems ? null : await publicProfileAsync(foremanProfile, (ref) => storage.secret.get(ref));
       return response({ version: "backend-v1", connection: { state: "connected" }, status: { at: store.timestamp() },
         eventCursor, foremanTurns, pendingForemanReplies: foreman.pendingReplies(),
         graph: { factory: factoryGraph },
         assets, logs, talk,
         ...(assetPage && { assetTotal: assetPage.total, assetOlderCursor: "olderCursor" in assetPage ? assetPage.olderCursor : assetPage.older ? Buffer.from(JSON.stringify({ v: 1, ...assetPage.older })).toString("base64url") : null }),
-        harnesses: harnesses.map((item) => ({ ...item, configuration: systems ? null : publicProfile(store.listHarnessProfiles().find((profile) => profile.runtime === item.id), (ref) => vault.get(ref)) })), harness_profiles: systems ? [] : store.listHarnessProfiles().map((profile) => publicProfile(profile, (ref) => vault.get(ref))), secrets: secrets.map(publicSecretRequest),
-        dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses(store.listHarnessProfiles()).map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : item.container_configured ? "configured" : "unavailable" })), storage: await probeStorageStatus(storage) },
-        foreman: (() => { const projected = systems ? null : publicProfile(foremanProfile, (ref) => vault.get(ref)); const runtime = projected?.foreman_runtime; return { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: systems ? null : foremanProfile?.runtime ?? null, model: systems ? null : foremanProfile?.model ?? null, mode: systems ? null : foremanProfile?.mode ?? null, runtime_state: runtime?.state, runtime_reason: runtime?.reason, runtime_provider: provider, profile: projected }; })(), constitution: await constitutionProjection(storageRoot) });
+        harnesses: projectedHarnesses, harness_profiles: projectedProfiles, secrets: secrets.map(publicSecretRequest),
+        dependencies: { [provider]: runtimeDependency(health, provider), podman: provider === "podman" ? runtimeDependency(health, provider) : { state: "inactive", provider: "podman", message: "当前使用 Kiri" }, kiri: provider === "kiri" ? runtimeDependency(health, provider) : { state: "inactive", provider: "kiri", message: "当前使用 Podman" }, harnesses: officialHarnesses(allProfiles).map((item) => ({ id: item.id, name: item.name, state: item.available ? "available" : item.container_configured ? "configured" : "unavailable" })), storage: await probeStorageStatus(storage) },
+        foreman: { configured: Boolean(foremanProfile), setup_required: !foremanProfile, runtime: systems ? null : foremanProfile?.runtime ?? null, model: systems ? null : foremanProfile?.model ?? null, mode: systems ? null : foremanProfile?.mode ?? null, runtime_state: projectedForeman?.foreman_runtime?.state, runtime_reason: projectedForeman?.foreman_runtime?.reason, runtime_provider: provider, profile: projectedForeman }, constitution: await constitutionProjection(storageRoot) });
     }
     if (url.pathname === "/api/v1/events" && request.method === "GET") {
       const signal = AbortSignal.any([request.signal, eventStreams.signal]);
@@ -1481,14 +1493,16 @@ function officialHarnesses(profiles: readonly HarnessProfile[] = []) {
   }));
 }
 
-function publicProfile(profile?: HarnessProfile, readSecret?: (ref: string) => string | undefined) {
+async function publicProfileAsync(profile?: HarnessProfile, readSecret?: (ref: string) => Promise<string | undefined>) {
   if (!profile) return null;
   const { secretRef, ...safeProfile } = profile;
+  const credential = await foremanCredentialAsync(profile, readSecret);
+  const operatorSecretConfigured = profile.role === "operator" && Boolean(secretRef && readSecret && await readSecret(secretRef));
   const configured = profile.role === "foreman"
     ? (profile.executionMode === "trusted_container"
-      ? Boolean(profile.image && (foremanCredential(profile, readSecret) || profile.image))
-      : Boolean(foremanCredential(profile, readSecret) || (!profile.image && resolveOfficialHarness(profile.runtime) && Bun.which(resolveOfficialHarness(profile.runtime)!.executable))))
-    : Boolean(secretRef && (!readSecret || readSecret(secretRef)));
+      ? Boolean(profile.image && (credential || profile.image))
+      : Boolean(credential || (!profile.image && resolveOfficialHarness(profile.runtime) && Bun.which(resolveOfficialHarness(profile.runtime)!.executable))))
+    : operatorSecretConfigured;
   const foremanRuntime = profile.role === "foreman"
     ? profile.executionMode === "native_host"
       ? { state: "native_unverified", reason: "本机官方 Harness 的仓库脚本执行能力尚未验证" }

@@ -9,7 +9,7 @@ import { FactoryError } from "./legacy/errors";
 import { RandomIds } from "./legacy/foundation";
 import { Warehouse } from "./legacy/warehouse";
 import { businessPackageBlob, createBusinessPackage, publishBusinessDirectory, readBusinessPackage, registerVerifiedArtifactFiles } from "./business-package";
-import { exportBusinessSystem, importBusinessSystem } from "./business-portability";
+import { exportBusinessSystemAsync, importBusinessSystem } from "./business-portability";
 import { parseRepositoryRegistration } from "./project-registration";
 import { projectCredentialName } from "./operator";
 import { VaultStore } from "./vault";
@@ -71,24 +71,18 @@ async function runProductionBusinessExport(args: string[]): Promise<number> {
   try {
     const system = store.getBusinessSystem(id);
     if (!system) throw new Error("business system was not found");
-    const secretValues = new Map<string, string>();
-    for (const project of store.listProjects(id)) {
-      for (const request of project.secretRequests) {
-        if (request.status !== "available") continue;
-        const value = await storage.secret.get(request.vaultRef);
-        if (value) secretValues.set(request.vaultRef, value);
-      }
-    }
-    const document = JSON.parse(JSON.stringify(exportBusinessSystem(
+    const secretValues: string[] = [];
+    const document = JSON.parse(JSON.stringify(await exportBusinessSystemAsync(
       store,
       id,
       () => system.metadata.graph ?? { nodes: [], edges: [] },
-      (ref) => secretValues.get(ref),
+      (ref) => storage.secret.get(ref),
+      (value) => secretValues.push(value),
     )));
     if (!document) throw new Error("business system was not found");
     if (args.length === 4) {
       const blobProvider = storage.blob.kind === "local" ? undefined : storage.blob;
-      console.log(JSON.stringify(await createBusinessPackage(args[3], document, root, [...secretValues.values()], blobProvider), null, 2));
+      console.log(JSON.stringify(await createBusinessPackage(args[3], document, root, secretValues, blobProvider), null, 2));
     } else console.log(JSON.stringify(document, null, 2));
     return 0;
   } finally {

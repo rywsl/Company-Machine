@@ -114,6 +114,8 @@ export interface KmsProvider {
 
 `Warehouse` 可以注入 `BlobProvider`。写入、物化和校验都通过注入的对象 provider 执行，`ensureLocal` 在 Harness 或物料挂载前把对象物化到平台管理的本地缓存。未注入时继续使用当前 `${FACTORY_ROOT}/cas` 布局。
 
+业务包导出使用 `exportBusinessSystemAsync` 读取异步 `SecretProvider`，Harness 配置投影和业务导出不能绕过 provider 直接读取本地 Vault。导出只把可用密钥短暂留在内存中用于载荷扫描，文档仍只保留待配置申请和脱敏引用。
+
 ## 3. 接口
 
 下列 provider-specific 章节实现第 2 章的接口，并由 `backend/src/storage.ts` 统一导出。

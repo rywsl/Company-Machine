@@ -177,6 +177,34 @@ export function exportBusinessSystem(
   };
 }
 
+/**
+ * Provider-neutral export boundary for secret stores whose reads are async.
+ * The document serializer remains deterministic and only receives an in-memory
+ * lookup of the selected project's available secret values.
+ */
+export async function exportBusinessSystemAsync(
+  store: SqliteStore,
+  id: string,
+  fallbackGraph: () => unknown,
+  readSecret: (ref: string) => Promise<string | undefined>,
+  onSecret?: (value: string) => void,
+) {
+  const values = new Map<string, string>();
+  const system = store.getBusinessSystem(id);
+  if (!system) return undefined;
+  for (const project of store.listProjects(id)) {
+    for (const request of project.secretRequests) {
+      if (request.status !== "available") continue;
+      const value = await readSecret(request.vaultRef);
+      if (value) {
+        values.set(request.vaultRef, value);
+        onSecret?.(value);
+      }
+    }
+  }
+  return exportBusinessSystem(store, id, fallbackGraph, (ref) => values.get(ref));
+}
+
 export function importBusinessSystem(store: SqliteStore, document: Json, validateGraph: GraphValidator): BusinessSystem {
   const sourceSystem = object(document.system);
   if (document.schema !== SCHEMA || typeof sourceSystem?.name !== "string" || !sourceSystem.name.trim()) {
