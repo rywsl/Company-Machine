@@ -108,6 +108,8 @@ export interface KmsProvider {
 
 `StateStatement` 只包含规范化 SQL、参数和业务操作名。业务层不能拼接方言 SQL。`ProviderStatus` 只返回 provider 名称、模式、可用状态、版本和非敏感原因。`VerificationReport` 只返回摘要、计数和不一致位置。
 
+`AsyncProviderStateDatabase` 将 `AsyncStateProvider` 暴露为 Promise-only 的查询、写入和事务接口。它不实现同步 `StateDatabase`，也不能被传给当前 `SqliteStore`。新的异步业务仓储必须通过这个边界接入，事务回调收到同一连接上下文，关闭操作必须等待池释放完成。生产控制面在全部业务仓储迁移到该边界前继续 fail-closed，不能把异步 provider 包装成同步数据库。
+
 当前 `SqliteStore`、`Warehouse` 和 `VaultStore` 通过适配器实现这些接口。`ProviderStateDatabase` 将 provider 的查询、语句和事务映射到现有同步仓储表面。适配器必须保持已有调用方的行为和本地文件布局，远程事务必须保证事务内查询能看到此前写入。
 
 `Warehouse` 可以注入 `BlobProvider`。写入、物化和校验都通过注入的对象 provider 执行，`ensureLocal` 在 Harness 或物料挂载前把对象物化到平台管理的本地缓存。未注入时继续使用当前 `${FACTORY_ROOT}/cas` 布局。

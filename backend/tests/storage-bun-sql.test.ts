@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { BunMysqlStateProvider, BunPostgresStateProvider, type BunSqlClient } from "../src/storage-bun-sql";
+import { AsyncProviderStateDatabase } from "../src/state-database";
 
 class FakeSql implements BunSqlClient {
   readonly options = { max: 4, idleTimeout: 30_000 };
@@ -78,5 +79,24 @@ test("Bun SQL constructor receives pool settings without exposing the DSN to cal
     options: { max: 5, idleTimeout: 30, connectionTimeout: 2, maxLifetime: 600, prepare: false },
   });
   await provider.close();
+});
+
+test("async state database preserves provider transactions without exposing a sync adapter", async () => {
+  const fake = new FakeSql();
+  const provider = new BunPostgresStateProvider({ dsn: "postgres://user:password@db.example/factory", client: fake });
+  const database = AsyncProviderStateDatabase.from(provider);
+  try {
+    expect(await database.query("SELECT 1").get()).toEqual({ value: 1 });
+    await database.transaction(async (transaction) => {
+      await transaction.query("SELECT 1").all();
+      await transaction.query("INSERT INTO events(value) VALUES (?)").run("in transaction");
+    });
+    expect(fake.begins).toBe(1);
+    expect(fake.queries.map(({ sql }) => sql)).toEqual([
+      "SELECT 1",
+      "SELECT 1",
+      "INSERT INTO events(value) VALUES ($1)",
+    ]);
+  } finally { await database.close(); }
 });
 
