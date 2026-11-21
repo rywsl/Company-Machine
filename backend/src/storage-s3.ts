@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { randomUuid } from "./legacy/foundation";
+import { randomUuid, SystemClock, type Clock } from "./legacy/foundation";
 import { ProviderError, providerFailure } from "./provider-errors";
 import type { BlobInput, BlobProvider } from "./providers";
 
@@ -15,6 +15,7 @@ export interface S3BlobOptions {
   addressing?: "path" | "virtual";
   cacheRoot?: string;
   timeoutMs?: number;
+  clock?: Clock;
   environment?: NodeJS.ProcessEnv;
 }
 
@@ -34,6 +35,7 @@ export class S3BlobProvider implements BlobProvider {
   private readonly accessKeyEnv: string;
   private readonly secretKeyEnv: string;
   private readonly sessionTokenEnv?: string;
+  private readonly clock: Clock;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly knownDigests = new Set<string>();
 
@@ -49,6 +51,7 @@ export class S3BlobProvider implements BlobProvider {
     this.accessKeyEnv = options.accessKeyEnv ?? "MAO_S3_ACCESS_KEY";
     this.secretKeyEnv = options.secretKeyEnv ?? "MAO_S3_SECRET_KEY";
     this.sessionTokenEnv = options.sessionTokenEnv;
+    this.clock = options.clock ?? new SystemClock();
     this.environment = options.environment ?? process.env;
     mkdirSync(this.cacheRoot, { recursive: true });
   }
@@ -170,7 +173,7 @@ export class S3BlobProvider implements BlobProvider {
   private async request(method: string, digest: string, body?: Uint8Array, extra: Record<string, string> = {}): Promise<Response> {
     const url = this.objectUrl(digest);
     const payloadHash = body === undefined ? sha256("") : sha256(body);
-    const now = new Date();
+    const now = this.clock.now();
     const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
     const date = amzDate.slice(0, 8);
     const access = this.environment[this.accessKeyEnv];

@@ -5,6 +5,9 @@ import { randomUuid, SystemClock, utcIso, type Clock } from "./legacy/foundation
 
 type VaultRecord = { ref: string; iv: string; tag: string; ciphertext: string; updatedAt: string };
 
+/** Cryptographic entropy belongs to the vault boundary rather than control-plane identity generation. */
+export function vaultRandomBytes(size: number): Buffer { return randomBytes(size); }
+
 function keyFromEnvironment(path: string): any {
   const configured = process.env.MAO_VAULT_KEY;
   if (configured) {

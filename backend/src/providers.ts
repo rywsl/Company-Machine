@@ -1,10 +1,11 @@
-import { createHash, createHmac, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createHash, createHmac, createCipheriv, createDecipheriv } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 import { ManagedDatabase } from "./sqlite";
-import { VaultStore } from "./vault";
+import { vaultRandomBytes, VaultStore } from "./vault";
+import { randomUuid } from "./legacy/foundation";
 import { ProviderError, type ProviderErrorCode } from "./provider-errors";
 
 export type StorageMode = "local" | "production";
@@ -30,6 +31,7 @@ export interface StateProvider {
   execute(sql: string, params?: readonly unknown[]): { changes: number; lastInsertRowid?: number };
   transaction<T>(work: () => T): T;
   migrate(): number;
+  verify(): Array<Record<string, string>>;
   status(): ProviderStatus;
   close(): void;
 }
@@ -138,7 +140,7 @@ export class LocalBlobProvider implements BlobProvider {
       return digest;
     }
     await mkdir(dirname(destination), { recursive: true });
-    const temporary = `${destination}.${cryptoRandomUuid()}.part`;
+    const temporary = `${destination}.${randomUuid()}.part`;
     await writeFile(temporary, data, { flag: "wx" });
     try {
       await rename(temporary, destination);
@@ -219,6 +221,7 @@ export class SqliteStateProvider implements StateProvider {
   }
   transaction<T>(work: () => T): T { return this.database.transaction(work).immediate(); }
   migrate(): number { return Number(this.database.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0); }
+  verify(): Array<Record<string, string>> { return []; }
   status(): ProviderStatus { return { kind: this.kind, mode: "local", available: true }; }
   close(): void { if (this.ownsDatabase) this.database.close(); }
 }
@@ -231,10 +234,6 @@ export class LocalSecretProvider implements SecretProvider {
   async has(ref: string): Promise<boolean> { return this.vault.has(ref); }
   async delete(ref: string): Promise<boolean> { return this.vault.delete(ref); }
   status(): ProviderStatus { return { kind: this.kind, mode: "local", available: true }; }
-}
-
-function cryptoRandomUuid(): string {
-  return randomBytes(16).toString("hex");
 }
 
 /** KMS-compatible local implementation backed by the existing AES-256-GCM Vault. */
@@ -250,12 +249,12 @@ export class LocalKmsProvider implements KmsProvider {
       if (key.length === 32) return key;
       throw new ProviderError("PROVIDER_CONFIG_INVALID", "KMS key material is invalid", { keyId });
     }
-    const key = randomBytes(32);
+    const key = vaultRandomBytes(32);
     this.vault.put(ref, key.toString("base64"));
     return key;
   }
   async encrypt(value: Uint8Array | string, keyId = "default"): Promise<EncryptedValue> {
-    const iv = randomBytes(12);
+    const iv = vaultRandomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", this.key(keyId), iv);
     const plaintext = typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
@@ -273,8 +272,8 @@ export class LocalKmsProvider implements KmsProvider {
     return createHmac("sha256", this.key(keyId)).update(input).digest("base64");
   }
   async rotate(keyId = "default"): Promise<string> {
-    const next = `${keyId}/${Date.now().toString(36)}-${cryptoRandomUuid().slice(0, 8)}`;
-    this.vault.put(`vault://kms/key/${next}`, randomBytes(32).toString("base64"));
+    const next = `${keyId}/${randomUuid()}`;
+    this.vault.put(`vault://kms/key/${next}`, vaultRandomBytes(32).toString("base64"));
     return next;
   }
   auditRef(operation: string, keyId = "default"): string { return `kms-audit://${this.kind}/${encodeURIComponent(keyId)}/${encodeURIComponent(operation)}`; }

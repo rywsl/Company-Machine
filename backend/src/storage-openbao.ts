@@ -1,6 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { ProviderError, providerFailure } from "./provider-errors";
 import type { KmsProvider, SecretProvider } from "./providers";
+import { randomUuid } from "./legacy/foundation";
 
 export interface OpenBaoOptions {
   addr: string;
@@ -162,7 +163,7 @@ export class OpenBaoKmsProvider implements KmsProvider, SecretProvider {
 
   private responseAuditRef(response: OpenBaoResponse | undefined): string {
     const requestId = typeof response?.request_id === "string" ? response.request_id : undefined;
-    return requestId ?? `audit:${randomUUID()}`;
+    return requestId ?? `audit:${randomUuid()}`;
   }
 
   private async ensureToken(): Promise<string | undefined> {
