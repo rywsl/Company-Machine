@@ -457,7 +457,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       for (const [position, file] of files.entries()) {
         const grant = grants.get(position);
         if (!grant) throw new Error(`business material ${artifact.ref} has no file grant`);
-        const source = uploads().blobPath(grant.digest);
+        const source = await uploads().ensureLocal(grant.digest);
         if (!existsSync(source)) throw new Error(`business material ${artifact.ref} file is missing`);
         const relativePath = typeof file.path === "string" && file.path.length > 0 ? file.path : `file-${position}`;
         const destination = join(stage, String(position));
@@ -528,12 +528,8 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
         digest: file.digest,
       }));
       for (const file of bean.payload) {
-        const source = context.warehouse.blobPath(file.digest);
-        const destination = uploads().blobPath(file.digest);
-        if (resolve(source) !== resolve(destination)) {
-          mkdirSync(dirname(destination), { recursive: true });
-          if (!existsSync(destination)) await Bun.write(destination, Bun.file(source));
-        }
+        await context.warehouse.ensureLocal(file.digest);
+        await uploads().ensureLocal(file.digest);
       }
       const artifact = store.addArtifact({
         projectId: unit.projectId,
@@ -1000,7 +996,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const stored = store.db.query("SELECT 1 FROM intake_uploads WHERE digest=?").get(digest);
       const source = store.getProject(projectId)?.sources.find((item) => item.fileRef === `cas://${digest}`);
       if (!stored || !source) return response({ error: "project upload was not found" }, 404);
-      const path = uploads().blobPath(digest);
+      const path = await uploads().ensureLocal(digest);
       if (!existsSync(path)) return response({ error: "project upload was not found" }, 404);
       const filename = typeof source.metadata.name === "string" ? source.metadata.name : digest;
       return new Response(Bun.file(path), { headers: {
@@ -1013,7 +1009,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
       const [, projectId, artifactId, digest] = artifactFile;
       const grant = store.projectArtifactFile(projectId, artifactId, digest);
       if (!grant) return response({ error: "artifact file was not found" }, 404);
-      const path = uploads().blobPath(digest);
+      const path = await uploads().ensureLocal(digest);
       const file = lstatSync(path, { throwIfNoEntry: false });
       if (!file?.isFile() || file.size !== grant.size) return response({ error: "artifact file was not found" }, 404);
       const filename = grant.path?.split("/").at(-1) || digest;
