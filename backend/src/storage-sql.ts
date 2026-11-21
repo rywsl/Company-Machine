@@ -21,10 +21,42 @@ function quote(value: unknown): string {
 
 function bind(sql: string, params: readonly unknown[]): string {
   let index = 0;
-  const result = sql.replaceAll("?", () => {
-    if (index >= params.length) throw new ProviderError("PROVIDER_CONFIG_INVALID", "SQL 参数数量不匹配");
-    return quote(params[index++]);
-  });
+  let result = "";
+  for (let cursor = 0; cursor < sql.length; cursor += 1) {
+    const character = sql[cursor];
+    if (character === "'" || character === '"' || character === "`") {
+      const quoteMark = character;
+      result += character;
+      while (++cursor < sql.length) {
+        result += sql[cursor];
+        if (sql[cursor] === quoteMark) {
+          if (sql[cursor + 1] === quoteMark) result += sql[++cursor];
+          else break;
+        }
+      }
+      continue;
+    }
+    if (character === "-" && sql[cursor + 1] === "-") {
+      const end = sql.indexOf("\n", cursor);
+      const stop = end < 0 ? sql.length : end;
+      result += sql.slice(cursor, stop);
+      cursor = stop - 1;
+      continue;
+    }
+    if (character === "/" && sql[cursor + 1] === "*") {
+      const end = sql.indexOf("*/", cursor + 2);
+      if (end < 0) throw new ProviderError("PROVIDER_CONFIG_INVALID", "SQL 注释没有闭合");
+      result += sql.slice(cursor, end + 2);
+      cursor = end + 1;
+      continue;
+    }
+    if (character === "?") {
+      if (index >= params.length) throw new ProviderError("PROVIDER_CONFIG_INVALID", "SQL 参数数量不匹配");
+      result += quote(params[index++]);
+      continue;
+    }
+    result += character;
+  }
   if (index !== params.length) throw new ProviderError("PROVIDER_CONFIG_INVALID", "SQL 参数数量不匹配");
   return result;
 }
