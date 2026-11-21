@@ -4,6 +4,7 @@ import {
   LocalKmsProvider,
   LocalSecretProvider,
   ProviderError,
+  type ProviderStatus,
   resolveStorageProviderConfig,
   SqliteStateProvider,
   type BlobProvider,
@@ -75,6 +76,21 @@ export function storageStatus(storage: StorageProviders): Record<string, unknown
     secret: storage.secret.status(),
     kms: storage.kms.status(),
   };
+}
+
+export async function probeStorageStatus(storage: StorageProviders): Promise<Record<string, unknown>> {
+  const result = storageStatus(storage) as Record<string, any>;
+  const secret = storage.secret as SecretProvider & { checkAvailability?: () => Promise<ProviderStatus> };
+  if (secret.checkAvailability) {
+    const status = await secret.checkAvailability();
+    result.secret = status;
+    result.kms = status;
+  }
+  if (storage.config.state !== "sqlite") {
+    const problems = storage.state.verify();
+    if (problems.length) result.state = { ...result.state, available: false, code: "PROVIDER_UNAVAILABLE", reason: problems[0]?.reason ?? "state provider verification failed" };
+  }
+  return result;
 }
 
 export function closeStorage(storage: StorageProviders): void {

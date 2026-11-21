@@ -13,7 +13,7 @@ import { projectCredentialName } from "./operator";
 import { VaultStore } from "./vault";
 import { CliUsageError, isStationScope, runStationCli, stationErrorExit, stationUsage } from "./station-cli";
 import { selectedContainerProvider } from "../runtime/selected";
-import { createStorageProviders, storageStatus } from "./storage-factory";
+import { createStorageProviders, probeStorageStatus, storageStatus } from "./storage-factory";
 import { ProviderError, migrateStorage, resolveStorageProviderConfig } from "./storage";
 export { CliUsageError } from "./station-cli";
 
@@ -368,7 +368,7 @@ async function runStorageCommand(args: string[]): Promise<number> {
   catch (error) { console.log(JSON.stringify(storageJsonError(error), null, 2)); return 4; }
   try {
     if (operation === "status") {
-      console.log(JSON.stringify({ ok: true, ...storageStatus(storage) }, null, 2));
+      console.log(JSON.stringify({ ok: true, ...(await probeStorageStatus(storage)) }, null, 2));
       return 0;
     }
     if (operation === "verify") {

@@ -10,7 +10,7 @@ import type { Artifact, BusinessConversion, BusinessSystem, Event, HarnessProfil
 import type { RuntimeHealth } from "../runtime/podman";
 import { selectedContainerProvider } from "../runtime/selected";
 import { LocalSecretProvider, ProviderError, SqliteStateProvider, type StorageProviders } from "./storage";
-import { createStorageProviders, storageStatus } from "./storage-factory";
+import { createStorageProviders, probeStorageStatus, storageStatus } from "./storage-factory";
 import { resolveStorageProviderConfig } from "./providers";
 import { ForemanCoordinator } from "./foreman";
 import { prepareProjectSources, type PrepareProjectSources } from "./project-source-mounts";
@@ -733,7 +733,7 @@ export function createApp(options: BackendAppOptions = {}): BackendApp {
     }
     if (url.pathname === "/api/v1/storage" && request.method === "GET") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以读取存储 provider 状态" }, 403);
-      return response(storageStatus(storage));
+      return response(await probeStorageStatus(storage));
     }
     if (url.pathname === "/api/v1/runtime/ensure-ready" && request.method === "POST") {
       if (principal?.scoped && principal.role !== "admin") return response({ code: "FORBIDDEN_ROLE", message: "只有管理员凭据可以启动平台运行时" }, 403);
